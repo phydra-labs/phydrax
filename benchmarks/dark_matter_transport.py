@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -53,7 +55,7 @@ def _manifest(name: str) -> ReferenceArtifactManifest:
     )
 
 
-def _inputs(path_count: int):
+def _inputs(path_count: int) -> Any:
     profile = LayeredTerrestrialProfile(
         jnp.asarray((1.0, 2.0)),
         jnp.asarray((1.0, 1.0)),

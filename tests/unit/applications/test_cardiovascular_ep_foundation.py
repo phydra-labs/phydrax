@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import zipfile
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -44,14 +45,14 @@ from phydrax.discretization import (
 )
 
 
-def _tetra_slab(cube_count: int = 2):
+def _tetra_slab(cube_count: int = 2) -> Any:
     coordinates = []
     for i in range(cube_count + 1):
         for j in range(2):
             for k in range(2):
                 coordinates.append((float(i), float(j), float(k)))
 
-    def vertex(i, j, k):
+    def vertex(i: Any, j: Any, k: Any) -> Any:
         return 4 * i + 2 * j + k
 
     tetrahedra = []
@@ -77,7 +78,7 @@ def _tetra_slab(cube_count: int = 2):
     return jnp.asarray(coordinates), jnp.asarray(tetrahedra, dtype=jnp.int32)
 
 
-def _fem(cube_count: int = 2):
+def _fem(cube_count: int = 2) -> Any:
     coordinates, tetrahedra = _tetra_slab(cube_count)
     mesh = CellMesh.from_tetrahedra(coordinates, tetrahedra)
     return FiniteElementPlan(
@@ -86,7 +87,7 @@ def _fem(cube_count: int = 2):
     ).prepare()
 
 
-def _parameters(**updates):
+def _parameters(**updates: Any) -> Any:
     values = {
         "a": 0.05,
         "b": 0.15,
@@ -114,7 +115,7 @@ def _runtime(
     dt_ms: float = 0.02,
     amplitude_per_ms: float = 1.0,
     stop_ms: float = 0.2,
-):
+) -> Any:
     fem = _fem(cube_count)
     fibers = jnp.tile(jnp.asarray(((1.0, 0.0, 0.0),)), (6 * cube_count, 1))
     diffusivity = CellwiseDiffusivity.from_fibers(fibers, 0.2, 0.05)
@@ -125,7 +126,7 @@ def _runtime(
     return plan.prepare(dt_ms)
 
 
-def test_exact_dimensional_aliev_panfilov_rates_and_singularity_evidence():
+def test_exact_dimensional_aliev_panfilov_rates_and_singularity_evidence() -> None:
     parameters = _parameters()
     state = AlievPanfilovState(jnp.asarray((0.2, 0.4)), jnp.asarray((0.1, 0.3)))
     source = jnp.asarray((0.01, -0.02))
@@ -159,10 +160,13 @@ def test_exact_dimensional_aliev_panfilov_rates_and_singularity_evidence():
     assert bool(jnp.all(singular.rates.recovery_per_ms == 0.0))
 
 
-def test_diffusivity_is_fiber_sign_invariant_and_ids_cover_coefficients():
+def test_diffusivity_is_fiber_sign_invariant_and_ids_cover_coefficients() -> None:
     fibers = jnp.asarray(((1.0, 2.0, 0.0), (-1.0, 0.0, 1.0)))
+    # ty: ignore[invalid-argument-type]
     positive = CellwiseDiffusivity.from_fibers(fibers, (0.2, 0.3), 0.05)
+    # ty: ignore[invalid-argument-type]
     reversed_ = CellwiseDiffusivity.from_fibers(-fibers, (0.2, 0.3), 0.05)
+    # ty: ignore[invalid-argument-type]
     changed = CellwiseDiffusivity.from_fibers(fibers, (0.21, 0.3), 0.05)
     np.testing.assert_array_equal(positive.tensor_mm2_per_ms, reversed_.tensor_mm2_per_ms)
     assert positive.diffusivity_id == reversed_.diffusivity_id
@@ -180,7 +184,7 @@ def test_diffusivity_is_fiber_sign_invariant_and_ids_cover_coefficients():
         assert base_id != _parameters(**{name: value}).parameter_id
 
 
-def test_p1_row_sum_lumping_selected_cell_l2_projection_and_half_open_pulse():
+def test_p1_row_sum_lumping_selected_cell_l2_projection_and_half_open_pulse() -> None:
     coordinates = jnp.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -214,7 +218,7 @@ def test_p1_row_sum_lumping_selected_cell_l2_projection_and_half_open_pulse():
         plan.prepare(0.06)
 
 
-def test_diffusion_bound_and_stage_commit_fail_closed():
+def test_diffusion_bound_and_stage_commit_fail_closed() -> None:
     runtime = _runtime(cube_count=1, dt_ms=0.02, stop_ms=0.2)
     diffusion_only = PhenomenologicalMonodomainPlan(
         runtime.plan.discretization,
@@ -263,7 +267,7 @@ def test_diffusion_bound_and_stage_commit_fail_closed():
         runtime.commit(foreign_candidate, clean)
 
 
-def test_branchwise_online_activation_and_directed_chord_velocity():
+def test_branchwise_online_activation_and_directed_chord_velocity() -> None:
     plan = ActivationObservationPlan(4, (0, 2, 3), threshold=0.5)
     state = initialize_activation_observation(
         plan, jnp.asarray((0.1, 0.0, 0.7, 0.2)), time_ms=0.0
@@ -296,7 +300,9 @@ def test_branchwise_online_activation_and_directed_chord_velocity():
     )
 
 
-def test_tetra_slab_propagates_and_checkpoint_restart_replays_identically(tmp_path):
+def test_tetra_slab_propagates_and_checkpoint_restart_replays_identically(
+    tmp_path: Any,
+) -> None:
     runtime = _runtime(cube_count=2, dt_ms=0.02, amplitude_per_ms=1.5, stop_ms=0.2)
     initial = runtime.initialize(
         jnp.zeros(runtime.plan.node_count), jnp.zeros(runtime.plan.node_count)
@@ -314,6 +320,7 @@ def test_tetra_slab_propagates_and_checkpoint_restart_replays_identically(tmp_pa
     assert resumed.state_id == uninterrupted.state_id
     assert monodomain_state_identity(runtime, restored) == prefix.state_id
     np.testing.assert_array_equal(resumed.state.values, uninterrupted.state.values)
+    # ty: ignore[unresolved-attribute]
     assert archive.manifest.checkpoint_id
     child = write_monodomain_checkpoint(
         runtime,
@@ -321,7 +328,9 @@ def test_tetra_slab_propagates_and_checkpoint_restart_replays_identically(tmp_pa
         tmp_path / "monodomain-child.phx",
         parent=archive,
     )
+    # ty: ignore[unresolved-attribute]
     assert child.manifest.parent_checkpoint_id == archive.manifest.checkpoint_id
+    # ty: ignore[unresolved-attribute]
     assert child.manifest.parent_manifest_id == archive.manifest.manifest_id
     child_state = read_monodomain_checkpoint(
         runtime,

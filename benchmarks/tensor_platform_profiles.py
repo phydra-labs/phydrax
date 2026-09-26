@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -15,7 +17,7 @@ from _runtime import capture_environment, logical_array_bytes, measure_repeated
 import phydrax as phx
 
 
-def _finite_profile(repeats: int):
+def _finite_profile(repeats: int) -> Any:
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     build = phx.tensor_network.build_local_term_mpo(
         (2, 2),
@@ -52,7 +54,7 @@ def _finite_profile(repeats: int):
     }
 
 
-def _tensor_train_profile(repeats: int):
+def _tensor_train_profile(repeats: int) -> Any:
     dense = jnp.arange(64.0, dtype=jnp.float64).reshape((4, 4, 4))
     result, timing = measure_repeated(
         lambda: phx.tensor_train.tt_svd(dense, max_ranks=(4, 4), relative_tolerance=0.0),
@@ -70,7 +72,7 @@ def _tensor_train_profile(repeats: int):
     }
 
 
-def _network_profile(repeats: int):
+def _network_profile(repeats: int) -> Any:
     leg = phx.tensor_network.ContractionLeg("shared", 4)
     topology = phx.tensor_network.ContractionStructure(
         (
@@ -102,7 +104,7 @@ def _network_profile(repeats: int):
     }
 
 
-def _symmetry_profile(repeats: int):
+def _symmetry_profile(repeats: int) -> Any:
     result, timing = measure_repeated(
         lambda: phx.tensor_network.su2_recoupling_matrix(1, 1, 1, 1)[2],
         warmup=1,
@@ -119,7 +121,7 @@ def _symmetry_profile(repeats: int):
     }
 
 
-def _quantum_profile(repeats: int):
+def _quantum_profile(repeats: int) -> Any:
     zero = jnp.asarray([[1.0, 0.0], [0.0, 0.0]], dtype=jnp.complex64)
     one = jnp.asarray([[0.0, 0.0], [0.0, 1.0]], dtype=jnp.complex64)
     instrument = phx.solver.QuantumInstrument(
@@ -141,7 +143,7 @@ def _quantum_profile(repeats: int):
     }
 
 
-def _platform_profile():
+def _platform_profile() -> Any:
     state = phx.tensor_network.product_mps(
         jnp.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=jnp.float32)
     )

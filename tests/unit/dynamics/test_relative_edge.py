@@ -1,13 +1,15 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def test_relative_equilibrium_residual_is_continuation_ready():
+def test_relative_equilibrium_residual_is_continuation_ready() -> None:
     space = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
 
-    def generator(state):
+    def generator(state: Any) -> Any:
         return jnp.asarray([-state[1], state[0]])
 
     problem = phx.dynamics.analysis.RelativeEquilibriumProblem(
@@ -23,7 +25,7 @@ def test_relative_equilibrium_residual_is_continuation_ready():
     np.testing.assert_allclose(np.asarray(residual), 0.0, atol=1e-12)
 
 
-def test_edge_tracking_bisects_opposite_outcomes():
+def test_edge_tracking_bisects_opposite_outcomes() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.DiscreteSystem(
         lambda step, state, args: state,
@@ -50,7 +52,7 @@ def test_edge_tracking_bisects_opposite_outcomes():
     assert result.upper_parameter - result.lower_parameter < 1e-8
 
 
-def test_recurrence_seed_candidates_select_temporally_separated_minima():
+def test_recurrence_seed_candidates_select_temporally_separated_minima() -> None:
     layout = phx.dynamics.StateLayout((1,))
     trajectory = phx.dynamics.TrajectoryData(
         jnp.arange(6.0),
@@ -71,7 +73,7 @@ def test_recurrence_seed_candidates_select_temporally_separated_minima():
     np.testing.assert_allclose(np.asarray(candidates.distances), [0.05, 0.05])
 
 
-def test_recurrence_seed_candidates_do_not_cross_resets():
+def test_recurrence_seed_candidates_do_not_cross_resets() -> None:
     trajectory = phx.dynamics.TrajectoryData(
         jnp.asarray([0.0, 1.0, 2.0, 3.0]),
         jnp.asarray([[0.0], [10.0], [0.01], [20.0]]),

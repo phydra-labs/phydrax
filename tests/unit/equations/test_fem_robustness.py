@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -19,7 +22,7 @@ from phydrax.equations.fem._robustness import (
 from phydrax.integration import GaussLegendreRule, ReferenceTriangleRule
 
 
-def test_conservative_subcell_projection_preserves_contents_and_constants():
+def test_conservative_subcell_projection_preserves_contents_and_constants() -> None:
     element = SimplexNodalFamily("triangle", 2).finite_element()
     plan = ConservativeSubcellPlan(element, ReferenceTriangleRule(GaussLegendreRule(6)))
     state = jnp.linspace(-0.2, 0.8, element.local_dof_count * 2).reshape(
@@ -52,7 +55,7 @@ def test_conservative_subcell_projection_preserves_contents_and_constants():
     )
 
 
-def test_sensor_hysteresis_keeps_correction_strength_until_release():
+def test_sensor_hysteresis_keeps_correction_strength_until_release() -> None:
     plan = RobustnessSensorPlan(
         activation=0.2,
         release=0.1,
@@ -70,7 +73,7 @@ def test_sensor_hysteresis_keeps_correction_strength_until_release():
     np.testing.assert_allclose(released.strength, 0.0, atol=0.0)
 
 
-def _ledger(block, *, high=None, low=None):
+def _ledger(block: Any, *, high: Any = None, low: Any = None) -> Any:
     return ConservationStageLedger(
         (block,),
         jnp.zeros((2, 1)),
@@ -86,7 +89,7 @@ def _ledger(block, *, high=None, low=None):
     )
 
 
-def test_correction_ladder_selects_shared_face_rate_and_conserves_content():
+def test_correction_ladder_selects_shared_face_rate_and_conserves_content() -> None:
     high = ConservationStageFluxRateBlock(
         jnp.asarray(((10.0,),)),
         jnp.asarray((0,), dtype=jnp.int32),

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,12 +13,12 @@ import pytest
 import phydrax as phx
 
 
-def test_2d_sdf_jvp_vector_and_scalar_inputs():
+def test_2d_sdf_jvp_vector_and_scalar_inputs() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
     )
 
-    def f(p):
+    def f(p: Any) -> Any:
         return geom.adf(p)
 
     # Vector input near boundary, finite JVP
@@ -28,12 +31,12 @@ def test_2d_sdf_jvp_vector_and_scalar_inputs():
         jax.jvp(f, (jnp.array(0.1),), (jnp.array(0.0),))
 
 
-def test_3d_sdf_jvp_vector_and_scalar_inputs():
+def test_3d_sdf_jvp_vector_and_scalar_inputs() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=1.0).compile()
     )
 
-    def f(p):
+    def f(p: Any) -> Any:
         p = jnp.asarray(p)
         if p.ndim == 0:
             p = jnp.array([p, 0.0, 0.0])
@@ -50,13 +53,13 @@ def test_3d_sdf_jvp_vector_and_scalar_inputs():
     assert jnp.isfinite(tval_s)
 
 
-def test_compact_enforcement_gate_exact_zero_has_finite_linear_jet():
+def test_compact_enforcement_gate_exact_zero_has_finite_linear_jet() -> None:
     geometry = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
     )
     gate = geometry.make_enforcement_gate(method="compact")
 
-    def profile(offset):
+    def profile(offset: Any) -> Any:
         return gate(jnp.array([0.5 + offset, 0.0]))
 
     derivatives = []
@@ -71,7 +74,7 @@ def test_compact_enforcement_gate_exact_zero_has_finite_linear_jet():
     assert jnp.allclose(jnp.stack(derivatives[1:]), 0.0)
 
 
-def test_3d_enforcement_gate_corner_has_finite_pseudoderivatives():
+def test_3d_enforcement_gate_corner_has_finite_pseudoderivatives() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=1.0).compile()
     )
@@ -86,7 +89,7 @@ def test_3d_enforcement_gate_corner_has_finite_pseudoderivatives():
     assert jnp.all(jnp.isfinite(hessian))
 
 
-def test_3d_enforcement_gate_vanishes_on_sliver_facet():
+def test_3d_enforcement_gate_vanishes_on_sliver_facet() -> None:
     vertices = np.array(
         [
             [0.0, 0.0, 0.0],

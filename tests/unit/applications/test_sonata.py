@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from typing import Any
 
 import h5py
 import jax
@@ -19,7 +20,7 @@ from phydrax.interchange import AdapterError, require_lossless, ResourceReadErro
 jax.config.update("jax_enable_x64", True)
 
 
-def _fixture(root, *, delay=0.25):
+def _fixture(root: Any, *, delay: Any = 0.25) -> Any:
     (root / "lif.json").write_text(
         json.dumps(
             {
@@ -91,8 +92,8 @@ def _fixture(root, *, delay=0.25):
 
 
 def test_group_type_precedence_population_keys_multiedges_and_semantic_roundtrip(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     circuit = ep.import_sonata(**_fixture(tmp_path))
     runtime = ep.prepare_sonata_network(
         circuit,
@@ -106,7 +107,9 @@ def test_group_type_precedence_population_keys_multiedges_and_semantic_roundtrip
     np.testing.assert_array_equal(execution.status, np.zeros(40, dtype=np.int32))
     assert int(np.sum(np.asarray(execution.delivered_messages))) == 4
     lookup = {node.key: node for node in circuit.nodes}
+    # ty: ignore[unresolved-attribute]
     assert float(lookup["cells", 7].model.threshold_mV) == -48.0
+    # ty: ignore[unresolved-attribute]
     assert float(lookup["cells", 2**63 + 7].model.threshold_mV) == -45.0
     assert dict(lookup["cells", 7].properties)["label"] == "first"
     assert lookup["input", 7].model is None
@@ -136,7 +139,9 @@ def test_group_type_precedence_population_keys_multiedges_and_semantic_roundtrip
         ep.sonata_roundtrip_report(circuit, altered)
 
 
-def test_missing_component_and_foreign_mechanism_fail_without_execution(tmp_path):
+def test_missing_component_and_foreign_mechanism_fail_without_execution(
+    tmp_path: Any,
+) -> None:
     arguments = _fixture(tmp_path)
     with pytest.raises(AdapterError, match="component resource binding"):
         ep.import_sonata(**(arguments | {"components": {}}))
@@ -149,7 +154,9 @@ def test_missing_component_and_foreign_mechanism_fail_without_execution(tmp_path
     assert not (tmp_path / "dangerous.hoc").exists()
 
 
-def test_group_index_and_population_binding_fail_before_wrong_connectivity(tmp_path):
+def test_group_index_and_population_binding_fail_before_wrong_connectivity(
+    tmp_path: Any,
+) -> None:
     arguments = _fixture(tmp_path)
     with h5py.File(tmp_path / "nodes.h5", "r+") as handle:
         handle["nodes/cells/node_group_index"][0] = 2
@@ -163,7 +170,7 @@ def test_group_index_and_population_binding_fail_before_wrong_connectivity(tmp_p
         ep.import_sonata(**arguments)
 
 
-def test_clock_rejects_physical_offgrid_delay_and_spike_time(tmp_path):
+def test_clock_rejects_physical_offgrid_delay_and_spike_time(tmp_path: Any) -> None:
     arguments = _fixture(tmp_path, delay=0.3)
     event = ep.import_sonata(**arguments, dt_ms=0.25, execution="event")
     assert event.edges[0].connection.delay_ms == 0.3
@@ -178,7 +185,9 @@ def test_clock_rejects_physical_offgrid_delay_and_spike_time(tmp_path):
         ep.import_sonata(**arguments, dt_ms=0.25, execution="clock")
 
 
-def test_spike_secondary_sorting_units_and_float_ids_are_not_silently_coerced(tmp_path):
+def test_spike_secondary_sorting_units_and_float_ids_are_not_silently_coerced(
+    tmp_path: Any,
+) -> None:
     arguments = _fixture(tmp_path)
     with h5py.File(tmp_path / "spikes.h5", "r+") as handle:
         handle["spikes/input/timestamps"][:] = [0.003, 0.001]
@@ -198,8 +207,8 @@ def test_spike_secondary_sorting_units_and_float_ids_are_not_silently_coerced(tm
 
 @pytest.mark.parametrize("hazard", ["external", "vds", "reference", "compressed_size"])
 def test_untrusted_hdf5_cannot_escape_resources_or_decode_unbounded_arrays(
-    tmp_path, hazard
-):
+    tmp_path: Any, hazard: Any
+) -> None:
     arguments = _fixture(tmp_path)
     with h5py.File(tmp_path / "nodes.h5", "r+") as handle:
         if hazard == "external":
@@ -225,7 +234,7 @@ def test_untrusted_hdf5_cannot_escape_resources_or_decode_unbounded_arrays(
         ep.import_sonata(**arguments)
 
 
-def test_cable_sites_require_exact_unambiguous_supplied_mapping(tmp_path):
+def test_cable_sites_require_exact_unambiguous_supplied_mapping(tmp_path: Any) -> None:
     arguments = _fixture(tmp_path)
     (tmp_path / "morphology.swc").write_text("1 1 0 0 0 10 -1\n2 3 10 0 0 1 1\n")
     (tmp_path / "node_types.csv").write_text(

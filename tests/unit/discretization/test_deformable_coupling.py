@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -18,7 +20,7 @@ from phydrax.discretization.particle._core import ParticleSetPlan
 from phydrax.discretization.particle._rigid_body import RigidBodySetPlan
 
 
-def _mpm_problem(*, periodic=True):
+def _mpm_problem(*, periodic: Any = True) -> Any:
     dimension = 2
     axes = tuple(
         phx.discretization.UniformAxisSpec(
@@ -85,7 +87,7 @@ def _mpm_problem(*, periodic=True):
     return compiled.dynamics, arguments, state, bodies, kinematics
 
 
-def _coupling(dynamics, bodies, mode, **parameters):
+def _coupling(dynamics: Any, bodies: Any, mode: Any, **parameters: Any) -> Any:
     return RigidMPMCouplingPlan(
         jnp.asarray([0]),
         jnp.asarray([0]),
@@ -97,7 +99,7 @@ def _coupling(dynamics, bodies, mode, **parameters):
     ).prepare(dynamics, bodies)
 
 
-def test_penalty_and_hard_weld_are_distinct_and_preserve_action_reaction():
+def test_penalty_and_hard_weld_are_distinct_and_preserve_action_reaction() -> None:
     dynamics, arguments, state, bodies, kinematics = _mpm_problem()
     penalty = _coupling(
         dynamics,
@@ -157,7 +159,9 @@ def test_penalty_and_hard_weld_are_distinct_and_preserve_action_reaction():
     assert bool(refreshed.certificate.cache_coherent)
 
 
-def test_impulse_mode_exposes_unilateral_payload_and_equal_opposite_impulse_load():
+def test_impulse_mode_exposes_unilateral_payload_and_equal_opposite_impulse_load() -> (
+    None
+):
     dynamics, _, state, bodies, _ = _mpm_problem()
     kinematics = bodies.kinematics(
         jnp.asarray([[0.45, 0.4]]),
@@ -184,7 +188,9 @@ def test_impulse_mode_exposes_unilateral_payload_and_equal_opposite_impulse_load
     assert bool(result.finite)
 
 
-def test_mpm_stability_and_route_failures_roll_back_coupling_cache_and_material_state():
+def test_mpm_stability_and_route_failures_roll_back_coupling_cache_and_material_state() -> (
+    None
+):
     dynamics, arguments, state, bodies, kinematics = _mpm_problem(periodic=False)
     coupling = _coupling(
         dynamics,

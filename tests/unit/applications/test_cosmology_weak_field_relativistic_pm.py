@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -23,13 +25,13 @@ from phydrax.discretization.splatting import ParticleGridSplatPlan
 from phydrax.metrix import ADMGridGeometry, RelativityConvention
 
 
-def _units():
+def _units() -> Any:
     convention = RelativityConvention.canonical()
     scale = RelativityScaleContract(CODE_COSMOLOGY_SCALE, 1, 1, 1, 1)
     return RelativisticUnitContract(scale, convention)
 
 
-def _frame(spectral, units, *, time, token):
+def _frame(spectral: Any, units: Any, *, time: Any, token: Any) -> Any:
     shape = spectral.physical_shape
     identity = jnp.broadcast_to(jnp.eye(3), shape + (3, 3))
     geometry = ADMGridGeometry(
@@ -63,13 +65,13 @@ def _frame(spectral, units, *, time, token):
 
 def _lattice_case(
     *,
-    count=4,
-    weights=None,
-    momenta=None,
-    gravitational_constant=1.0e-4,
-    scalar_only=False,
-    policy=None,
-):
+    count: Any = 4,
+    weights: Any = None,
+    momenta: Any = None,
+    gravitational_constant: Any = 1.0e-4,
+    scalar_only: Any = False,
+    policy: Any = None,
+) -> Any:
     units = _units()
     spectral = TensorSpectralPlan(
         tuple(FourierBasisPlan(count) for _ in range(3)),
@@ -129,7 +131,7 @@ def _lattice_case(
     return plan, frame, state, spectral
 
 
-def test_uniform_source_has_zero_mean_modes():
+def test_uniform_source_has_zero_mean_modes() -> None:
     plan, frame, state, _ = _lattice_case()
     result = plan.solve_stress(state, frame)
 
@@ -144,7 +146,7 @@ def test_uniform_source_has_zero_mean_modes():
     assert result.tensor_residual < 2e-5
 
 
-def test_cold_plane_wave_recovers_the_newtonian_poisson_limit():
+def test_cold_plane_wave_recovers_the_newtonian_poisson_limit() -> None:
     count = 4
     particle_count = count**3
     x = jnp.repeat(jnp.arange(count) / count, count * count)
@@ -174,7 +176,7 @@ def test_cold_plane_wave_recovers_the_newtonian_poisson_limit():
     np.testing.assert_allclose(result.metric.tensor_metric, 0.0, atol=2e-7)
 
 
-def test_plane_wave_scalar_source_solves_poisson_and_anisotropic_stress_slip():
+def test_plane_wave_scalar_source_solves_poisson_and_anisotropic_stress_slip() -> None:
     count = 5
     x = jnp.repeat(jnp.arange(count) / count, count * count)
     modulation = 1.0 + 0.2 * jnp.cos(2.0 * jnp.pi * x)
@@ -198,7 +200,7 @@ def test_plane_wave_scalar_source_solves_poisson_and_anisotropic_stress_slip():
     assert jnp.max(jnp.abs(result.stress_evidence.anisotropic_stress)) > 0.0
 
 
-def test_transverse_vector_and_tt_tensor_projections_close_gauge_constraints():
+def test_transverse_vector_and_tt_tensor_projections_close_gauge_constraints() -> None:
     count = 5
     x = jnp.repeat(jnp.arange(count) / count, count * count)
     momenta = jnp.zeros((count**3, 3)).at[:, 1].set(0.45 * jnp.cos(2.0 * jnp.pi * x))
@@ -225,7 +227,7 @@ def test_transverse_vector_and_tt_tensor_projections_close_gauge_constraints():
     assert result.spectral_support_defect < 2e-4
 
 
-def test_unrepresentable_tensor_nyquist_source_is_reported_and_refused():
+def test_unrepresentable_tensor_nyquist_source_is_reported_and_refused() -> None:
     count = 4
     x = jnp.repeat(jnp.arange(count) / count, count * count)
     momenta = jnp.zeros((count**3, 3)).at[:, 0].set(0.35 * jnp.cos(2.0 * jnp.pi * x))
@@ -236,7 +238,7 @@ def test_unrepresentable_tensor_nyquist_source_is_reported_and_refused():
     assert not bool(result.successful)
 
 
-def test_scalar_only_profile_refuses_unbounded_omitted_vector_tensor_channels():
+def test_scalar_only_profile_refuses_unbounded_omitted_vector_tensor_channels() -> None:
     count = 5
     x = jnp.repeat(jnp.arange(count) / count, count * count)
     momenta = jnp.zeros((count**3, 3)).at[:, 1].set(0.5 * jnp.cos(2.0 * jnp.pi * x))
@@ -250,7 +252,7 @@ def test_scalar_only_profile_refuses_unbounded_omitted_vector_tensor_channels():
     np.testing.assert_allclose(result.metric.tensor_metric, 0.0, atol=0.0)
 
 
-def test_relativistic_geodesic_step_and_resource_evidence():
+def test_relativistic_geodesic_step_and_resource_evidence() -> None:
     count = 3
     capacity = count**3
     momenta = jnp.broadcast_to(jnp.asarray([0.6, 0.0, 0.0]), (capacity, 3))
@@ -287,7 +289,7 @@ def test_relativistic_geodesic_step_and_resource_evidence():
     assert plan.workspace_bytes > 0
 
 
-def test_static_resource_gate_refuses_oversized_grid_before_execution():
+def test_static_resource_gate_refuses_oversized_grid_before_execution() -> None:
     plan, _, _, spectral = _lattice_case(count=3)
     policy = WeakFieldRelativisticPMPolicy(maximum_grid_points=1)
 
@@ -301,7 +303,7 @@ def test_static_resource_gate_refuses_oversized_grid_before_execution():
         )
 
 
-def test_failed_time_step_rolls_back_particle_and_metric_state_atomically():
+def test_failed_time_step_rolls_back_particle_and_metric_state_atomically() -> None:
     count = 3
     capacity = count**3
     momenta = jnp.broadcast_to(jnp.asarray([0.8, 0.0, 0.0]), (capacity, 3))

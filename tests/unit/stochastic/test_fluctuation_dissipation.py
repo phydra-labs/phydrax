@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +13,7 @@ class _QuadraticEnergy1D(AbstractArrayModel):
     in_size: int = 1
     out_size: str = "scalar"
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         del key
         return 0.5 * state[0] ** 2
 
@@ -20,7 +22,7 @@ class _QuadraticEnergy2D(AbstractArrayModel):
     in_size: int = 2
     out_size: str = "scalar"
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         del key
         return 0.5 * jnp.vdot(state, state).real
 
@@ -29,7 +31,7 @@ class _VariableMobility(AbstractArrayModel):
     in_size: int = 1
     out_size: int = 1
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.asarray([1.0 + state[0]])
 
@@ -38,7 +40,7 @@ class _StateSkew(AbstractArrayModel):
     in_size: int = 2
     out_size: int = 1
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         del key
         return state[:1]
 
@@ -47,12 +49,12 @@ class _RankOneMobility(AbstractArrayModel):
     in_size: int = 2
     out_size: int = 3
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         del state, key
         return jnp.asarray([1.0, 0.0, 0.0])
 
 
-def _variable_mobility_dynamics(temperature=0.7):
+def _variable_mobility_dynamics(temperature: Any = 0.7) -> Any:
     field = phx.nn.models.PortHamiltonianVectorField(
         state_size=1,
         energy=_QuadraticEnergy1D(),
@@ -67,7 +69,7 @@ def _variable_mobility_dynamics(temperature=0.7):
     )
 
 
-def test_variable_mobility_includes_complete_ito_correction():
+def test_variable_mobility_includes_complete_ito_correction() -> None:
     temperature = 0.7
     dynamics = _variable_mobility_dynamics(temperature)
     state = jnp.asarray([0.2])
@@ -109,7 +111,7 @@ def test_variable_mobility_includes_complete_ito_correction():
     )
 
 
-def test_state_dependent_skew_field_has_exact_divergence_correction():
+def test_state_dependent_skew_field_has_exact_divergence_correction() -> None:
     temperature = 0.4
     field = phx.nn.models.PortHamiltonianVectorField(
         state_size=2,
@@ -146,7 +148,7 @@ def test_state_dependent_skew_field_has_exact_divergence_correction():
     )
 
 
-def test_constant_structure_has_exact_zero_correction():
+def test_constant_structure_has_exact_zero_correction() -> None:
     field = phx.nn.models.PortHamiltonianVectorField(
         state_size=2,
         energy=_QuadraticEnergy2D(),
@@ -165,7 +167,7 @@ def test_constant_structure_has_exact_zero_correction():
     )
 
 
-def test_isothermal_dynamics_rejects_nonequilibrium_configuration():
+def test_isothermal_dynamics_rejects_nonequilibrium_configuration() -> None:
     with pytest.raises(ValueError, match="strictly positive"):
         phx.stochastic.IsothermalPortHamiltonianDynamics(
             phx.nn.models.PortHamiltonianVectorField(
@@ -197,7 +199,7 @@ def test_isothermal_dynamics_rejects_nonequilibrium_configuration():
         )
 
 
-def test_thermodynamic_kernel_and_solver_preserve_process_contracts():
+def test_thermodynamic_kernel_and_solver_preserve_process_contracts() -> None:
     dynamics = _variable_mobility_dynamics()
     kernel = dynamics.transition_kernel()
     context = phx.stochastic.StateSpaceStepContext.empty()

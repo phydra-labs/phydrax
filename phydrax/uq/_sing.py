@@ -33,6 +33,7 @@ from ..stochastic._state_space import (
     state_space_key,
     StateSpaceProblem,
 )
+from ..typing import parse
 from ._gaussian_factor import GaussianFactor
 from ._nonlinear_gaussian import (
     gaussian_expectation,
@@ -115,10 +116,7 @@ def _expectation_configuration(
     kappa: float,
     /,
 ) -> tuple[Array, int, int, int, int, float, float, float]:
-    if method not in ("cubature", "unscented", "gauss-hermite", "monte-carlo"):
-        raise ValueError(
-            "expectation_method must be 'cubature', 'unscented', 'gauss-hermite', or 'monte-carlo'."
-        )
+    method = parse(method, GaussianExpectationMethod, "method")
     samples = _positive_int(num_samples, owner="num_samples")
     order_ = _positive_int(order, owner="order")
     max_dimension_ = _positive_int(max_dimension, owner="max_dimension")

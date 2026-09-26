@@ -52,6 +52,7 @@ def main() -> None:
     )
     k = jnp.geomspace(0.05, 2000.0, 512)
     linear = cosmo.MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         [0.5, 1.0],
         k,
         jnp.stack((0.25 / (1.0 + k**2), 1.0 / (1.0 + k**2))),
@@ -97,6 +98,7 @@ def main() -> None:
         "example-bin",
     )
     tracer = cosmo.LinearDensityTracer(distribution, 1.5)
+    # ty: ignore[invalid-argument-type]
     angular = cosmo.LimberAngularPowerPlan([20, 50, 100], 1).predict(
         background,
         distance_plan,

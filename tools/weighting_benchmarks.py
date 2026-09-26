@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -38,12 +39,12 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _dense_operator(size: int, moments: int, seed: int):
+def _dense_operator(size: int, moments: int, seed: int) -> Any:
     key = jr.fold_in(jr.key(seed), size * 10_000 + moments)
     return jr.normal(key, (size, moments)) / jnp.sqrt(float(moments))
 
 
-def _sparse_operator(size: int, moments: int):
+def _sparse_operator(size: int, moments: int) -> Any:
     source_indices = jnp.arange(size, dtype=jnp.int32)
     target_indices = source_indices % moments
     relation = phx.sparse.EdgeRelation(
@@ -58,7 +59,7 @@ def _sparse_operator(size: int, moments: int):
     )
 
 
-def _problem(size: int, moments: int, execution: str, target_kind: str, seed: int):
+def _problem(size: int, moments: int, execution: str, target_kind: str, seed: int) -> Any:
     moment_map = (
         _dense_operator(size, moments, seed)
         if execution == "dense"
@@ -91,7 +92,7 @@ def _problem(size: int, moments: int, execution: str, target_kind: str, seed: in
     )
 
 
-def _nearby_problem(problem, target_kind: str):
+def _nearby_problem(problem: Any, target_kind: str) -> Any:
     perturbation = 0.002 * jnp.cos(
         jnp.arange(problem.moment_count, dtype=problem.target.values.dtype) * 0.23
     )
@@ -120,7 +121,7 @@ def _nearby_problem(problem, target_kind: str):
     )
 
 
-def _bytes(tree) -> int:
+def _bytes(tree: Any) -> int:
     return sum(
         leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
@@ -128,7 +129,9 @@ def _bytes(tree) -> int:
     )
 
 
-def _record(size, moments, execution, target_kind, repeats, seed):
+def _record(
+    size: Any, moments: Any, execution: Any, target_kind: Any, repeats: Any, seed: Any
+) -> Any:
     setup_started = time.perf_counter()
     problem = _problem(size, moments, execution, target_kind, seed)
     nearby = _nearby_problem(problem, target_kind)
@@ -181,9 +184,13 @@ def _record(size, moments, execution, target_kind, repeats, seed):
         "steady_ms": steady_ms,
         "cold_nearby_ms": cold_nearby_ms,
         "warm_nearby_ms": warm_nearby_ms,
+        # ty: ignore[unresolved-attribute]
         "iterations": int(diagnostics.optimization.iterations),
+        # ty: ignore[unresolved-attribute]
         "cold_nearby_iterations": int(cold_nearby.diagnostics.optimization.iterations),
+        # ty: ignore[unresolved-attribute]
         "warm_nearby_iterations": int(warm_nearby.diagnostics.optimization.iterations),
+        # ty: ignore[unresolved-attribute]
         "linear_iterations": int(diagnostics.optimization.linear_iterations),
         "status": int(result.status),
         "optimizer_status": int(diagnostics.optimizer_status),

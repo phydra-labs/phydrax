@@ -466,7 +466,8 @@ class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
         safe = jnp.where(admissible[..., None], local, first)
         entropy_pair = self.dynamics.entropy_pair
         # __init__ rejects nodal dynamics without an entropy pair.
-        assert entropy_pair is not None
+        if not (entropy_pair is not None):
+            raise RuntimeError("Internal invariant failed: entropy_pair is not None.")
         entropy = entropy_pair._entropy_unchecked(safe)
         entropy = jnp.nan_to_num(
             entropy,

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -39,16 +42,17 @@ def _graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
     return graph0, graph1
 
 
-def test_enforce_graph_values_overwrites_boundary_nodes_and_satisfies_residual():
+def test_enforce_graph_values_overwrites_boundary_nodes_and_satisfies_residual() -> None:
     graph = _line_graph()
     domain = phx.domain.GraphDomain(graph)
     structure = phx.domain.SampleLayout((("graph",),))
     nodes = domain.component({"graph": phx.domain.Nodes()})
+    # ty: ignore[invalid-argument-type]
     boundary = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
     node_batch = nodes.sample(phx.domain.PointSampling(graph.num_nodes, layout=structure))
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     hard_u = phx.enforcement.enforce_graph_values(u, boundary, target=5.0)
@@ -63,7 +67,7 @@ def test_enforce_graph_values_overwrites_boundary_nodes_and_satisfies_residual()
     assert term.loss({"u": hard_u}) < 1e-12
 
 
-def test_enforce_graph_values_is_seen_by_graph_gradient_full_node_view():
+def test_enforce_graph_values_is_seen_by_graph_gradient_full_node_view() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.zeros((2, 1)),
         senders=jnp.array([0], dtype=jnp.int32),
@@ -77,10 +81,11 @@ def test_enforce_graph_values_is_seen_by_graph_gradient_full_node_view():
             graph.num_edges, layout=phx.domain.SampleLayout((("graph",),))
         )
     )
+    # ty: ignore[invalid-argument-type]
     left = domain.component({"graph": phx.domain.BoundaryNodes([0])})
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> float:
         del node
         return 0.0
 
@@ -91,7 +96,7 @@ def test_enforce_graph_values_is_seen_by_graph_gradient_full_node_view():
     )
 
 
-def test_enforce_graph_values_supports_edge_and_global_components():
+def test_enforce_graph_values_supports_edge_and_global_components() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.zeros((2, 1)),
         edges=jnp.array([[2.0], [3.0]]),
@@ -111,15 +116,16 @@ def test_enforce_graph_values_supports_edge_and_global_components():
     )
 
     @domain.Function("graph")
-    def flux(edge):
+    def flux(edge: Any) -> Any:
         return edge[0]
 
     @domain.Function("graph")
-    def scale(global_):
+    def scale(global_: Any) -> Any:
         return global_[0]
 
     hard_flux = phx.enforcement.enforce_graph_values(
         flux,
+        # ty: ignore[invalid-argument-type]
         domain.component({"graph": phx.domain.EdgeSet([1])}),
         target=-1.0,
     )
@@ -133,17 +139,19 @@ def test_enforce_graph_values_supports_edge_and_global_components():
     assert jnp.allclose(jnp.asarray(hard_scale(global_batch).data), jnp.array([9.0]))
 
 
-def test_enforce_graph_values_uses_local_indices_for_graph_dataset_batches():
+def test_enforce_graph_values_uses_local_indices_for_graph_dataset_batches() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs())
     full_nodes = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
         component=phx.domain.Nodes(),
         structure=phx.domain.SampleLayout((("graph",),)),
     )
+    # ty: ignore[invalid-argument-type]
     boundary = domain.component({"graph": phx.domain.BoundaryNodes([1])})
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     hard_u = phx.enforcement.enforce_graph_values(u, boundary, target=7.0)
@@ -153,7 +161,7 @@ def test_enforce_graph_values_uses_local_indices_for_graph_dataset_batches():
     )
 
 
-def test_enforce_graph_values_supports_time_dependent_graph_trajectory_targets():
+def test_enforce_graph_values_supports_time_dependent_graph_trajectory_targets() -> None:
     domain = phx.domain.GraphTrajectoryDatasetDomain(
         _graphs(),
         jnp.array([3, 5], dtype=jnp.int32),
@@ -169,16 +177,17 @@ def test_enforce_graph_values_supports_time_dependent_graph_trajectory_targets()
         structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
     boundary = domain.component(
+        # ty: ignore[invalid-argument-type]
         {"graph": phx.domain.BoundaryNodes([1]), "t": phx.domain.Interior()}
     )
 
     @domain.Function("graph", "t")
-    def u(node, t):
+    def u(node: Any, t: Any) -> float:
         del node, t
         return 0.0
 
     @domain.Function("graph", "t")
-    def target(node, t):
+    def target(node: Any, t: Any) -> Any:
         del node
         return 10.0 + t
 
@@ -189,17 +198,18 @@ def test_enforce_graph_values_supports_time_dependent_graph_trajectory_targets()
     )
 
 
-def test_graph_value_enforcement_integrates_with_functional_solver():
+def test_graph_value_enforcement_integrates_with_functional_solver() -> None:
     graph = _line_graph()
     domain = phx.domain.GraphDomain(graph)
     structure = phx.domain.SampleLayout((("graph",),))
+    # ty: ignore[invalid-argument-type]
     boundary = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
     node_batch = domain.component({"graph": phx.domain.Nodes()}).sample(
         phx.domain.PointSampling(graph.num_nodes, layout=structure)
     )
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     functions = {"u": u}
@@ -217,7 +227,7 @@ def test_graph_value_enforcement_integrates_with_functional_solver():
     )
 
 
-def _cochain_complex_with_interior_vertex():
+def _cochain_complex_with_interior_vertex() -> Any:
     vertices = jnp.asarray(
         [
             [0.0, 0.0],
@@ -237,13 +247,13 @@ def _cochain_complex_with_interior_vertex():
 class _TrainableCellValues(eqx.Module):
     values: jax.Array = phx.parameter_field()
 
-    def __call__(self, graph):
+    def __call__(self, graph: Any) -> Any:
         nodes = dict(graph.nodes)
         nodes["candidate"] = self.values
         return graph.replace(nodes=nodes, validate=False)
 
 
-def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch():
+def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch() -> None:
     complex_ir = _cochain_complex_with_interior_vertex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
     structure = phx.domain.SampleLayout((("graph",),))
@@ -259,11 +269,11 @@ def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch(
     )
 
     @domain.Function("graph")
-    def raw(cell):
+    def raw(cell: Any) -> Any:
         return 2.0 + cell["local_index"]
 
     @domain.Function("graph")
-    def target_raw(cell):
+    def target_raw(cell: Any) -> Any:
         return -3.0 - cell["local_index"]
 
     edge_form = phx.domain.as_cochain_field(raw, edge_spec)
@@ -294,7 +304,7 @@ def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch(
         )
 
 
-def test_hard_cochain_boundary_remains_exact_during_solver_optimization():
+def test_hard_cochain_boundary_remains_exact_during_solver_optimization() -> None:
     complex_ir = _cochain_complex_with_interior_vertex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
     structure = phx.domain.SampleLayout((("graph",),))
@@ -325,7 +335,7 @@ def test_hard_cochain_boundary_remains_exact_during_solver_optimization():
     )
 
     @domain.Function("graph")
-    def forcing_raw(cell):
+    def forcing_raw(cell: Any) -> Any:
         index = jnp.where(cell["cell_dim"] == 0, cell["local_index"], 0)
         return forcing_values[index]
 

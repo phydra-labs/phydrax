@@ -13,7 +13,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _small_config(**overrides):
+def _small_config(**overrides: Any) -> Any:
     settings: dict[str, Any] = {
         "num_adaptation_rounds": 1,
         "num_local_adaptation_steps": 4,
@@ -36,7 +36,7 @@ def _small_config(**overrides):
     return phx.uq.FlowNUTSConfig(**settings)
 
 
-def _positive_problem():
+def _positive_problem() -> Any:
     return phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             {"rate": jnp.asarray(0.0)},
@@ -51,7 +51,7 @@ def _positive_problem():
     )
 
 
-def _nested_constrained_problem():
+def _nested_constrained_problem() -> Any:
     return phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             {
@@ -86,12 +86,12 @@ def _nested_constrained_problem():
         ("validation_fraction", 0.5),
     ],
 )
-def test_flow_nuts_config_rejects_invalid_controls(name, value):
+def test_flow_nuts_config_rejects_invalid_controls(name: Any, value: Any) -> None:
     with pytest.raises(ValueError):
         _small_config(**{name: value})
 
 
-def test_flow_nuts_preserves_transformed_parameters_and_result_contract():
+def test_flow_nuts_preserves_transformed_parameters_and_result_contract() -> None:
     result = phx.uq.sample_flow_nuts(
         _positive_problem(),
         key=jr.key(10),
@@ -121,10 +121,11 @@ def test_flow_nuts_preserves_transformed_parameters_and_result_contract():
     assert len(result.flow_training_duration_seconds) == 1
     assert result.flow_parameter_memory_bytes > 0
     assert result.history_memory_bytes > 0
+    # ty: ignore[unresolved-attribute]
     assert prediction.samples.shape == (2, 8, 2)
 
 
-def test_flow_nuts_roundtrips_nested_positive_and_bounded_parameters():
+def test_flow_nuts_roundtrips_nested_positive_and_bounded_parameters() -> None:
     result = phx.uq.sample_flow_nuts(
         _nested_constrained_problem(),
         key=jr.key(14),
@@ -144,7 +145,7 @@ def test_flow_nuts_roundtrips_nested_positive_and_bounded_parameters():
     assert result.unconstrained_samples["nested"]["bounded"].shape == (2, 4)
 
 
-def test_flow_nuts_requires_explicit_starts_for_custom_joint_prior():
+def test_flow_nuts_requires_explicit_starts_for_custom_joint_prior() -> None:
     problem = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             jnp.asarray(0.0),
@@ -164,7 +165,7 @@ def test_flow_nuts_requires_explicit_starts_for_custom_joint_prior():
         )
 
 
-def test_flow_nuts_validates_leading_chain_axes_before_warmup():
+def test_flow_nuts_validates_leading_chain_axes_before_warmup() -> None:
     problem = _positive_problem()
 
     with pytest.raises(ValueError, match="shape"):
@@ -179,7 +180,7 @@ def test_flow_nuts_validates_leading_chain_axes_before_warmup():
         )
 
 
-def test_flow_nuts_sequential_and_vectorized_methods_share_semantic_keys():
+def test_flow_nuts_sequential_and_vectorized_methods_share_semantic_keys() -> None:
     common: dict[str, Any] = {
         "key": jr.key(13),
         "num_chains": 2,

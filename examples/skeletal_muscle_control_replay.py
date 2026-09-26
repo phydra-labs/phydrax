@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -36,7 +37,7 @@ def main() -> None:
     )
     target_force = runtime.evaluate(runtime.initialize(), 20.0).total_force
 
-    def running_cost(time, state, control, parameters):
+    def running_cost(time: Any, state: Any, control: Any, parameters: Any) -> Any:
         del time, parameters
         force = runtime.evaluate(runtime.unpack_state(state), control[0]).total_force
         return ((force - target_force) / target_force) ** 2
@@ -64,7 +65,7 @@ def main() -> None:
         jax.random.key(7),
     )
 
-    def exact_force(trajectory):
+    def exact_force(trajectory: Any) -> Any:
         return jax.vmap(
             lambda state, control: (
                 runtime.evaluate(runtime.unpack_state(state), control[0]).total_force

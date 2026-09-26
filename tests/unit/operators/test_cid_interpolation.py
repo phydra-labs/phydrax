@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -11,7 +13,7 @@ from phydrax.operators.interpolation import (
 
 
 @pytest.mark.parametrize("query_chunk_size", (None, 3))
-def test_cid09_type1_is_algebraic_transpose_of_type2(query_chunk_size):
+def test_cid09_type1_is_algebraic_transpose_of_type2(query_chunk_size: Any) -> None:
     phases = jnp.asarray([[-1.1], [-0.2], [0.4], [1.7]])
     coefficients = jnp.asarray([1.0 + 0.2j, -0.3j, 0.7, 0.1 + 0.5j])
     values = jnp.asarray([0.5 - 0.1j, 0.2, -0.7j, 1.1])
@@ -22,7 +24,7 @@ def test_cid09_type1_is_algebraic_transpose_of_type2(query_chunk_size):
     )
 
 
-def test_cid10_mixed_fourier_chebyshev_reconstruction_round_trip():
+def test_cid10_mixed_fourier_chebyshev_reconstruction_round_trip() -> None:
     space = phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(5),

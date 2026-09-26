@@ -5,6 +5,7 @@
 
 import json
 import platform
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -13,7 +14,7 @@ from benchmarks._runtime import measure_repeated, measure_synchronized
 from phydrax.applications import power
 
 
-def _radial(size):
+def _radial(size: Any) -> Any:
     """Replicate equal single-section feeders, preserving each operating point.
 
     A common source supplies size-1 independent feeder/load pairs. Electrical
@@ -33,7 +34,7 @@ def _radial(size):
     return network, study
 
 
-def main():
+def main() -> Any:
     rows = []
     for size in (2, 8, 32):
         compiled, prepare_seconds = measure_synchronized(
@@ -128,12 +129,14 @@ def main():
             "original_feasibility": float(ac_result.original_feasibility),
             "objective": float(ac_result.objective),
             "jacobian_entries": ac.program.jacobian_plan.nnz,
+            # ty: ignore[unresolved-attribute]
             "hessian_entries": ac.program.hessian_plan.nnz,
         }
     )
     feasibility_tolerance = 1e-6
     passed = all(
         row["converged"]
+        # ty: ignore[unsupported-operator]
         and row.get("original_feasibility", row.get("residual_norm", float("inf")))
         <= feasibility_tolerance
         for row in rows

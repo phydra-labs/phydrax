@@ -6,6 +6,8 @@ Run: JAX_ENABLE_X64=1 python -m benchmarks.nucleic_rigid --bodies 16 --steps 100
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -36,7 +38,7 @@ from phydrax.discretization.particle._rigid_body import (
 from phydrax.qualification._reference import ReferenceArtifactManifest
 
 
-def parameter_data(family="average-dna"):
+def parameter_data(family: Any="average-dna") -> Any:
     """Independently authored noncalibrated coefficients for all equation paths.
 
     These are not a transcription of any model table. They are useful for
@@ -165,7 +167,7 @@ def parameter_data(family="average-dna"):
     }
 
 
-def parameter_artifact(family="average-dna"):
+def parameter_artifact(family: Any="average-dna") -> Any:
     payload = json.dumps(parameter_data(family), sort_keys=True).encode()
     manifest = ReferenceArtifactManifest(
         "analytic-pair-mechanics",
@@ -185,7 +187,7 @@ def parameter_artifact(family="average-dna"):
     return NucleotideParameterArtifact(manifest, payload, AtomisticUnitSystem.reduced())
 
 
-def make_fixture(count=16):
+def make_fixture(count: Any=16) -> Any:
     """Independent noninteracting pairs with nonzero orientation torques."""
     if count < 2 or count % 2:
         raise ValueError("Body count must be positive and even.")
@@ -218,7 +220,7 @@ def make_fixture(count=16):
     return model, state
 
 
-def run(count=16, steps=100, repeats=5):
+def run(count: Any=16, steps: Any=100, repeats: Any=5) -> Any:
     model, state = make_fixture(count)
     energy_force = jax.jit(lambda value: model.evaluate(value))
     compiled, compilation = measure_lower_and_compile(
@@ -234,7 +236,7 @@ def run(count=16, steps=100, repeats=5):
         .multiply(-1)
     )
 
-    def displaced(t):
+    def displaced(t: Any) -> Any:
         return model.energy(
             RigidBodyKinematics(
                 state.position,
@@ -248,8 +250,8 @@ def run(count=16, steps=100, repeats=5):
     adjoint_wrench = -jnp.sum(load.torque * direction)
     initial_energy = model.energy(state) + model.kinetic_energy(state)
 
-    def trajectory(dt, n):
-        def advance(q, i):
+    def trajectory(dt: Any, n: Any) -> Any:
+        def advance(q: Any, i: Any) -> Any:
             result = model.step(q, i * dt, dt)
             energy = model.energy(result.kinematics) + model.kinetic_energy(
                 result.kinematics
@@ -263,8 +265,8 @@ def run(count=16, steps=100, repeats=5):
     bath = model.heat_bath(2.0, 3.0)
 
     # Actual thermostatted conservative evolution, with explicit PRNG event keys.
-    def thermal_rollout(key):
-        def advance(q, inputs):
+    def thermal_rollout(key: Any) -> Any:
+        def advance(q: Any, inputs: Any) -> Any:
             i, event_key = inputs
             result = bath.step(
                 q,
@@ -326,7 +328,7 @@ def run(count=16, steps=100, repeats=5):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bodies", type=int, default=16)
     parser.add_argument("--steps", type=int, default=100)

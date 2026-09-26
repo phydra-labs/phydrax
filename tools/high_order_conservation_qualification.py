@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -14,7 +15,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _field_discretization(mesh, system, cell_kind, degree=2):
+def _field_discretization(mesh: Any, system: Any, cell_kind: Any, degree: Any = 2) -> Any:
     return phx.discretization.FiniteElementPlan(
         mesh,
         phx.discretization.FiniteElementFieldSpec(
@@ -25,7 +26,7 @@ def _field_discretization(mesh, system, cell_kind, degree=2):
     ).prepare()
 
 
-def _structured_quad_mesh(nx: int, ny: int):
+def _structured_quad_mesh(nx: int, ny: int) -> Any:
     nx_ = int(nx)
     ny_ = int(ny)
     if nx_ <= 0 or ny_ <= 0:
@@ -56,14 +57,14 @@ def _structured_quad_mesh(nx: int, ny: int):
     )
 
 
-def _boundary_set(discretization, boundary):
+def _boundary_set(discretization: Any, boundary: Any) -> Any:
     exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     return phx.discretization.fem.FiniteElementBoundarySet(
         discretization, {"boundary": (exterior, boundary)}
     )
 
 
-def _constant_state(system, discretization, velocity=0.0):
+def _constant_state(system: Any, discretization: Any, velocity: Any = 0.0) -> Any:
     primitive = jnp.asarray((1.0,) + (float(velocity),) * system.dimension + (1.0,))
     return jnp.broadcast_to(
         system.primitive_to_conserved(primitive),
@@ -73,13 +74,13 @@ def _constant_state(system, discretization, velocity=0.0):
 
 def _tensor_problem(
     *,
-    viscous=False,
-    sampled=False,
-    physical_boundaries=True,
-    nx=1,
-    ny=1,
-    degree=2,
-):
+    viscous: Any = False,
+    sampled: Any = False,
+    physical_boundaries: Any = True,
+    nx: Any = 1,
+    ny: Any = 1,
+    degree: Any = 2,
+) -> Any:
     mesh = _structured_quad_mesh(nx, ny)
     system = (
         phx.equations.CompressibleNavierStokesSystem(
@@ -151,7 +152,7 @@ def _tensor_problem(
     return compiled, system, discretization
 
 
-def _triangle_problem(nx=1, ny=1, degree=2):
+def _triangle_problem(nx: Any = 1, ny: Any = 1, degree: Any = 2) -> Any:
     nx_ = int(nx)
     ny_ = int(ny)
     coordinates = np.asarray(
@@ -189,7 +190,7 @@ def _triangle_problem(nx=1, ny=1, degree=2):
     return compiled, system, discretization
 
 
-def _hybrid_case(kind):
+def _hybrid_case(kind: Any) -> Any:
     points = {
         "prism": np.asarray(
             (
@@ -230,10 +231,11 @@ def _hybrid_case(kind):
         ),
     )
     state = _constant_state(system, discretization, velocity=0.05)
+    # ty: ignore[invalid-argument-type]
     return float(jnp.max(jnp.abs(compiled(0.0, state))))
 
 
-def _advance(method, state, step_size, steps):
+def _advance(method: Any, state: Any, step_size: Any, steps: Any) -> Any:
     value = state
     time = jnp.asarray(0.0, dtype=state.dtype)
     for step in range(int(steps)):
@@ -251,7 +253,7 @@ def _advance(method, state, step_size, steps):
     return value
 
 
-def _smooth_periodic_state(system, discretization):
+def _smooth_periodic_state(system: Any, discretization: Any) -> Any:
     coordinates = discretization.dof_maps[0].dof_coordinates
     phase = 2.0 * jnp.pi * coordinates[:, 0]
     density = 1.0 + 0.05 * jnp.sin(phase)
@@ -263,7 +265,7 @@ def _smooth_periodic_state(system, discretization):
     return system.primitive_to_conserved(primitive)
 
 
-def _discontinuous_periodic_state(system, discretization):
+def _discontinuous_periodic_state(system: Any, discretization: Any) -> Any:
     coordinates = discretization.dof_maps[0].dof_coordinates
     left = coordinates[:, 0] < 0.5
     density = jnp.where(left, 1.0, 0.7)
@@ -275,14 +277,14 @@ def _discontinuous_periodic_state(system, discretization):
     return system.primitive_to_conserved(primitive)
 
 
-def _relative_integral_drift(dynamics, initial, final):
+def _relative_integral_drift(dynamics: Any, initial: Any, final: Any) -> Any:
     initial_integral = dynamics.residual_with_diagnostics(0.0, initial)[1].total_integral
     final_integral = dynamics.residual_with_diagnostics(0.0, final)[1].total_integral
     scale = jnp.maximum(1.0, jnp.max(jnp.abs(initial_integral)))
     return float(jnp.max(jnp.abs(final_integral - initial_integral)) / scale)
 
 
-def _production_extension_checks(lane):
+def _production_extension_checks(lane: Any) -> Any:
     checks = {}
     if lane in ("nightly", "weekly", "release"):
         pyramid = phx.discretization.fem.HybridReferenceFamily("pyramid", 3)
@@ -375,7 +377,7 @@ def _production_extension_checks(lane):
     return checks
 
 
-def run(lane="release") -> dict[str, object]:
+def run(lane: Any = "release") -> dict[str, object]:
     wall, wall_system, wall_discretization = _tensor_problem(
         sampled=True, physical_boundaries=True
     )

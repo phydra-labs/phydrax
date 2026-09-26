@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 import phydrax as phx
@@ -6,7 +8,7 @@ from phydrax.nn.operator.architectures import ConditionalHolomorphicMapCertifica
 from phydrax.nn.operator.layers import CliffordEquivarianceCertificate
 
 
-def _frame():
+def _frame() -> Any:
     return phx.equations.HolomorphicLinearFrameCertificate(
         complex_input_size=1,
         complex_output_size=1,
@@ -18,7 +20,7 @@ def _frame():
     )
 
 
-def _meromorphic_frame():
+def _meromorphic_frame() -> Any:
     return phx.equations.MeromorphicLinearFrameCertificate(
         complex_output_size=1,
         real_coefficient_count=6,
@@ -108,7 +110,7 @@ _CASES = {
 
 
 @pytest.mark.parametrize("capability", sorted(_CASES))
-def test_construction_certificates_keep_their_identities(capability):
+def test_construction_certificates_keep_their_identities(capability: Any) -> None:
     build, identity = _CASES[capability]
     certificate = build()
 
@@ -117,7 +119,7 @@ def test_construction_certificates_keep_their_identities(capability):
     assert certificate.certificate_id == identity
 
 
-def test_meromorphic_map_references_its_frame_certificate():
+def test_meromorphic_map_references_its_frame_certificate() -> None:
     frame = _meromorphic_frame()
     certificate = phx.equations.MeromorphicMapCertificate(
         frame, parameter_mode="m", construction_dependency="d"

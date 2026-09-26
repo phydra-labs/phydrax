@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _topology():
+def _topology() -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(1) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -27,7 +30,7 @@ def _topology():
     return phx.discretization.VariablePatchTopologyCompiler(plan).initial_topology()
 
 
-def _topology_x_cells(count):
+def _topology_x_cells(count: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(count),
@@ -50,12 +53,12 @@ def _topology_x_cells(count):
     return phx.discretization.VariablePatchTopologyCompiler(plan).initial_topology()
 
 
-def _identity(points, time, args):
+def _identity(points: Any, time: Any, args: Any) -> Any:
     del time, args
     return points
 
 
-def _resources(*, components=4):
+def _resources(*, components: Any = 4) -> Any:
     return phx.discretization.BlockAMRResourcePlan(
         maximum_components_per_cell=components,
         maximum_apertures_per_face=96,
@@ -67,7 +70,7 @@ def _resources(*, components=4):
     )
 
 
-def test_canonical_hierarchy_preflight_accounts_component_capacity():
+def test_canonical_hierarchy_preflight_accounts_component_capacity() -> None:
     hierarchy = phx.discretization.canonicalize_patch_hierarchy(_topology())
     evidence = _resources(components=3).preflight(
         hierarchy,
@@ -82,7 +85,7 @@ def test_canonical_hierarchy_preflight_accounts_component_capacity():
     assert evidence.reserved_device_bytes > 3 * 5 * 8
 
 
-def test_three_dimensional_plane_cut_closes_volume_and_faces():
+def test_three_dimensional_plane_cut_closes_volume_and_faces() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
         "plane-x-0.37",
@@ -115,7 +118,7 @@ def test_three_dimensional_plane_cut_closes_volume_and_faces():
     assert np.count_nonzero(np.asarray(complex_.face_kinds) == 2) > 0
 
 
-def test_subcell_piecewise_linear_field_preserves_disconnected_components():
+def test_subcell_piecewise_linear_field_preserves_disconnected_components() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: (points[:, 0] - 0.3) * (points[:, 0] - 0.7),
         "solid-slab",
@@ -143,7 +146,7 @@ def test_subcell_piecewise_linear_field_preserves_disconnected_components():
     np.testing.assert_allclose(centers, np.asarray((0.17, 0.83)), atol=2.0e-6)
 
 
-def test_cut_complex_lowers_to_polyhedral_finite_volume_plan():
+def test_cut_complex_lowers_to_polyhedral_finite_volume_plan() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
         "plane-fv",
@@ -163,7 +166,7 @@ def test_cut_complex_lowers_to_polyhedral_finite_volume_plan():
     np.testing.assert_allclose(prepared.cell_volumes, jnp.asarray((0.63,)), atol=2.0e-6)
 
 
-def test_cut_complex_advances_through_public_finite_volume_runtime():
+def test_cut_complex_advances_through_public_finite_volume_runtime() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
         "plane-runtime",
@@ -207,6 +210,7 @@ def test_cut_complex_advances_through_public_finite_volume_runtime():
         method,
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
     )
@@ -228,7 +232,7 @@ def test_cut_complex_advances_through_public_finite_volume_runtime():
     )
 
 
-def test_metric_common_refinement_preserves_content_and_transpose_pairing():
+def test_metric_common_refinement_preserves_content_and_transpose_pairing() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
         "plane-transition",
@@ -276,7 +280,7 @@ def test_metric_common_refinement_preserves_content_and_transpose_pairing():
     np.testing.assert_allclose(lhs, rhs, rtol=2.0e-6, atol=2.0e-7)
 
 
-def test_multivalued_small_cell_redistribution_uses_aperture_neighbor():
+def test_multivalued_small_cell_redistribution_uses_aperture_neighbor() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.49,
         "small-sliver",
@@ -308,7 +312,7 @@ def test_multivalued_small_cell_redistribution_uses_aperture_neighbor():
     np.testing.assert_allclose(result.redistributed_rate[source, 0], 0.2, atol=2.0e-6)
 
 
-def test_polyhedral_viscous_residual_vanishes_for_constant_state():
+def test_polyhedral_viscous_residual_vanishes_for_constant_state() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
         "viscous-plane",
@@ -344,7 +348,7 @@ def test_polyhedral_viscous_residual_vanishes_for_constant_state():
     np.testing.assert_allclose(residual, 0.0, atol=2.0e-7)
 
 
-def test_multivalued_composite_diffusion_solves_each_connected_nullspace():
+def test_multivalued_composite_diffusion_solves_each_connected_nullspace() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: jnp.ones((points.shape[0],)),
         "full-fluid-diffusion",
@@ -382,7 +386,7 @@ def test_multivalued_composite_diffusion_solves_each_connected_nullspace():
     )
 
 
-def test_moving_cut_cell_transaction_closes_swept_volume_and_content():
+def test_moving_cut_cell_transaction_closes_swept_volume_and_content() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - (0.35 + 0.01 * time),
         "moving-plane",
@@ -424,7 +428,9 @@ def test_moving_cut_cell_transaction_closes_swept_volume_and_content():
     )
 
 
-def test_cut_complex_cochains_preserve_chain_identity_and_reflux_curl_divergence():
+def test_cut_complex_cochains_preserve_chain_identity_and_reflux_curl_divergence() -> (
+    None
+):
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
         "cochain-plane",
@@ -468,12 +474,12 @@ def test_cut_complex_cochains_preserve_chain_identity_and_reflux_curl_divergence
     )
 
 
-def test_adaptive_implicit_certificate_detects_corner_invisible_surface():
-    def slab(points, time, args):
+def test_adaptive_implicit_certificate_detects_corner_invisible_surface() -> None:
+    def slab(points: Any, time: Any, args: Any) -> Any:
         del time, args
         return (points[:, 0] - 0.3) * (points[:, 0] - 0.7)
 
-    def interval_bound(lower, upper, time, args):
+    def interval_bound(lower: Any, upper: Any, time: Any, args: Any) -> Any:
         del time, args
         candidates = jnp.asarray(
             (
@@ -516,8 +522,8 @@ def test_adaptive_implicit_certificate_detects_corner_invisible_surface():
     assert complex_.component_count == 2
 
 
-def test_localized_moving_step_resolves_multiple_enter_exit_events():
-    def oscillating_plane(points, time, args):
+def test_localized_moving_step_resolves_multiple_enter_exit_events() -> None:
+    def oscillating_plane(points: Any, time: Any, args: Any) -> Any:
         del args
         threshold = 0.5 - 2.8 * (time - 0.5) ** 2
         return points[:, 0] - threshold
@@ -563,7 +569,7 @@ def test_localized_moving_step_resolves_multiple_enter_exit_events():
     )
 
 
-def test_cut_cochain_transition_commutes_and_uses_metric_adjoint():
+def test_cut_cochain_transition_commutes_and_uses_metric_adjoint() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
         "cochain-transition-plane",
@@ -609,7 +615,7 @@ def test_cut_cochain_transition_commutes_and_uses_metric_adjoint():
         )
 
 
-def test_embedded_body_set_supports_tagged_union_and_difference_csg():
+def test_embedded_body_set_supports_tagged_union_and_difference_csg() -> None:
     left = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.25,
         "left-solid",

@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _dataset():
+def _dataset() -> Any:
     low = phx.fidelity.FidelityLevelSpec(
         "low",
         problem_id="poisson",
@@ -70,7 +73,7 @@ def _dataset():
     return phx.fidelity.FidelityDataset(hierarchy, cases, tuple(evaluations))
 
 
-def test_fidelity_observations_become_exact_fixed_residual_penalty():
+def test_fidelity_observations_become_exact_fixed_residual_penalty() -> None:
     dataset = _dataset()
     geometry = phx.domain.Interval1d(-1.0, 1.0)
     prepared = phx.terms.prepare_fidelity_observation_penalty(
@@ -89,10 +92,11 @@ def test_fidelity_observations_become_exact_fixed_residual_penalty():
 
     other = geometry.component().points({"x": jnp.asarray([0.0])})
     with pytest.raises(ValueError, match="metadata"):
+        # ty: ignore[unresolved-attribute]
         prepared.term.condition.target(other)
 
 
-def test_fidelity_split_requirements_reserve_target_groups():
+def test_fidelity_split_requirements_reserve_target_groups() -> None:
     dataset = _dataset()
     split = phx.fidelity.split_fidelity_dataset(
         dataset,

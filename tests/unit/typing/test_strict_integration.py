@@ -1,4 +1,5 @@
 import copy
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -70,7 +71,7 @@ class Concrete(AbstractOptedIn):
     values: pt.Float64[NodeDim]
 
 
-def test_construction_accepts_and_refuses_structural_contracts():
+def test_construction_accepts_and_refuses_structural_contracts() -> None:
     field = Field(jnp.zeros((3,)), 3)
 
     assert field.count == 3
@@ -79,12 +80,13 @@ def test_construction_accepts_and_refuses_structural_contracts():
     with pytest.raises(TypeError):
         Field(jnp.zeros((3,), dtype=jnp.float32), 3)
     with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
         Field(np.zeros((3,)), 3)
 
 
-def test_structural_checks_add_no_equations_and_no_host_transfers():
-    def build(opted):
-        def run(values):
+def test_structural_checks_add_no_equations_and_no_host_transfers() -> None:
+    def build(opted: Any) -> Any:
+        def run(values: Any) -> Any:
             module = Field(values, 3) if opted else Twin(values, 3)
             return module.values
 
@@ -97,7 +99,7 @@ def test_structural_checks_add_no_equations_and_no_host_transfers():
         Field(jnp.zeros((3,)), 3)
 
 
-def test_leaves_and_static_structure_match_an_unchecked_twin():
+def test_leaves_and_static_structure_match_an_unchecked_twin() -> None:
     values = jnp.arange(3.0)
     opted = jax.tree_util.tree_flatten(Field(values, 3))
     twin = jax.tree_util.tree_flatten(Twin(values, 3))
@@ -106,39 +108,40 @@ def test_leaves_and_static_structure_match_an_unchecked_twin():
     assert opted[1].num_leaves == twin[1].num_leaves
 
 
-def test_owner_check_init_runs_before_structural_checks():
+def test_owner_check_init_runs_before_structural_checks() -> None:
     with pytest.raises(RuntimeError, match="owner invariant"):
         Checked(jnp.asarray(1.0))
 
 
-def test_the_first_failing_field_in_declaration_order_is_reported():
+def test_the_first_failing_field_in_declaration_order_is_reported() -> None:
     with pytest.raises(ValueError, match="right"):
         Pair(jnp.zeros((2,)), jnp.zeros((3,)))
     with pytest.raises(TypeError, match="left"):
         Pair(jnp.zeros((2,), dtype=jnp.int32), jnp.zeros((5, 5, 5)))
 
 
-def test_failed_union_alternatives_roll_back_their_bindings():
+def test_failed_union_alternatives_roll_back_their_bindings() -> None:
     pair = Pair(jnp.zeros((2,)), jnp.zeros((2, 4)))
 
     assert pair.right.shape == (2, 4)
 
 
-def test_nested_modules_bind_dimensions_in_independent_scopes():
+def test_nested_modules_bind_dimensions_in_independent_scopes() -> None:
     outer = Outer(Field(jnp.zeros((5,)), 5), jnp.zeros((2,)))
 
     pt.validate(outer)
 
 
-def test_abstract_opt_in_is_inherited_by_concrete_modules():
+def test_abstract_opt_in_is_inherited_by_concrete_modules() -> None:
     Concrete(jnp.zeros((2,)))
     with pytest.raises(TypeError):
         Concrete(jnp.zeros((2,), dtype=jnp.int32))
     with pytest.raises(TypeError):
+        # ty: ignore[missing-argument]
         AbstractOptedIn()
 
 
-def test_transformations_do_not_validate_but_explicit_validation_does():
+def test_transformations_do_not_validate_but_explicit_validation_does() -> None:
     field = Field(jnp.zeros((3,)), 3)
     widened = eqx.tree_at(lambda module: module.values, field, jnp.zeros((4,)))
     doubled = jax.tree_util.tree_map(lambda leaf: 2.0 * leaf, field)
@@ -151,9 +154,9 @@ def test_transformations_do_not_validate_but_explicit_validation_does():
         pt.validate(eqx.tree_at(lambda module: module.inner, outer, widened))
 
 
-def test_filter_jit_and_filter_vmap_check_at_trace_time():
+def test_filter_jit_and_filter_vmap_check_at_trace_time() -> None:
     @eqx.filter_jit
-    def build(values):
+    def build(values: Any) -> Any:
         return Field(values, 3)
 
     assert build(jnp.zeros((3,))).values.shape == (3,)
@@ -166,7 +169,7 @@ def test_filter_jit_and_filter_vmap_check_at_trace_time():
         pt.validate(stacked)
 
 
-def test_array_recipe_round_trip_validates_the_restored_model():
+def test_array_recipe_round_trip_validates_the_restored_model() -> None:
     catalog = ChemicalComponentCatalog(
         ("H2", "O2"),
         np.asarray((2.016, 31.998)),

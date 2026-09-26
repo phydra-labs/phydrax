@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -16,7 +19,7 @@ from phydrax.applications.numerical_relativity._characteristic import (
 )
 
 
-def _octahedral_quadrature():
+def _octahedral_quadrature() -> Any:
     directions = np.asarray(
         (
             (1.0, 0.0, 0.0),
@@ -40,7 +43,7 @@ def _octahedral_quadrature():
     )
 
 
-def test_characteristic_minkowski_and_analytic_outgoing_wave_controls():
+def test_characteristic_minkowski_and_analytic_outgoing_wave_controls() -> None:
     nine = 9
     times = np.linspace(-1.0, 1.0, nine)
     inverse_radius = np.asarray((0.25, 0.125, 0.0))
@@ -104,7 +107,7 @@ def test_characteristic_minkowski_and_analytic_outgoing_wave_controls():
     assert bool(wave.qualified)
 
 
-def test_bms_quadrature_rejects_asymmetric_l_one_moments():
+def test_bms_quadrature_rejects_asymmetric_l_one_moments() -> None:
     directions = np.asarray(
         (
             (1.0, 0.0, 0.0),
@@ -128,7 +131,7 @@ def test_bms_quadrature_rejects_asymmetric_l_one_moments():
         )
 
 
-def test_bms_boost_and_translation_controls_preserve_poincare_laws():
+def test_bms_boost_and_translation_controls_preserve_poincare_laws() -> None:
     plan = _octahedral_quadrature()
     times = np.asarray((0.0, 1.0))
     mass = 2.0

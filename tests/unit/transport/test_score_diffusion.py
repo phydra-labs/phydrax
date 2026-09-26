@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +13,7 @@ class _GaussianMarginalScore(eqx.Module):
     mean: jnp.ndarray = phx.fixed_field()
     variance: jnp.ndarray = phx.fixed_field()
 
-    def __call__(self, state, time):
+    def __call__(self, state: Any, time: Any) -> Any:
         slope = (
             self.process.beta_maximum - self.process.beta_minimum
         ) / self.process.terminal_time
@@ -23,7 +25,7 @@ class _GaussianMarginalScore(eqx.Module):
         return -(state - marginal_mean) / marginal_variance
 
 
-def _score_function(process, mean, variance):
+def _score_function(process: Any, mean: Any, variance: Any) -> Any:
     state = phx.domain.HyperRectangle(
         jnp.full(process.state_shape, -100.0),
         jnp.full(process.state_shape, 100.0),
@@ -33,7 +35,7 @@ def _score_function(process, mean, variance):
     return domain.Function("x", "t")(_GaussianMarginalScore(process, mean, variance))
 
 
-def _problem():
+def _problem() -> Any:
     process = phx.stochastic.VariancePreservingDiffusion(
         1,
         beta_minimum=0.1,
@@ -66,7 +68,7 @@ def _problem():
     return process, mean, variance, score, terminal, reverse
 
 
-def test_reverse_diffusion_recovers_gaussian_moments_and_replays():
+def test_reverse_diffusion_recovers_gaussian_moments_and_replays() -> None:
     process, mean, variance, _, _, reverse = _problem()
     realization = reverse.realize(jr.key(0), (256,))
     first = reverse.solve(realization)
@@ -84,7 +86,7 @@ def test_reverse_diffusion_recovers_gaussian_moments_and_replays():
     assert jnp.array_equal(trajectory.states[:, 0], realization.terminal_states)
 
 
-def test_probability_flow_reuses_continuous_density_contract():
+def test_probability_flow_reuses_continuous_density_contract() -> None:
     process, mean, variance, score, terminal, _ = _problem()
     system = phx.transport.probability_flow_system(
         process,
@@ -111,7 +113,7 @@ def test_probability_flow_reuses_continuous_density_contract():
     assert jnp.allclose(result.log_prob, target.log_prob(points), atol=2e-7, rtol=2e-7)
 
 
-def test_reverse_diffusion_rejects_invalid_realization_and_save_grid():
+def test_reverse_diffusion_rejects_invalid_realization_and_save_grid() -> None:
     process, _, _, score, terminal, reverse = _problem()
     realization = reverse.realize(jr.key(1), (2,))
     with pytest.raises(ValueError, match="save_times"):
@@ -129,7 +131,7 @@ def test_reverse_diffusion_rejects_invalid_realization_and_save_grid():
         other.solve(realization)
 
 
-def test_asymptotic_terminal_reference_remains_explicit():
+def test_asymptotic_terminal_reference_remains_explicit() -> None:
     process = phx.stochastic.VariancePreservingDiffusion(2)
     reference = process.asymptotic_terminal_reference()
     assert reference.relationship == "asymptotic"

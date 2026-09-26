@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_shared_scalar_root_event_and_semantic_replay():
+def test_shared_scalar_root_event_and_semantic_replay() -> None:
     problem = phx.solver.amplitude_damping_trajectory_problem(
         2.0, jnp.asarray([0.0j, 1.0 + 0.0j])
     )
@@ -32,7 +32,7 @@ def test_shared_scalar_root_event_and_semantic_replay():
     assert jnp.array_equal(first.events.times, second.events.times)
 
 
-def test_closed_quantum_jump_ensemble_supports_zero_collapse_channels():
+def test_closed_quantum_jump_ensemble_supports_zero_collapse_channels() -> None:
     hamiltonian = phx.solver.StateVectorOperator.from_matrix(
         jnp.zeros((2, 2), dtype=jnp.complex128),
         operator_id="closed-zero",
@@ -55,7 +55,7 @@ def test_closed_quantum_jump_ensemble_supports_zero_collapse_channels():
     assert not jnp.any(result.jump_mask)
 
 
-def test_event_quantum_jump_refuses_root_work_beyond_budget():
+def test_event_quantum_jump_refuses_root_work_beyond_budget() -> None:
     problem = phx.solver.amplitude_damping_trajectory_problem(
         20.0, jnp.asarray([0.0j, 1.0 + 0.0j])
     )
@@ -76,7 +76,7 @@ def test_event_quantum_jump_refuses_root_work_beyond_budget():
     assert result.work.residual_evaluations == 0
 
 
-def test_environment_mps_and_nonnormalizing_tebd():
+def test_environment_mps_and_nonnormalizing_tebd() -> None:
     state = phx.tensor_network.product_mps(
         jnp.asarray([[2.0, 0.0], [0.0, 1.0]], dtype="complex128")
     )
@@ -96,7 +96,7 @@ def test_environment_mps_and_nonnormalizing_tebd():
     assert jnp.allclose(evolved.norm(), state.norm())
 
 
-def test_lpdo_raw_trace_canonicalization_and_xxz_strang():
+def test_lpdo_raw_trace_canonicalization_and_xxz_strang() -> None:
     problem = phx.solver.boundary_driven_xxz_problem(
         2, half_step=0.005, boundary_rate=0.2
     )
@@ -121,7 +121,7 @@ def test_lpdo_raw_trace_canonicalization_and_xxz_strang():
     assert jnp.all(jnp.isfinite(result.raw_trace_history))
 
 
-def test_xxz_qualification_retains_every_step_diagnostic():
+def test_xxz_qualification_retains_every_step_diagnostic() -> None:
     result = phx.solver.qualify_boundary_driven_xxz(
         phx.solver.boundary_driven_xxz_problem(2, half_step=0.005, boundary_rate=0.2),
         step_size=0.01,
@@ -130,11 +130,13 @@ def test_xxz_qualification_retains_every_step_diagnostic():
         maximum_purification_dimension=8,
         steady_window=2,
     )
+    # ty: ignore[unresolved-attribute]
     assert result.final_result.raw_trace_history.shape == (6,)
+    # ty: ignore[unresolved-attribute]
     assert result.final_result.canonical_residual_history.shape == (3,)
 
 
-def test_bath_decomposition_scaled_and_implicit_heom():
+def test_bath_decomposition_scaled_and_implicit_heom() -> None:
     with pytest.raises(ValueError):
         phx.operators.quantum.drude_lorentz_matsubara(0.1, 2.0 * jnp.pi, 1.0, 2)
     expansion = phx.operators.quantum.underdamped_brownian_two_pole(1.0, 0.2, 0.1)
@@ -153,7 +155,7 @@ def test_bath_decomposition_scaled_and_implicit_heom():
     assert bool(result.valid)
 
 
-def test_heom_continuation_uses_common_initial_state():
+def test_heom_continuation_uses_common_initial_state() -> None:
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     expansion = phx.operators.quantum.drude_lorentz_matsubara(0.02, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
@@ -172,7 +174,7 @@ def test_heom_continuation_uses_common_initial_state():
     )
 
 
-def test_conditioned_map_and_matched_spin_boson():
+def test_conditioned_map_and_matched_spin_boson() -> None:
     identity = jnp.eye(4, dtype="complex128")
     report = phx.operators.quantum.analyze_dynamical_map_series(
         jnp.stack((identity, identity)), 2
@@ -186,7 +188,7 @@ def test_conditioned_map_and_matched_spin_boson():
     assert bool(comparison.valid)
 
 
-def test_causal_process_tomography_and_compression_status():
+def test_causal_process_tomography_and_compression_status() -> None:
     spec = phx.tensor_network.CombLegSpec(2, 1, 1)
     density = jnp.asarray([[0.7 + 0j, 0j], [0j, 0.3 + 0j]])
     process = phx.tensor_network.CausalProcessTensor(
@@ -215,7 +217,7 @@ def test_causal_process_tomography_and_compression_status():
     assert bool(compressed.valid)
 
 
-def test_neural_no_jump_tdvp_lifecycle():
+def test_neural_no_jump_tdvp_lifecycle() -> None:
     problem = phx.solver.NeuralNoJumpTDVPProblem(
         jnp.asarray([0.2]),
         lambda parameters, vector: vector,

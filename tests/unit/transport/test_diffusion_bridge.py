@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -21,12 +23,12 @@ from phydrax.transport.dynamic._diffusion_solver import (
 )
 
 
-def _brownian_transition():
-    def sample(key, state, t0, t1, context):
+def _brownian_transition() -> Any:
+    def sample(key: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         del context
         return state + jnp.sqrt(t1 - t0) * jr.normal(key, state.shape)
 
-    def log_prob(next_state, state, t0, t1, context):
+    def log_prob(next_state: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         del context
         variance = t1 - t0
         residual = next_state - state
@@ -41,7 +43,7 @@ def _brownian_transition():
     )
 
 
-def _proposal_realization(points):
+def _proposal_realization(points: Any) -> Any:
     target = phx.integration.weighted(
         points,
         -jnp.log(jnp.asarray(points.shape[0], dtype=points.dtype))
@@ -54,7 +56,7 @@ def _proposal_realization(points):
     return IntegrationRealization(target, None, None, None)
 
 
-def _problem_and_plan(capacity=9):
+def _problem_and_plan(capacity: Any = 9) -> Any:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.5, 1.0]),
         time_id="brownian-bridge-grid",
@@ -88,7 +90,7 @@ def _problem_and_plan(capacity=9):
     return problem, plan
 
 
-def test_diffusion_bridge_prepares_solves_and_samples_finite_chain():
+def test_diffusion_bridge_prepares_solves_and_samples_finite_chain() -> None:
     problem, plan = _problem_and_plan()
     prepared = prepare_diffusion_bridge(problem, plan, key=jr.key(12))
     result = solve_diffusion_bridge(prepared)
@@ -112,7 +114,7 @@ def test_diffusion_bridge_prepares_solves_and_samples_finite_chain():
     assert result.approximation_kind == "exact-prepared-chain-diffusion-approximation"
 
 
-def test_diffusion_bridge_prepared_solve_is_jittable():
+def test_diffusion_bridge_prepared_solve_is_jittable() -> None:
     problem, plan = _problem_and_plan()
     prepared = prepare_diffusion_bridge(problem, plan, key=jr.key(14))
     marginals = jax.jit(lambda value: solve_diffusion_bridge(value).physical_marginals)(
@@ -123,7 +125,7 @@ def test_diffusion_bridge_prepared_solve_is_jittable():
     assert jnp.all(jnp.isfinite(marginals))
 
 
-def test_diffusion_bridge_fails_closed_on_support_capacity_mismatch():
+def test_diffusion_bridge_fails_closed_on_support_capacity_mismatch() -> None:
     problem, plan = _problem_and_plan(capacity=8)
     with pytest.raises(ValueError, match="support_capacity"):
         prepare_diffusion_bridge(problem, plan, key=jr.key(15))

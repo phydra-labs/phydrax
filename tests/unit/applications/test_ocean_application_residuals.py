@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +11,7 @@ import phydrax as phx
 ocean_api = phx.applications.ocean
 
 
-def _ocean(*, policy=None, wetting=False):
+def _ocean(*, policy: Any = None, wetting: Any = False) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),
@@ -35,7 +37,7 @@ def _ocean(*, policy=None, wetting=False):
     ).prepare()
 
 
-def _state(prepared, eta=0.0):
+def _state(prepared: Any, eta: Any = 0.0) -> Any:
     return prepared.initialize_state(
         jnp.full(prepared.geometry.horizontal_shape, eta),
         tracers={
@@ -45,7 +47,7 @@ def _state(prepared, eta=0.0):
     )
 
 
-def test_gsw75_named_subset_derivatives_and_funnel():
+def test_gsw75_named_subset_derivatives_and_funnel() -> None:
     eos = ocean_api.TEOS10GSW75EOS()
     result = eos.evaluate(jnp.asarray([35.0]), jnp.asarray([10.0]), jnp.asarray([0.0]))
     assert bool(result.successful)
@@ -90,7 +92,7 @@ def test_gsw75_named_subset_derivatives_and_funnel():
     )
 
 
-def test_spherical_mosaics_cover_caps_tripolar_and_cube_with_oriented_seams():
+def test_spherical_mosaics_cover_caps_tripolar_and_cube_with_oriented_seams() -> None:
     radius = 2.0
     vertical = jnp.asarray([-1.0, -0.5, 0.0])
     polar = ocean_api.polar_cap(
@@ -138,6 +140,7 @@ def test_spherical_mosaics_cover_caps_tripolar_and_cube_with_oriented_seams():
     block_values = {
         block.name: jnp.ones(block.cell_area.shape) for block in tripolar.blocks
     }
+    # ty: ignore[invalid-argument-type]
     left_trace, right_trace = tripolar.seam_traces(0, block_values)
     assert left_trace.shape == right_trace.shape
     block_states = {
@@ -194,7 +197,7 @@ def test_spherical_mosaics_cover_caps_tripolar_and_cube_with_oriented_seams():
     assert bool(block_ocean.view(block_state).eos_successful)
 
 
-def test_cubed_sphere_cross_metric_drives_manufactured_gradients_and_transports():
+def test_cubed_sphere_cross_metric_drives_manufactured_gradients_and_transports() -> None:
     count = 48
     grid = ocean_api.equiangular_cubed_sphere(
         (count, count), jnp.asarray([-1.0, 0.0, 1.0]), 2.0, radius=1.0
@@ -277,7 +280,7 @@ def test_cubed_sphere_cross_metric_drives_manufactured_gradients_and_transports(
     )
 
 
-def test_public_mosaic_advance_reconciles_every_physical_seam_conservatively():
+def test_public_mosaic_advance_reconciles_every_physical_seam_conservatively() -> None:
     grid = ocean_api.equiangular_cubed_sphere(
         (3, 3), jnp.asarray([-1.0, -0.5, 0.0]), 1.0, radius=10.0
     ).prepare()
@@ -335,7 +338,7 @@ def test_public_mosaic_advance_reconciles_every_physical_seam_conservatively():
         )
 
 
-def test_mosaic_advance_commits_atomically_when_one_block_fails():
+def test_mosaic_advance_commits_atomically_when_one_block_fails() -> None:
     grid = ocean_api.equiangular_cubed_sphere(
         (2, 2), jnp.asarray([-1.0, -0.5, 0.0]), 1.0, radius=10.0
     ).prepare()
@@ -361,7 +364,7 @@ def test_mosaic_advance_commits_atomically_when_one_block_fails():
         np.testing.assert_array_equal(actual, expected)
 
 
-def test_split_external_mode_is_only_available_without_multiblock_seams():
+def test_split_external_mode_is_only_available_without_multiblock_seams() -> None:
     vertical = jnp.asarray([-1.0, -0.5, 0.0])
     cube = ocean_api.equiangular_cubed_sphere(
         (2, 2), vertical, 1.0, radius=10.0
@@ -386,7 +389,7 @@ def test_split_external_mode_is_only_available_without_multiblock_seams():
     assert bool(result.successful)
 
 
-def test_mosaic_ghosts_launch_cross_seam_wave_and_conserve_upwind_tracer():
+def test_mosaic_ghosts_launch_cross_seam_wave_and_conserve_upwind_tracer() -> None:
     grid = ocean_api.equiangular_cubed_sphere(
         (3, 3), jnp.asarray([-1.0, -0.5, 0.0]), 1.0, radius=10.0
     ).prepare()
@@ -448,7 +451,7 @@ def test_mosaic_ghosts_launch_cross_seam_wave_and_conserve_upwind_tracer():
     )
 
 
-def test_mosaic_redi_gradient_uses_neighbor_trace_and_is_globally_conservative():
+def test_mosaic_redi_gradient_uses_neighbor_trace_and_is_globally_conservative() -> None:
     grid = ocean_api.equiangular_cubed_sphere(
         (3, 3), jnp.asarray([-1.0, -0.5, 0.0]), 1.0, radius=10.0
     ).prepare()
@@ -495,7 +498,7 @@ def test_mosaic_redi_gradient_uses_neighbor_trace_and_is_globally_conservative()
     )
 
 
-def test_adaptive_subcycle_schedule_is_masked_and_fails_over_capacity():
+def test_adaptive_subcycle_schedule_is_masked_and_fails_over_capacity() -> None:
     policy = ocean_api.ExternalModeSubcyclePolicy.adaptive_cfl(16, target_courant=0.4)
     prepared = _ocean(policy=policy)
     state = _state(prepared)
@@ -521,7 +524,7 @@ def test_adaptive_subcycle_schedule_is_masked_and_fails_over_capacity():
     assert not bool(overflow.successful)
 
 
-def test_adaptive_subcycle_uses_the_controlling_directional_spacing():
+def test_adaptive_subcycle_uses_the_controlling_directional_spacing() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),
@@ -556,8 +559,8 @@ def test_adaptive_subcycle_uses_the_controlling_directional_spacing():
     assert int(advective.count) == 40
 
 
-def test_passive_vertical_velocity_is_grid_area_invariant():
-    def advect_on_square(length):
+def test_passive_vertical_velocity_is_grid_area_invariant() -> None:
+    def advect_on_square(length: Any) -> Any:
         grid = phx.discretization.TensorGridPlan(
             (
                 phx.discretization.UniformCellAxisSpec(2),
@@ -602,7 +605,7 @@ def test_passive_vertical_velocity_is_grid_area_invariant():
     )
 
 
-def test_wet_dry_epoch_semantics_and_passive_trajectory_lowering():
+def test_wet_dry_epoch_semantics_and_passive_trajectory_lowering() -> None:
     prepared = _ocean(wetting=True)
     previous = _state(prepared, eta=0.0)
     candidate = _state(prepared, eta=0.0)
@@ -635,7 +638,7 @@ def test_wet_dry_epoch_semantics_and_passive_trajectory_lowering():
     assert trajectory.active_steps[0] == 3
 
 
-def test_passive_trajectory_uses_nonuniform_vertical_layer_boundaries():
+def test_passive_trajectory_uses_nonuniform_vertical_layer_boundaries() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(2),
@@ -696,7 +699,7 @@ def test_passive_trajectory_uses_nonuniform_vertical_layer_boundaries():
     assert not bool(jnp.allclose(result.sampled_velocity[0, 0], uniform_grid_choice))
 
 
-def test_passive_trajectory_invalidates_boundary_crossing_final_sample():
+def test_passive_trajectory_invalidates_boundary_crossing_final_sample() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(2) for _ in range(3)),
         axis_names=("x", "y", "z"),

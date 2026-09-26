@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -8,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def _atlas_plan():
+def _atlas_plan() -> Any:
     atlas = phx.geometry.circle_boundary_atlas(
         jnp.asarray((0.5, 0.5)),
         jnp.asarray(0.2),
@@ -67,7 +69,7 @@ def test_atlas_surfel_materialization_adapts_to_marker_kinematics() -> None:
     np.testing.assert_allclose(kinematics.velocity, materialized.velocity)
 
 
-def test_marker_materialization_rejects_out_of_range_chart_indices():
+def test_marker_materialization_rejects_out_of_range_chart_indices() -> None:
     atlas, _, _ = _atlas_plan()
     invalid = phx.geometry.ImmersedMarkerQuadraturePlan(
         jnp.asarray((0,)),

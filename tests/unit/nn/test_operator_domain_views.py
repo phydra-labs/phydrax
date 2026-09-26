@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -10,7 +13,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _points_batch():
+def _points_batch() -> Any:
     structure = phx.domain.SampleLayout((("case",), ("x",))).canonicalize(("case", "x"))
     case_axis = structure.axis_for("case")
     sample_axis = structure.axis_for("x")
@@ -20,6 +23,7 @@ def _points_batch():
     )
     values = jnp.arange(8.0).reshape((2, 4))
     batch = phx.domain.PointBatch(
+        # ty: ignore[invalid-argument-type]
         {
             "u": cx.AxisArray(values, dims=(case_axis, sample_axis)),
             "x": cx.AxisArray(coordinates, dims=(case_axis, sample_axis, None)),
@@ -29,7 +33,7 @@ def _points_batch():
     return batch, case_axis, sample_axis
 
 
-def test_points_domain_view_round_trips_named_prediction_fields():
+def test_points_domain_view_round_trips_named_prediction_fields() -> None:
     batch, case_axis, sample_axis = _points_batch()
     view = phx.nn.operator.operator_domain_view_from_points(
         batch,
@@ -61,7 +65,7 @@ def test_points_domain_view_round_trips_named_prediction_fields():
     assert jnp.array_equal(jnp.asarray(restored["solution"].data), values)
 
 
-def test_points_domain_model_dispatches_shared_query_geometry_end_to_end():
+def test_points_domain_model_dispatches_shared_query_geometry_end_to_end() -> None:
     data = phx.domain.DatasetDomain(jnp.ones((2, 4)), label="data")
     domain = data @ phx.domain.Interval1d(0.0, 1.0)
     sampled = domain.component().sample(
@@ -93,12 +97,13 @@ def test_points_domain_model_dispatches_shared_query_geometry_end_to_end():
     )
     output = domain.Model("data", "x")(model)(sampled)
 
+    # ty: ignore[invalid-argument-type]
     assert output.dims == tuple(sampled.structure.axis_names)
     assert output.data.shape == (2, 4)
     assert jnp.all(jnp.isfinite(jnp.asarray(output.data)))
 
 
-def test_coord_separable_domain_view_preserves_axes_and_restores_output():
+def test_coord_separable_domain_view_preserves_axes_and_restores_output() -> None:
     nx = 8
     data = phx.domain.DatasetDomain(jnp.ones((3, nx)), label="data")
     geometry = phx.domain.GeometryDomain(
@@ -143,7 +148,7 @@ def test_coord_separable_domain_view_preserves_axes_and_restores_output():
     assert restored.data.shape == output.shape
 
 
-def _graph(node_count):
+def _graph(node_count: Any) -> Any:
     positions = jnp.arange(float(node_count))[:, None]
     return phx.graph.GraphIR(
         nodes={"positions": positions},
@@ -155,7 +160,7 @@ def _graph(node_count):
     )
 
 
-def test_graph_domain_view_pads_graph_cases_and_restores_ragged_entity_axis():
+def test_graph_domain_view_pads_graph_cases_and_restores_ragged_entity_axis() -> None:
     domain = phx.domain.GraphDatasetDomain((_graph(2), _graph(3)), label="graph")
     sampled = domain.points_from_indices(
         jnp.asarray([0, 1]),
@@ -200,7 +205,7 @@ def test_graph_domain_view_pads_graph_cases_and_restores_ragged_entity_axis():
     )
 
 
-def test_simplicial_domain_view_retains_cell_site_and_graph_node_entity():
+def test_simplicial_domain_view_retains_cell_site_and_graph_node_entity() -> None:
     complex_graph = phx.graph.triangle_mesh_to_simplicial_graph(
         jnp.asarray([[0, 1, 2], [0, 2, 3]]),
         num_vertices=4,
@@ -225,7 +230,7 @@ def test_simplicial_domain_view_retains_cell_site_and_graph_node_entity():
     assert jnp.array_equal(topology.sample_entities, complex_graph.face_cells)
 
 
-def test_ragged_series_domain_view_preserves_masks_weights_and_model_dispatch():
+def test_ragged_series_domain_view_preserves_masks_weights_and_model_dispatch() -> None:
     domain = phx.domain.RaggedSeriesDatasetDomain(
         jnp.arange(12.0).reshape((3, 4, 1)),
         jnp.asarray([2, 4, 3]),
@@ -286,7 +291,7 @@ def test_ragged_series_domain_view_preserves_masks_weights_and_model_dispatch():
     )
 
 
-def test_trajectory_domain_views_group_cases_and_restore_observation_order():
+def test_trajectory_domain_views_group_cases_and_restore_observation_order() -> None:
     regular = phx.domain.TrajectoryDatasetDomain(
         jnp.asarray([[1.0, 2.0], [3.0, 4.0]]),
         jnp.asarray([3, 3]),
@@ -350,7 +355,7 @@ def test_trajectory_domain_views_group_cases_and_restore_observation_order():
         assert jnp.all(jnp.isfinite(jnp.asarray(evaluated.data)))
 
 
-def test_graph_trajectory_domain_view_includes_time_in_query_geometry():
+def test_graph_trajectory_domain_view_includes_time_in_query_geometry() -> None:
     domain = phx.domain.GraphTrajectoryDatasetDomain(
         (_graph(2), _graph(3)),
         jnp.asarray([3, 4]),
@@ -390,7 +395,9 @@ def test_graph_trajectory_domain_view_includes_time_in_query_geometry():
     )
 
 
-def test_operator_domain_preflight_rejects_unsupported_geometry_before_execution():
+def test_operator_domain_preflight_rejects_unsupported_geometry_before_execution() -> (
+    None
+):
     batch, case_axis, _ = _points_batch()
     view = phx.nn.operator.operator_domain_view_from_points(
         batch,

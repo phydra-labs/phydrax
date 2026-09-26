@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -28,18 +31,18 @@ class _DenseScaleModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, factor, schema):
+    def __init__(self, factor: Any, schema: Any) -> None:
         self.factor = jnp.asarray(factor)
         self.input_schema = schema
         self.output_schema = schema
         self.in_size = len(schema.names)
         self.out_size = len(schema.names)
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return self.factor * jnp.asarray(x)
 
-    def transform_batch(self, batch, /, *, key=None):
+    def transform_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         if batch.targets is not None:
             raise AssertionError("Fitted feature transforms must not receive targets.")
@@ -53,10 +56,10 @@ class _DenseScaleModel(AbstractArrayModel):
 class _DenseScaleRecipe(phx.ml.AbstractRecipe):
     factor: float = eqx.field(static=True)
 
-    def __init__(self, factor):
+    def __init__(self, factor: Any) -> None:
         self.factor = float(factor)
 
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         diagnostics = phx.ml.FitDiagnostics(
             valid=True,
@@ -82,14 +85,14 @@ class _SparseFirstModel(AbstractArrayModel):
     out_size: int = eqx.field(static=True)
     _input_binding = ModelBinding.blockwise("flat")
 
-    def __init__(self, factor, input_schema, output_name):
+    def __init__(self, factor: Any, input_schema: Any, output_name: Any) -> None:
         self.factor = jnp.asarray(factor)
         self.input_schema = input_schema
         self.output_schema = phx.ml.FeatureSchema((output_name,))
         self.in_size = len(input_schema.names)
         self.out_size = 1
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         values = jnp.asarray(x)
         if values.ndim < 2:
@@ -103,7 +106,7 @@ class _SparseFirstModel(AbstractArrayModel):
             case_shape=case_shape,
         )
 
-    def transform_batch(self, batch, /, *, key=None):
+    def transform_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         if isinstance(batch.features, phx.ml.SparseFeatures):
             raise TypeError("The test sparse transform expects dense input.")
@@ -122,11 +125,11 @@ class _SparseFirstRecipe(phx.ml.AbstractRecipe):
     factor: float = eqx.field(static=True)
     output_name: str = eqx.field(static=True)
 
-    def __init__(self, factor, output_name):
+    def __init__(self, factor: Any, output_name: Any) -> None:
         self.factor = float(factor)
         self.output_name = str(output_name)
 
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         diagnostics = phx.ml.FitDiagnostics(
             valid=True,
@@ -144,7 +147,7 @@ class _SparseFirstRecipe(phx.ml.AbstractRecipe):
         )
 
 
-def _dense_batch():
+def _dense_batch() -> Any:
     return phx.ml.MLBatch(
         jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
         feature_mask=jnp.array([[True, True, False], [True, True, True]]),
@@ -159,12 +162,13 @@ def _dense_batch():
     )
 
 
-def test_feature_union_dense_outputs_are_ordered_prefixed_and_differentiable():
+def test_feature_union_dense_outputs_are_ordered_prefixed_and_differentiable() -> None:
     batch = _dense_batch()
     result = FeatureUnion(
         (("left", _DenseScaleRecipe(2.0)), ("right", _DenseScaleRecipe(-1.0)))
     ).fit_batch(batch, key=jax.random.key(0))
     fitted = result.as_trainable()
+    # ty: ignore[unresolved-attribute]
     transformed = fitted.transform_batch(batch)
 
     assert transformed.feature_schema.names == (
@@ -200,10 +204,11 @@ def test_feature_union_dense_outputs_are_ordered_prefixed_and_differentiable():
         result.derivative_contract.level(phx.DerivativeSurface.INPUT)
         is phx.GradientLevel.SMOOTH
     )
+    # ty: ignore[unresolved-attribute]
     assert len(fitted.fit_results) == 2
 
 
-def test_feature_union_supports_all_sparse_and_rejects_mixed_joins():
+def test_feature_union_supports_all_sparse_and_rejects_mixed_joins() -> None:
     batch = _dense_batch()
     sparse_result = FeatureUnion(
         (
@@ -212,6 +217,7 @@ def test_feature_union_supports_all_sparse_and_rejects_mixed_joins():
         )
     ).fit_batch(batch, key=jax.random.key(1))
     fitted = sparse_result.as_trainable()
+    # ty: ignore[unresolved-attribute]
     transformed = fitted.transform_batch(batch)
     expected = jnp.concatenate(
         (batch.features[..., :1], 2.0 * batch.features[..., :1]),
@@ -237,7 +243,7 @@ def test_feature_union_supports_all_sparse_and_rejects_mixed_joins():
         mixed.fit_batch(batch, key=jax.random.key(2))
 
 
-def test_column_transformer_resolves_names_indices_and_remainder_schema():
+def test_column_transformer_resolves_names_indices_and_remainder_schema() -> None:
     batch = _dense_batch()
     recipe = ColumnTransformer(
         (
@@ -248,10 +254,14 @@ def test_column_transformer_resolves_names_indices_and_remainder_schema():
     )
     result = recipe.fit_batch(batch, key=jax.random.key(3))
     fitted = result.as_trainable()
+    # ty: ignore[unresolved-attribute]
     transformed = fitted.transform_batch(batch)
 
+    # ty: ignore[unresolved-attribute]
     assert fitted.transformers[0][2] == (1,)
+    # ty: ignore[unresolved-attribute]
     assert fitted.transformers[1][2] == (0,)
+    # ty: ignore[unresolved-attribute]
     assert fitted.remainder_indices == (2,)
     assert transformed.feature_schema.names == (
         "named__b",
@@ -290,7 +300,7 @@ def test_column_transformer_resolves_names_indices_and_remainder_schema():
     assert jnp.allclose(fitted(batch.features), transformed.features)
 
 
-def test_column_transformer_rejects_duplicate_unknown_and_duplicate_names():
+def test_column_transformer_rejects_duplicate_unknown_and_duplicate_names() -> None:
     batch = _dense_batch()
     duplicate_columns = ColumnTransformer((("bad", _DenseScaleRecipe(1.0), ("a", "a")),))
     with pytest.raises(ValueError, match="cannot select a feature twice"):

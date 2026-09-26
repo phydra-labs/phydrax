@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
@@ -25,12 +27,12 @@ MAPPING = tuple(
 
 
 def _assessment(
-    candidate=0.10,
+    candidate: Any = 0.10,
     *,
-    reference_values=(0.0, 0.001),
-    uncertainty=0.002,
-    manifest_uncertainty=(("voltage_v", 0.001),),
-):
+    reference_values: Any = (0.0, 0.001),
+    uncertainty: Any = 0.002,
+    manifest_uncertainty: Any = (("voltage_v", 0.001),),
+) -> Any:
     policy = DfnEntryPolicy(
         MARQUIS_2019_SPME_SUPPORT.support_tuple_id,
         "test:distribution",
@@ -86,11 +88,13 @@ def _assessment(
                 (uncertainty,) * 2,
                 (f"test:{index}-coarse", f"test:{index}-medium", f"test:{index}-fine"),
                 rights,
+                # ty: ignore[invalid-argument-type]
                 None,
             )
         )
     return DfnEntryAssessment(
         policy,
+        # ty: ignore[invalid-argument-type]
         tuple(references),
         (candidate,) * 2,
         (0.001,) * 2,
@@ -101,7 +105,7 @@ def _assessment(
     )
 
 
-def test_authorization_uses_the_minimum_of_two_lower_bounds():
+def test_authorization_uses_the_minimum_of_two_lower_bounds() -> None:
     assessment = _assessment()
     decision = evaluate_reference_consensus(assessment)
     assert decision.eligible and decision.conclusive
@@ -125,7 +129,7 @@ def test_authorization_uses_the_minimum_of_two_lower_bounds():
     assert not decision.conclusive
 
 
-def test_no_build_requires_both_uncertainty_upper_bounds_strictly_below():
+def test_no_build_requires_both_uncertainty_upper_bounds_strictly_below() -> None:
     decision = evaluate_reference_consensus(_assessment(candidate=0.01))
     assert not decision.eligible and decision.conclusive
     at_boundary = evaluate_reference_consensus(
@@ -134,7 +138,9 @@ def test_no_build_requires_both_uncertainty_upper_bounds_strictly_below():
     assert not at_boundary.eligible and not at_boundary.conclusive
 
 
-def test_cross_reference_disagreement_cannot_authorize_even_when_each_error_is_large():
+def test_cross_reference_disagreement_cannot_authorize_even_when_each_error_is_large() -> (
+    None
+):
     assessment = _assessment(candidate=0.2, reference_values=(0.0, 0.1))
     decision = evaluate_reference_consensus(assessment)
     assert all(
@@ -144,7 +150,7 @@ def test_cross_reference_disagreement_cannot_authorize_even_when_each_error_is_l
     assert not decision.eligible and not decision.conclusive
 
 
-def test_two_distinct_runtimes_and_manifests_are_mandatory():
+def test_two_distinct_runtimes_and_manifests_are_mandatory() -> None:
     assessment = _assessment()
     duplicate_runtime = replace(
         assessment.references[1], runtime_family=assessment.references[0].runtime_family
@@ -158,7 +164,7 @@ def test_two_distinct_runtimes_and_manifests_are_mandatory():
         replace(assessment, references=(*assessment.references, assessment.references[0]))
 
 
-def test_convergence_and_matched_geometry_are_independent_required_audits():
+def test_convergence_and_matched_geometry_are_independent_required_audits() -> None:
     assessment = _assessment()
     unresolved = replace(assessment.references[0], medium_values=(0.1,) * 2)
     assert not evaluate_reference_consensus(
@@ -180,13 +186,13 @@ def test_convergence_and_matched_geometry_are_independent_required_audits():
     ).conclusive
 
 
-def test_unquantified_reference_uncertainty_is_incomplete_coverage():
+def test_unquantified_reference_uncertainty_is_incomplete_coverage() -> None:
     decision = evaluate_reference_consensus(_assessment(manifest_uncertainty=None))
     assert decision.reason == "reference-uncertainty-coverage-incomplete"
     assert not decision.eligible and not decision.conclusive
 
 
-def test_numeric_eligibility_without_authority_never_admits_implementation():
+def test_numeric_eligibility_without_authority_never_admits_implementation() -> None:
     assessment = _assessment()
     assert evaluate_reference_consensus(assessment).eligible
     decision = evaluate_dfn_entry_gate(
@@ -200,7 +206,7 @@ def test_numeric_eligibility_without_authority_never_admits_implementation():
     assert not decision.eligible and not decision.conclusive
 
 
-def test_policy_precedes_execution_and_nonfinite_discrepancies_are_rejected():
+def test_policy_precedes_execution_and_nonfinite_discrepancies_are_rejected() -> None:
     assessment = _assessment()
     with pytest.raises(ValueError):
         replace(assessment, started_at=assessment.policy.issued_at)

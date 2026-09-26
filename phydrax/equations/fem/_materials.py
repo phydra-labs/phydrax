@@ -352,7 +352,8 @@ class LearnedLocalImplicitMaterial(AbstractLocalImplicitMaterial):
         )
         model_precision = contract.model_contract.precision
         # _bind_learned_law rejects models without a ComponentPrecisionContract.
-        assert model_precision is not None
+        if not (model_precision is not None):
+            raise RuntimeError("Internal invariant failed: model_precision is not None.")
         precision.validate_tolerance(
             tolerance_, residual_dtype=model_precision.output_dtype
         )

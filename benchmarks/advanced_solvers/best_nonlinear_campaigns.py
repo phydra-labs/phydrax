@@ -111,7 +111,7 @@ _IMPLEMENTATION_PEER = {
 }
 
 
-def _peer_spec(implementation: str):
+def _peer_spec(implementation: str) -> Any:
     peer_id = _IMPLEMENTATION_PEER.get(implementation)
     return None if peer_id is None else _PEER_SPECS[peer_id]
 
@@ -148,7 +148,7 @@ def _unavailable(
     *,
     reason: str = "runtime-missing",
     detail: str | None = None,
-):
+) -> Any:
     spec = _peer_spec(implementation)
     observed_identity = (
         python_runtime_identity(spec)
@@ -293,7 +293,7 @@ class _RootCase:
         )
 
 
-def _root_termination():
+def _root_termination() -> Any:
     return phx.nonlinear.NonlinearTermination(
         absolute_residual=1e-8,
         relative_residual=0.0,
@@ -343,23 +343,23 @@ def _root_eligibility(
     return tuple(rows)
 
 
-def _periodic_gradient(value):
+def _periodic_gradient(value: Any) -> Any:
     return (jnp.roll(value, -1) - jnp.roll(value, 1)) / (2.0 * _QUASILINEAR_ROOT_SPACING)
 
 
-def _periodic_divergence(value):
+def _periodic_divergence(value: Any) -> Any:
     return (jnp.roll(value, -1) - jnp.roll(value, 1)) / (2.0 * _QUASILINEAR_ROOT_SPACING)
 
 
-def _quasilinear_diffusivity(value):
+def _quasilinear_diffusivity(value: Any) -> Any:
     return 0.02 + 0.8 * value * value
 
 
-def _quasilinear_diffusion(value, coefficient):
+def _quasilinear_diffusion(value: Any, coefficient: Any) -> Any:
     return _periodic_divergence(coefficient * _periodic_gradient(value))
 
 
-def _quasilinear_residual(value, previous):
+def _quasilinear_residual(value: Any, previous: Any) -> Any:
     return (
         value
         - previous
@@ -368,29 +368,29 @@ def _quasilinear_residual(value, previous):
     )
 
 
-def _numpy_periodic_gradient(value):
+def _numpy_periodic_gradient(value: Any) -> Any:
     return (np.roll(value, -1) - np.roll(value, 1)) / (2.0 * _QUASILINEAR_ROOT_SPACING)
 
 
-def _numpy_periodic_divergence(value):
+def _numpy_periodic_divergence(value: Any) -> Any:
     return (np.roll(value, -1) - np.roll(value, 1)) / (2.0 * _QUASILINEAR_ROOT_SPACING)
 
 
-def _numpy_quasilinear_residual(value, previous):
+def _numpy_quasilinear_residual(value: Any, previous: Any) -> Any:
     coefficient = 0.02 + 0.8 * value * value
     diffusion = _numpy_periodic_divergence(coefficient * _numpy_periodic_gradient(value))
     return value - previous - _QUASILINEAR_ROOT_STEP * diffusion
 
 
-def _jax_diagonal_polynomial(value, parameters):
+def _jax_diagonal_polynomial(value: Any, parameters: Any) -> Any:
     return value * value - parameters
 
 
-def _numpy_diagonal_polynomial(value, parameters):
+def _numpy_diagonal_polynomial(value: Any, parameters: Any) -> Any:
     return value * value - parameters
 
 
-def _jax_brown_almost_linear(value, parameters):
+def _jax_brown_almost_linear(value: Any, parameters: Any) -> Any:
     del parameters
     return jnp.concatenate(
         [
@@ -400,7 +400,7 @@ def _jax_brown_almost_linear(value, parameters):
     )
 
 
-def _numpy_brown_almost_linear(value, parameters):
+def _numpy_brown_almost_linear(value: Any, parameters: Any) -> Any:
     del parameters
     return np.concatenate(
         [
@@ -410,26 +410,26 @@ def _numpy_brown_almost_linear(value, parameters):
     )
 
 
-def _jax_domain_restricted(value, parameters):
+def _jax_domain_restricted(value: Any, parameters: Any) -> Any:
     return jnp.where(value > 0.0, jnp.log(value) - parameters, jnp.nan)
 
 
-def _numpy_domain_restricted(value, parameters):
+def _numpy_domain_restricted(value: Any, parameters: Any) -> Any:
     safe = np.maximum(value, np.finfo(np.float64).tiny)
     return np.where(value > 0.0, np.log(safe) - parameters, np.nan)
 
 
-def _all_positive_jax(value, parameters):
+def _all_positive_jax(value: Any, parameters: Any) -> Any:
     del parameters
     return jnp.all(value > 0.0)
 
 
-def _all_positive_numpy(value, parameters):
+def _all_positive_numpy(value: Any, parameters: Any) -> Any:
     del parameters
     return bool(np.all(value > 0.0))
 
 
-def _jax_singular_start_rational(value, parameters):
+def _jax_singular_start_rational(value: Any, parameters: Any) -> Any:
     del parameters
     return jnp.asarray(
         [
@@ -439,34 +439,34 @@ def _jax_singular_start_rational(value, parameters):
     )
 
 
-def _numpy_singular_start_rational(value, parameters):
+def _numpy_singular_start_rational(value: Any, parameters: Any) -> Any:
     del parameters
     with np.errstate(divide="ignore", invalid="ignore"):
         second = 10.0 * value[0] / (value[0] + 0.1) + 2.0 * value[1] ** 2
     return np.asarray([value[0], second])
 
 
-def _singular_domain_jax(value, parameters):
+def _singular_domain_jax(value: Any, parameters: Any) -> Any:
     del parameters
     return value[0] > -0.1
 
 
-def _singular_domain_numpy(value, parameters):
+def _singular_domain_numpy(value: Any, parameters: Any) -> Any:
     del parameters
     return bool(value[0] > -0.1)
 
 
-def _jax_tiny_column(value, parameters):
+def _jax_tiny_column(value: Any, parameters: Any) -> Any:
     del parameters
     return jnp.asarray([value[0] - 2.0, 1e-200 * (value[1] - 3.0)])
 
 
-def _numpy_tiny_column(value, parameters):
+def _numpy_tiny_column(value: Any, parameters: Any) -> Any:
     del parameters
     return np.asarray([value[0] - 2.0, 1e-200 * (value[1] - 3.0)])
 
 
-def _lagged_root_method(case_id, initial):
+def _lagged_root_method(case_id: Any, initial: Any) -> Any:
     space = phx.linalg.ArraySpace(initial.shape, dtype=initial.dtype)
     if case_id == "diagonal-polynomial":
         policy = phx.linalg.LinearSolvePolicy(
@@ -478,7 +478,7 @@ def _lagged_root_method(case_id, initial):
             ),
         )
 
-        def operator(state, args):
+        def operator(state: Any, args: Any) -> Any:
             del args
             return phx.linalg.FunctionLinearOperator(
                 lambda direction: state * direction,
@@ -498,7 +498,7 @@ def _lagged_root_method(case_id, initial):
             ),
         )
 
-        def operator(state, args):
+        def operator(state: Any, args: Any) -> Any:
             del args
             coefficient = _quasilinear_diffusivity(state)
             return phx.linalg.FunctionLinearOperator(
@@ -533,7 +533,7 @@ def _lagged_root_method(case_id, initial):
     )
 
 
-def _make_root_cases():
+def _make_root_cases() -> Any:
     grid = np.arange(_QUASILINEAR_ROOT_SIZE, dtype=np.float64)
     previous = (
         0.45
@@ -648,7 +648,7 @@ def _make_root_cases():
 _ROOT_CASES = _make_root_cases()
 
 
-def _root_cases():
+def _root_cases() -> Any:
     return _ROOT_CASES
 
 
@@ -797,7 +797,7 @@ def _root_raw_observation(
     )
 
 
-def _run_root(case_id, implementation):
+def _run_root(case_id: Any, implementation: Any) -> Any:
     case = _root_cases()[case_id]
     skipped = case.skip(implementation)
     if skipped is not None:
@@ -971,7 +971,7 @@ def _run_root(case_id, implementation):
     )
 
 
-def _least_squares_cases():
+def _least_squares_cases() -> Any:
     time_axis = jnp.linspace(0.0, 1.0, 32)
     observations = 3.0 * jnp.exp(-2.0 * time_axis)
     return {
@@ -1079,7 +1079,7 @@ def _independent_least_squares_certificate(
     }
 
 
-def _run_least_squares(case_id, implementation):
+def _run_least_squares(case_id: Any, implementation: Any) -> Any:
     if case_id == "robust-outlier" and implementation == "phydrax-pounders":
         return _unavailable(
             "least-squares",
@@ -1217,7 +1217,7 @@ def _run_least_squares(case_id, implementation):
     )
 
 
-def _constrained_cases():
+def _constrained_cases() -> Any:
     equality = phx.optim.NonlinearConstraint(
         lambda x, a: jnp.asarray([jnp.sum(x)]),
         lower=1.0,
@@ -1328,7 +1328,7 @@ def _independent_constrained_certificate(
     }
 
 
-def _run_constrained(case_id, implementation):
+def _run_constrained(case_id: Any, implementation: Any) -> Any:
     problem = _constrained_cases()[case_id]
     methods = {
         "phydrax-sqp": phx.optim.SQP(
@@ -1391,7 +1391,7 @@ def _run_constrained(case_id, implementation):
     )
 
 
-def _global_cases():
+def _global_cases() -> Any:
     return {
         "rastrigin": lambda x: (
             10.0 * x.size + jnp.sum(x * x - 10.0 * jnp.cos(2.0 * jnp.pi * x))
@@ -1403,7 +1403,7 @@ def _global_cases():
     }
 
 
-def _run_global(case_id, implementation):
+def _run_global(case_id: Any, implementation: Any) -> Any:
     objective = _global_cases()[case_id]
     problem = phx.optim.MinimizationProblem(
         lambda x, a: objective(x),
@@ -1522,7 +1522,7 @@ def _run_global(case_id, implementation):
     )
 
 
-def _run_differentiation(case_id, implementation):
+def _run_differentiation(case_id: Any, implementation: Any) -> Any:
     if implementation != "phydrax-implicit":
         return None
     problem = phx.nonlinear.NonlinearSystemProblem(lambda x, a: x * x - a)
@@ -1564,7 +1564,7 @@ def _run_differentiation(case_id, implementation):
     )
 
 
-def _run_adversarial(case_id, implementation):
+def _run_adversarial(case_id: Any, implementation: Any) -> Any:
     if implementation != "phydrax-robust":
         return None
     start = time.perf_counter()
@@ -1643,7 +1643,7 @@ def _run_adversarial(case_id, implementation):
     )
 
 
-def _json_solution(value):
+def _json_solution(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, str)):
         return value
     if isinstance(value, float):
@@ -1662,7 +1662,7 @@ def _json_solution(value):
     }
 
 
-def _case_initial_evidence(family: Family, case_id: str):
+def _case_initial_evidence(family: Family, case_id: str) -> Any:
     if family == "root":
         case = _root_cases()[case_id]
         initial = np.asarray(case.initial, dtype=np.float64)
@@ -1705,7 +1705,7 @@ def _case_initial_evidence(family: Family, case_id: str):
     return initial, args, fingerprint
 
 
-def _runner_payload(family: Family, case_id: str):
+def _runner_payload(family: Family, case_id: str) -> Any:
     initial, args, fingerprint = _case_initial_evidence(family, case_id)
     if family == "root":
         case = _root_cases()[case_id]
@@ -1742,9 +1742,9 @@ def _external_raw_observation(
     family: Family,
     case_id: str,
     implementation: str,
-    response,
+    response: Any,
     elapsed: float,
-):
+) -> Any:
     if not response["available"]:
         return _unavailable(
             family,
@@ -1930,7 +1930,7 @@ def _execute_raw_once(
             )
     holder: list[_RawObservation | None] = []
 
-    def callback():
+    def callback() -> Any:
         raw = runner(case_id, implementation)
         holder.append(raw)
         if raw is None:
@@ -1981,14 +1981,14 @@ def _execute_raw_once(
     )
 
 
-def _finite_or_none(value: float | None):
+def _finite_or_none(value: float | None) -> Any:
     if value is None:
         return None
     value_ = float(value)
     return value_ if math.isfinite(value_) else None
 
 
-def _certificate_contract(family: Family):
+def _certificate_contract(family: Family) -> Any:
     return {
         "root": ("physical-root-residual", "equation", 1e-8),
         "least-squares": (
@@ -2011,7 +2011,7 @@ def _certificate_contract(family: Family):
     }[family]
 
 
-def _backend_claim_scope(family: Family):
+def _backend_claim_scope(family: Family) -> Any:
     return {
         "root": "equation",
         "least-squares": "local",

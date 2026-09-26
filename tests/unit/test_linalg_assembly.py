@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import opt_einsum as oe
@@ -13,7 +16,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _materialized_diagonal(operator):
+def _materialized_diagonal(operator: Any) -> Any:
     matrix = la.materialize(
         operator,
         la.MaterializationPolicy(max_entries=100_000, max_bytes=1_000_000),
@@ -21,7 +24,7 @@ def _materialized_diagonal(operator):
     return jnp.diagonal(matrix, axis1=-2, axis2=-1)
 
 
-def test_exact_diagonal_assembly_covers_structured_operator_families():
+def test_exact_diagonal_assembly_covers_structured_operator_families() -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
     operators = (
         la.DenseLinearOperator(
@@ -75,7 +78,7 @@ def test_exact_diagonal_assembly_covers_structured_operator_families():
         )
 
 
-def test_composite_block_and_kronecker_diagonals_are_structural_and_jittable():
+def test_composite_block_and_kronecker_diagonals_are_structural_and_jittable() -> None:
     factor_space = la.ArraySpace((2,), dtype=jnp.float64)
     left = la.DiagonalLinearOperator(jnp.asarray([2.0, 3.0]), space=factor_space)
     right = la.DenseLinearOperator(
@@ -102,7 +105,7 @@ def test_composite_block_and_kronecker_diagonals_are_structural_and_jittable():
         assert jnp.allclose(actual, _materialized_diagonal(operator))
 
 
-def test_sparse_and_batched_dense_diagonal_assembly():
+def test_sparse_and_batched_dense_diagonal_assembly() -> None:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 2, 1, 2], dtype=jnp.int32),
         jnp.asarray([0, 0, 1, 2], dtype=jnp.int32),
@@ -128,7 +131,7 @@ def test_sparse_and_batched_dense_diagonal_assembly():
     )
 
 
-def test_dense_fallback_is_explicit_and_budget_bounded():
+def test_dense_fallback_is_explicit_and_budget_bounded() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     matrix = jnp.asarray([[2.0, 1.0], [3.0, 4.0]])
     operator = la.FunctionLinearOperator(
@@ -152,7 +155,7 @@ def test_dense_fallback_is_explicit_and_budget_bounded():
     assert jnp.array_equal(diagonal, jnp.asarray([2.0, 4.0]))
 
 
-def test_jacobi_uses_shared_structural_diagonal_without_dense_budget():
+def test_jacobi_uses_shared_structural_diagonal_without_dense_budget() -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
     left = la.DiagonalLinearOperator(jnp.asarray([2.0, 4.0, 5.0]), space=space)
     right = la.DiagonalLinearOperator(jnp.asarray([1.0, 2.0, 5.0]), space=space)
@@ -173,7 +176,7 @@ def test_jacobi_uses_shared_structural_diagonal_without_dense_budget():
     assert jnp.allclose(preconditioner.apply(residual), jnp.asarray([0.5, 0.5, 0.5]))
 
 
-def test_local_blocks_preserve_grouped_event_and_trailing_rhs_axes():
+def test_local_blocks_preserve_grouped_event_and_trailing_rhs_axes() -> None:
     blocks = jnp.asarray(
         [
             [[2.0, 1.0, -1.0], [0.0, 3.0, 2.0]],
@@ -197,7 +200,7 @@ def test_local_blocks_preserve_grouped_event_and_trailing_rhs_axes():
     )
 
 
-def test_local_block_adjoint_respects_nonuniform_coordinate_pairings():
+def test_local_block_adjoint_respects_nonuniform_coordinate_pairings() -> None:
     source_weights = jnp.asarray([[2.0, 3.0], [5.0, 7.0]])
     target_weights = jnp.asarray([[11.0, 13.0], [17.0, 19.0]])
     source = la.ArraySpace(
@@ -235,7 +238,7 @@ def test_local_block_adjoint_respects_nonuniform_coordinate_pairings():
     )
 
 
-def test_local_block_diagonal_materialization_and_assembly():
+def test_local_block_diagonal_materialization_and_assembly() -> None:
     blocks = jnp.asarray(
         [
             [[2.0, 1.0], [3.0, 4.0]],
@@ -256,7 +259,7 @@ def test_local_block_diagonal_materialization_and_assembly():
     assert jnp.allclose(dense, jax.scipy.linalg.block_diag(*blocks))
 
 
-def test_local_block_preconditioner_uses_batched_lu_and_relaxation():
+def test_local_block_preconditioner_uses_batched_lu_and_relaxation() -> None:
     blocks = jnp.asarray(
         [
             [[2.0, 1.0], [0.0, 3.0]],
@@ -275,7 +278,7 @@ def test_local_block_preconditioner_uses_batched_lu_and_relaxation():
         la.LocalBlockPreconditioner(blocks.at[1].set(0.0))
 
 
-def test_local_block_positive_definite_factorization_uses_pairing_transform():
+def test_local_block_positive_definite_factorization_uses_pairing_transform() -> None:
     metric = jnp.asarray([[2.0, 5.0], [3.0, 7.0]])
     metric_sqrt = jnp.sqrt(metric)
     hermitian = jnp.asarray(
@@ -302,7 +305,9 @@ def test_local_block_positive_definite_factorization_uses_pairing_transform():
     assert jnp.allclose(preconditioner.apply(residual), solution)
 
 
-def test_structured_local_block_solve_is_exact_resource_bounded_and_differentiable():
+def test_structured_local_block_solve_is_exact_resource_bounded_and_differentiable() -> (
+    None
+):
     blocks = jnp.asarray(
         [
             [[3.0, 1.0], [0.0, 2.0]],
@@ -327,7 +332,7 @@ def test_structured_local_block_solve_is_exact_resource_bounded_and_differentiab
     assert bool(result.successful)
     assert jnp.allclose(result.value, expected)
 
-    def objective(values):
+    def objective(values: Any) -> Any:
         dynamic = la.LocalBlockDiagonalLinearOperator(
             values,
             operator_id="local-block-gradient",
@@ -340,7 +345,7 @@ def test_structured_local_block_solve_is_exact_resource_bounded_and_differentiab
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_local_elimination_preserves_trailing_right_hand_side_axes():
+def test_local_elimination_preserves_trailing_right_hand_side_axes() -> None:
     plan = la.LocalEliminationPlan(3, jnp.asarray([1, 2]))
     matrix = jnp.asarray([[[4.0, 1.0, -1.0], [1.0, 3.0, 0.5], [-1.0, 0.5, 2.5]]])
     right_hand_side = jnp.asarray([[[1.0, -2.0], [3.0, 0.5], [-1.0, 4.0]]])
@@ -356,7 +361,9 @@ def test_local_elimination_preserves_trailing_right_hand_side_axes():
     assert jnp.allclose(matrix[0] @ solution[0], right_hand_side[0])
 
 
-def test_sparse_assembly_handles_canonical_algebraic_graphs_and_weighted_adjoint():
+def test_sparse_assembly_handles_canonical_algebraic_graphs_and_weighted_adjoint() -> (
+    None
+):
     weights = jnp.asarray([2.0, 3.0, 5.0])
     space = la.ArraySpace(
         (3,),
@@ -405,10 +412,10 @@ def test_sparse_assembly_handles_canonical_algebraic_graphs_and_weighted_adjoint
     )
 
 
-def test_sparse_assembly_refresh_reuses_structure_and_rejects_pattern_changes():
+def test_sparse_assembly_refresh_reuses_structure_and_rejects_pattern_changes() -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
 
-    def graph(relation, coefficients):
+    def graph(relation: Any, coefficients: Any) -> Any:
         sparse = phx.sparse.SparseCoordinateOperator(
             relation,
             coefficients,
@@ -474,7 +481,7 @@ def test_sparse_assembly_refresh_reuses_structure_and_rejects_pattern_changes():
         )
 
 
-def test_sparse_assembly_refresh_uses_current_numeric_property_evidence():
+def test_sparse_assembly_refresh_uses_current_numeric_property_evidence() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1]),
@@ -517,7 +524,7 @@ def test_sparse_assembly_refresh_uses_current_numeric_property_evidence():
     assert refreshed.operator.properties.certifies("self_adjoint")
 
 
-def test_spineax_storage_rejects_complex_values_before_provider_analysis():
+def test_spineax_storage_rejects_complex_values_before_provider_analysis() -> None:
     from phydrax.linalg.backends._spineax import _storage
 
     space = la.ArraySpace((2,), dtype=jnp.complex128)
@@ -538,7 +545,7 @@ def test_spineax_storage_rejects_complex_values_before_provider_analysis():
         _storage(la.LinearSystem(operator))
 
 
-def test_sparse_assembly_dense_fallback_is_explicit_and_resource_bounded():
+def test_sparse_assembly_dense_fallback_is_explicit_and_resource_bounded() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     matrix = jnp.asarray([[2.0, 0.0], [3.0, 4.0]])
     operator = la.FunctionLinearOperator(
@@ -582,7 +589,7 @@ def test_sparse_assembly_dense_fallback_is_explicit_and_resource_bounded():
     )
 
 
-def test_sparse_assembly_covers_block_and_kronecker_structures():
+def test_sparse_assembly_covers_block_and_kronecker_structures() -> None:
     first = la.TridiagonalLinearOperator(
         jnp.asarray([1.0, 2.0]),
         jnp.asarray([3.0, 4.0, 5.0]),
@@ -620,7 +627,7 @@ def test_sparse_assembly_covers_block_and_kronecker_structures():
         )
 
 
-def test_uniform_block_assembly_extracts_sparse_graph_blocks_without_densifying():
+def test_uniform_block_assembly_extracts_sparse_graph_blocks_without_densifying() -> None:
     space = la.ArraySpace((4,), dtype=jnp.float64)
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1, 2, 3, 2, 0]),
@@ -657,7 +664,7 @@ def test_uniform_block_assembly_extracts_sparse_graph_blocks_without_densifying(
         la.assemble_uniform_blocks(operator, 3)
 
 
-def test_block_jacobi_builder_is_resource_aware_jittable_and_refreshable():
+def test_block_jacobi_builder_is_resource_aware_jittable_and_refreshable() -> None:
     properties = la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -749,7 +756,7 @@ def test_block_jacobi_builder_is_resource_aware_jittable_and_refreshable():
     assert "materialization" in rejected.reason
 
 
-def test_batched_banded_structured_solve_preserves_batch_and_rhs_axes():
+def test_batched_banded_structured_solve_preserves_batch_and_rhs_axes() -> None:
     bands = jnp.asarray(
         [
             [[0.0, -1.0, -1.0], [0.0, 4.0, 4.0], [-1.0, -1.0, 0.0]],

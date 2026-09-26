@@ -2,13 +2,16 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import opt_einsum as oe
 
 import phydrax as phx
 
 
-def _triangle_graph(positions=None) -> phx.graph.GraphIR:
+def _triangle_graph(positions: Any = None) -> phx.graph.GraphIR:
     if positions is None:
         positions = jnp.array(
             [
@@ -29,7 +32,7 @@ def _triangle_graph(positions=None) -> phx.graph.GraphIR:
     )
 
 
-def test_euclidean_edge_features_are_rigid_motion_invariant():
+def test_euclidean_edge_features_are_rigid_motion_invariant() -> None:
     graph = phx.graph.euclidean_edge_features(_triangle_graph())
     rotation = jnp.array([[0.0, -1.0], [1.0, 0.0]])
     translation = jnp.array([3.0, -2.0])
@@ -45,7 +48,7 @@ def test_euclidean_edge_features_are_rigid_motion_invariant():
     assert jnp.allclose(moved.edges["relative"], expected_relative)
 
 
-def test_gaussian_radial_basis_expands_distances():
+def test_gaussian_radial_basis_expands_distances() -> None:
     out = phx.graph.gaussian_radial_basis(
         jnp.array([[0.0], [1.0]]),
         jnp.array([0.0, 1.0]),
@@ -57,7 +60,7 @@ def test_gaussian_radial_basis_expands_distances():
     assert jnp.allclose(out[1], jnp.array([jnp.exp(-2.0), 1.0]))
 
 
-def test_equivariant_graph_convolution_respects_rigid_motion():
+def test_equivariant_graph_convolution_respects_rigid_motion() -> None:
     graph = _triangle_graph()
     moved_positions = graph.nodes["positions"] @ jnp.array([[0.0, -1.0], [1.0, 0.0]]).T
     moved = _triangle_graph(moved_positions + jnp.array([4.0, 5.0]))
@@ -76,10 +79,12 @@ def test_equivariant_graph_convolution_respects_rigid_motion():
     assert jnp.allclose(moved_out.nodes["vector"], expected_vector)
 
 
-def test_equivariant_graph_convolution_supports_radial_weights_and_normalization():
+def test_equivariant_graph_convolution_supports_radial_weights_and_normalization() -> (
+    None
+):
     graph = phx.graph.euclidean_edge_features(_triangle_graph())
 
-    def radial(edges, distance, unit, sent, recv):
+    def radial(edges: Any, distance: Any, unit: Any, sent: Any, recv: Any) -> Any:
         del distance, unit, sent, recv
         return 1.0 / edges["distance"][:, 0]
 
@@ -95,7 +100,7 @@ def test_equivariant_graph_convolution_supports_radial_weights_and_normalization
     assert out.nodes["vector"].shape == (3, 2, 1)
 
 
-def test_equivariant_graph_convolution_wraps_as_graph_model():
+def test_equivariant_graph_convolution_wraps_as_graph_model() -> None:
     graph = _triangle_graph()
     domain = phx.domain.GraphDomain(graph)
     nodes = domain.component({"graph": phx.domain.Nodes()})
@@ -104,7 +109,7 @@ def test_equivariant_graph_convolution_wraps_as_graph_model():
     )
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node.get("features")[0]
 
     model = domain.GraphModel(

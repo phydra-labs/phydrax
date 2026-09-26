@@ -32,7 +32,7 @@ from phydrax.ml.clustering import (
 )
 
 
-def test_kmeans_preserves_case_sample_feature_and_ignored_target_axes():
+def test_kmeans_preserves_case_sample_feature_and_ignored_target_axes() -> None:
     features = jnp.array(
         [
             [[-3.0], [3.0], [-2.0], [2.0]],
@@ -46,8 +46,10 @@ def test_kmeans_preserves_case_sample_feature_and_ignored_target_axes():
 
     assert result.status.shape == (2,)
     assert jnp.all(result.status == ML_SUCCESS)
+    # ty: ignore[unresolved-attribute]
     assert model.centers.shape == (2, 2, 1)
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         model.centers,
         jnp.array([[[-2.5], [2.5]], [[10.5], [19.5]]]),
         atol=1e-5,
@@ -58,7 +60,7 @@ def test_kmeans_preserves_case_sample_feature_and_ignored_target_axes():
     assert recipe.cluster_count == 2
 
 
-def test_kmeans_product_weights_sample_and_feature_masks_route_to_the_fit():
+def test_kmeans_product_weights_sample_and_feature_masks_route_to_the_fit() -> None:
     features = jnp.array([[0.0], [10.0], [100.0], [999.0]])
     batch = MLBatch(
         features,
@@ -74,13 +76,15 @@ def test_kmeans_product_weights_sample_and_feature_masks_route_to_the_fit():
     ).fit_batch(batch)
 
     assert product.status == ML_SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(product.as_trainable().centers[0, 0], 6.0, atol=1e-6)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(statistical.as_trainable().centers[0, 0], 7.5, atol=1e-6)
     assert jnp.allclose(product.diagnostics.cluster_mass, jnp.array([5.0]))
     assert jnp.allclose(product.diagnostics.effective_samples, 25.0 / 13.0)
 
 
-def test_hard_and_soft_cluster_models_have_exact_ties_and_distinct_gradients():
+def test_hard_and_soft_cluster_models_have_exact_ties_and_distinct_gradients() -> None:
     centers = jnp.array([[-1.0], [1.0]])
     active = jnp.array([True, True])
     hard = HardClusterModel(centers, active, method="test-hard")
@@ -102,7 +106,7 @@ def test_hard_and_soft_cluster_models_have_exact_ties_and_distinct_gradients():
     assert jax.vmap(soft)(jnp.array([[-0.5], [0.5]])).shape == (2, 2)
 
 
-def test_soft_kmeans_exercises_declared_prediction_and_fit_gradients():
+def test_soft_kmeans_exercises_declared_prediction_and_fit_gradients() -> None:
     features = jnp.array([[-2.0], [2.0], [-1.5], [1.5]])
     weights = jnp.array([1.0, 1.2, 0.9, 1.1])
     point = jnp.array([0.25])
@@ -128,8 +132,14 @@ def test_soft_kmeans_exercises_declared_prediction_and_fit_gradients():
     )(weights)
     parameter_gradient = jax.grad(
         lambda centers: SoftClusterModel(
-            centers, model.active_clusters, model.temperature, method="parameter-gradient"
+            centers,
+            # ty: ignore[unresolved-attribute]
+            model.active_clusters,
+            # ty: ignore[unresolved-attribute]
+            model.temperature,
+            method="parameter-gradient",
         )(point)[0]
+        # ty: ignore[unresolved-attribute]
     )(model.centers)
     temperature_gradient = jax.grad(
         lambda temperature: (
@@ -162,7 +172,7 @@ def test_soft_kmeans_exercises_declared_prediction_and_fit_gradients():
     assert jnp.isfinite(temperature_gradient)
 
 
-def test_derivative_admission_distinguishes_hard_and_soft_fits():
+def test_derivative_admission_distinguishes_hard_and_soft_fits() -> None:
     features = jnp.asarray([[-2.0], [2.0], [-1.5], [1.5]])
     request = DifferentiationRequest((DerivativeSurface.FIT_FEATURES,))
     hard = KMeans(2, initialization="first").fit_batch(MLBatch(features))
@@ -195,7 +205,7 @@ def test_derivative_admission_distinguishes_hard_and_soft_fits():
         )
 
 
-def test_kmedoids_returns_observations_and_uses_deterministic_manhattan_ties():
+def test_kmedoids_returns_observations_and_uses_deterministic_manhattan_ties() -> None:
     features = jnp.array([[0.0], [9.0], [2.0], [10.0]])
     result = KMedoids(
         2, metric="manhattan", initialization="first", max_iterations=16
@@ -203,9 +213,11 @@ def test_kmedoids_returns_observations_and_uses_deterministic_manhattan_ties():
     model = result.as_trainable()
 
     assert result.status == ML_SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.centers, jnp.array([[0.0], [9.0]]))
     assert jnp.array_equal(model(features), jnp.array([0, 1, 0, 1]))
     assert jnp.all(
+        # ty: ignore[unresolved-attribute]
         jnp.any(model.centers[:, None, :] == features[None, :, :], axis=(1, 2))
     )
     assert result.derivative_contract.route is DerivativeRoute.STOPPED
@@ -214,7 +226,7 @@ def test_kmedoids_returns_observations_and_uses_deterministic_manhattan_ties():
     )
 
 
-def test_minibatch_kmeans_requires_a_key_and_replays_it_exactly():
+def test_minibatch_kmeans_requires_a_key_and_replays_it_exactly() -> None:
     features = jnp.array([[-3.0], [3.0], [-2.0], [2.0], [-1.0], [1.0]])
     recipe = MiniBatchKMeans(
         2,
@@ -232,13 +244,14 @@ def test_minibatch_kmeans_requires_a_key_and_replays_it_exactly():
     second = recipe.fit_batch(MLBatch(features), key=key)
 
     assert first.status == ML_SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(first.as_trainable().centers, second.as_trainable().centers)
     assert jnp.array_equal(first.model(features), second.model(features))
     assert first.derivative_contract.route is DerivativeRoute.STOPPED
     assert "explicit random key" in first.derivative_contract.conditions
 
 
-def test_streaming_kmeans_updates_immutably_with_hard_and_soft_models():
+def test_streaming_kmeans_updates_immutably_with_hard_and_soft_models() -> None:
     state = StreamingKMeans(jnp.array([[0.0], [10.0]]))
     updated = state.update(
         jnp.array([[2.0], [8.0], [100.0]]),
@@ -257,18 +270,20 @@ def test_streaming_kmeans_updates_immutably_with_hard_and_soft_models():
     assert jnp.allclose(jnp.sum(probability, axis=-1), 1.0)
 
 
-def test_kmeans_supports_complex_features_with_real_distances_and_centers():
+def test_kmeans_supports_complex_features_with_real_distances_and_centers() -> None:
     features = jnp.array([[-2.0 + 1.0j], [2.0 - 1.0j], [-1.0 + 1.0j], [1.0 - 1.0j]])
     result = KMeans(2, initialization="first").fit_batch(MLBatch(features))
     model = result.as_trainable()
 
     assert result.status == ML_SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert jnp.issubdtype(model.centers.dtype, jnp.complexfloating)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.centers, jnp.array([[-1.5 + 1.0j], [1.5 - 1.0j]]))
     assert jnp.array_equal(model(features), jnp.array([0, 1, 0, 1]))
 
 
-def test_kmeans_reports_empty_underfull_nonfinite_and_nonconverged_cases():
+def test_kmeans_reports_empty_underfull_nonfinite_and_nonconverged_cases() -> None:
     constant = KMeans(
         2, initialization="first", empty_policy="error", max_iterations=3
     ).fit_batch(MLBatch(jnp.ones((3, 1))))
@@ -295,7 +310,7 @@ def test_kmeans_reports_empty_underfull_nonfinite_and_nonconverged_cases():
         KMeans(4, initialization="first").fit_batch(MLBatch(jnp.ones((3, 1))))
 
 
-def test_case_bound_models_reject_missing_or_wrong_case_axes():
+def test_case_bound_models_reject_missing_or_wrong_case_axes() -> None:
     cases = jnp.array(
         [
             [[-2.0], [2.0], [-1.0], [1.0]],

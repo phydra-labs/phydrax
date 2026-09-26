@@ -54,7 +54,9 @@ def _support_bytes(profile: CapabilityProfile) -> bytes:
     ).encode("utf-8")
 
 
-def test_periodic_support_requires_signed_profile_evidence_and_exact_dependencies():
+def test_periodic_support_requires_signed_profile_evidence_and_exact_dependencies() -> (
+    None
+):
     periodic_support = next(
         item
         for item in periodic_chemistry_support_tuples()
@@ -181,7 +183,7 @@ def test_periodic_support_requires_signed_profile_evidence_and_exact_dependencie
     )
 
 
-def test_profile_maturity_does_not_change_periodic_support_tuple_bytes():
+def test_profile_maturity_does_not_change_periodic_support_tuple_bytes() -> None:
     support = periodic_chemistry_support_tuples()[0]
     candidate = CapabilityProfile(
         support.capability,

@@ -19,7 +19,7 @@ from phydrax.tensor_network._quantum_lattice import (
 )
 
 
-def test_mpo_lowerer_preserves_heterogeneous_spin_boson_product():
+def test_mpo_lowerer_preserves_heterogeneous_spin_boson_product() -> None:
     spin = LocalSpacePlan.spin("spin", 1)
     boson = LocalSpacePlan.boson("phonon", 3)
     sigma_z = np.diag((-1.0, 1.0))

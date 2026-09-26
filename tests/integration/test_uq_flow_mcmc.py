@@ -9,7 +9,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_flow_nuts_recovers_conjugate_posterior_and_predictive_axes():
+def test_flow_nuts_recovers_conjugate_posterior_and_predictive_axes() -> None:
     sensor_x = jnp.linspace(0.05, 0.95, 16)
     basis = 0.5 * sensor_x * (1.0 - sensor_x)
     observation_scale = 0.05
@@ -73,9 +73,11 @@ def test_flow_nuts_recovers_conjugate_posterior_and_predictive_axes():
     assert result.diagnostics.max_rhat < 1.1
     assert result.diagnostics.divergence_count == 0
     assert jnp.sum(result.global_accepted_count) > 0
+    # ty: ignore[unresolved-attribute]
     assert prediction.samples.dims == (
         "__phydra_uq_chain",
         "__phydra_uq_draw",
         "x",
     )
+    # ty: ignore[unresolved-attribute]
     assert prediction.samples.shape == (4, 120, 9)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,14 @@ import pytest
 import phydrax as phx
 
 
-def _level(index, *, shape=(5,), parent=None, transfer=None, coupling="shared"):
+def _level(
+    index: Any,
+    *,
+    shape: Any = (5,),
+    parent: Any = None,
+    transfer: Any = None,
+    coupling: Any = "shared",
+) -> Any:
     return phx.stochastic.StochasticLevelSpec(
         f"level-{index}",
         index,
@@ -26,7 +36,7 @@ def _level(index, *, shape=(5,), parent=None, transfer=None, coupling="shared"):
     )
 
 
-def test_hierarchy_validates_order_parent_and_transfer_identity():
+def test_hierarchy_validates_order_parent_and_transfer_identity() -> None:
     levels = (
         _level(0),
         _level(1, parent="level-0"),
@@ -76,7 +86,7 @@ def test_hierarchy_validates_order_parent_and_transfer_identity():
         )
 
 
-def test_multi_axis_and_independent_noise_are_explicit():
+def test_multi_axis_and_independent_noise_are_explicit() -> None:
     level = phx.stochastic.StochasticLevelSpec(
         "base",
         0,
@@ -97,7 +107,7 @@ def test_multi_axis_and_independent_noise_are_explicit():
     assert hierarchy.refinement_axes == ("time", "space")
 
 
-def test_tensor_grid_transfer_preserves_nested_nodes_constants_and_jit():
+def test_tensor_grid_transfer_preserves_nested_nodes_constants_and_jit() -> None:
     transfer = phx.discretization.TensorGridStateTransfer(
         (5, 5),
         (3, 3),
@@ -121,7 +131,7 @@ def test_tensor_grid_transfer_preserves_nested_nodes_constants_and_jit():
     assert jnp.allclose(weighted.prolong(jnp.ones((3,))), 1.0)
 
 
-def test_spectral_and_identity_transfers_preserve_trailing_channels():
+def test_spectral_and_identity_transfers_preserve_trailing_channels() -> None:
     identity = phx.discretization.IdentityStateTransfer((3,))
     state = jnp.arange(6.0).reshape((3, 2))
     assert identity.restrict(state) is state

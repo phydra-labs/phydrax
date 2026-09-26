@@ -836,8 +836,14 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
             if state.ksgs is None or ksgs_transport is None:
                 raise ValueError("Prepared KSGS transport requires KSGS state.")
             # KSGS state presence fixes kinetic energy and raw production above.
-            assert kinetic_energy is not None
-            assert ksgs_raw_production_density is not None
+            if not (kinetic_energy is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: kinetic_energy is not None."
+                )
+            if not (ksgs_raw_production_density is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: ksgs_raw_production_density is not None."
+                )
             ksgs_gradient = self.operators.nonorthogonal_face_gradient(
                 kinetic_energy, "KSGS kinetic energy"
             )
@@ -1021,7 +1027,10 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
         modeled_energy_split_residual = jnp.asarray(0.0, dtype=density.dtype)
         if ksgs_raw_production_density is not None:
             # Raw production exists only with KSGS, which also limits production.
-            assert ksgs_production_density is not None
+            if not (ksgs_production_density is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: ksgs_production_density is not None."
+                )
             modeled_energy_split_residual = jnp.sum(
                 discretization.cell_volumes.astype(density.dtype)
                 * (

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,11 +12,11 @@ import pytest
 import phydrax as phx
 
 
-def _triangle():
+def _triangle() -> Any:
     return phx.discretization.polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
 
 
-def _u1_kernel(step_size=0.12):
+def _u1_kernel(step_size: Any = 0.12) -> Any:
     action = phx.operators.path_integral.CompactU1GaugeMeasure(_triangle(), beta=0.7)
     target = phx.operators.path_integral.compact_geometric_target_from_lattice_action(
         action
@@ -26,7 +29,7 @@ def _u1_kernel(step_size=0.12):
     return action, kernel
 
 
-def _su2_kernel(step_size=0.08):
+def _su2_kernel(step_size: Any = 0.08) -> Any:
     topology = _triangle()
     paths = phx.discretization.prepare_cell_boundary_paths(topology)
     space = phx.graph.MatrixGaugeLinkSpace(
@@ -49,7 +52,7 @@ def _su2_kernel(step_size=0.08):
     return action, kernel
 
 
-def test_flat_torus_hmc_preserves_membership_and_replays_semantic_keys():
+def test_flat_torus_hmc_preserves_membership_and_replays_semantic_keys() -> None:
     action, kernel = _u1_kernel()
     positions = jnp.stack(
         (
@@ -78,7 +81,7 @@ def test_flat_torus_hmc_preserves_membership_and_replays_semantic_keys():
     assert jnp.all(jnp.isfinite(first.energy_error))
 
 
-def test_su2_hmc_preserves_group_and_uses_per_group_metric():
+def test_su2_hmc_preserves_group_and_uses_per_group_metric() -> None:
     action, kernel = _su2_kernel()
     identity = action.link_space.identity()
     coordinates = jnp.full(action.local_coordinate_shape, 0.03)
@@ -102,7 +105,7 @@ def test_su2_hmc_preserves_group_and_uses_per_group_metric():
     assert not jnp.any(result.membership_failure)
 
 
-def test_compact_group_hmc_adaptation_returns_frozen_kernel():
+def test_compact_group_hmc_adaptation_returns_frozen_kernel() -> None:
     action, kernel = _u1_kernel(step_size=0.1)
     state = phx.sampling.initialize_compact_group_hamiltonian_state(
         kernel,
@@ -127,7 +130,7 @@ def test_compact_group_hmc_adaptation_returns_frozen_kernel():
     assert adaptation.final_state.kernel_id == adaptation.kernel.kernel_id
 
 
-def test_compact_group_hmc_rejects_state_from_another_kernel():
+def test_compact_group_hmc_rejects_state_from_another_kernel() -> None:
     action, first = _u1_kernel(step_size=0.1)
     _, second = _u1_kernel(step_size=0.2)
     state = phx.sampling.initialize_compact_group_hamiltonian_state(
@@ -144,7 +147,7 @@ def test_compact_group_hmc_rejects_state_from_another_kernel():
         )
 
 
-def test_compact_group_hmc_rejects_wrong_measure_and_nonmembers():
+def test_compact_group_hmc_rejects_wrong_measure_and_nonmembers() -> None:
     scalar = phx.operators.path_integral.Phi4LatticeAction(
         phx.discretization.StructuredCochainBridge(
             phx.discretization.TensorGridPlan(

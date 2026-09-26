@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -71,7 +73,7 @@ def test_pallas_particle_pair_acceleration_matches_jax_and_gradients() -> None:
     mass = jnp.asarray([1.0, 0.7, 1.3])
     valid = jnp.asarray([True, False, True])
 
-    def evaluate(value, backend):
+    def evaluate(value: Any, backend: Any) -> Any:
         return spatial_pair_acceleration(
             value,
             mass,
@@ -94,7 +96,7 @@ def test_pallas_particle_pair_acceleration_matches_jax_and_gradients() -> None:
     relative_tangent = jnp.asarray([[0.1, 0.2, -0.3], [-0.4, 0.1, 0.2], [0.3, -0.2, 0.1]])
     mass_tangent = jnp.asarray([0.2, -0.1, 0.4])
 
-    def evaluate_both(current_relative, current_mass, backend):
+    def evaluate_both(current_relative: Any, current_mass: Any, backend: Any) -> Any:
         return spatial_pair_acceleration(
             current_relative,
             current_mass,
@@ -156,7 +158,7 @@ def test_pallas_uniform_fmm_near_kernel_matches_jax() -> None:
     masses = jnp.asarray([1.0, 0.7, 1.2, 0.9])
     tree = phx.solver.ParticleOctreePlan3D((1.0, 1.0, 1.0), 4).prepare(positions, masses)
 
-    def evaluate(backend):
+    def evaluate(backend: Any) -> Any:
         return phx.solver.UniformFMMPlan(
             1.0,
             phx.solver.CartesianExpansionSpace(2),

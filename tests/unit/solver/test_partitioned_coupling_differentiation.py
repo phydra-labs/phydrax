@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 cpl = phx.solver.coupling
 
 
-def _parameterized_graph():
+def _parameterized_graph() -> Any:
     space = phx.linalg.ArraySpace(
         (1,), dtype=jnp.float64, space_id="differentiable-interface"
     )
@@ -27,12 +30,12 @@ def _parameterized_graph():
         fixed_topology=True,
     )
 
-    def advance_a(window, state, inputs, parameter):
+    def advance_a(window: Any, state: Any, inputs: Any, parameter: Any) -> Any:
         del window, state, parameter
         value = 0.5 * inputs[0]
         return cpl.CouplingSubsystemResult(value, (value,), successful=True, status=0)
 
-    def advance_b(window, state, inputs, parameter):
+    def advance_b(window: Any, state: Any, inputs: Any, parameter: Any) -> Any:
         del window, state
         value = 0.5 * (inputs[0] + parameter)
         return cpl.CouplingSubsystemResult(value, (value,), successful=True, status=0)
@@ -63,7 +66,7 @@ def _parameterized_graph():
     return graph, states, values
 
 
-def _root_policy():
+def _root_policy() -> Any:
     return cpl.ImplicitCouplingPolicy(
         phx.nonlinear.NewtonKrylov(),
         phx.nonlinear.NonlinearTermination(
@@ -78,7 +81,7 @@ def _root_policy():
     )
 
 
-def test_explicit_algorithmic_derivative_matches_single_sweep_map():
+def test_explicit_algorithmic_derivative_matches_single_sweep_map() -> None:
     graph, states, values = _parameterized_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -89,7 +92,7 @@ def test_explicit_algorithmic_derivative_matches_single_sweep_map():
         args=jnp.asarray(1.0, dtype=jnp.float64),
     )
 
-    def observable(parameter):
+    def observable(parameter: Any) -> Any:
         result = cpl.advance_coupling_window(
             prepared, prepared.reference_state, 1.0, parameter
         )
@@ -98,7 +101,7 @@ def test_explicit_algorithmic_derivative_matches_single_sweep_map():
     assert float(jax.grad(observable)(jnp.asarray(1.0))) == pytest.approx(0.5)
 
 
-def test_explicit_coupling_vectorizes_over_runtime_parameters():
+def test_explicit_coupling_vectorizes_over_runtime_parameters() -> None:
     graph, states, values = _parameterized_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -118,7 +121,7 @@ def test_explicit_coupling_vectorizes_over_runtime_parameters():
     assert jnp.allclose(values, jnp.asarray([0.5, 1.0]))
 
 
-def test_none_differentiation_policy_stops_returned_state_gradients():
+def test_none_differentiation_policy_stops_returned_state_gradients() -> None:
     graph, states, values = _parameterized_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -138,7 +141,7 @@ def test_none_differentiation_policy_stops_returned_state_gradients():
     assert float(derivative) == pytest.approx(0.0)
 
 
-def test_implicit_root_derivative_matches_analytic_coupled_solution():
+def test_implicit_root_derivative_matches_analytic_coupled_solution() -> None:
     graph, states, values = _parameterized_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -149,7 +152,7 @@ def test_implicit_root_derivative_matches_analytic_coupled_solution():
         args=jnp.asarray(1.0, dtype=jnp.float64),
     )
 
-    def observable(parameter):
+    def observable(parameter: Any) -> Any:
         result = cpl.advance_coupling_window(
             prepared, prepared.reference_state, 1.0, parameter
         )
@@ -167,7 +170,7 @@ def test_implicit_root_derivative_matches_analytic_coupled_solution():
     assert float(reverse) == pytest.approx(float(tangent), abs=1e-9)
 
 
-def test_implicit_root_derivative_composes_across_checkpointed_rollout():
+def test_implicit_root_derivative_composes_across_checkpointed_rollout() -> None:
     graph, states, values = _parameterized_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -182,7 +185,7 @@ def test_implicit_root_derivative_composes_across_checkpointed_rollout():
         replay=phx.solver.FixedStepReplayPolicy("step"),
     )
 
-    def observable(parameter):
+    def observable(parameter: Any) -> Any:
         solution = rollout.rollout(
             prepared,
             window_count=2,
@@ -196,7 +199,7 @@ def test_implicit_root_derivative_composes_across_checkpointed_rollout():
     assert float(derivative) == pytest.approx(1.0 / 3.0, abs=1e-8)
 
 
-def test_implicit_differentiation_rejects_fixed_point_anderson():
+def test_implicit_differentiation_rejects_fixed_point_anderson() -> None:
     graph, states, values = _parameterized_graph()
     policy = cpl.ImplicitCouplingPolicy(
         phx.nonlinear.FixedPointIteration(),

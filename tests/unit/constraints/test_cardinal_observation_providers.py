@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -18,7 +20,7 @@ from phydrax.enforcement._cardinal import (
 from phydrax.enforcement._observation import PointObservationAction
 
 
-def _point_batch(domain: Interval1d, coordinates) -> PointBatch:
+def _point_batch(domain: Interval1d, coordinates: Any) -> PointBatch:
     structure = SampleLayout((("x",),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -29,12 +31,12 @@ def _point_batch(domain: Interval1d, coordinates) -> PointBatch:
     )
 
 
-def test_point_observation_returns_exact_finite_values_and_selected_components():
+def test_point_observation_returns_exact_finite_values_and_selected_components() -> None:
     domain = Interval1d(-1.0, 2.0)
     batch = _point_batch(domain, [-1.0, 0.25, 2.0])
 
     @domain.Function("x")
-    def field(x):
+    def field(x: Any) -> Any:
         return jnp.asarray((2.0 * x[0] - 1.0, x[0] ** 2 + 3.0, -x[0]))
 
     action = PointObservationAction("u", batch, components=(2, 0))
@@ -55,7 +57,7 @@ def test_point_observation_returns_exact_finite_values_and_selected_components()
     "provider_type",
     (IDWCardinalCorrectionProvider, CompactCardinalCorrectionProvider),
 )
-def test_cardinal_provider_is_identity_on_every_anchor(provider_type):
+def test_cardinal_provider_is_identity_on_every_anchor(provider_type: Any) -> None:
     domain = Interval1d(0.0, 1.0)
     anchors = _point_batch(domain, [0.0, 0.3, 1.0])
     observation = PointObservationAction("u", anchors)
@@ -79,7 +81,7 @@ def test_cardinal_provider_is_identity_on_every_anchor(provider_type):
     assert not provider.evidence.interpolation_exact_off_support
 
 
-def test_cardinal_lift_scatter_preserves_unselected_output_components():
+def test_cardinal_lift_scatter_preserves_unselected_output_components() -> None:
     domain = Interval1d(0.0, 1.0)
     anchors = _point_batch(domain, [0.0, 0.5, 1.0])
     observation = PointObservationAction("velocity", anchors, components=(2, 0))
@@ -112,7 +114,7 @@ def test_cardinal_lift_scatter_preserves_unselected_output_components():
     "provider_type",
     (IDWCardinalCorrectionProvider, CompactCardinalCorrectionProvider),
 )
-def test_cardinal_providers_reject_duplicate_anchors(provider_type):
+def test_cardinal_providers_reject_duplicate_anchors(provider_type: Any) -> None:
     domain = Interval1d(0.0, 1.0)
     duplicate_anchors = _point_batch(domain, [0.0, 0.5, 0.5])
     observation = PointObservationAction("u", duplicate_anchors)
@@ -121,7 +123,7 @@ def test_cardinal_providers_reject_duplicate_anchors(provider_type):
         provider_type(observation, domain)
 
 
-def test_idw_source_envelope_attenuates_only_the_enabled_source():
+def test_idw_source_envelope_attenuates_only_the_enabled_source() -> None:
     domain = Interval1d(0.0, 2.0)
     anchors = _point_batch(domain, [0.0, 2.0])
     query = _point_batch(domain, [1.0])

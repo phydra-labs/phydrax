@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,7 +10,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _artifact():
+def _artifact() -> Any:
     return cosmology.ScientificArtifactEnvelope(
         artifact_kind="survey-fixture",
         content_digest="fixture",
@@ -21,7 +23,7 @@ def _artifact():
     )
 
 
-def _coordinate(component, value):
+def _coordinate(component: Any, value: Any) -> Any:
     return cosmology.SurveyCoordinate(
         domain="Fourier",
         statistic="power-multipole",
@@ -39,7 +41,7 @@ def _coordinate(component, value):
     )
 
 
-def test_generic_survey_slice_composes_theory_response_and_likelihood():
+def test_generic_survey_slice_composes_theory_response_and_likelihood() -> None:
     coordinates = (_coordinate("P0", 0.1), _coordinate("P2", 0.1))
     theory = cosmology.SurveyTheoryProduct(
         jnp.asarray([2.0, 1.0]), coordinates, "theory-fixture"
@@ -72,7 +74,7 @@ def test_generic_survey_slice_composes_theory_response_and_likelihood():
     np.testing.assert_allclose(derivative, 0.0, atol=1e-12)
 
 
-def test_three_vertical_slice_manifests_have_distinct_capabilities():
+def test_three_vertical_slice_manifests_have_distinct_capabilities() -> None:
     artifact = _artifact()
     manifests = (
         cosmology.desi_full_shape_slice(artifact),

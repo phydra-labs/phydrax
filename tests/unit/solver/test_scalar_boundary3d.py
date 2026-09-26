@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -28,7 +30,7 @@ _VERTICES = jnp.asarray(
 _FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32)
 
 
-def _policy():
+def _policy() -> Any:
     return LaplaceSingleLayerDP0GalerkinPolicy3D(
         regular_order=3,
         singular_order=3,
@@ -41,13 +43,13 @@ def _policy():
     )
 
 
-def _calderon(kernel=None):
+def _calderon(kernel: Any = None) -> Any:
     return prepare_scalar_calderon_dp0_3d(
         MeshRegion(_VERTICES, _FACES), kernel=kernel, policy=_policy()
     )
 
 
-def test_laplace_interior_dirichlet_constant_harmonic_solve_end_to_end():
+def test_laplace_interior_dirichlet_constant_harmonic_solve_end_to_end() -> None:
     calderon = _calderon()
     formulation = scalar_interior_dirichlet_formulation_3d(
         calderon, representation="double-layer"
@@ -60,13 +62,14 @@ def test_laplace_interior_dirichlet_constant_harmonic_solve_end_to_end():
     assert result.metadata.side == "interior"
     assert result.metadata.double_layer_jump == -0.5
     assert result.metadata.continuum_certified is False
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(result.boundary_dirichlet, data, rtol=2.0e-4, atol=2.0e-4)
     assert jnp.allclose(result.solution, -1.0, rtol=2.0e-1, atol=2.0e-1)
     assert result.boundary_neumann is None
     assert result.potential is not None
 
 
-def test_pure_laplace_neumann_enforces_compatibility_and_component_gauge():
+def test_pure_laplace_neumann_enforces_compatibility_and_component_gauge() -> None:
     calderon = _calderon()
     formulation = scalar_interior_neumann_formulation_3d(calderon)
     areas = calderon.face_areas
@@ -78,6 +81,7 @@ def test_pure_laplace_neumann_enforces_compatibility_and_component_gauge():
     assert "area-mean" in result.metadata.gauge
     assert jnp.allclose(result.compatibility_residual, 0.0, atol=1.0e-12)
     assert jnp.allclose(result.gauge_residual, 0.0, atol=2.0e-5)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(result.boundary_neumann, flux)
 
     incompatible = jnp.ones((calderon.face_count,), dtype=calderon.space.dtype)
@@ -85,7 +89,7 @@ def test_pure_laplace_neumann_enforces_compatibility_and_component_gauge():
         solve_laplace_boundary_3d(formulation, incompatible)
 
 
-def test_outgoing_helmholtz_cfie_and_raw_resonance_metadata_execute():
+def test_outgoing_helmholtz_cfie_and_raw_resonance_metadata_execute() -> None:
     calderon = _calderon(ScalarKernelFamily3D.outgoing_helmholtz(0.4))
     raw = scalar_exterior_dirichlet_formulation_3d(
         calderon, representation="double-layer"
@@ -101,12 +105,14 @@ def test_outgoing_helmholtz_cfie_and_raw_resonance_metadata_execute():
     assert result.metadata.coupling_parameter == 0.7
     assert "removes-the-standard-raw" in result.metadata.resonance_risk
     assert result.metadata.single_layer_neumann_jump == -0.5
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(result.boundary_dirichlet, data, rtol=3.0e-4, atol=3.0e-4)
     assert result.potential is not None
+    # ty: ignore[unresolved-attribute]
     assert result.potential.eta == 0.7
 
 
-def test_robin_mixed_trace_solve_and_pure_neumann_route_failure():
+def test_robin_mixed_trace_solve_and_pure_neumann_route_failure() -> None:
     calderon = _calderon()
     alpha = jnp.asarray([1.0, 0.0, 1.0, 0.5], dtype=calderon.space.dtype)
     beta = jnp.asarray([0.2, 1.0, 0.3, 0.4], dtype=calderon.space.dtype)
@@ -116,6 +122,7 @@ def test_robin_mixed_trace_solve_and_pure_neumann_route_failure():
     data = jnp.asarray([0.1, -0.2, 0.3, 0.4], dtype=calderon.space.dtype)
     result = solve_laplace_boundary_3d(formulation, data)
 
+    # ty: ignore[unsupported-operator]
     reconstructed = alpha * result.boundary_dirichlet + beta * result.boundary_neumann
     assert bool(result.valid)
     assert jnp.allclose(reconstructed, data, rtol=5.0e-4, atol=5.0e-4)

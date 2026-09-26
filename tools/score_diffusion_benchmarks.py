@@ -11,6 +11,7 @@ import argparse
 import json
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -25,7 +26,7 @@ class _GaussianMarginalScore(eqx.Module):
     mean: jax.Array = phx.fixed_field()
     variance: jax.Array = phx.fixed_field()
 
-    def __call__(self, state, time):
+    def __call__(self, state: Any, time: Any) -> Any:
         if isinstance(self.process, phx.stochastic.VariancePreservingDiffusion):
             slope = (
                 self.process.beta_maximum - self.process.beta_minimum
@@ -35,16 +36,19 @@ class _GaussianMarginalScore(eqx.Module):
             noise_variance = -jnp.expm1(-integrated)
         else:
             mean_scale = jnp.asarray(1.0, dtype=state.dtype)
+            # ty: ignore[unresolved-attribute]
             reference = self.process.initial_scale * jnp.exp(
+                # ty: ignore[unresolved-attribute]
                 self.process.log_scale_ratio * time / self.process.terminal_time
             )
+            # ty: ignore[unresolved-attribute]
             noise_variance = reference**2 - self.process.initial_scale**2
         marginal_mean = mean_scale * self.mean
         marginal_variance = mean_scale**2 * self.variance + noise_variance
         return -(state - marginal_mean) / marginal_variance
 
 
-def _score_function(process, mean, variance):
+def _score_function(process: Any, mean: Any, variance: Any) -> Any:
     dimension = process.dimension
     state = phx.domain.HyperRectangle(
         jnp.full((dimension,), -100.0),
@@ -55,7 +59,7 @@ def _score_function(process, mean, variance):
     return domain.Function("x", "t")(_GaussianMarginalScore(process, mean, variance))
 
 
-def _exact_terminal(process, mean, variance):
+def _exact_terminal(process: Any, mean: Any, variance: Any) -> Any:
     terminal = process.terminal_time
     if isinstance(process, phx.stochastic.VariancePreservingDiffusion):
         mean_scale = process.transition_mean_scale(0.0, terminal)
@@ -77,18 +81,18 @@ def _exact_terminal(process, mean, variance):
     )
 
 
-def _moments(samples):
+def _moments(samples: Any) -> Any:
     mean = jnp.mean(samples, axis=0)
     centered = samples - mean
     variance = jnp.mean(centered**2, axis=0)
     return mean, variance
 
 
-def _ready(value):
+def _ready(value: Any) -> Any:
     return jax.block_until_ready(value)
 
 
-def benchmark_process(process, *, sample_count: int, seed: int, quick: bool):
+def benchmark_process(process: Any, *, sample_count: int, seed: int, quick: bool) -> Any:
     dimension = process.dimension
     mean = jnp.linspace(-0.4, 0.6, dimension)
     variance = jnp.linspace(0.6, 1.2, dimension)
@@ -199,7 +203,7 @@ def benchmark_process(process, *, sample_count: int, seed: int, quick: bool):
     }
 
 
-def run_score_diffusion_benchmarks(*, quick: bool = False):
+def run_score_diffusion_benchmarks(*, quick: bool = False) -> Any:
     sample_count = 256 if quick else 2048
     dimension = 2 if quick else 4
     processes = (

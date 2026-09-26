@@ -24,6 +24,7 @@ from ..._differentiation import (
 )
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -488,8 +489,7 @@ def _validate_recipe(
         raise ValueError("shrinkage must be a scalar in [0, 1].")
     if ridge.ndim != 0 or float(ridge) < 0.0:
         raise ValueError("regularization must be a nonnegative scalar.")
-    if weight_policy not in {"none", "statistical", "measure", "product"}:
-        raise ValueError("Unsupported weight policy.")
+    weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
     return classes, prior_values, shrink, ridge, weight_policy
 
 

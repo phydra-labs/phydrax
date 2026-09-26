@@ -8,7 +8,7 @@ from phydrax.operators.quantum import AbelianGroup
 tn = phx.tensor_network
 
 
-def test_abelian_group_leg_layout_and_product_state_dense_order():
+def test_abelian_group_leg_layout_and_product_state_dense_order() -> None:
     group = AbelianGroup((None, 2))
     assert group.add((2, 1), (-1, 1)) == (1, 0)
     assert group.negate((2, 1)) == (-2, 1)
@@ -28,7 +28,7 @@ def test_abelian_group_leg_layout_and_product_state_dense_order():
     assert jnp.allclose(tn.abelian_mps_inner(state, state), 1.0)
 
 
-def test_one_site_abelian_mpo_dense_conversion_preserves_sector_order():
+def test_one_site_abelian_mpo_dense_conversion_preserves_sector_order() -> None:
     group = AbelianGroup((2,))
     physical = tn.AbelianLeg(group, ((0,), (1,)), (1, 1), orientation=1)
     boundary_left = tn.AbelianLeg(group, ((0,),), (1,), orientation=1)
@@ -44,7 +44,7 @@ def test_one_site_abelian_mpo_dense_conversion_preserves_sector_order():
     assert jnp.allclose(operator.to_dense(), jnp.eye(2))
 
 
-def test_empty_abelian_sector_layout_is_an_exact_structural_zero():
+def test_empty_abelian_sector_layout_is_an_exact_structural_zero() -> None:
     group = AbelianGroup((2,))
     leg = tn.AbelianLeg(group, ((0,),), (1,), orientation=1)
     layout = tn.AbelianTensorLayout((leg,), total_charge=(1,))
@@ -65,7 +65,7 @@ def test_empty_abelian_sector_layout_is_an_exact_structural_zero():
         value.to_dense().block_until_ready()
 
 
-def test_abelian_contraction_axes_reject_positive_wraparound():
+def test_abelian_contraction_axes_reject_positive_wraparound() -> None:
     group = AbelianGroup((2,))
     left_leg = tn.AbelianLeg(group, ((0,), (1,)), (1, 1), orientation=1)
     right_leg = left_leg.dual()
@@ -75,7 +75,7 @@ def test_abelian_contraction_axes_reject_positive_wraparound():
         tn.AbelianContractionPlan(left, right, (2,), (0,))
 
 
-def test_abelian_open_evidence_rejects_declared_non_trace_preserving_map():
+def test_abelian_open_evidence_rejects_declared_non_trace_preserving_map() -> None:
     group = AbelianGroup((2,))
     physical = tn.AbelianLeg(group, ((0,),), (1,), orientation=1)
     operator = tn.AbelianKrausOperator(

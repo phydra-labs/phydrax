@@ -24,21 +24,21 @@ from benchmarks._runtime import (
 from phydrax._fingerprint import array_tree_fingerprint
 
 
-def _transition(context, state, action, noise, args):
+def _transition(context: Any, state: Any, action: Any, noise: Any, args: Any) -> Any:
     return state + context.duration * (args["decay"] * state + action) + noise
 
 
-def _stage_cost(context, state, action, args):
+def _stage_cost(context: Any, state: Any, action: Any, args: Any) -> Any:
     del args
     return context.duration * jnp.mean(state * state + 0.2 * action * action)
 
 
-def _terminal_cost(time, state, args):
+def _terminal_cost(time: Any, state: Any, args: Any) -> Any:
     del time, args
     return jnp.mean(state * state)
 
 
-def _full_state_policy(context, state, args):
+def _full_state_policy(context: Any, state: Any, args: Any) -> Any:
     del context
     # Deliberately no noise argument and no random key: this is causal state feedback.
     return args["gain"] * state
@@ -51,7 +51,7 @@ def _noise(
     case_count: int,
     cluster_count: int,
     /,
-):
+) -> Any:
     path = jnp.arange(path_count, dtype=jnp.float32)[:, None, None]
     step = jnp.arange(horizon, dtype=jnp.float32)[None, :, None]
     coordinate = jnp.arange(case_count, dtype=jnp.float32)[None, None, :]
@@ -73,7 +73,7 @@ def _noise(
     )
 
 
-def _problem(horizon: int, case_count: int, /):
+def _problem(horizon: int, case_count: int, /) -> Any:
     time_grid = phx.dynamics.TimeGrid(
         jnp.linspace(0.0, 1.0, horizon + 1, dtype=jnp.float32),
         time_id=f"benchmark-feedback:T{horizon}:coordinates{case_count}",
@@ -92,7 +92,7 @@ def _problem(horizon: int, case_count: int, /):
     )
 
 
-def _evaluate(problem, training_noise, holdout_noise):
+def _evaluate(problem: Any, training_noise: Any, holdout_noise: Any) -> Any:
     training = phx.control.stochastic.evaluate_feedback_policy(
         problem,
         _full_state_policy,
@@ -112,7 +112,7 @@ def _evaluate(problem, training_noise, holdout_noise):
     return training, holdout
 
 
-def _certificates(training, holdout, training_noise, holdout_noise) -> dict[str, Any]:
+def _certificates(training: Any, holdout: Any, training_noise: Any, holdout_noise: Any) -> dict[str, Any]:
     disjoint_ids = set(training_noise.realization_ids).isdisjoint(
         holdout_noise.realization_ids
     )
@@ -238,7 +238,7 @@ def _case(
     }
 
 
-def _specifications():
+def _specifications() -> Any:
     return (
         ("baseline", 64, 16, 4, 64),
         ("paths-16", 16, 16, 4, 16),

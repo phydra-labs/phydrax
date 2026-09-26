@@ -23,7 +23,7 @@ from .._fingerprint import (
 )
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._wiener import LevyAreaKind, WienerRealization
 
 
@@ -374,8 +374,7 @@ class StochasticPathEnsemblePlan(StrictModule):
             raise ValueError(
                 "rtol, atol, and wiener_tolerance must be finite and positive."
             )
-        if levy_area not in ("brownian", "space_time", "space_time_time"):
-            raise ValueError("Unknown Levy-area representation.")
+        levy_area = parse(levy_area, LevyAreaKind, "levy_area")
         solver_fingerprint = _configuration_fingerprint(solver, solver_id, owner="solver")
         controller_fingerprint = _configuration_fingerprint(
             stepsize_controller,

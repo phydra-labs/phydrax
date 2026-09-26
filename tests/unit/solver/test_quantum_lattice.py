@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -30,7 +33,7 @@ from phydrax.tensor_network._quantum_lattice import (
 )
 
 
-def _case():
+def _case() -> Any:
     order = FermionModeOrder(("a", "b", "c"))
     spaces = tuple(LocalSpacePlan.fermion(label, label) for label in order.labels)
     create = np.asarray(((0.0, 0.0), (1.0, 0.0)))
@@ -70,12 +73,12 @@ def _case():
     return order, prepared, basis, sector
 
 
-def _sector_matrix(operator):
+def _sector_matrix(operator: Any) -> Any:
     identity = jnp.eye(operator.source.size, dtype=jnp.complex128)
     return jnp.stack(tuple(operator.mv(column) for column in identity), axis=1)
 
 
-def test_local_hamiltonian_mpo_and_vmc_lowerers_preserve_one_car_operator():
+def test_local_hamiltonian_mpo_and_vmc_lowerers_preserve_one_car_operator() -> None:
     order, prepared, basis, sector = _case()
     full_reference = CARPolynomial(
         order,

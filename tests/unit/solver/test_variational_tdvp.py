@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,7 +22,7 @@ _HAMILTONIAN = jnp.asarray(
 class _TableModel(eqx.Module):
     parameters: jax.Array = phx.parameter_field()
 
-    def __call__(self, configuration):
+    def __call__(self, configuration: Any) -> Any:
         bits = (configuration > 0).astype(jnp.int32)
         index = 2 * bits[0] + bits[1]
         value = self.parameters[index]
@@ -31,11 +33,11 @@ class _TableModel(eqx.Module):
         return phx.operators.LogAmplitude(value, 1.0 + 0.0j)
 
 
-def _operator():
-    def diagonal(configurations):
+def _operator() -> Any:
+    def diagonal(configurations: Any) -> Any:
         return -configurations[..., 0] * configurations[..., 1]
 
-    def connections(configurations):
+    def connections(configurations: Any) -> Any:
         first = configurations.at[..., 0].multiply(-1)
         second = configurations.at[..., 1].multiply(-1)
         connected = jnp.stack((first, second), axis=-2)
@@ -55,12 +57,12 @@ def _operator():
     )
 
 
-def _kernel():
-    def sample(key, current):
+def _kernel() -> Any:
+    def sample(key: Any, current: Any) -> Any:
         index = jr.randint(key, (), 0, current.shape[0])
         return current.at[index].multiply(-1)
 
-    def log_prob(_proposed, current):
+    def log_prob(_proposed: Any, current: Any) -> Any:
         return -jnp.log(float(current.shape[0]))
 
     return phx.sampling.MetropolisHastings(
@@ -72,7 +74,7 @@ def _kernel():
     )
 
 
-def _problem(parameters):
+def _problem(parameters: Any) -> Any:
     return phx.solver.VariationalMonteCarloProblem(
         _TableModel(parameters),
         _operator(),
@@ -81,12 +83,12 @@ def _problem(parameters):
     )
 
 
-def _exact_energy(model):
+def _exact_energy(model: Any) -> Any:
     state = jnp.exp(model.parameters)
     return jnp.real(jnp.vdot(state, _HAMILTONIAN @ state) / jnp.vdot(state, state))
 
 
-def test_imaginary_time_tdvp_decreases_exact_energy():
+def test_imaginary_time_tdvp_decreases_exact_energy() -> None:
     problem = _problem(jnp.asarray([0.2, -0.1, 0.1, -0.2]))
     policy = phx.solver.VariationalTDVPPolicy(
         "imaginary-time",
@@ -125,7 +127,7 @@ def test_imaginary_time_tdvp_decreases_exact_energy():
 
 
 @pytest.mark.parametrize("mode", ["real-time", "imaginary-time"])
-def test_tdvp_stationary_eigenstate_has_zero_velocity(mode):
+def test_tdvp_stationary_eigenstate_has_zero_velocity(mode: Any) -> None:
     _eigenvalues, eigenvectors = jnp.linalg.eigh(_HAMILTONIAN)
     ground = eigenvectors[:, 0]
     phase = jnp.sign(ground)

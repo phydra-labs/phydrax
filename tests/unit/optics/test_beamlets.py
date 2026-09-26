@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -42,7 +45,7 @@ from phydrax.optics.geometric._resonator import (
 from phydrax.optics.wave._fields import PlaneFieldSpace
 
 
-def _ray(*, z=0.0, optical_path=0.0):
+def _ray(*, z: Any = 0.0, optical_path: Any = 0.0) -> Any:
     return OpticalRayState(
         jnp.asarray((0.0, 0.0, z)),
         jnp.asarray((0.0, 0.0, 1.0)),
@@ -52,11 +55,11 @@ def _ray(*, z=0.0, optical_path=0.0):
     )
 
 
-def _frame(*, z=0.0):
+def _frame(*, z: Any = 0.0) -> Any:
     return BeamletFrame(RigidFrame(jnp.eye(3), jnp.asarray((0.0, 0.0, z))))
 
 
-def _space(count=41, extent=2.0, *, z=0.0):
+def _space(count: Any = 41, extent: Any = 2.0, *, z: Any = 0.0) -> Any:
     grid = TensorGridPlan(
         (UniformAxisSpec(count), UniformAxisSpec(count)),
         axis_names=("u", "v"),
@@ -65,7 +68,9 @@ def _space(count=41, extent=2.0, *, z=0.0):
     return PlaneFieldSpace(grid, frame, "finite-window")
 
 
-def _map(jacobian, input_frame, output_frame, *, source="system"):
+def _map(
+    jacobian: Any, input_frame: Any, output_frame: Any, *, source: Any = "system"
+) -> Any:
     return DifferentialRayMap(
         jnp.zeros((4,)),
         jnp.zeros((4,)),
@@ -81,12 +86,16 @@ def _map(jacobian, input_frame, output_frame, *, source="system"):
     )
 
 
-def test_moving_beamlet_frames_are_deterministic_and_right_handed():
+def test_moving_beamlet_frames_are_deterministic_and_right_handed() -> None:
+    # ty: ignore[invalid-argument-type]
     first = deterministic_beamlet_frame((0.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+    # ty: ignore[invalid-argument-type]
     repeated = deterministic_beamlet_frame((0.0, 0.0, 0.0), (0.0, 0.0, 1.0))
     transported = transport_beamlet_frame(
         first,
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.0, 1.0),
+        # ty: ignore[invalid-argument-type]
         (0.1, -0.2, 1.0),
     )
 
@@ -104,9 +113,10 @@ def test_moving_beamlet_frames_are_deterministic_and_right_handed():
     )
 
 
-def test_fundamental_beamlet_reconstructs_analytic_gaussian():
+def test_fundamental_beamlet_reconstructs_analytic_gaussian() -> None:
     state = gaussian_beamlets_at_waist(
         _ray(),
+        # ty: ignore[invalid-argument-type]
         GaussianWaistSpecification((0.7, 0.7)),
         _frame(),
         2.0 * jnp.pi,
@@ -127,11 +137,12 @@ def test_fundamental_beamlet_reconstructs_analytic_gaussian():
     assert bool(result.successful)
 
 
-def test_astigmatic_waist_rotation_rotates_complex_curvature():
+def test_astigmatic_waist_rotation_rotates_complex_curvature() -> None:
     angle = jnp.pi / 4.0
     wavenumber = 5.0
     state = gaussian_beamlets_at_waist(
         _ray(),
+        # ty: ignore[invalid-argument-type]
         GaussianWaistSpecification((0.5, 1.0), angle),
         _frame(),
         wavenumber,
@@ -152,12 +163,13 @@ def test_astigmatic_waist_rotation_rotates_complex_curvature():
     assert bool(curvature.successful)
 
 
-def test_symplectic_transport_preserves_lagrange_invariant():
+def test_symplectic_transport_preserves_lagrange_invariant() -> None:
     input_frame = _frame()
     distance = 0.75
     output_frame = _frame(z=distance)
     state = gaussian_beamlets_at_waist(
         _ray(),
+        # ty: ignore[invalid-argument-type]
         GaussianWaistSpecification((0.6, 0.9), 0.2),
         input_frame,
         7.0,
@@ -190,7 +202,7 @@ def test_symplectic_transport_preserves_lagrange_invariant():
     assert bool(transported.successful)
 
 
-def test_certified_coupled_resonator_mode_survives_beamlet_round_trip():
+def test_certified_coupled_resonator_mode_survives_beamlet_round_trip() -> None:
     frame = _frame()
     phases = jnp.asarray((0.31, 0.67))
     curvature_axes = jnp.asarray((1.35, 0.72))
@@ -257,7 +269,7 @@ def test_certified_coupled_resonator_mode_survives_beamlet_round_trip():
     )
 
 
-def test_uncertified_resonator_mode_cannot_seed_a_beamlet():
+def test_uncertified_resonator_mode_cannot_seed_a_beamlet() -> None:
     frame = _frame()
     unstable_map = _map(
         jnp.diag(jnp.asarray((1.4, 1.2, 1.0 / 1.4, 1.0 / 1.2))),
@@ -283,7 +295,7 @@ def test_uncertified_resonator_mode_cannot_seed_a_beamlet():
         jax.block_until_ready(state.lagrangian_state)
 
 
-def test_free_space_transport_reconstructs_complex_gaussian_field():
+def test_free_space_transport_reconstructs_complex_gaussian_field() -> None:
     distance = 0.8
     waist_radius = 0.65
     medium_wavenumber = 6.0
@@ -291,6 +303,7 @@ def test_free_space_transport_reconstructs_complex_gaussian_field():
     output_frame = _frame(z=distance)
     waist = gaussian_beamlets_at_waist(
         _ray(),
+        # ty: ignore[invalid-argument-type]
         GaussianWaistSpecification((waist_radius, waist_radius)),
         input_frame,
         medium_wavenumber,
@@ -337,10 +350,11 @@ def test_free_space_transport_reconstructs_complex_gaussian_field():
     assert bool(result.successful)
 
 
-def test_transport_exposes_topology_and_caustic_failures():
+def test_transport_exposes_topology_and_caustic_failures() -> None:
     frame = _frame()
     state = gaussian_beamlets_at_waist(
         _ray(),
+        # ty: ignore[invalid-argument-type]
         GaussianWaistSpecification((1.0, 1.0)),
         frame,
         4.0,
@@ -382,7 +396,7 @@ def test_transport_exposes_topology_and_caustic_failures():
     assert not bool(caustic.successful)
 
 
-def _nine_ray_samples(step):
+def _nine_ray_samples(step: Any) -> Any:
     inputs = jnp.zeros((9, 4))
     for axis in range(4):
         inputs = inputs.at[1 + 2 * axis, axis].set(step)
@@ -391,7 +405,7 @@ def _nine_ray_samples(step):
     return NineRayTraceSamples(inputs, outputs, jnp.full((4,), step))
 
 
-def test_nine_ray_qualification_reports_centered_second_order_convergence():
+def test_nine_ray_qualification_reports_centered_second_order_convergence() -> None:
     qualification = qualify_nine_ray_differential_map(
         _map(jnp.eye(4), _frame(), _frame()),
         _nine_ray_samples(0.1),

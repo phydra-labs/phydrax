@@ -4,12 +4,14 @@
 
 """Periodic plane-strain elastic wave with explicit APIC material points."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     nx, ny = 24, 6
     grid = phx.discretization.TensorGridPlan(
         (

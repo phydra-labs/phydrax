@@ -16,7 +16,7 @@ from phydrax.solver._functional_run import (
 from phydrax.solver._functional_surrogate import prepare_functional_update
 
 
-def test_functional_sharding_places_named_sample_axes_and_replicates_events():
+def test_functional_sharding_places_named_sample_axes_and_replicates_events() -> None:
     policy = phx.solver.FunctionalShardingPolicy({"sample": "data"})
     field = cx.AxisArray(
         jnp.arange(8.0).reshape((4, 2)),
@@ -26,12 +26,13 @@ def test_functional_sharding_places_named_sample_axes_and_replicates_events():
 
     assert jnp.array_equal(placed.data, field.data)
     assert placed.dims == field.dims
+    # ty: ignore[unresolved-attribute]
     assert placed.data.sharding.mesh == policy.mesh
     assert policy.field_sharding(field).spec == jax.sharding.PartitionSpec("data", None)
     assert jnp.allclose(jnp.sum(placed.data), 28.0)
 
 
-def _scalar_solver(value=1.0):
+def _scalar_solver(value: Any = 1.0) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(jnp.asarray(value))
     component = domain.component()
@@ -46,7 +47,7 @@ def _scalar_solver(value=1.0):
     return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
-def test_functional_sharding_rejects_coordinator_outside_mesh():
+def test_functional_sharding_rejects_coordinator_outside_mesh() -> None:
     outside_mesh = max(device.process_index for device in jax.devices()) + 1
     with pytest.raises(ValueError, match="represented by the sharding mesh"):
         phx.solver.FunctionalShardingPolicy(
@@ -55,7 +56,7 @@ def test_functional_sharding_rejects_coordinator_outside_mesh():
         )
 
 
-def test_functional_session_rejects_sharding_execution_group_mismatch():
+def test_functional_session_rejects_sharding_execution_group_mismatch() -> None:
     training = phx.solver.FunctionalTrainingPlan(
         sharding=phx.solver.FunctionalShardingPolicy(
             {"sample": "data"},
@@ -78,7 +79,7 @@ def test_functional_session_rejects_sharding_execution_group_mismatch():
         )
 
 
-def test_sharded_functional_ntk_matches_unsharded_global_kernel():
+def test_sharded_functional_ntk_matches_unsharded_global_kernel() -> None:
     solver = _scalar_solver()
     params, non_trainable = partition_functional_parameters(solver.functions)
     prepared = solver.objective.prepare_training(
@@ -128,10 +129,10 @@ class _WindowAdapter(phx.solver.FunctionalWindowAdapter):
         self,
         previous_solver: Any,
         window_index: int,
-        bounds,
-        previous_terminal,
+        bounds: Any,
+        previous_terminal: Any,
         /,
-    ):
+    ) -> Any:
         del window_index, bounds, previous_terminal
         return eqx.tree_at(
             lambda solver: solver.training_state,
@@ -140,11 +141,18 @@ class _WindowAdapter(phx.solver.FunctionalWindowAdapter):
             is_leaf=lambda value: value is None,
         )
 
-    def terminal_fields(self, solver, window_index, bounds, /):
+    def terminal_fields(self, solver: Any, window_index: Any, bounds: Any, /) -> Any:
         del window_index, bounds
         return {"u": solver.functions["u"]}
 
-    def seam_metrics(self, previous_terminal, current_solver, window_index, bounds, /):
+    def seam_metrics(
+        self,
+        previous_terminal: Any,
+        current_solver: Any,
+        window_index: Any,
+        bounds: Any,
+        /,
+    ) -> Any:
         del window_index, bounds
         previous = previous_terminal["u"].func()
         current = current_solver.functions["u"].func()
@@ -158,10 +166,10 @@ class _WidthChangingWindowAdapter(phx.solver.FunctionalWindowAdapter):
         self,
         previous_solver: Any,
         window_index: int,
-        bounds,
-        previous_terminal,
+        bounds: Any,
+        previous_terminal: Any,
         /,
-    ):
+    ) -> Any:
         del bounds, previous_terminal
         if window_index == 0:
             return eqx.tree_at(
@@ -172,16 +180,23 @@ class _WidthChangingWindowAdapter(phx.solver.FunctionalWindowAdapter):
             )
         return _scalar_solver(jnp.asarray([1.0, -1.0]))
 
-    def terminal_fields(self, solver, window_index, bounds, /):
+    def terminal_fields(self, solver: Any, window_index: Any, bounds: Any, /) -> Any:
         del window_index, bounds
         return {"u": solver.functions["u"]}
 
-    def seam_metrics(self, previous_terminal, current_solver, window_index, bounds, /):
+    def seam_metrics(
+        self,
+        previous_terminal: Any,
+        current_solver: Any,
+        window_index: Any,
+        bounds: Any,
+        /,
+    ) -> Any:
         del previous_terminal, current_solver, window_index, bounds
         return {"u": jnp.asarray(0.0)}
 
 
-def test_functional_time_windows_train_and_route_physical_query():
+def test_functional_time_windows_train_and_route_physical_query() -> None:
     schedule = phx.sampling.collocation.CausalTimeSlabSchedule((0.0, 0.5, 1.0))
     plan = phx.solver.FunctionalTimeWindowPlan(
         schedule,
@@ -199,7 +214,7 @@ def test_functional_time_windows_train_and_route_physical_query():
     assert bool(result.successful)
 
 
-def test_functional_time_windows_transfer_optimizer_state_independently():
+def test_functional_time_windows_transfer_optimizer_state_independently() -> None:
     schedule = phx.sampling.collocation.CausalTimeSlabSchedule((0.0, 0.5, 1.0))
     plan = phx.solver.FunctionalTimeWindowPlan(
         schedule,
@@ -230,7 +245,7 @@ def test_functional_time_windows_transfer_optimizer_state_independently():
     assert 2 in integer_scalars
 
 
-def test_functional_time_windows_reinitialize_incompatible_optimizer_state():
+def test_functional_time_windows_reinitialize_incompatible_optimizer_state() -> None:
     schedule = phx.sampling.collocation.CausalTimeSlabSchedule((0.0, 0.5, 1.0))
     plan = phx.solver.FunctionalTimeWindowPlan(
         schedule,

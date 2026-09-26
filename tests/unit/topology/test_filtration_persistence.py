@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,7 +19,7 @@ from tests.unit.topology._fixtures import (
 )
 
 
-def test_vertex_support_requires_explicit_geometric_closure():
+def test_vertex_support_requires_explicit_geometric_closure() -> None:
     topology = filled_triangle_topology()
     support = filled_triangle_vertex_support(topology)
     assert support.topology_id == topology.topology_id
@@ -32,7 +35,7 @@ def test_vertex_support_requires_explicit_geometric_closure():
         )
 
 
-def test_explicit_filtration_rejects_face_monotonicity_violation():
+def test_explicit_filtration_rejects_face_monotonicity_violation() -> None:
     topology = filled_triangle_topology()
     complex = phx.topology.CellSubcomplex.full(topology)
     with pytest.raises(ValueError, match="face monotonicity"):
@@ -47,7 +50,7 @@ def test_explicit_filtration_rejects_face_monotonicity_violation():
         )
 
 
-def test_selected_filtration_values_must_be_finite():
+def test_selected_filtration_values_must_be_finite() -> None:
     topology = filled_triangle_topology()
     complex = phx.topology.CellSubcomplex.full(topology)
     with pytest.raises(ValueError, match="finite"):
@@ -62,7 +65,7 @@ def test_selected_filtration_values_must_be_finite():
         )
 
 
-def test_lower_and_upper_star_builders_preserve_face_order():
+def test_lower_and_upper_star_builders_preserve_face_order() -> None:
     topology = filled_triangle_topology()
     complex = phx.topology.CellSubcomplex.full(topology)
     support = filled_triangle_vertex_support(topology)
@@ -85,7 +88,7 @@ def test_lower_and_upper_star_builders_preserve_face_order():
     assert np.all(np.diff(np.asarray(upper.canonical_order_values)) >= 0)
 
 
-def test_prepared_vertex_filtration_is_jittable_and_batched():
+def test_prepared_vertex_filtration_is_jittable_and_batched() -> None:
     topology = filled_triangle_topology()
     complex = phx.topology.CellSubcomplex.full(topology)
     support = filled_triangle_vertex_support(topology)
@@ -103,7 +106,7 @@ def test_prepared_vertex_filtration_is_jittable_and_batched():
     np.testing.assert_allclose(result[2], [[2.0], [2.0]])
 
 
-def test_triangle_persistence_has_essential_component_and_finite_loop():
+def test_triangle_persistence_has_essential_component_and_finite_loop() -> None:
     _, _, filtration = filled_triangle_filtration()
     result = phx.topology.compute_persistence(
         filtration,
@@ -122,7 +125,7 @@ def test_triangle_persistence_has_essential_component_and_finite_loop():
     assert result.pairing.representatives.pair_count == result.pairing.pair_count
 
 
-def test_induced_relative_persistence_uses_quotient_boundary():
+def test_induced_relative_persistence_uses_quotient_boundary() -> None:
     topology, complex, filtration = filled_triangle_filtration()
     boundary = phx.topology.CellSubcomplex.from_subsets(topology, "boundary")
     result = phx.topology.compute_persistence(
@@ -138,7 +141,7 @@ def test_induced_relative_persistence_uses_quotient_boundary():
     assert result.pairing.layout_id != complex.layout.layout_id
 
 
-def test_relative_subcomplex_must_share_filtration_topology():
+def test_relative_subcomplex_must_share_filtration_topology() -> None:
     _, _, filtration = filled_triangle_filtration()
     other = phx.geometry.simplicial.TriangleTopology(
         jnp.asarray([[0, 1, 2]], dtype=jnp.int32),
@@ -153,7 +156,7 @@ def test_relative_subcomplex_must_share_filtration_topology():
         )
 
 
-def test_packed_diagram_separates_padding_and_essential_bars():
+def test_packed_diagram_separates_padding_and_essential_bars() -> None:
     _, _, filtration = filled_triangle_filtration()
     result = phx.topology.compute_persistence(
         filtration,
@@ -171,7 +174,7 @@ def test_packed_diagram_separates_padding_and_essential_bars():
         result.pack(1)
 
 
-def test_frozen_pairing_evaluates_batches_and_detects_full_order_change():
+def test_frozen_pairing_evaluates_batches_and_detects_full_order_change() -> None:
     _, _, filtration = filled_triangle_filtration()
     result = phx.topology.compute_persistence(
         filtration,
@@ -193,7 +196,7 @@ def test_frozen_pairing_evaluates_batches_and_detects_full_order_change():
     assert not bool(invalid.ordering_valid)
 
 
-def test_frozen_pairing_endpoint_gather_has_local_gradient():
+def test_frozen_pairing_endpoint_gather_has_local_gradient() -> None:
     _, _, filtration = filled_triangle_filtration()
     result = phx.topology.compute_persistence(
         filtration,
@@ -201,7 +204,7 @@ def test_frozen_pairing_endpoint_gather_has_local_gradient():
     )
     frozen = phx.topology.freeze_persistence_pairing(result, filtration)
 
-    def objective(vertices):
+    def objective(vertices: Any) -> Any:
         evaluated = frozen.evaluate(
             (vertices, filtration.values[1], filtration.values[2])
         )
@@ -213,7 +216,7 @@ def test_frozen_pairing_endpoint_gather_has_local_gradient():
     assert jnp.any(gradient != 0)
 
 
-def test_tied_relabeling_preserves_diagram_not_cell_pairing():
+def test_tied_relabeling_preserves_diagram_not_cell_pairing() -> None:
     topology = filled_triangle_topology()
     complex = phx.topology.CellSubcomplex.full(topology)
     tied = phx.topology.CellFiltration(

@@ -168,7 +168,7 @@ class SemidiscretePDEBenchmarkRecord:
 class _LinearHJBValue(eqx.Module):
     time_coefficient: Array = phx.parameter_field()
 
-    def __call__(self, time: Array, state: Array, *, key=None) -> Array:
+    def __call__(self, time: Array, state: Array, *, key: Any = None) -> Array:
         del key
         return jnp.asarray([jnp.mean(state) + self.time_coefficient * (1.0 - time)])
 
@@ -177,7 +177,7 @@ class _LinearHJBControl(eqx.Module):
     coefficient: Array = phx.parameter_field()
     dimension: int = eqx.field(static=True)
 
-    def __call__(self, time: Array, state: Array, *, key=None) -> Array:
+    def __call__(self, time: Array, state: Array, *, key: Any = None) -> Array:
         del time, state, key
         return jnp.full((1, self.dimension), self.coefficient)
 
@@ -185,7 +185,7 @@ class _LinearHJBControl(eqx.Module):
 class _OrnsteinUhlenbeckScore(eqx.Module):
     variance: Array = phx.fixed_field()
 
-    def __call__(self, state: Array, time: Array, *, key=None) -> Array:
+    def __call__(self, state: Array, time: Array, *, key: Any = None) -> Array:
         del time, key
         return -state / self.variance
 
@@ -283,7 +283,7 @@ def quartic_laplacian(state: Array, /) -> Array:
 
 
 def _measure(
-    function,
+    function: Any,
     argument: Any,
     /,
     *,
@@ -302,21 +302,23 @@ def _measure(
     compile_ms = 1_000.0 * (
         compilation.lowering_seconds + compilation.compilation_seconds
     )
+    # ty: ignore[invalid-argument-type]
     return value, compile_ms, 1_000.0 * float(distribution.mean_seconds)
 
 
 def _measure_thunk(
-    function,
+    function: Any,
     /,
     *,
     repeats: int,
-):
+) -> Any:
     value, first_seconds = measure_synchronized(function)
     value, distribution = measure_repeated(
         function,
         warmup=0,
         repeats=int(repeats),
     )
+    # ty: ignore[invalid-argument-type]
     wall_ms = 1_000.0 * float(distribution.mean_seconds)
     first_ms = 1_000.0 * first_seconds
     return value, max(first_ms - wall_ms, 0.0), wall_ms, first_ms
@@ -357,6 +359,7 @@ def run_semidiscrete_pde_compiler_benchmark(
             ),
         ),
     )
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(size).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     started = time.perf_counter()
@@ -368,11 +371,11 @@ def run_semidiscrete_pde_compiler_benchmark(
     state = 0.2 + 0.1 * jnp.sin(2.0 * jnp.pi * axis.nodes)
     coefficient = jnp.asarray(0.07)
 
-    def compiled_drift(arguments):
+    def compiled_drift(arguments: Any) -> Any:
         value, diffusivity = arguments
         return compiled(0.0, value, {"kappa": diffusivity})
 
-    def handwritten_drift(arguments):
+    def handwritten_drift(arguments: Any) -> Any:
         value, diffusivity = arguments
         return diffusivity * spatial.laplacian(value) + value * (1.0 - value)
 
@@ -421,7 +424,7 @@ def _quadratic_heat_problem(dimension: int, /) -> phx.stochastic.BSDEProblem:
     times = jnp.asarray([0.0, 1.0])
     process_id = f"rank-one-brownian-{dimension}"
 
-    def forward_sampler(key):
+    def forward_sampler(key: Any) -> Any:
         increments = jr.normal(key, (1, 1, 1))
         initial = jnp.zeros((1, 1, dimension), dtype=increments.dtype)
         terminal = initial + jnp.broadcast_to(increments, initial.shape)
@@ -473,7 +476,7 @@ def _query_feynman_kac_record(
         control_target_mode="martingale",
     )
 
-    def operation():
+    def operation() -> Any:
         result = phx.stochastic.query_feynman_kac_labels(
             problem,
             plan,
@@ -638,7 +641,7 @@ def _linear_hjb_problem(
         raise ValueError("Antithetic Linear HJB paths require an even path count.")
     times = jnp.linspace(0.0, 1.0, step_count + 1)
 
-    def forward_sampler(key):
+    def forward_sampler(key: Any) -> Any:
         independent_count = path_count // 2 if antithetic else path_count
         independent = jr.normal(key, (independent_count, step_count, dimension))
         increments = (
@@ -735,7 +738,7 @@ def _deep_picard_record(
         refresh_mode="fixed",
     )
 
-    def solve_once():
+    def solve_once() -> Any:
         return phx.solver.solve_deep_picard(
             _linear_hjb_solver(dimension),
             problem,
@@ -839,7 +842,7 @@ def _deep_bsde_record(
     )
     validation_paths = problem.sample(jr.fold_in(key, 1))
 
-    def solve_once():
+    def solve_once() -> Any:
         return phx.solver.solve_deep_bsde(
             _linear_hjb_shooting_solver(dimension),
             problem,
@@ -929,7 +932,7 @@ def _deep_splitting_record(
     training_paths = problem.sample(jr.fold_in(key, 1))
     validation_paths = problem.sample(jr.fold_in(key, 2))
 
-    def solve_once():
+    def solve_once() -> Any:
         return phx.solver.solve_deep_splitting(
             _linear_hjb_solver(dimension),
             problem,
@@ -1027,7 +1030,7 @@ def _hutchinson_laplacian_record(
     state = jr.normal(state_key, (dimension,))
     policy = StochasticTracePolicy(num_probes, distribution="normal")
 
-    def operation(value):
+    def operation(value: Any) -> Any:
         return stochastic_trace_samples(
             quartic_field,
             value,
@@ -1080,7 +1083,7 @@ def _dimension_laplacian_record(
     count = min(int(num_probes), dimension)
     policy = DimensionSamplingPolicy(dimension, count)
 
-    def operation(value):
+    def operation(value: Any) -> Any:
         return coordinate_second_derivative_samples(
             quartic_field,
             value,
@@ -1167,7 +1170,7 @@ def _implicit_score_record(
     )
     functions = {"score": score}
 
-    def operation(value):
+    def operation(value: Any) -> Any:
         del value
         return term.loss(functions, key=objective_key)
 

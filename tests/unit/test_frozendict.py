@@ -12,7 +12,7 @@ from phydrax._frozendict import frozendict
 
 
 class TestFrozenDict:
-    def test_init(self):
+    def test_init(self) -> None:
         # Test initialization with dict
         d = {"a": 1, "b": 2}
         fd = frozendict(d)
@@ -35,7 +35,7 @@ class TestFrozenDict:
         assert fd2["a"] == 1
         assert fd2["b"] == 2
 
-    def test_immutability(self):
+    def test_immutability(self) -> None:
         fd = frozendict(a=1, b=2)
 
         # Test that assignment raises TypeError
@@ -66,35 +66,35 @@ class TestFrozenDict:
         with pytest.raises(TypeError):
             fd.update({"c": 3})
 
-    def test_get(self):
+    def test_get(self) -> None:
         fd = frozendict(a=1, b=2)
         assert fd.get("a") == 1
         assert fd.get("c") is None
         assert fd.get("c", 3) == 3
 
-    def test_keys_values_items(self):
+    def test_keys_values_items(self) -> None:
         fd = frozendict(a=1, b=2)
         assert set(fd.keys()) == {"a", "b"}
         assert set(fd.values()) == {1, 2}
         assert set(fd.items()) == {("a", 1), ("b", 2)}
 
-    def test_len(self):
+    def test_len(self) -> None:
         fd = frozendict(a=1, b=2)
         assert len(fd) == 2
 
-    def test_contains(self):
+    def test_contains(self) -> None:
         fd = frozendict(a=1, b=2)
         assert "a" in fd
         assert "c" not in fd
 
-    def test_iter(self):
+    def test_iter(self) -> None:
         fd = frozendict(a=1, b=2)
         keys = set()
         for key in fd:
             keys.add(key)
         assert keys == {"a", "b"}
 
-    def test_hash(self):
+    def test_hash(self) -> None:
         fd1 = frozendict(a=1, b=2)
         fd2 = frozendict(a=1, b=2)
         fd3 = frozendict(a=1, b=3)
@@ -111,7 +111,7 @@ class TestFrozenDict:
         assert d[fd2] == "value1"  # fd2 has same hash as fd1
         assert d[fd3] == "value2"
 
-    def test_equality(self):
+    def test_equality(self) -> None:
         fd1 = frozendict(a=1, b=2)
         fd2 = frozendict(a=1, b=2)
         fd3 = frozendict(a=1, b=3)
@@ -130,7 +130,7 @@ class TestFrozenDict:
         assert fd1 != [("a", 1), ("b", 2)]
         assert fd1 != 42
 
-    def test_nested_frozendict(self):
+    def test_nested_frozendict(self) -> None:
         # Test with nested frozendict
         nested = frozendict(a=1, b=frozendict(c=2, d=3))
         assert nested["b"]["c"] == 2
@@ -140,7 +140,7 @@ class TestFrozenDict:
         with pytest.raises(TypeError):
             nested["b"]["c"] = 4
 
-    def test_with_unhashable_values(self):
+    def test_with_unhashable_values(self) -> None:
         # Should work with unhashable values like lists
         fd = frozendict(a=[1, 2, 3], b=[4, 5, 6])
         assert fd["a"] == [1, 2, 3]
@@ -149,13 +149,13 @@ class TestFrozenDict:
         with pytest.raises(TypeError):
             hash(fd)
 
-    def test_with_complex_keys(self):
+    def test_with_complex_keys(self) -> None:
         # Test with tuple keys (which are hashable)
         fd = frozendict({(1, 2): "a", (3, 4): "b"})
         assert fd[(1, 2)] == "a"
         assert fd[(3, 4)] == "b"
 
-    def test_equivalent_mappings_have_one_canonical_pytree_layout(self):
+    def test_equivalent_mappings_have_one_canonical_pytree_layout(self) -> None:
         left = frozendict({"b": 2, "a": 1})
         right = frozendict({"a": 1, "b": 2})
 
@@ -171,7 +171,7 @@ class TestFrozenDict:
         assert jax.tree.structure(boolean_key) == jax.tree.structure(integer_key)
         assert jax.tree.structure(integer_key) == jax.tree.structure(floating_key)
 
-    def test_leaf_key_paths_name_the_mapping_keys(self):
+    def test_leaf_key_paths_name_the_mapping_keys(self) -> None:
         fd = frozendict({"direction": 1.0, 3: 2.0, "offset": 3.0})
         paths = [
             jax.tree_util.keystr(path)
@@ -187,7 +187,7 @@ class TestFrozenDict:
         assert jax.tree.structure(mapped) == jax.tree.structure(fd)
         assert mapped == frozendict({"direction": 2.0, 3: 4.0, "offset": 6.0})
 
-    def test_noncanonical_key_kinds_are_rejected(self):
+    def test_noncanonical_key_kinds_are_rejected(self) -> None:
         class CustomKey:
             pass
 
@@ -196,7 +196,7 @@ class TestFrozenDict:
         with pytest.raises(ValueError, match="finite"):
             frozendict({float("nan"): 1})
 
-    def test_mapping_protocol(self):
+    def test_mapping_protocol(self) -> None:
         # Test that frozendict implements the Mapping protocol
         fd = frozendict(a=1, b=2)
         assert isinstance(fd, Mapping)
@@ -205,7 +205,7 @@ class TestFrozenDict:
         assert dict(fd) == {"a": 1, "b": 2}
         assert {**fd} == {"a": 1, "b": 2}
 
-    def test_empty_frozendict(self):
+    def test_empty_frozendict(self) -> None:
         fd = frozendict()
         assert len(fd) == 0
         assert list(fd.keys()) == []
@@ -213,14 +213,14 @@ class TestFrozenDict:
         assert list(fd.items()) == []
         assert hash(fd) == hash(frozenset())
 
-    def test_structural_update_preserves_empty_mapping_layout(self):
+    def test_structural_update_preserves_empty_mapping_layout(self) -> None:
         tree = {"metadata": frozendict(), "value": 1.0}
         updated = eqx.tree_at(lambda item: item["value"], tree, 2.0)
 
         assert jax.tree.structure(updated) == jax.tree.structure(tree)
         assert eqx.tree_equal(updated, {"metadata": frozendict(), "value": 2.0})
 
-    def test_type_annotations(self):
+    def test_type_annotations(self) -> None:
         # Test that type annotations work as expected
         def takes_mapping(m: Mapping[str, int]) -> int:
             return sum(m.values())

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _termination(*, steps=50, tolerance=1e-7):
+def _termination(*, steps: Any = 50, tolerance: Any = 1e-7) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=tolerance,
         relative_optimality=0.0,
@@ -19,7 +22,7 @@ def _termination(*, steps=50, tolerance=1e-7):
     )
 
 
-def test_bounds_broadcast_over_pytrees_and_report_activity():
+def test_bounds_broadcast_over_pytrees_and_report_activity() -> None:
     parameters = {"a": jnp.array([-2.0, 0.5]), "b": jnp.array(3.0)}
     bounds = phx.optim.Bounds(
         {"a": jnp.array([-1.0, 0.0]), "b": jnp.array(-2.0)},
@@ -46,7 +49,9 @@ def test_bounds_broadcast_over_pytrees_and_report_activity():
         phx.optim.ProjectedLBFGS(),
     ],
 )
-def test_bound_methods_converge_to_active_corner_with_feasible_iterates(method):
+def test_bound_methods_converge_to_active_corner_with_feasible_iterates(
+    method: Any,
+) -> None:
     bounds = phx.optim.Bounds(
         jnp.array([0.0, -1.0]),
         jnp.array([1.0, 2.0]),
@@ -76,7 +81,7 @@ def test_bound_methods_converge_to_active_corner_with_feasible_iterates(method):
         phx.optim.ProjectedLBFGS(),
     ],
 )
-def test_bound_methods_stage_large_budget_and_backtracked_step(method):
+def test_bound_methods_stage_large_budget_and_backtracked_step(method: Any) -> None:
     problem = phx.optim.MinimizationProblem(
         lambda value, target: 5.0 * jnp.sum((value - target) ** 2),
         bounds=phx.optim.Bounds(-20.0, 20.0),
@@ -87,7 +92,7 @@ def test_bound_methods_stage_large_budget_and_backtracked_step(method):
         maximum_steps=1_000_000,
     )
 
-    def solve(target):
+    def solve(target: Any) -> Any:
         return phx.optim.minimize(
             problem,
             jnp.array([0.0]),
@@ -123,7 +128,7 @@ def test_bound_methods_stage_large_budget_and_backtracked_step(method):
         )
 
 
-def test_bound_method_can_reject_infeasible_initial_point_by_policy():
+def test_bound_method_can_reject_infeasible_initial_point_by_policy() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda value, _: jnp.sum(value**2),
         bounds=phx.optim.Bounds(0.0, 1.0),
@@ -138,7 +143,7 @@ def test_bound_method_can_reject_infeasible_initial_point_by_policy():
     assert result.diagnostics.primal_feasibility == 2.0
 
 
-def _mixed_constraint_problem():
+def _mixed_constraint_problem() -> Any:
     constraints = (
         phx.optim.NonlinearConstraint(
             lambda value, _: jnp.array([value[0] + value[1]]),
@@ -166,7 +171,9 @@ def _mixed_constraint_problem():
         (phx.optim.SQP(), 1e-6),
     ],
 )
-def test_nonlinear_constrained_methods_satisfy_kkt_system(method, tolerance):
+def test_nonlinear_constrained_methods_satisfy_kkt_system(
+    method: Any, tolerance: Any
+) -> None:
     result = phx.optim.minimize(
         _mixed_constraint_problem(),
         jnp.array([0.5, 0.5]),
@@ -186,7 +193,7 @@ def test_nonlinear_constrained_methods_satisfy_kkt_system(method, tolerance):
         assert result.diagnostics.hvp_evaluations > 0
 
 
-def test_sqp_reports_failed_restoration_for_infeasible_nonlinear_equation():
+def test_sqp_reports_failed_restoration_for_infeasible_nonlinear_equation() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda value, _: jnp.sum(value**2),
         constraints=(
@@ -212,7 +219,7 @@ def test_sqp_reports_failed_restoration_for_infeasible_nonlinear_equation():
     assert result.diagnostics.direction_fallbacks >= 1
 
 
-def _assert_constrained_diagnostics_match(compiled, eager):
+def _assert_constrained_diagnostics_match(compiled: Any, eager: Any) -> None:
     for field in (
         "iterations",
         "accepted_steps",
@@ -259,13 +266,13 @@ def _assert_constrained_diagnostics_match(compiled, eager):
     ],
 )
 def test_constrained_native_methods_filtered_jit_match_large_budget_eager(
-    method,
-    tolerance,
-):
+    method: Any,
+    tolerance: Any,
+) -> None:
     problem = _mixed_constraint_problem()
     termination = _termination(steps=100_000, tolerance=tolerance)
 
-    def solve(initial):
+    def solve(initial: Any) -> Any:
         return phx.optim.minimize(
             problem,
             initial,
@@ -289,7 +296,7 @@ def test_constrained_native_methods_filtered_jit_match_large_budget_eager(
     _assert_constrained_diagnostics_match(compiled, eager)
 
 
-def test_sqp_filtered_jit_restoration_failure_preserves_accepted_iterate():
+def test_sqp_filtered_jit_restoration_failure_preserves_accepted_iterate() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda value, _: jnp.sum(value**2),
         constraints=(
@@ -303,7 +310,7 @@ def test_sqp_filtered_jit_restoration_failure_preserves_accepted_iterate():
     method = phx.optim.SQP()
     termination = _termination(steps=100_000)
 
-    def solve(initial):
+    def solve(initial: Any) -> Any:
         return phx.optim.minimize(
             problem,
             initial,
@@ -340,7 +347,9 @@ def test_sqp_filtered_jit_restoration_failure_preserves_accepted_iterate():
         ),
     ],
 )
-def test_native_constrained_methods_support_jvp_vmap_and_pytree_parameters(method):
+def test_native_constrained_methods_support_jvp_vmap_and_pytree_parameters(
+    method: Any,
+) -> None:
     constraint = phx.optim.NonlinearConstraint(
         lambda parameters, target: parameters["state"] - target,
         lower=0.0,
@@ -352,7 +361,7 @@ def test_native_constrained_methods_support_jvp_vmap_and_pytree_parameters(metho
     )
     termination = _termination(steps=40, tolerance=1e-8)
 
-    def solution(target):
+    def solution(target: Any) -> Any:
         return phx.optim.minimize(
             problem,
             {"state": jnp.array([0.0])},
@@ -382,14 +391,14 @@ def test_native_constrained_methods_support_jvp_vmap_and_pytree_parameters(metho
         phx.optim.ActiveSetNewton(),
     ],
 )
-def test_native_bound_methods_support_jvp_vmap_and_pytree_parameters(method):
+def test_native_bound_methods_support_jvp_vmap_and_pytree_parameters(method: Any) -> None:
     problem = phx.optim.MinimizationProblem(
         lambda parameters, target: jnp.sum((parameters["state"] - target) ** 2),
         bounds=phx.optim.Bounds(-2.0, 2.0),
     )
     termination = _termination(steps=30, tolerance=1e-8)
 
-    def solution(target):
+    def solution(target: Any) -> Any:
         return phx.optim.minimize(
             problem,
             {"state": jnp.array([0.0])},
@@ -411,7 +420,7 @@ def test_native_bound_methods_support_jvp_vmap_and_pytree_parameters(method):
     np.testing.assert_allclose(derivative, 0.2, atol=2e-6)
 
 
-def test_augmented_lagrangian_refuses_outer_subsolve_without_remaining_budget():
+def test_augmented_lagrangian_refuses_outer_subsolve_without_remaining_budget() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda value, _: jnp.sum((value - 2.0) ** 2),
         constraints=(

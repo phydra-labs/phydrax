@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -17,12 +20,12 @@ from phydrax.solver._deterministic_ensemble import (
 from phydrax.solver._differential import DifferentialProblem
 
 
-def _zero_drift(time, state, args):
+def _zero_drift(time: Any, state: Any, args: Any) -> Any:
     del time, args
     return jnp.zeros_like(state)
 
 
-def test_qft_deterministic_ensemble_preserves_paths_and_weighted_moments():
+def test_qft_deterministic_ensemble_preserves_paths_and_weighted_moments() -> None:
     problem = DifferentialProblem(
         _zero_drift,
         jnp.asarray([0.0]),
@@ -34,6 +37,7 @@ def test_qft_deterministic_ensemble_preserves_paths_and_weighted_moments():
         DeterministicInitialCondition([1.0], 1.0, "low-amplitude"),
         DeterministicInitialCondition([3.0], 3.0, "high-amplitude"),
     )
+    # ty: ignore[invalid-argument-type]
     prepared = DeterministicEnsemblePlan(problem, paths).prepare([0.0, 0.5, 1.0])
     result = execute_deterministic_ensemble(prepared)
 
@@ -47,11 +51,13 @@ def test_qft_deterministic_ensemble_preserves_paths_and_weighted_moments():
     assert result.path_ids == prepared.plan.path_ids
     with pytest.raises(MemoryError, match="maximum_output_bytes"):
         DeterministicEnsemblePlan(problem, paths, maximum_output_bytes=1).prepare(
+            # ty: ignore[invalid-argument-type]
             [0.0, 1.0]
         )
 
 
-def test_qft_weighted_reducer_masks_invalid_paths_without_changing_shape():
+def test_qft_weighted_reducer_masks_invalid_paths_without_changing_shape() -> None:
+    # ty: ignore[invalid-argument-type]
     reducer = WeightedEnsembleReducer([1.0, 2.0, 100.0], [True, True, False])
     values = jnp.asarray([[1.0, 2.0], [4.0, 8.0], [jnp.nan, jnp.nan]])
 
@@ -60,7 +66,7 @@ def test_qft_weighted_reducer_masks_invalid_paths_without_changing_shape():
     assert bool(reducer.successful)
 
 
-def test_qft_scalar_and_mmst_recipes_encode_declared_second_moments():
+def test_qft_scalar_and_mmst_recipes_encode_declared_second_moments() -> None:
     coordinates = jnp.asarray(
         (
             ((-1.0,), (-1.0,)),
@@ -70,7 +76,12 @@ def test_qft_scalar_and_mmst_recipes_encode_declared_second_moments():
         )
     )
     scalar = ClassicalStatisticalScalarRecipe(
-        [2.0], coordinates, jnp.ones((4,)), occupations=[0.5]
+        # ty: ignore[invalid-argument-type]
+        [2.0],
+        coordinates,
+        jnp.ones((4,)),
+        # ty: ignore[invalid-argument-type]
+        occupations=[0.5],
     )
     scalar_states = jnp.stack(
         tuple(path.initial_state for path in scalar.initial_conditions())
@@ -80,7 +91,12 @@ def test_qft_scalar_and_mmst_recipes_encode_declared_second_moments():
     np.testing.assert_allclose(reducer.variance(scalar_states[:, 0, 0]), 0.5)
     np.testing.assert_allclose(reducer.variance(scalar_states[:, 1, 0]), 2.0)
     changed = ClassicalStatisticalScalarRecipe(
-        [3.0], 2.0 * coordinates, 2.0 * jnp.ones((4,)), occupations=[1.5]
+        # ty: ignore[invalid-argument-type]
+        [3.0],
+        2.0 * coordinates,
+        2.0 * jnp.ones((4,)),
+        # ty: ignore[invalid-argument-type]
+        occupations=[1.5],
     )
     scalar_paths = scalar.initial_conditions()
     changed_paths = changed.initial_conditions()
@@ -91,6 +107,7 @@ def test_qft_scalar_and_mmst_recipes_encode_declared_second_moments():
         path.realization_id for path in changed_paths
     )
 
+    # ty: ignore[invalid-argument-type]
     mmst = MMSTInitialConditionRecipe([0.25, 0.75], [1.0], [-0.5])
     mmst_paths = mmst.initial_conditions()
     mapping_actions = jnp.stack(

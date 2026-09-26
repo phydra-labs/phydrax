@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -14,7 +17,7 @@ from phydrax.statistical_dynamics._cumulants import DenseCumulantState, ForcingC
 from phydrax.statistical_dynamics._interactions import InteractionPartition
 
 
-def _problem(count=8, *, beta=2.0):
+def _problem(count: Any = 8, *, beta: Any = 2.0) -> Any:
     space = TensorSpectralPlan(
         (FourierBasisPlan(count), FourierBasisPlan(count)),
         axis_names=("x", "y"),
@@ -28,7 +31,7 @@ def _problem(count=8, *, beta=2.0):
     return BarotropicBetaPlane(space, beta=beta)
 
 
-def test_beta_plane_rossby_wave_inversion_and_budgets():
+def test_beta_plane_rossby_wave_inversion_and_budgets() -> None:
     problem = _problem()
     space = problem.discretization
     x = space.axes[0].nodes[:, None]
@@ -67,7 +70,7 @@ def test_beta_plane_rossby_wave_inversion_and_budgets():
     assert bool(budgets.successful)
 
 
-def test_dealiased_jacobian_conserves_energy_and_enstrophy():
+def test_dealiased_jacobian_conserves_energy_and_enstrophy() -> None:
     problem = _problem(beta=0.0)
     space = problem.discretization
     x = space.axes[0].nodes[:, None]
@@ -84,7 +87,7 @@ def test_dealiased_jacobian_conserves_energy_and_enstrophy():
     np.testing.assert_allclose(budgets.nonlinear_enstrophy_rate, 0.0, atol=2e-11)
 
 
-def test_hermitian_masks_close_and_ql_gql_reach_exact_limits():
+def test_hermitian_masks_close_and_ql_gql_reach_exact_limits() -> None:
     problem = _problem()
     space = problem.discretization
     partition = InteractionPartition.zonal_mean(
@@ -120,7 +123,7 @@ def test_hermitian_masks_close_and_ql_gql_reach_exact_limits():
     np.testing.assert_allclose(continued, problem.nonlinear_tendency(state), atol=2e-11)
 
 
-def test_beta_plane_coordinates_drive_exact_prepared_gce2_owner():
+def test_beta_plane_coordinates_drive_exact_prepared_gce2_owner() -> None:
     problem = _problem(6, beta=0.0)
     partition = InteractionPartition.from_wavenumber_cutoff(
         problem.discretization,

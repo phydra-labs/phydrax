@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_plane_stress_closes_p33_and_condenses_tangent():
+def test_plane_stress_closes_p33_and_condenses_tangent() -> None:
     material = phx.applications.solid_mechanics.PlaneStressMPMConstitutivePlan(
         phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
     )
@@ -33,7 +35,7 @@ def test_plane_stress_closes_p33_and_condenses_tangent():
     assert bool(linearized.tangent_successful[0])
     assert jnp.all(jnp.isfinite(linearized.algorithmic_tangent))
 
-    def reduced_energy(value):
+    def reduced_energy(value: Any) -> Any:
         return material.evaluate(
             value[None], history, jnp.asarray((2.0,)), parameters, 0.0, 0.01
         ).reference_energy_density[0]
@@ -42,7 +44,7 @@ def test_plane_stress_closes_p33_and_condenses_tangent():
     np.testing.assert_allclose(gradient, response.first_piola[0], rtol=2e-8, atol=2e-8)
 
 
-def test_plane_stress_material_initializes_and_advances_explicit_mpm():
+def test_plane_stress_material_initializes_and_advances_explicit_mpm() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(10, periodic=True, endpoint=False)
@@ -85,7 +87,7 @@ def test_plane_stress_material_initializes_and_advances_explicit_mpm():
     assert jnp.all(detail.accepted_state.particles.material_state[:, -1] == 0.0)
 
 
-def test_finite_strain_j2_yields_dissipates_and_preserves_plastic_volume():
+def test_finite_strain_j2_yields_dissipates_and_preserves_plastic_volume() -> None:
     material = phx.applications.solid_mechanics.FiniteStrainJ2MPMConstitutivePlan()
     parameters = phx.applications.solid_mechanics.FiniteStrainJ2Parameters(
         10.0, 30.0, 0.15, 2.0
@@ -109,7 +111,7 @@ def test_finite_strain_j2_yields_dissipates_and_preserves_plastic_volume():
     assert bool(linearized.tangent_successful[0])
 
 
-def test_coupled_j2_plane_stress_solves_thickness_and_plastic_branch():
+def test_coupled_j2_plane_stress_solves_thickness_and_plastic_branch() -> None:
     material = phx.applications.solid_mechanics.finite_strain_j2_plane_stress_plan()
     parameters = phx.applications.solid_mechanics.FiniteStrainJ2Parameters(
         8.0, 25.0, 0.1, 1.0

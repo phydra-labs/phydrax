@@ -768,7 +768,10 @@ class PreparedMACFlowControl(StrictModule):
         if self.method_kind == "sbdf2":
             sbdf2 = self.method
             # method_kind is derived from the method type at preparation.
-            assert isinstance(sbdf2, MACSBDF2Method)
+            if not (isinstance(sbdf2, MACSBDF2Method)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(sbdf2, MACSBDF2Method)."
+                )
             step = jnp.asarray(sbdf2.step_size, dtype=dtype)
             if value is not None:
                 supplied = jnp.asarray(value, dtype=dtype).reshape(())
@@ -779,7 +782,10 @@ class PreparedMACFlowControl(StrictModule):
         if self.method_kind == "imex_euler":
             imex = self.method
             # method_kind is derived from the method type at preparation.
-            assert isinstance(imex, MACIMEXEulerMethod)
+            if not (isinstance(imex, MACIMEXEulerMethod)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(imex, MACIMEXEulerMethod)."
+                )
             return imex._step_size(value)
         if value is None:
             raise ValueError("MAC SSPRK flow control requires step_size.")
@@ -829,7 +835,10 @@ class PreparedMACFlowControl(StrictModule):
         method = _set_control(self.method, control)
         # method_kind is derived from the method type at preparation.
         if self.method_kind == "ssprk":
-            assert isinstance(method, AbstractSSPRKFixedStepMethod)
+            if not (isinstance(method, AbstractSSPRKFixedStepMethod)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(method, AbstractSSPRKFixedStepMethod)."
+                )
             result = method.step(state.step_index, state.time, state.state, step, args)
             candidate = MACFlowControlState(
                 time=state.time + step,
@@ -853,7 +862,10 @@ class PreparedMACFlowControl(StrictModule):
             )
             return candidate, result.successful
         if self.method_kind == "imex_euler":
-            assert isinstance(method, MACIMEXEulerMethod)
+            if not (isinstance(method, MACIMEXEulerMethod)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(method, MACIMEXEulerMethod)."
+                )
             result = method.step(
                 state.time,
                 state.state,
@@ -882,7 +894,10 @@ class PreparedMACFlowControl(StrictModule):
                 plan_id=self.prepared_id,
             )
             return candidate, result.accepted
-        assert isinstance(method, MACSBDF2Method)
+        if not (isinstance(method, MACSBDF2Method)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(method, MACSBDF2Method)."
+            )
         sbdf2 = method
 
         def startup(_: None) -> tuple[MACFlowControlState, Array]:
@@ -1063,7 +1078,10 @@ class PreparedMACFlowControl(StrictModule):
         if isinstance(controlled_method, AbstractSSPRKFixedStepMethod):
             vector_field = controlled_method.vector_field
             # Preparation binds compiled MAC dynamics as the SSPRK vector field.
-            assert isinstance(vector_field, CompiledMACIncompressibleDynamics)
+            if not (isinstance(vector_field, CompiledMACIncompressibleDynamics)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(vector_field, CompiledMACIncompressibleDynamics)."
+                )
             diagnostic_dynamics = vector_field
         else:
             diagnostic_dynamics = controlled_method.dynamics

@@ -97,7 +97,7 @@ def run_benchmarks(
 
     iterative_space = phx.linalg.ArraySpace((iterative_size,), dtype=jnp.float64)
 
-    def stencil(vector):
+    def stencil(vector: Any) -> Any:
         padded = jnp.pad(vector, (1, 1))
         return 4.0 * vector - padded[:-2] - padded[2:]
 
@@ -136,7 +136,7 @@ def run_benchmarks(
     sparse_space = phx.linalg.ArraySpace((iterative_size,), dtype=jnp.float64)
     sparse_target = phx.linalg.ArraySpace((iterative_size - 1,), dtype=jnp.float64)
 
-    def residual(values, _):
+    def residual(values: Any, _: Any) -> Any:
         return (values[1:] - values[:-1]) ** 2
 
     point = jnp.linspace(0.0, 1.0, iterative_size)
@@ -227,7 +227,7 @@ def run_benchmarks(
         )
     )
 
-    def energy(values, _):
+    def energy(values: Any, _: Any) -> Any:
         return jnp.sum((values[1:] - values[:-1]) ** 2) + jnp.sum(values**2)
 
     coordinates = jnp.arange(iterative_size)

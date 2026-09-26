@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -11,7 +13,7 @@ from phydrax.meshing import MeshingFailure, MeshingFailureCategory
 from phydrax.meshing.providers._openvdb import OpenVDBMeshingSpec, OpenVDBProvider
 
 
-def _ellipsoid_field(*, background_mode="constant"):
+def _ellipsoid_field(*, background_mode: Any = "constant") -> Any:
     lower = np.asarray((10.0, -6.0, 20.0))
     upper = np.asarray((14.0, 2.0, 32.0))
     center = (lower + upper) / 2.0
@@ -21,6 +23,7 @@ def _ellipsoid_field(*, background_mode="constant"):
     normalized = (indices + 0.5) / 8.0 - 1.0
     indices = indices[np.linalg.norm(normalized, axis=1) < 0.9]
     grid = SparseVoxelGridPlan(
+        # ty: ignore[invalid-argument-type]
         MortonAddressPlan(lower, upper, 4),
         brick_size=4,
         brick_capacity=64,
@@ -43,7 +46,7 @@ def _ellipsoid_field(*, background_mode="constant"):
     return field, center, half_width
 
 
-def test_openvdb_extracts_sparse_anisotropic_cell_centered_isosurface():
+def test_openvdb_extracts_sparse_anisotropic_cell_centered_isosurface() -> None:
     pytest.importorskip("openvdb")
     field, center, half_width = _ellipsoid_field()
     contract = SpatialCoordinateContract.si()
@@ -62,12 +65,13 @@ def test_openvdb_extracts_sparse_anisotropic_cell_centered_isosurface():
     np.testing.assert_allclose(radius, 0.65, atol=0.04, rtol=0)
     assert result.audit.passed and result.compliance.passed
     assert result.coordinate_contract.spatial_id == contract.spatial_id
+    # ty: ignore[unresolved-attribute]
     assert result.boundary.metadata.source_id != "sampled-ellipsoid"
     assert result.associations == ()
     assert result.labels == ()
 
 
-def test_openvdb_rejects_unknown_background_instead_of_inventing_exterior():
+def test_openvdb_rejects_unknown_background_instead_of_inventing_exterior() -> None:
     field, _, _ = _ellipsoid_field(background_mode="unsupported")
     with pytest.raises(MeshingFailure) as caught:
         OpenVDBProvider().execute(
@@ -80,7 +84,7 @@ def test_openvdb_rejects_unknown_background_instead_of_inventing_exterior():
     assert caught.value.category is MeshingFailureCategory.UNSUPPORTED_CAPABILITY
 
 
-def test_openvdb_rejects_empty_isosurface_without_substituting_geometry():
+def test_openvdb_rejects_empty_isosurface_without_substituting_geometry() -> None:
     pytest.importorskip("openvdb")
     field, _, _ = _ellipsoid_field()
     with pytest.raises(MeshingFailure) as caught:

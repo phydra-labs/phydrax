@@ -12,6 +12,7 @@ illustrative calibration choices, not observed optical constants.
 
 import argparse
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -27,7 +28,7 @@ from phydrax.applications.atmosphere import (
 )
 
 
-def build_column(layers=8):
+def build_column(layers: Any = 8) -> Any:
     if int(layers) != layers or layers < 2:
         raise ValueError("The forced-column example requires at least two layers.")
     thermo = MoistThermodynamicPlan()
@@ -46,6 +47,7 @@ def build_column(layers=8):
         background_diffusivity=0.5,
         mixing_length=50.0,
     )
+    # ty: ignore[unresolved-attribute]
     dtype = jnp.float64 if jax.config.x64_enabled else jnp.float32
     thickness = 4000.0 / layers
     height = thickness * (
@@ -77,7 +79,7 @@ def build_column(layers=8):
     return plan, initial
 
 
-def physical_report(plan, initial, final, dt, forcing):
+def physical_report(plan: Any, initial: Any, final: Any, dt: Any, forcing: Any) -> Any:
     view = plan.diagnose(final)
     flux = plan.step(final, dt, **forcing)
     if not bool(flux.successful):
@@ -142,7 +144,7 @@ def physical_report(plan, initial, final, dt, forcing):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--layers", type=int, default=8)
     parser.add_argument("--steps", type=int, default=1800)

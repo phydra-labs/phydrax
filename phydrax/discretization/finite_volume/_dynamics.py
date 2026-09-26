@@ -819,7 +819,10 @@ class PreparedFiniteVolumeDynamics(StrictModule):
     ) -> tuple[Array, Array]:
         # Preparation admits only arbitrary-normal fluxes on mapped geometry.
         solver = self.method.interface_solver
-        assert isinstance(solver, AbstractArbitraryNormalNumericalFluxPlan)
+        if not (isinstance(solver, AbstractArbitraryNormalNumericalFluxPlan)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(solver, AbstractArbitraryNormalNumericalFluxPlan)."
+            )
         measure = self.discretization.face_measures[axis]
         left_ = self.precision.flux(left)
         right_ = self.precision.flux(right)

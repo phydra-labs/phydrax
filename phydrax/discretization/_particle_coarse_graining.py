@@ -288,7 +288,10 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
         kinetic_stress = -(raw_flux_result.density - advective_flux)
         particle_measure = self.particle_splat.target_measure
         # deposit_content above already rejected non-materialized target measures.
-        assert isinstance(particle_measure, DiscreteMeasure)
+        if not (isinstance(particle_measure, DiscreteMeasure)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(particle_measure, DiscreteMeasure)."
+            )
         target_measure = particle_measure.weights.reshape(
             self.particle_splat.target_shape
         ).astype(position.dtype)

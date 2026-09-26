@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -9,7 +12,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _gaussian_problem():
+def _gaussian_problem() -> Any:
     prior = phx.uq.Normal(0.0, 1.0)
     likelihood = phx.uq.Normal(1.5, 0.5)
     return phx.uq.PosteriorProblem(
@@ -22,7 +25,7 @@ def _gaussian_problem():
     )
 
 
-def test_mean_field_samples_and_normalized_log_density_are_consistent():
+def test_mean_field_samples_and_normalized_log_density_are_consistent() -> None:
     family = phx.uq.MeanFieldGaussianFamily.from_position(
         {"a": jnp.asarray([0.2, -0.1]), "b": jnp.asarray(0.3)},
         initial_scale=0.4,
@@ -42,7 +45,7 @@ def test_mean_field_samples_and_normalized_log_density_are_consistent():
     )
 
 
-def test_mean_field_vi_recovers_analytic_gaussian_posterior():
+def test_mean_field_vi_recovers_analytic_gaussian_posterior() -> None:
     problem = _gaussian_problem()
     result = phx.uq.fit_variational(
         problem,
@@ -58,7 +61,9 @@ def test_mean_field_vi_recovers_analytic_gaussian_posterior():
     expected_mean = 1.2
     expected_scale = jnp.sqrt(0.2)
 
+    # ty: ignore[unresolved-attribute]
     assert abs(float(result.family.location) - expected_mean) < 0.08
+    # ty: ignore[unresolved-attribute]
     assert abs(float(result.family.scale) - float(expected_scale)) < 0.08
     assert abs(float(jnp.mean(result.samples)) - expected_mean) < 0.1
     assert abs(float(jnp.std(result.samples)) - float(expected_scale)) < 0.1
@@ -69,10 +74,13 @@ def test_mean_field_vi_recovers_analytic_gaussian_posterior():
         jax.random.key(20),
         num_observation_samples=2,
     )
+    # ty: ignore[unresolved-attribute]
     assert observations.samples.data.shape == (1000, 2)
 
 
-def test_variational_checkpoint_resume_matches_uninterrupted_training(tmp_path):
+def test_variational_checkpoint_resume_matches_uninterrupted_training(
+    tmp_path: Any,
+) -> None:
     problem = _gaussian_problem()
     root_key = jax.random.key(3)
     common = dict(
@@ -84,6 +92,7 @@ def test_variational_checkpoint_resume_matches_uninterrupted_training(tmp_path):
     phx.uq.fit_variational(
         problem,
         key=root_key,
+        # ty: ignore[invalid-argument-type]
         config=phx.uq.VariationalConfig(num_steps=20, **common),
         num_samples=32,
         checkpoint_path=checkpoint,
@@ -93,6 +102,7 @@ def test_variational_checkpoint_resume_matches_uninterrupted_training(tmp_path):
     resumed = phx.uq.fit_variational(
         problem,
         key=root_key,
+        # ty: ignore[invalid-argument-type]
         config=phx.uq.VariationalConfig(num_steps=40, **common),
         num_samples=32,
         resume_from=checkpoint,
@@ -102,6 +112,7 @@ def test_variational_checkpoint_resume_matches_uninterrupted_training(tmp_path):
     uninterrupted = phx.uq.fit_variational(
         problem,
         key=root_key,
+        # ty: ignore[invalid-argument-type]
         config=phx.uq.VariationalConfig(num_steps=40, **common),
         num_samples=32,
     )
@@ -119,7 +130,7 @@ def test_variational_checkpoint_resume_matches_uninterrupted_training(tmp_path):
     assert jnp.array_equal(resumed.diagnostics.elbo, uninterrupted.diagnostics.elbo)
 
 
-def test_variational_family_preserves_constrained_parameter_coordinates():
+def test_variational_family_preserves_constrained_parameter_coordinates() -> None:
     likelihood = phx.uq.Normal(2.0, 0.3)
     space = phx.uq.ParameterSpace(
         jnp.asarray(0.0),

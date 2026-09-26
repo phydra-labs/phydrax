@@ -220,7 +220,10 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
         if dynamics.boundary is not None:
             if dynamics.compact_storage:
                 # Compact storage is block-sparse, whose build always returns a state.
-                assert storage_state is not None
+                if not (storage_state is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: storage_state is not None."
+                    )
                 initial_guess = dynamics.boundary.apply_indexed(
                     initial_guess,
                     grid_mass,
@@ -276,7 +279,10 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             if dynamics.boundary is not None:
                 if dynamics.compact_storage:
                     # Compact storage is block-sparse, whose build always returns a state.
-                    assert storage_state is not None
+                    if not (storage_state is not None):
+                        raise RuntimeError(
+                            "Internal invariant failed: storage_state is not None."
+                        )
                     logical = storage_state.logical_node_ids.reshape((-1,))
                     valid_nodes = storage_state.node_valid.reshape((-1,))
                     mask = (

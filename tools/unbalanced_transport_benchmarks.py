@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import coordax as cx
 import equinox as eqx
@@ -29,9 +30,10 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _measure(points, weights, *, provenance):
+def _measure(points: Any, weights: Any, *, provenance: Any) -> Any:
     return phx.integration.discrete(
         points,
+        # ty: ignore[invalid-argument-type]
         cx.Field(weights, dims=("atom",)),
         axes="atom",
         normalized=False,
@@ -39,7 +41,7 @@ def _measure(points, weights, *, provenance):
     )
 
 
-def _problem(size: int, dimension: int):
+def _problem(size: int, dimension: int) -> Any:
     coordinates = jnp.arange(size * dimension, dtype="float64")
     source_points = jnp.sin(0.013 * coordinates).reshape((size, dimension))
     target_points = jnp.cos(0.017 * coordinates).reshape((size, dimension))
@@ -62,7 +64,7 @@ def _problem(size: int, dimension: int):
     )
 
 
-def _bytes(tree) -> int:
+def _bytes(tree: Any) -> int:
     return sum(
         leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
@@ -70,7 +72,15 @@ def _bytes(tree) -> int:
     )
 
 
-def _record(size, dimension, block_size, iterations, repeats, *, blockwise):
+def _record(
+    size: Any,
+    dimension: Any,
+    block_size: Any,
+    iterations: Any,
+    repeats: Any,
+    *,
+    blockwise: Any,
+) -> Any:
     problem = _problem(size, dimension)
     solver = phx.transport.UnbalancedSinkhorn(
         0.5,
@@ -102,7 +112,7 @@ def _record(size, dimension, block_size, iterations, repeats, *, blockwise):
         jax.block_until_ready(applied)
     apply_ms = 1e3 * (time.perf_counter() - started) / repeats
 
-    def scalar(points):
+    def scalar(points: Any) -> Any:
         candidate = phx.transport.UnbalancedTransportProblem(
             eqx.tree_at(lambda measure: measure.points, problem.source, points),
             problem.target,

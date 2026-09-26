@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -26,7 +28,7 @@ import phydrax as phx
 from phydrax.units import KILOGRAM
 
 
-def _compiler_record(compiled) -> dict[str, object]:
+def _compiler_record(compiled: Any) -> dict[str, object]:
     evidence = compiler_evidence(
         compiled.cost_analysis(),
         compiled.memory_analysis(),
@@ -38,7 +40,7 @@ def _compiler_record(compiled) -> dict[str, object]:
     return record
 
 
-def _measure(function, arguments, warmup, repeats):
+def _measure(function: Any, arguments: Any, warmup: Any, repeats: Any) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: jax.jit(function).lower(*arguments),
         lambda lowered: lowered.compile(),
@@ -53,7 +55,7 @@ def _measure(function, arguments, warmup, repeats):
     }
 
 
-def _setup(cells_per_axis: int):
+def _setup(cells_per_axis: int) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(cells_per_axis, periodic=True),
@@ -150,8 +152,8 @@ def run(
         initial_state,
     ) = setup
 
-    def rollout(state, step_size):
-        def advance(current, _):
+    def rollout(state: Any, step_size: Any) -> Any:
+        def advance(current: Any, _: Any) -> Any:
             result = runtime.advance(
                 current, current.time, current.time + step_size, geometry
             )
@@ -192,8 +194,8 @@ def run(
             jnp.max(evidence[10]),
         )
 
-    def step_size_derivative(state, step_size, direction):
-        def objective(value):
+    def step_size_derivative(state: Any, step_size: Any, direction: Any) -> Any:
+        def objective(value: Any) -> Any:
             material = rollout(state, value)[0]
             return jnp.mean(material * material)
 

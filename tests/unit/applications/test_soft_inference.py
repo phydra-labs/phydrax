@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -30,7 +33,7 @@ from phydrax.optim import SQP
 from tests._control_systems import make_discrete_control_dynamics
 
 
-def test_reduced_rod_physical_maps_round_trip_and_enforce_spd():
+def test_reduced_rod_physical_maps_round_trip_and_enforce_spd() -> None:
     parameterization = ReducedRodParameterization(
         (
             PositiveParameterMap("density", minimum=1e-6),
@@ -58,13 +61,13 @@ def test_reduced_rod_physical_maps_round_trip_and_enforce_spd():
     assert np.min(np.linalg.eigvalsh(np.asarray(physical["constitutive"]))) > 0.0
 
 
-def _calibration_problem(*, held_out_observation: float = 6.0):
+def _calibration_problem(*, held_out_observation: float = 6.0) -> Any:
     parameterization = ReducedRodParameterization(
         (PositiveParameterMap("stiffness", minimum=0.0, maximum=10.0),),
         parameterization_id="calibration:stiffness-map",
     )
 
-    def experiment(load, observation, split, identifier):
+    def experiment(load: Any, observation: Any, split: Any, identifier: Any) -> Any:
         return CalibrationExperiment(
             lambda physical, args: jnp.asarray(
                 [load * physical["stiffness"] - observation]
@@ -115,7 +118,9 @@ def _calibration_problem(*, held_out_observation: float = 6.0):
     return problem, source_realization
 
 
-def test_calibration_recovers_synthetic_parameter_with_disjoint_held_out_evidence():
+def test_calibration_recovers_synthetic_parameter_with_disjoint_held_out_evidence() -> (
+    None
+):
     problem, _ = _calibration_problem()
     initial = problem.parameterization.to_latent({"stiffness": jnp.asarray(0.5)})
 
@@ -134,7 +139,7 @@ def test_calibration_recovers_synthetic_parameter_with_disjoint_held_out_evidenc
     assert np.all(np.isfinite(np.asarray(result.identifiability.latent_covariance)))
 
 
-def test_rank_deficient_training_data_is_not_made_identifiable_by_acceptance():
+def test_rank_deficient_training_data_is_not_made_identifiable_by_acceptance() -> None:
     parameterization = ReducedRodParameterization(
         (
             PositiveParameterMap("density", minimum=0.0, maximum=5.0),
@@ -179,7 +184,9 @@ def test_rank_deficient_training_data_is_not_made_identifiable_by_acceptance():
     assert np.linalg.norm(np.asarray(evidence.null_projection)) > 0.0
 
 
-def test_held_out_failure_rejects_candidate_and_retains_exact_source_realization():
+def test_held_out_failure_rejects_candidate_and_retains_exact_source_realization() -> (
+    None
+):
     problem, source_realization = _calibration_problem(held_out_observation=100.0)
     initial = problem.parameterization.to_latent({"stiffness": jnp.asarray(0.5)})
 
@@ -193,7 +200,9 @@ def test_held_out_failure_rejects_candidate_and_retains_exact_source_realization
     assert not bool(result.held_out.accepted)
 
 
-def _fixed_mode_evidence(*, contact_margin=1.0, primal_result_id="primal:co-design"):
+def _fixed_mode_evidence(
+    *, contact_margin: Any = 1.0, primal_result_id: Any = "primal:co-design"
+) -> Any:
     return FixedModeDerivativeEvidence(
         material_margin=1.0,
         kinematic_margin=1.0,
@@ -216,7 +225,7 @@ def _fixed_mode_evidence(*, contact_margin=1.0, primal_result_id="primal:co-desi
     )
 
 
-def _co_design_problem(*, held_out=True, contact_margin=1.0):
+def _co_design_problem(*, held_out: Any = True, contact_margin: Any = 1.0) -> Any:
     parameterization = ReducedRodParameterization(
         (
             BoundedParameterMap("length", 0.5, 2.0),
@@ -266,7 +275,7 @@ def _co_design_problem(*, held_out=True, contact_margin=1.0):
     return problem, source_design, source_realization
 
 
-def test_co_design_lowers_to_existing_state_design_and_sqp_with_bound_ids():
+def test_co_design_lowers_to_existing_state_design_and_sqp_with_bound_ids() -> None:
     problem, source_design, _ = _co_design_problem()
 
     state_design = problem.as_state_design_problem()
@@ -288,7 +297,7 @@ class _CoDesignOptimization(eqx.Module):
     successful: jax.Array
 
 
-def test_co_design_rejects_mode_boundary_and_retains_source_design():
+def test_co_design_rejects_mode_boundary_and_retains_source_design() -> None:
     problem, source_design, source_realization = _co_design_problem(contact_margin=0.0)
     optimization = _CoDesignOptimization(
         jnp.asarray([2.0]),
@@ -310,7 +319,7 @@ def test_co_design_rejects_mode_boundary_and_retains_source_design():
     )
 
 
-def test_soft_plant_mpc_retains_selected_replay_and_fixed_mode_evidence():
+def test_soft_plant_mpc_retains_selected_replay_and_fixed_mode_evidence() -> None:
     grid = TimeGrid(jnp.asarray([0.0, 1.0]), time_id="soft-mpc:grid")
     dynamics = make_discrete_control_dynamics(
         lambda context, state, control, args: state + args["stiffness"] * control,

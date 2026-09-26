@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import tempfile
@@ -107,7 +109,7 @@ def main() -> None:
         "fixed_capacity": True,
     }
 
-    def execute_production(root: Path):
+    def execute_production(root: Path) -> Any:
         published = []
         publisher = ByteBoundedAsyncPublisher(
             lambda event_id, snapshot: published.append(

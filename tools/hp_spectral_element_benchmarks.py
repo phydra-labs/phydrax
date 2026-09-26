@@ -8,6 +8,7 @@ import argparse
 import json
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,7 +17,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _mesh():
+def _mesh() -> Any:
     return phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         (
@@ -68,6 +69,7 @@ def benchmark(order: int) -> dict[str, float | int | bool]:
         "h-refinement",
     )
     values = jnp.zeros((capacity, transfer.primal.shape[2]))
+    # ty: ignore[unresolved-attribute]
     source_nodes = np.asarray(source.discretization.elements[0][0].reference_nodes)
     polynomial = source_nodes[:, 0] ** min(order, 2) + source_nodes[:, 1]
     values = values.at[0, : polynomial.size].set(polynomial)
@@ -78,6 +80,7 @@ def benchmark(order: int) -> dict[str, float | int | bool]:
         np.asarray(transfer.target_dof_count),
         strict=True,
     ):
+        # ty: ignore[unresolved-attribute]
         element = target.discretization.elements[0][0]
         local_nodes = np.asarray(element.reference_nodes)[:count]
         lower = np.asarray(target.geometry.reference_lower)[slot]

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 
@@ -29,17 +32,18 @@ from phydrax.applications.cavity_quantum import (
 from phydrax.discretization._cell_mesh import CellMesh
 
 
-def _tetrahedral_mesh():
+def _tetrahedral_mesh() -> Any:
     return CellMesh.from_tetrahedra(
         np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
         np.asarray(((0, 1, 2, 3),), dtype=np.int32),
     )
 
 
-def test_qft_cavity_modes_have_declared_single_quantum_energy():
+def test_qft_cavity_modes_have_declared_single_quantum_energy() -> None:
     plan = MaxwellEigenmodeNormalizationPlan(
         jnp.eye(2),
         jnp.eye(2),
+        # ty: ignore[invalid-argument-type]
         [3.0, 5.0],
         hbar=2.0,
         equipartition_tolerance=1e-12,
@@ -54,38 +58,46 @@ def test_qft_cavity_modes_have_declared_single_quantum_energy():
     assert len(set(result.mode_ids)) == 2
 
 
-def test_qft_mode_resource_limits_are_exact_and_identity_defining():
+def test_qft_mode_resource_limits_are_exact_and_identity_defining() -> None:
     with pytest.raises(TypeError, match="maximum_modes"):
         MaxwellEigenmodeNormalizationPlan(
             jnp.eye(1),
             jnp.eye(1),
+            # ty: ignore[invalid-argument-type]
             [1.0],
             maximum_modes=True,
         )
     first = MaxwellEigenmodeNormalizationPlan(
         jnp.eye(1),
         jnp.eye(1),
+        # ty: ignore[invalid-argument-type]
         [1.0],
         maximum_modes=1,
     )
     second = MaxwellEigenmodeNormalizationPlan(
         jnp.eye(1),
         jnp.eye(1),
+        # ty: ignore[invalid-argument-type]
         [1.0],
         maximum_modes=2,
     )
     assert first.plan_id != second.plan_id
 
 
-def test_qft_participation_and_dipole_coupling_retain_si_units():
+def test_qft_participation_and_dipole_coupling_retain_si_units() -> None:
     modes = (
+        # ty: ignore[invalid-argument-type]
         MaxwellEigenmodeNormalizationPlan(jnp.eye(1), jnp.eye(1), [3.0], hbar=2.0)
         .prepare()
         .normalize(jnp.ones((1, 1)), jnp.ones((1, 1)))
     )
     participation = CavityParticipationPlan({"dielectric": jnp.eye(1)}).evaluate(modes)
     coupling = CavityDipoleCouplingPlan(
-        jnp.ones((1, 1)), [4.0], emitter_id="emitter-a", hbar_joule_second=2.0
+        jnp.ones((1, 1)),
+        # ty: ignore[invalid-argument-type]
+        [4.0],
+        emitter_id="emitter-a",
+        hbar_joule_second=2.0,
     ).evaluate(modes)
 
     np.testing.assert_allclose(participation.participation_ratios, [[0.5]])
@@ -97,7 +109,7 @@ def test_qft_participation_and_dipole_coupling_retain_si_units():
     assert bool(jnp.all(coupling.successful))
 
 
-def test_qft_purcell_lowering_matches_resonant_bad_cavity_limit():
+def test_qft_purcell_lowering_matches_resonant_bad_cavity_limit() -> None:
     plan = PurcellLoweringPlan(10.0, 10.0, 2.0, 0.25)
     result = plan.lower(0.5)
 
@@ -109,7 +121,7 @@ def test_qft_purcell_lowering_matches_resonant_bad_cavity_limit():
     assert bool(result.successful)
 
 
-def test_qft_maxwell_bloch_and_lindblad_rhs_preserve_quantum_constraints():
+def test_qft_maxwell_bloch_and_lindblad_rhs_preserve_quantum_constraints() -> None:
     bloch_plan = MaxwellBlochPlan(
         cavity_detuning=0.1,
         emitter_detuning=-0.2,
@@ -163,7 +175,7 @@ def test_qft_maxwell_bloch_and_lindblad_rhs_preserve_quantum_constraints():
     )
 
 
-def test_qft_adaptive_hcurl_fails_closed_for_unsupported_claims():
+def test_qft_adaptive_hcurl_fails_closed_for_unsupported_claims() -> None:
     mesh = _tetrahedral_mesh()
     high_order = AdaptiveHcurlCapabilityPlan(mesh, requested_polynomial_order=2)
     missing_adaptation = AdaptiveHcurlCapabilityPlan(

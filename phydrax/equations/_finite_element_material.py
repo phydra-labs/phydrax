@@ -339,7 +339,8 @@ def _bind_learned_law(
     )
     admission = contract.derivative_admission
     # A contract bound with a differentiation request always carries its admission.
-    assert admission is not None
+    if not (admission is not None):
+        raise RuntimeError("Internal invariant failed: admission is not None.")
     reasons = sorted({*admission.reasons, *implicit.reasons})
     if reasons:
         raise ValueError(

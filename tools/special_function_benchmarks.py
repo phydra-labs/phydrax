@@ -141,7 +141,7 @@ def _spherical_bessel_derivative_references(
     modified_argument: jax.Array,
     /,
 ) -> dict[str, jax.Array]:
-    def derivative(sequence, argument, first, sign):
+    def derivative(sequence: Any, argument: Any, first: Any, sign: Any) -> Any:
         orders = jnp.arange(1, sequence.shape[0], dtype=argument.dtype)[:, None]
         tail = sign * sequence[:-1] - (orders + 1.0) / argument[None, :] * sequence[1:]
         return jnp.concatenate((first[None, :], tail), axis=0)

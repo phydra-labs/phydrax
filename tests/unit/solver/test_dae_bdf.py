@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _decay_problem(*, initial=1.0, parameter=1.0):
+def _decay_problem(*, initial: Any = 1.0, parameter: Any = 1.0) -> Any:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, rate: state_rate + rate * state,
         state_shape=(1,),
@@ -20,7 +22,7 @@ def _decay_problem(*, initial=1.0, parameter=1.0):
     )
 
 
-def _strict_termination(*, maximum_steps=20):
+def _strict_termination(*, maximum_steps: Any = 20) -> Any:
     return phx.nonlinear.NonlinearTermination(
         absolute_residual=1e-11,
         relative_residual=0.0,
@@ -30,7 +32,7 @@ def _strict_termination(*, maximum_steps=20):
     )
 
 
-def test_bdf1_and_bdf2_follow_their_fixed_grid_discrete_maps():
+def test_bdf1_and_bdf2_follow_their_fixed_grid_discrete_maps() -> None:
     problem = _decay_problem()
     grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 0.5, 6), time_id="bdf-maps")
     bdf1 = phx.solver.solve_dae(
@@ -76,7 +78,7 @@ def test_bdf1_and_bdf2_follow_their_fixed_grid_discrete_maps():
     )
 
 
-def test_prepared_bdf_is_jittable_vmappable_and_implicitly_differentiable():
+def test_prepared_bdf_is_jittable_vmappable_and_implicitly_differentiable() -> None:
     problem = _decay_problem()
     grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 0.4, 5), time_id="bdf-gradient")
     policy = phx.solver.DAESolvePolicy(
@@ -85,7 +87,7 @@ def test_prepared_bdf_is_jittable_vmappable_and_implicitly_differentiable():
     )
     prepared = phx.solver.prepare_dae(problem, grid, policy=policy)
 
-    def terminal(parameter):
+    def terminal(parameter: Any) -> Any:
         return phx.solver.solve_dae(prepared, args=parameter).states[-1, 0]
 
     parameters = jnp.asarray((0.5, 1.0, 2.0))
@@ -105,7 +107,7 @@ def test_prepared_bdf_is_jittable_vmappable_and_implicitly_differentiable():
     assert jnp.allclose(gradients, expected_gradients, rtol=1e-7, atol=1e-9)
     assert jnp.allclose(tangent, expected_gradients[1], rtol=1e-7, atol=1e-9)
 
-    def terminal_from_initial(initial):
+    def terminal_from_initial(initial: Any) -> Any:
         state = jnp.asarray((initial,))
         return phx.solver.solve_dae(
             prepared,
@@ -121,7 +123,7 @@ def test_prepared_bdf_is_jittable_vmappable_and_implicitly_differentiable():
     )
 
 
-def test_prepared_solve_reports_native_nonlinear_lifecycle_and_provenance():
+def test_prepared_solve_reports_native_nonlinear_lifecycle_and_provenance() -> None:
     problem = _decay_problem()
     grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 0.2, 4), time_id="bdf-evidence")
     prepared = phx.solver.prepare_dae(
@@ -155,7 +157,7 @@ def test_prepared_solve_reports_native_nonlinear_lifecycle_and_provenance():
     assert jnp.all(solution.residual_norm <= solution.residual_threshold)
 
 
-def test_failed_bdf_stage_is_reported_once_and_later_nodes_are_not_run():
+def test_failed_bdf_stage_is_reported_once_and_later_nodes_are_not_run() -> None:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, args: state_rate + state**3,
         state_shape=(1,),
@@ -199,7 +201,7 @@ def test_failed_bdf_stage_is_reported_once_and_later_nodes_are_not_run():
     assert jnp.all(jnp.isnan(solution.states[2:]))
 
 
-def test_bdf2_rejects_grid_ratios_outside_declared_stability_contract():
+def test_bdf2_rejects_grid_ratios_outside_declared_stability_contract() -> None:
     problem = _decay_problem()
     grid = phx.dynamics.TimeGrid(
         jnp.asarray((0.0, 0.01, 0.11)),
@@ -217,7 +219,7 @@ def test_bdf2_rejects_grid_ratios_outside_declared_stability_contract():
         )
 
 
-def test_bdf_rate_preserves_small_changes_under_exact_state_translation():
+def test_bdf_rate_preserves_small_changes_under_exact_state_translation() -> None:
     from phydrax.solver._bdf_method import bdf_rate
 
     times = jnp.asarray((0.0, -0.13, -0.37, -0.51, -0.93))
@@ -230,7 +232,9 @@ def test_bdf_rate_preserves_small_changes_under_exact_state_translation():
 
 
 @pytest.mark.parametrize("mode", ("fixed-bdf", "adaptive-bdf", "theta"))
-def test_small_implicit_increments_preserve_rates_on_large_state_offsets(mode):
+def test_small_implicit_increments_preserve_rates_on_large_state_offsets(
+    mode: Any,
+) -> None:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, power: 100.0 * state_rate - power,
         state_shape=(1,),
@@ -271,7 +275,7 @@ def test_small_implicit_increments_preserve_rates_on_large_state_offsets(mode):
     assert jnp.max(jnp.abs(solution.states[:, 0] - (300.0 + 0.002 * times))) < 1e-12
     assert jnp.max(solution.residual_norm) < 1e-11
 
-    def terminal(power):
+    def terminal(power: Any) -> Any:
         result = phx.solver.solve_dae(prepared, args=power)
         return jnp.stack((result.states[-1, 0], result.state_rates[-1, 0]))
 

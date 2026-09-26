@@ -6,6 +6,7 @@
 
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -15,7 +16,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _scene(segment_count):
+def _scene(segment_count: Any) -> Any:
     x = jnp.linspace(0.0, 1.0, segment_count + 1)
     positions = jnp.stack((x, 0.01 * jnp.sin(20.0 * x)), axis=-1)
     edges = jnp.stack(
@@ -37,7 +38,7 @@ def _scene(segment_count):
     return source, phx.discretization.PreparedCollisionScene((surface,))
 
 
-def _time(plan, scene, positions, repeats):
+def _time(plan: Any, scene: Any, positions: Any, repeats: Any) -> Any:
     started = time.perf_counter()
     result = None
     for _ in range(repeats):
@@ -46,7 +47,7 @@ def _time(plan, scene, positions, repeats):
     return result, elapsed
 
 
-def main():
+def main() -> None:
     source, scene = _scene(256)
     positions = scene.positions(source.zeros())
     capacities = dict(
@@ -56,17 +57,20 @@ def main():
         activation_distance=0.005,
     )
     dense, dense_seconds = _time(
+        # ty: ignore[invalid-argument-type]
         phx.discretization.DenseContactSearchPlan(**capacities),
         scene,
         positions,
         3,
     )
     sweep, sweep_seconds = _time(
+        # ty: ignore[invalid-argument-type]
         phx.discretization.SweepAndPruneContactSearchPlan(**capacities),
         scene,
         positions,
         20,
     )
+    # ty: ignore[invalid-argument-type]
     compiled_plan = phx.discretization.CompiledContactSearchPlan(scene, **capacities)
     compiled = eqx.filter_jit(compiled_plan.evaluate)
     started = time.perf_counter()

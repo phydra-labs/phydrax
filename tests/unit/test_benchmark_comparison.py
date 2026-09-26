@@ -14,7 +14,7 @@ def _constant(value: float, count: int = 8) -> DurationDistribution:
     return DurationDistribution((value,) * count)
 
 
-def test_identical_performance_does_not_regress():
+def test_identical_performance_does_not_regress() -> None:
     result = compare_performance(
         _constant(1.0),
         _constant(1.0),
@@ -28,7 +28,7 @@ def test_identical_performance_does_not_regress():
     assert result.regressed is False
 
 
-def test_latency_and_throughput_objectives_orient_degradation_consistently():
+def test_latency_and_throughput_objectives_orient_degradation_consistently() -> None:
     latency = compare_performance(
         _constant(1.0),
         _constant(1.2),
@@ -48,7 +48,7 @@ def test_latency_and_throughput_objectives_orient_degradation_consistently():
     assert throughput.relative_degradation == pytest.approx(0.2)
 
 
-def test_practical_threshold_boundary_is_not_a_regression():
+def test_practical_threshold_boundary_is_not_a_regression() -> None:
     result = compare_performance(
         _constant(1.0),
         _constant(1.1),
@@ -60,7 +60,9 @@ def test_practical_threshold_boundary_is_not_a_regression():
     assert result.regressed is False
 
 
-def test_zero_baseline_uses_absolute_tolerance_but_never_drops_declared_relative():
+def test_zero_baseline_uses_absolute_tolerance_but_never_drops_declared_relative() -> (
+    None
+):
     absolute = compare_performance(
         _constant(0.0),
         _constant(0.2),
@@ -81,10 +83,11 @@ def test_zero_baseline_uses_absolute_tolerance_but_never_drops_declared_relative
     assert absolute.relative_degradation is None
     assert absolute.regressed is True
     assert declared_relative.regressed is None
+    # ty: ignore[unsupported-operator]
     assert "relative criterion is unavailable" in declared_relative.reason
 
 
-def test_insufficient_samples_return_no_decision():
+def test_insufficient_samples_return_no_decision() -> None:
     result = compare_performance(
         _constant(1.0, count=2),
         _constant(2.0, count=2),
@@ -98,10 +101,11 @@ def test_insufficient_samples_return_no_decision():
 
     assert not result.sufficient_samples
     assert result.regressed is None
+    # ty: ignore[unsupported-operator]
     assert "insufficient" in result.reason
 
 
-def test_bootstrap_is_deterministic_for_one_comparison_identity():
+def test_bootstrap_is_deterministic_for_one_comparison_identity() -> None:
     baseline = DurationDistribution((0.9, 1.0, 1.1, 1.0, 1.05, 0.95))
     candidate = DurationDistribution((1.0, 1.2, 1.15, 1.1, 1.25, 1.05))
     policy = PerformancePolicy(
@@ -127,7 +131,7 @@ def test_bootstrap_is_deterministic_for_one_comparison_identity():
     assert first.relative_interval == second.relative_interval
 
 
-def test_pairing_requires_complete_unique_matching_ids():
+def test_pairing_requires_complete_unique_matching_ids() -> None:
     baseline = _constant(1.0, count=5)
     candidate = _constant(1.2, count=5)
     policy = PerformancePolicy(objective="minimize", relative_tolerance=0.1)
@@ -172,7 +176,7 @@ def test_pairing_requires_complete_unique_matching_ids():
         )
 
 
-def test_policy_rejects_invalid_threshold_and_sampling_contracts():
+def test_policy_rejects_invalid_threshold_and_sampling_contracts() -> None:
     with pytest.raises(ValueError, match="At least one"):
         PerformancePolicy(objective="minimize")
     with pytest.raises(ValueError, match="finite and nonnegative"):

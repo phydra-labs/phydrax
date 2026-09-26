@@ -550,7 +550,8 @@ def coupling_signal_norm(port: CouplingPort, value: Any, /) -> Array:
     gauss_weights_ = jnp.asarray(gauss_weights, dtype=validated.grid.nodes.dtype)
     temporal_transfer = port.temporal_transfer
     # Waveform ports require an explicit temporal transfer at construction.
-    assert temporal_transfer is not None
+    if not (temporal_transfer is not None):
+        raise RuntimeError("Internal invariant failed: temporal_transfer is not None.")
     degree = temporal_transfer.degree
     squared = jnp.asarray(0.0, dtype=validated.grid.nodes.dtype)
     for interval_index in range(port.waveform_plan.sample_capacity - 1):
@@ -605,7 +606,8 @@ def transfer_coupling_signal(
     target_grid = target_plan.initial_grid()
     temporal_transfer = target_port.temporal_transfer
     # Waveform ports require an explicit temporal transfer at construction.
-    assert temporal_transfer is not None
+    if not (temporal_transfer is not None):
+        raise RuntimeError("Internal invariant failed: temporal_transfer is not None.")
     source_waveform = temporal_transfer.interpolate(
         source_waveform, target_grid, source_port.space
     )
@@ -825,7 +827,8 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState)
         for port, samples in zip(self.output_ports, output_samples, strict=True):
             plan = port.waveform_plan
             # Construction requires a waveform plan on every subcycling port.
-            assert plan is not None
+            if not (plan is not None):
+                raise RuntimeError("Internal invariant failed: plan is not None.")
             output_waveforms.append(
                 CouplingWaveform(
                     plan.initial_grid(),

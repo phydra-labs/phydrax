@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
+from ...typing import parse
 from ._base import (
     _broadcast_full,
     _nan_where_invalid,
@@ -454,8 +455,7 @@ def precision_recall_fscore(
     if beta <= 0.0:
         raise ValueError("beta must be positive.")
     classes = int(num_classes)
-    if average not in {"binary", "micro", "macro", "weighted", "none"}:
-        raise ValueError(f"Unsupported average {average!r}.")
+    average = parse(average, Average, "average")
     if average == "binary" and not 0 <= int(positive_class) < classes:
         raise ValueError("positive_class is outside the class range.")
     confusion, mass, invalid, _ = _hard_confusion_components(
@@ -1004,8 +1004,7 @@ def smooth_precision_recall_fscore(
     """Expected-count precision/recall/F-beta, smooth in class probabilities."""
     if beta <= 0.0:
         raise ValueError("beta must be positive.")
-    if average not in {"binary", "micro", "macro", "weighted", "none"}:
-        raise ValueError(f"Unsupported average {average!r}.")
+    average = parse(average, Average, "average")
     matrix_result = smooth_confusion_matrix(
         y_true,
         y_probability,

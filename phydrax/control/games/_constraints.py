@@ -659,7 +659,10 @@ def _evaluate_path_block(
     )
     constraint = block.constraint
     # GameConstraintBlock.__init__ requires a BoundedPathConstraint for PATH blocks.
-    assert isinstance(constraint, BoundedPathConstraint)
+    if not (isinstance(constraint, BoundedPathConstraint)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(constraint, BoundedPathConstraint)."
+        )
 
     def evaluate_case(case_states: Array, case_controls: Array) -> Array:
         return jax.vmap(
@@ -691,7 +694,10 @@ def _evaluate_trajectory_block(
 ) -> Array:
     constraint = block.constraint
     # GameConstraintBlock.__init__ requires a BoundedTrajectoryConstraint off PATH.
-    assert isinstance(constraint, BoundedTrajectoryConstraint)
+    if not (isinstance(constraint, BoundedTrajectoryConstraint)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(constraint, BoundedTrajectoryConstraint)."
+        )
     values = jnp.asarray(constraint(trajectory, args))
     expected = trajectory.case_shape + block.residual_shape
     if values.shape != expected:

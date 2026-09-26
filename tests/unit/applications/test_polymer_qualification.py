@@ -1,7 +1,7 @@
 import phydrax as phx
 
 
-def test_polymer_capabilities_are_separate_unreleased_profiles_and_campaigns():
+def test_polymer_capabilities_are_separate_unreleased_profiles_and_campaigns() -> None:
     supports = phx.applications.soft_matter_support_tuples()
     profiles = phx.applications.soft_matter_candidate_profiles()
     campaigns = phx.applications.soft_matter_candidate_campaigns()

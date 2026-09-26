@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -10,18 +13,19 @@ import phydrax as phx
 from phydrax.applications import geophysics as geo
 
 
-def _unit_tetra():
+def _unit_tetra() -> Any:
     return phx.discretization.CellMesh.from_tetrahedra(
         np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype="float64"),
         np.asarray(((0, 1, 2, 3),)),
     )
 
 
-def _patch_survey(mesh):
+def _patch_survey(mesh: Any) -> Any:
     faces = np.asarray(mesh.connectivity.faces)
     lookup = {tuple(sorted(face)): index for index, face in enumerate(faces)}
     patch_faces = ((0, 2, 3), (0, 1, 3), (0, 1, 2), (1, 2, 3))
     patches = tuple(
+        # ty: ignore[invalid-argument-type]
         geo.ElectrodePatch(f"e{index}", [lookup[tuple(sorted(face))]])
         for index, face in enumerate(patch_faces)
     )
@@ -33,7 +37,7 @@ def _patch_survey(mesh):
     )
 
 
-def _hcurl_mesh():
+def _hcurl_mesh() -> Any:
     vertices = np.asarray(
         (
             (0, 0, 0),
@@ -60,7 +64,7 @@ def _hcurl_mesh():
     return phx.discretization.CellMesh.from_tetrahedra(vertices, cells)
 
 
-def test_complete_and_point_electrode_models_are_finite_and_reciprocal():
+def test_complete_and_point_electrode_models_are_finite_and_reciprocal() -> None:
     mesh = _unit_tetra()
     finite = geo.FinitePatchDCPlan(mesh, _patch_survey(mesh))
     complete = geo.CompleteElectrodeDCPlan(finite, 0.01).prepare()
@@ -74,8 +78,11 @@ def test_complete_and_point_electrode_models_are_finite_and_reciprocal():
     )
     survey = geo.PointElectrodeSurvey(
         point_positions,
+        # ty: ignore[invalid-argument-type]
         [[1.0, -1.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0, -1.0]],
+        # ty: ignore[invalid-argument-type]
         [0],
     )
     point = geo.PointElectrodeDCPlan(mesh, survey, 1.0).prepare()
@@ -84,7 +91,7 @@ def test_complete_and_point_electrode_models_are_finite_and_reciprocal():
     assert jnp.all(jnp.isfinite(prediction))
 
 
-def test_line_two_point_five_d_and_ip_responses_are_physical():
+def test_line_two_point_five_d_and_ip_responses_are_physical() -> None:
     mesh = phx.discretization.CellMesh.from_triangles(
         np.asarray(((0, 0), (1, 0), (1, 1), (0, 1)), dtype="float64"),
         np.asarray(((0, 1, 2), (0, 2, 3))),
@@ -94,8 +101,11 @@ def test_line_two_point_five_d_and_ip_responses_are_physical():
     )
     line_survey = geo.InvariantElectricalSurvey(
         positions,
+        # ty: ignore[invalid-argument-type]
         [[1.0, -1.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0, -1.0]],
+        # ty: ignore[invalid-argument-type]
         [0],
         current_kind="line-current",
     )
@@ -104,8 +114,11 @@ def test_line_two_point_five_d_and_ip_responses_are_physical():
     point_positions[:, 1] = np.asarray((0.0, 0.0, 0.2, -0.2))
     point_survey = geo.InvariantElectricalSurvey(
         point_positions,
+        # ty: ignore[invalid-argument-type]
         [[1.0, -1.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0, -1.0]],
+        # ty: ignore[invalid-argument-type]
         [0],
         current_kind="point-current",
     )
@@ -118,20 +131,27 @@ def test_line_two_point_five_d_and_ip_responses_are_physical():
     conductivity = cole.conductivity(jnp.asarray((0.0, 1.0, 100.0)))
     assert jnp.all(jnp.real(conductivity) > 0)
     assert jnp.all(jnp.imag(conductivity) <= 1e-12)
+    # ty: ignore[invalid-argument-type]
     debye = geo.DebyeSpectrumConductivity(1.0, [0.3, 0.2], [0.1, 1.0])
     memory, current = debye.advance_memory(debye.initial_memory(()), 1.0, 0.1)
     assert jnp.all(memory > 0)
     assert current > 0
 
 
-def test_free_space_gravity_magnetics_and_continuation_obey_analytic_limits():
+def test_free_space_gravity_magnetics_and_continuation_obey_analytic_limits() -> None:
+    # ty: ignore[invalid-argument-type]
     source = geo.GravityQuadratureSource([[0.0, 0.0, 0.0]], [1.0], [0], 1)
     coordinates = phx.interchange.GeospatialContract.local_cartesian(
         phx.SpatialCoordinateContract.si(), vertical_datum="local"
     )
     gravity = geo.FreeSpaceGravityPlan(
-        source, [[0.0, 0.0, 10.0]], coordinates, minimum_separation_m=1.0
+        source,
+        # ty: ignore[invalid-argument-type]
+        [[0.0, 0.0, 10.0]],
+        coordinates,
+        minimum_separation_m=1.0,
     )
+    # ty: ignore[invalid-argument-type]
     result = gravity.evaluate([1000.0])
     np.testing.assert_allclose(
         result.potential_m2_s2[0],
@@ -145,12 +165,16 @@ def test_free_space_gravity_magnetics_and_continuation_obey_analytic_limits():
     )
     magnetic = geo.FreeSpaceMagneticPlan(
         source,
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 10.0]],
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.0, 1.0],
         coordinates,
         minimum_separation_m=1.0,
     )
+    # ty: ignore[invalid-argument-type]
     material = geo.MagneticMaterial(0.1, [0.0, 0.0, 0.0], 1)
+    # ty: ignore[invalid-argument-type]
     field = magnetic.evaluate(material, [0.0, 0.0, 50_000.0])
     assert field.flux_density_T[0, 2] > 0
     constant = jnp.full((8, 8), 3.0)
@@ -158,14 +182,16 @@ def test_free_space_gravity_magnetics_and_continuation_obey_analytic_limits():
     np.testing.assert_allclose(continued, constant, atol=1e-12)
 
 
-def test_variable_elastic_cpml_travel_and_surface_wave_workflows_execute():
+def test_variable_elastic_cpml_travel_and_surface_wave_workflows_execute() -> None:
     grid = geo.AcousticGrid((9, 9), (1.0, 1.0))
+    # ty: ignore[invalid-argument-type]
     acquisition = geo.SeismicAcquisition(grid, [[4.0, 4.0]], [[5.0, 4.0]])
     source = jnp.zeros((4, 1)).at[0, 0].set(0.01)
     variable = geo.VariableDensityAcousticPlan(grid, 0.05, 4, 2.0)
     simulation = variable.simulate(1.5, 1000.0, acquisition, source)
     assert jnp.all(jnp.isfinite(simulation.traces.values))
 
+    # ty: ignore[invalid-argument-type]
     elastic_acquisition = geo.ElasticAcquisition(grid, [[4.0, 4.0]], [[5.0, 4.0]])
     elastic = geo.PeriodicIsotropicElasticWavePlan(grid, 0.05, 3, 2.0)
     force = jnp.zeros((3, 1, 2))
@@ -186,7 +212,10 @@ def test_variable_elastic_cpml_travel_and_surface_wave_workflows_execute():
     assert cpml_result.finite
 
     graph = geo.TravelTimeGraphPlan(
-        [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]], [[0, 1], [1, 2]]
+        # ty: ignore[invalid-argument-type]
+        [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
+        [[0, 1], [1, 2]],
     )
     travel = graph.solve(2.0, 0)
     np.testing.assert_allclose(travel.travel_times_s, [0.0, 0.5, 1.0])
@@ -194,8 +223,10 @@ def test_variable_elastic_cpml_travel_and_surface_wave_workflows_execute():
     assert 0.85 * 1700 < rayleigh.phase_velocity_m_s < 1700
 
 
-def test_layered_frequency_and_time_domain_em_are_passive():
+def test_layered_frequency_and_time_domain_em_are_passive() -> None:
+    # ty: ignore[invalid-argument-type]
     layered = geo.LayeredEarthModel([100.0], [1.0, 1.0])
+    # ty: ignore[invalid-argument-type]
     impedance = layered.magnetotelluric_impedance([1.0, 10.0])
     assert jnp.all(jnp.isfinite(impedance))
     assert jnp.all(jnp.real(impedance) > 0)
@@ -207,6 +238,7 @@ def test_layered_frequency_and_time_domain_em_are_passive():
     source = np.zeros((1, hcurl.edge_count))
     source[0, free[0]] = 1.0
     receivers = source.copy()
+    # ty: ignore[invalid-argument-type]
     survey = geo.FrequencyDomainEMSurvey(source, receivers, [0])
     material = geo.ConductiveEMMaterial(
         1.0,
@@ -214,17 +246,22 @@ def test_layered_frequency_and_time_domain_em_are_passive():
         1.0 / geo.electromagnetics.VACUUM_PERMEABILITY_H_M,
         hcurl.cell_count,
     )
+    # ty: ignore[invalid-argument-type]
     frequency = geo.FrequencyDomainEMPlan(mesh, survey).solve([2 * np.pi], material)
     assert frequency.successful
     assert frequency.dissipated_power_W[0, 0] >= 0
     time = geo.ImplicitTimeDomainEMPlan(mesh, survey).simulate(
-        material, [0.01, 0.01], [[1.0], [0.0]]
+        material,
+        # ty: ignore[invalid-argument-type]
+        [0.01, 0.01],
+        # ty: ignore[invalid-argument-type]
+        [[1.0], [0.0]],
     )
     assert time.successful
     assert jnp.all(time.dissipated_energy_J >= 0)
 
 
-def test_gpr_rejects_runtime_with_envelope_free_pic_current_source():
+def test_gpr_rejects_runtime_with_envelope_free_pic_current_source() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(3),
@@ -233,16 +270,26 @@ def test_gpr_rejects_runtime_with_envelope_free_pic_current_source():
         axis_names=("x", "y"),
     ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
     source = phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
-        [0], [1.0], envelope=geo.GaussianDerivativeWaveform(10.0, 0.1)
+        # ty: ignore[invalid-argument-type]
+        [0],
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        envelope=geo.GaussianDerivativeWaveform(10.0, 0.1),
     )
     runtime = phx.solver.CompatibleMaxwellPlan(
         phx.discretization.StructuredCochainBridge(grid),
         polarization="tez",
         constitutive=phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
-            [1.0], [0.1], [0.5]
+            # ty: ignore[invalid-argument-type]
+            [1.0],
+            # ty: ignore[invalid-argument-type]
+            [0.1],
+            # ty: ignore[invalid-argument-type]
+            [0.5],
         ),
         pml=phx.solver.maxwell.MaxwellCPMLPlan(1),
         sources=(source, phx.solver.PICMaxwellCurrentSourcePlan()),
+        # ty: ignore[invalid-argument-type]
         observers=(phx.solver.maxwell.FieldProbePlan("electric", [0]),),
     ).prepare()
     with pytest.raises(ValueError, match="explicit real transient envelopes"):

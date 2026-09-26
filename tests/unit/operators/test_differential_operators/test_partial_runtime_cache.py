@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.domain import TimeInterval
@@ -9,12 +12,12 @@ from phydrax.operators.differential import dt_n
 from phydrax.operators.differential._runtime import derivative_runtime_context
 
 
-def test_partial_n_runtime_cache_reuses_eval_within_context():
+def test_partial_n_runtime_cache_reuses_eval_within_context() -> None:
     dom = TimeInterval(0.0, 1.0)
     calls = {"count": 0}
 
     @dom.Function("t")
-    def f(t):
+    def f(t: Any) -> Any:
         calls["count"] += 1
         return t**3
 
@@ -30,12 +33,12 @@ def test_partial_n_runtime_cache_reuses_eval_within_context():
     assert second == first
 
 
-def test_partial_n_runtime_cache_is_not_global():
+def test_partial_n_runtime_cache_is_not_global() -> None:
     dom = TimeInterval(0.0, 1.0)
     calls = {"count": 0}
 
     @dom.Function("t")
-    def f(t):
+    def f(t: Any) -> Any:
         calls["count"] += 1
         return t**3
 

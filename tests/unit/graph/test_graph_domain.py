@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -20,7 +23,7 @@ def _make_graph() -> phx.graph.GraphIR:
     )
 
 
-def test_graph_domain_samples_node_batch():
+def test_graph_domain_samples_node_batch() -> None:
     domain = phx.domain.GraphDomain(_make_graph())
     component = domain.component({"graph": phx.domain.Nodes()})
     structure = phx.domain.SampleLayout((("graph",),))
@@ -34,14 +37,14 @@ def test_graph_domain_samples_node_batch():
     assert batch["graph"].data.shape == (3, 1)
 
 
-def test_graph_domain_function_evaluates_over_nodes():
+def test_graph_domain_function_evaluates_over_nodes() -> None:
     domain = phx.domain.GraphDomain(_make_graph())
     component = domain.component({"graph": phx.domain.Nodes()})
     structure = phx.domain.SampleLayout((("graph",),))
     batch = component.sample(phx.domain.PointSampling(3, layout=structure), key=jr.key(1))
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0] + 1.0
 
     out = u(batch)
@@ -50,39 +53,45 @@ def test_graph_domain_function_evaluates_over_nodes():
     assert jnp.allclose(jnp.asarray(out.data), jnp.array([1.0, 2.0, 3.0]))
 
 
-def test_graph_domain_samples_explicit_node_sets():
+def test_graph_domain_samples_explicit_node_sets() -> None:
     domain = phx.domain.GraphDomain(_make_graph(), measure="count")
+    # ty: ignore[invalid-argument-type]
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
     structure = phx.domain.SampleLayout((("graph",),))
 
     batch = component.sample(phx.domain.PointSampling(2, layout=structure), key=jr.key(1))
 
+    # ty: ignore[unresolved-attribute]
     assert batch.component_kind == "nodes"
     assert jnp.allclose(jnp.asarray(batch["graph"].data), jnp.array([[0.0], [2.0]]))
     assert jnp.allclose(
         jnp.asarray(batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
         jnp.array([0, 2], dtype=jnp.int32),
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(component.mass.value, 2.0)
 
 
-def test_graph_domain_samples_explicit_edge_sets():
+def test_graph_domain_samples_explicit_edge_sets() -> None:
     domain = phx.domain.GraphDomain(_make_graph(), measure="count")
+    # ty: ignore[invalid-argument-type]
     component = domain.component({"graph": phx.domain.InterfaceEdges([2, 0])})
     structure = phx.domain.SampleLayout((("graph",),))
 
     batch = component.sample(phx.domain.PointSampling(2, layout=structure), key=jr.key(1))
 
+    # ty: ignore[unresolved-attribute]
     assert batch.component_kind == "edges"
     assert jnp.allclose(jnp.asarray(batch["graph"].data), jnp.array([[2.5], [0.5]]))
     assert jnp.allclose(
         jnp.asarray(batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
         jnp.array([2, 0], dtype=jnp.int32),
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(component.mass.value, 2.0)
 
 
-def test_graph_domain_integral_measure_modes():
+def test_graph_domain_integral_measure_modes() -> None:
     graph = _make_graph()
     structure = phx.domain.SampleLayout((("graph",),))
 
@@ -107,13 +116,13 @@ def test_graph_domain_integral_measure_modes():
     assert jnp.allclose(jnp.asarray(count_integral.data), 3.0)
 
 
-def test_graph_domain_residual_penalty_is_zero():
+def test_graph_domain_residual_penalty_is_zero() -> None:
     domain = phx.domain.GraphDomain(_make_graph())
     component = domain.component({"graph": phx.domain.Nodes()})
     structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> float:
         del node
         return 0.0
 
@@ -128,7 +137,7 @@ def test_graph_domain_residual_penalty_is_zero():
     assert loss < 1e-12
 
 
-def test_graph_domain_support_identity_includes_topology_values():
+def test_graph_domain_support_identity_includes_topology_values() -> None:
     first_graph = _make_graph()
     rerouted_graph = phx.graph.GraphIR(
         nodes=first_graph.nodes,

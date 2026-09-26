@@ -12,14 +12,14 @@ import phydrax as phx
 
 def _problem(
     *,
-    drift=None,
-    diffusion=None,
-    t1=0.2,
-    delay=0.5,
-    interpretation="ito",
-    structure="general",
-    basis_id="delay-basis",
-):
+    drift: Any = None,
+    diffusion: Any = None,
+    t1: Any = 0.2,
+    delay: Any = 0.5,
+    interpretation: Any = "ito",
+    structure: Any = "general",
+    basis_id: Any = "delay-basis",
+) -> Any:
     if drift is None:
         drift = lambda time, state, memory, args: 2.0 * memory[0]
     if diffusion is None:
@@ -45,16 +45,16 @@ def _problem(
 
 
 def _realization(
-    problem,
-    seed=0,
+    problem: Any,
+    seed: Any = 0,
     *,
-    support=(0.0, 1.0),
-    sample_shape=(),
-    tolerance=1e-4,
-    levy_area="brownian",
-    noise_shape=None,
-    noise_id="use-problem",
-):
+    support: Any = (0.0, 1.0),
+    sample_shape: Any = (),
+    tolerance: Any = 1e-4,
+    levy_area: Any = "brownian",
+    noise_shape: Any = None,
+    noise_id: Any = "use-problem",
+) -> Any:
     resolved_noise_id = problem.noise_id if noise_id == "use-problem" else noise_id
     return phx.stochastic.WienerRealization(
         jr.key(seed),
@@ -67,7 +67,7 @@ def _realization(
     )
 
 
-def test_ito_euler_maruyama_matches_manufactured_one_step_and_provenance():
+def test_ito_euler_maruyama_matches_manufactured_one_step_and_provenance() -> None:
     problem = _problem(structure="additive")
     realization = _realization(problem, 3)
     increment = realization.increments(jnp.asarray(0.0), jnp.asarray(0.2))[0]
@@ -93,7 +93,7 @@ def test_ito_euler_maruyama_matches_manufactured_one_step_and_provenance():
     assert solution.has_dense_interpolation
 
 
-def test_stochastic_delay_preserves_selected_levy_area_path():
+def test_stochastic_delay_preserves_selected_levy_area_path() -> None:
     problem = _problem(structure="additive")
     realization = _realization(
         problem,
@@ -118,7 +118,7 @@ def test_stochastic_delay_preserves_selected_levy_area_path():
     assert jnp.array_equal(first.states, replay.states)
 
 
-def test_stratonovich_euler_heun_matches_manufactured_one_step():
+def test_stratonovich_euler_heun_matches_manufactured_one_step() -> None:
     sigma = 0.7
     problem = _problem(
         drift=lambda time, state, memory, args: 0.4 * memory["past"],
@@ -143,7 +143,7 @@ def test_stratonovich_euler_heun_matches_manufactured_one_step():
     assert solution.stats["continuous_extension"] == "euler-heun-wiener-path"
 
 
-def test_dense_history_uses_the_same_wiener_path_inside_an_accepted_step():
+def test_dense_history_uses_the_same_wiener_path_inside_an_accepted_step() -> None:
     problem = _problem(t1=0.4, structure="additive")
     realization = _realization(problem, 7, support=(0.0, 0.4))
     solution = phx.solver.solve_diffrax_delay(
@@ -163,7 +163,7 @@ def test_dense_history_uses_the_same_wiener_path_inside_an_accepted_step():
     assert history.size == int(solution.stats["num_accepted_steps"])
 
 
-def test_batched_stochastic_rolling_history_replays_full_path_solution():
+def test_batched_stochastic_rolling_history_replays_full_path_solution() -> None:
     problem = _problem(t1=0.8, delay=0.2, structure="additive")
     realization = _realization(
         problem,
@@ -196,7 +196,7 @@ def test_batched_stochastic_rolling_history_replays_full_path_solution():
         rolling.evaluate(jnp.asarray([0.1]))
 
 
-def test_delayed_diffusion_reads_the_path_consistent_accepted_history():
+def test_delayed_diffusion_reads_the_path_consistent_accepted_history() -> None:
     delay = 0.08
     problem = _problem(
         drift=lambda time, state, memory, args: jnp.zeros_like(state),
@@ -227,7 +227,7 @@ def test_delayed_diffusion_reads_the_path_consistent_accepted_history():
     assert jnp.allclose(solution.states[0, 0], expected)
 
 
-def test_realization_replay_antithetic_sign_and_prefixes_are_preserved():
+def test_realization_replay_antithetic_sign_and_prefixes_are_preserved() -> None:
     problem = _problem(structure="additive")
     realization = _realization(problem, 11)
     first = phx.solver.solve_diffrax_delay(
@@ -284,7 +284,7 @@ def test_realization_replay_antithetic_sign_and_prefixes_are_preserved():
     assert jnp.array_equal(small.states, large.states[:2])
 
 
-def test_stochastic_delay_preserves_realization_sample_and_state_shapes():
+def test_stochastic_delay_preserves_realization_sample_and_state_shapes() -> None:
     problem = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: jnp.zeros_like(state),
         lambda time, args: jnp.ones((2, 2)),
@@ -320,12 +320,12 @@ def test_stochastic_delay_preserves_realization_sample_and_state_shapes():
     assert jnp.allclose(dense[..., 0, 0], dense[..., 1, 1])
 
 
-def test_stochastic_delay_is_jittable_vectorizable_and_differentiable():
+def test_stochastic_delay_is_jittable_vectorizable_and_differentiable() -> None:
     template = _problem(structure="additive")
     realization = _realization(template, 23)
     increment = realization.increments(jnp.asarray(0.0), jnp.asarray(0.2))[0]
 
-    def terminal(rate):
+    def terminal(rate: Any) -> Any:
         problem = _problem(
             drift=lambda time, state, memory, args: rate * memory[0],
             diffusion=lambda time, state, memory, args: jnp.ones(state.shape + (1,)),
@@ -352,7 +352,7 @@ class _WrongInterpolationEuler(dfx.Euler):
     interpolation_cls = dfx.ThirdOrderHermitePolynomialInterpolation
 
 
-def test_stochastic_delay_rejects_wrong_interpretation_solver_and_interpolation():
+def test_stochastic_delay_rejects_wrong_interpretation_solver_and_interpolation() -> None:
     ito = _problem()
     ito_realization = _realization(ito)
     with pytest.raises(ValueError, match="Itô.*diffrax.Euler"):
@@ -391,7 +391,9 @@ def test_stochastic_delay_rejects_wrong_interpretation_solver_and_interpolation(
         )
 
 
-def test_stochastic_delay_requires_realization_and_step_and_accepts_advanced_delays():
+def test_stochastic_delay_requires_realization_and_step_and_accepts_advanced_delays() -> (
+    None
+):
     problem = _problem()
     with pytest.raises(ValueError, match="WienerRealization"):
         phx.solver.solve_diffrax_delay(
@@ -446,7 +448,9 @@ def test_stochastic_delay_requires_realization_and_step_and_accepts_advanced_del
         assert jnp.all(jnp.isfinite(solution.states))
 
 
-def test_stochastic_state_dependent_and_distributed_delays_replay_all_history_modes():
+def test_stochastic_state_dependent_and_distributed_delays_replay_all_history_modes() -> (
+    None
+):
     state_delay = phx.solver.StateDependentDelay(
         "past",
         lambda time, state, args: jnp.asarray(0.2),
@@ -514,7 +518,7 @@ def test_stochastic_state_dependent_and_distributed_delays_replay_all_history_mo
     assert rolling.stats["history_capacity"] > rolling.stats["history_max_occupancy"]
 
 
-def test_stochastic_delay_rejects_wrong_noise_basis_support_and_capability():
+def test_stochastic_delay_rejects_wrong_noise_basis_support_and_capability() -> None:
     problem = _problem()
     solve = lambda realization, **kwargs: phx.solver.solve_diffrax_delay(
         problem,
@@ -548,7 +552,7 @@ def test_stochastic_delay_rejects_wrong_noise_basis_support_and_capability():
         )
 
 
-def test_coupled_fine_step_reduces_strong_error_on_the_same_global_paths():
+def test_coupled_fine_step_reduces_strong_error_on_the_same_global_paths() -> None:
     problem = _problem(
         drift=lambda time, state, memory, args: 0.3 * memory[0],
         diffusion=lambda time, state, memory, args: 0.5 * state[..., None],
@@ -563,7 +567,7 @@ def test_coupled_fine_step_reduces_strong_error_on_the_same_global_paths():
         tolerance=1e-4,
     )
 
-    def terminal(step):
+    def terminal(step: Any) -> Any:
         return phx.solver.solve_diffrax_delay(
             problem,
             save_times=jnp.asarray([0.8]),
@@ -581,7 +585,7 @@ def test_coupled_fine_step_reduces_strong_error_on_the_same_global_paths():
     assert fine_error < coarse_error
 
 
-def test_complex_stochastic_delay_uses_real_coordinates_pathwise():
+def test_complex_stochastic_delay_uses_real_coordinates_pathwise() -> None:
     problem = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: jnp.conj(memory[0]),
         lambda time, args: jnp.asarray([1.0 + 0.25j]),
@@ -613,7 +617,7 @@ def test_complex_stochastic_delay_uses_real_coordinates_pathwise():
     assert jnp.all(jnp.isfinite(solution.evaluate(jnp.asarray([0.05]))))
 
 
-def test_stratonovich_quaternion_delay_diffusion_uses_physical_tangent_shape():
+def test_stratonovich_quaternion_delay_diffusion_uses_physical_tangent_shape() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
     angular_diffusion = jnp.asarray([0.2, -0.1, 0.3])

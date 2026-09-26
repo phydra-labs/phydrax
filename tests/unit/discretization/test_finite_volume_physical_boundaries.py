@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,37 +14,39 @@ import pytest
 import phydrax as phx
 
 
-def _grid(count=12, *, periodic=False):
+def _grid(count: Any = 12, *, periodic: Any = False) -> Any:
     return phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=periodic),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def _system():
+def _system() -> Any:
     return phx.equations.CompressibleNavierStokesSystem(
         phx.equations.ConstantTransport(0.1, 0.2)
     )
 
 
-def _wall_velocity_provider(time, point, normal, args):
+def _wall_velocity_provider(time: Any, point: Any, normal: Any, args: Any) -> Any:
     del time, point, normal
     return args
 
 
-def _heat_flux_provider(time, interior, point, normal, args):
+def _heat_flux_provider(
+    time: Any, interior: Any, point: Any, normal: Any, args: Any
+) -> float:
     del time, interior, point, normal, args
     return 0.0
 
 
 def _ale_identity_kwargs(
     *,
-    topology_epoch_id="topology-epoch:7",
-    geometry_layout_id="geometry-layout:moving",
-    geometry_version=11,
-    face_block_id="face-block:wall",
-    motion_plan_id="motion-plan:translation",
-):
+    topology_epoch_id: Any = "topology-epoch:7",
+    geometry_layout_id: Any = "geometry-layout:moving",
+    geometry_version: Any = 11,
+    face_block_id: Any = "face-block:wall",
+    motion_plan_id: Any = "motion-plan:translation",
+) -> Any:
     return {
         "topology_epoch_id": topology_epoch_id,
         "geometry_layout_id": geometry_layout_id,
@@ -51,17 +56,21 @@ def _ale_identity_kwargs(
     }
 
 
-def _primitive_target(time, primitive, point, normal, args):
+def _primitive_target(
+    time: Any, primitive: Any, point: Any, normal: Any, args: Any
+) -> Any:
     del time, primitive, point, normal, args
     return jnp.asarray([1.1, 0.1, -0.05, 1.05])
 
 
-def _pressure_target(time, primitive, point, normal, args):
+def _pressure_target(
+    time: Any, primitive: Any, point: Any, normal: Any, args: Any
+) -> float:
     del time, primitive, point, normal, args
     return 0.95
 
 
-def _axis_based_ale_boundary(kind):
+def _axis_based_ale_boundary(kind: Any) -> Any:
     if kind == "reflective":
         return phx.discretization.ReflectiveBoundary()
     if kind == "characteristic-inflow":
@@ -84,10 +93,10 @@ def _axis_based_ale_boundary(kind):
 
 def _moving_wall(
     *,
-    provider_id="constant-moving-wall",
-    absolute_tolerance=1.0e-12,
-    relative_tolerance=1.0e-10,
-):
+    provider_id: Any = "constant-moving-wall",
+    absolute_tolerance: Any = 1.0e-12,
+    relative_tolerance: Any = 1.0e-10,
+) -> Any:
     return phx.discretization.MovingSlipWallBoundary(
         _wall_velocity_provider,
         wall_velocity_provider_id=provider_id,
@@ -97,13 +106,13 @@ def _moving_wall(
 
 
 def _ale_context(
-    boundary,
-    wall_velocity,
-    normal,
+    boundary: Any,
+    wall_velocity: Any,
+    normal: Any,
     *,
-    grid_velocity=None,
-    identity=None,
-):
+    grid_velocity: Any = None,
+    identity: Any = None,
+) -> Any:
     wall = jnp.asarray(wall_velocity)
     normal_ = jnp.asarray(normal)
     grid = wall if grid_velocity is None else jnp.asarray(grid_velocity)
@@ -118,29 +127,38 @@ def _ale_context(
     )
 
 
-def test_slip_and_no_slip_walls_apply_distinct_velocity_parity():
+def test_slip_and_no_slip_walls_apply_distinct_velocity_parity() -> None:
     system = _system()
     interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.3, 1.0]]))
     coordinates = jnp.asarray([[0.0]])
     normal = jnp.asarray([-1.0])
     slip = phx.discretization.SlipWallBoundary().exterior_state(
-        system, 0.0, interior, coordinates, normal, 0, None
+        system,
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        interior,
+        coordinates,
+        normal,
+        0,
+        None,
     )
     no_slip = phx.discretization.NoSlipAdiabaticWallBoundary(
         jnp.asarray([0.1])
+        # ty: ignore[invalid-argument-type]
     ).exterior_state(system, 0.0, interior, coordinates, normal, 0, None)
 
     np.testing.assert_allclose(system.conserved_to_primitive(slip)[..., 1], -0.3)
     np.testing.assert_allclose(system.conserved_to_primitive(no_slip)[..., 1], -0.1)
 
 
-def test_isothermal_wall_places_target_temperature_at_face_average():
+def test_isothermal_wall_places_target_temperature_at_face_average() -> None:
     system = _system()
     primitive = jnp.asarray([[1.0, 0.2, 2.0]])
     interior = system.primitive_to_conserved(primitive)
     boundary = phx.discretization.NoSlipIsothermalWallBoundary(jnp.asarray([0.0]), 1.5)
     exterior = boundary.exterior_state(
         system,
+        # ty: ignore[invalid-argument-type]
         0.0,
         interior,
         jnp.asarray([[0.0]]),
@@ -154,15 +172,19 @@ def test_isothermal_wall_places_target_temperature_at_face_average():
     np.testing.assert_allclose(system.conserved_to_primitive(exterior)[..., 1], -0.2)
 
 
-def test_characteristic_boundaries_return_finite_admissible_states():
+def test_characteristic_boundaries_return_finite_admissible_states() -> None:
     system = phx.equations.EulerSystem()
     interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, 1.0]]))
 
-    def target(time, primitive, coordinates, normal, args):
+    def target(
+        time: Any, primitive: Any, coordinates: Any, normal: Any, args: Any
+    ) -> Any:
         del time, primitive, coordinates, normal, args
         return jnp.asarray([1.1, 0.1, 1.05])
 
-    def pressure_target(time, primitive, coordinates, normal, args):
+    def pressure_target(
+        time: Any, primitive: Any, coordinates: Any, normal: Any, args: Any
+    ) -> float:
         del time, primitive, coordinates, normal, args
         return 0.95
 
@@ -191,12 +213,14 @@ def test_characteristic_boundaries_return_finite_admissible_states():
     assert jnp.all(system.admissible(outflow_state))
 
 
-def test_characteristic_boundaries_are_axis_independent_for_oblique_normals():
+def test_characteristic_boundaries_are_axis_independent_for_oblique_normals() -> None:
     system = phx.equations.EulerSystem(2)
     interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, -0.1, 1.0]]))
     normal = jnp.asarray([[0.6, 0.8]])
 
-    def target(time, primitive, coordinates, outward_normal, args):
+    def target(
+        time: Any, primitive: Any, coordinates: Any, outward_normal: Any, args: Any
+    ) -> Any:
         del time, primitive, coordinates, outward_normal, args
         return jnp.asarray([1.05, 0.1, 0.05, 0.95])
 
@@ -226,7 +250,7 @@ def test_characteristic_boundaries_are_axis_independent_for_oblique_normals():
     assert jnp.all(system.admissible(first))
 
 
-def test_prepared_periodic_halo_wraps_declared_reconstruction_depth():
+def test_prepared_periodic_halo_wraps_declared_reconstruction_depth() -> None:
     grid = _grid(12, periodic=True)
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     reconstruction = phx.discretization.HighResolutionReconstructionPlan("weno_z")
@@ -242,6 +266,7 @@ def test_prepared_periodic_halo_wraps_declared_reconstruction_depth():
             lambda left, right, axis, args: jnp.ones(left.shape[:-1]),
             system_id="halo-scalar",
         ),
+        # ty: ignore[invalid-argument-type]
         0.0,
         state,
         0,
@@ -252,7 +277,7 @@ def test_prepared_periodic_halo_wraps_declared_reconstruction_depth():
     np.testing.assert_allclose(ghosted[-3:, 0], [0.0, 1.0, 2.0])
 
 
-def test_halo_plan_rejects_insufficient_local_extent():
+def test_halo_plan_rejects_insufficient_local_extent() -> None:
     grid = _grid(4, periodic=True)
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     with pytest.raises(ValueError, match="halo depth"):
@@ -263,7 +288,7 @@ def test_halo_plan_rejects_insufficient_local_extent():
         )
 
 
-def test_viscous_flux_consumes_isothermal_wall_ghost_temperature():
+def test_viscous_flux_consumes_isothermal_wall_ghost_temperature() -> None:
     grid = _grid(12)
     system = _system()
     discretization = phx.discretization.FiniteVolumePlan(
@@ -282,21 +307,28 @@ def test_viscous_flux_consumes_isothermal_wall_ghost_temperature():
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (12, 3))
     state = system.primitive_to_conserved(primitive)
     flux = phx.discretization.ViscousFluxPlan().face_fluxes(
-        system, 0.0, state, discretization, halo
+        system,
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        state,
+        discretization,
+        halo,
     )[0]
 
     assert flux[0, -1] < 0.0
     assert flux[-1, -1] > 0.0
 
 
-def test_prescribed_heat_flux_wall_sets_oriented_energy_flux():
+def test_prescribed_heat_flux_wall_sets_oriented_energy_flux() -> None:
     grid = _grid(10)
     system = _system()
     discretization = phx.discretization.FiniteVolumePlan(
         grid, component_names=system.component_names
     ).prepare()
 
-    def heat_target(time, interior, coordinates, normal, args):
+    def heat_target(
+        time: Any, interior: Any, coordinates: Any, normal: Any, args: Any
+    ) -> float:
         del time, interior, coordinates, normal, args
         return 3.0
 
@@ -317,14 +349,19 @@ def test_prescribed_heat_flux_wall_sets_oriented_energy_flux():
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (10, 3))
     state = system.primitive_to_conserved(primitive)
     flux = phx.discretization.ViscousFluxPlan().face_fluxes(
-        system, 0.0, state, discretization, halo
+        system,
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        state,
+        discretization,
+        halo,
     )[0]
 
     np.testing.assert_allclose(flux[0, -1], -3.0)
     np.testing.assert_allclose(flux[-1, -1], 3.0)
 
 
-def test_materialized_halo_contains_mirrored_coordinates_and_layer_states():
+def test_materialized_halo_contains_mirrored_coordinates_and_layer_states() -> None:
     grid = _grid(8)
     system = _system()
     discretization = phx.discretization.FiniteVolumePlan(
@@ -342,6 +379,7 @@ def test_materialized_halo_contains_mirrored_coordinates_and_layer_states():
     velocity = jnp.linspace(0.1, 0.8, 8)
     primitive = jnp.stack((jnp.ones(8), velocity, jnp.ones(8)), axis=-1)
     state = system.primitive_to_conserved(primitive)
+    # ty: ignore[invalid-argument-type]
     ghosted = halo.materialize_axis(system, 0.0, state, 0)
     ghost_primitive = system.conserved_to_primitive(ghosted.values)
 
@@ -351,7 +389,7 @@ def test_materialized_halo_contains_mirrored_coordinates_and_layer_states():
     np.testing.assert_allclose(ghost_primitive[:3, 1], [-0.3, -0.2, -0.1], atol=1e-12)
 
 
-def test_moving_slip_wall_matches_static_slip_wall_at_zero_wall_speed():
+def test_moving_slip_wall_matches_static_slip_wall_at_zero_wall_speed() -> None:
     system = phx.equations.EulerSystem(2)
     interior_primitive = jnp.asarray([[1.3, 0.7, -0.2, 1.1]])
     interior = system.primitive_to_conserved(interior_primitive)
@@ -374,7 +412,7 @@ def test_moving_slip_wall_matches_static_slip_wall_at_zero_wall_speed():
     assert jnp.all(context.kinematics_consistent)
 
 
-def test_static_slip_wall_rejects_nonzero_conforming_grid_motion():
+def test_static_slip_wall_rejects_nonzero_conforming_grid_motion() -> None:
     system = phx.equations.EulerSystem(2)
     interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, 0.0, 1.0]]))
     context = _ale_context(_moving_wall(), [0.2, 0.0], [1.0, 0.0])
@@ -392,7 +430,7 @@ def test_static_slip_wall_rejects_nonzero_conforming_grid_motion():
         jax.block_until_ready(exterior)
 
 
-def test_moving_slip_wall_reflects_translating_relative_normal_velocity_only():
+def test_moving_slip_wall_reflects_translating_relative_normal_velocity_only() -> None:
     system = phx.equations.EulerSystem(2)
     interior_primitive = jnp.asarray([[1.4, 1.1, -0.3, 1.7]])
     interior = system.primitive_to_conserved(interior_primitive)
@@ -407,7 +445,7 @@ def test_moving_slip_wall_reflects_translating_relative_normal_velocity_only():
     np.testing.assert_allclose(exterior_primitive[..., -1], 1.7, rtol=1e-12)
 
 
-def test_conforming_translating_wall_has_zero_relative_mass_flux_and_wall_work():
+def test_conforming_translating_wall_has_zero_relative_mass_flux_and_wall_work() -> None:
     system = phx.equations.EulerSystem(2)
     pressure = 1.6
     wall_velocity = jnp.asarray([-0.4, 0.25])
@@ -442,7 +480,7 @@ def test_conforming_translating_wall_has_zero_relative_mass_flux_and_wall_work()
     assert ale_flux[..., -1].item() > 0.0
 
 
-def test_moving_slip_wall_preserves_relative_tangent_for_arbitrary_normal():
+def test_moving_slip_wall_preserves_relative_tangent_for_arbitrary_normal() -> None:
     system = phx.equations.EulerSystem(2)
     normal = jnp.asarray([0.6, 0.8])
     tangent = jnp.asarray([-normal[1], normal[0]])
@@ -472,7 +510,7 @@ def test_moving_slip_wall_preserves_relative_tangent_for_arbitrary_normal():
     )
 
 
-def test_moving_slip_wall_rejects_grid_wall_normal_velocity_mismatch():
+def test_moving_slip_wall_rejects_grid_wall_normal_velocity_mismatch() -> None:
     system = phx.equations.EulerSystem(2)
     interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.0, 0.0, 1.0]]))
     boundary = _moving_wall(absolute_tolerance=1.0e-13, relative_tolerance=0.0)
@@ -491,7 +529,7 @@ def test_moving_slip_wall_rejects_grid_wall_normal_velocity_mismatch():
         jax.block_until_ready(exterior)
 
 
-def test_ale_boundary_context_rejects_nonfinite_and_mismatched_geometry():
+def test_ale_boundary_context_rejects_nonfinite_and_mismatched_geometry() -> None:
     boundary = _moving_wall()
     with pytest.raises(ValueError, match="same non-scalar shape"):
         phx.discretization.ALEBoundaryContext(
@@ -523,7 +561,7 @@ def test_ale_boundary_context_rejects_nonfinite_and_mismatched_geometry():
         jax.block_until_ready(context.face_point)
 
 
-def test_moving_context_carries_exact_stage_route_identity():
+def test_moving_context_carries_exact_stage_route_identity() -> None:
     identity = _ale_identity_kwargs(
         topology_epoch_id="topology-epoch:accepted-3",
         geometry_layout_id="geometry-layout:stage",
@@ -555,7 +593,9 @@ def test_moving_context_carries_exact_stage_route_identity():
         ("motion_plan_id", "motion-plan:stale"),
     ),
 )
-def test_ale_context_rejects_stale_consumer_stage_identity(field, stale_value):
+def test_ale_context_rejects_stale_consumer_stage_identity(
+    field: Any, stale_value: Any
+) -> None:
     identity = _ale_identity_kwargs()
     context = _ale_context(
         _moving_wall(),
@@ -577,7 +617,7 @@ def test_ale_context_rejects_stale_consumer_stage_identity(field, stale_value):
         jax.block_until_ready(consumed)
 
 
-def test_ale_context_consumer_version_check_is_jittable():
+def test_ale_context_consumer_version_check_is_jittable() -> None:
     identity = _ale_identity_kwargs(geometry_version=23)
     context = _ale_context(
         _moving_wall(),
@@ -587,7 +627,7 @@ def test_ale_context_consumer_version_check_is_jittable():
     )
 
     @jax.jit
-    def consume(geometry_version):
+    def consume(geometry_version: Any) -> Any:
         return context.validate_consumer_identity(
             jnp.asarray([[2.0, 3.0]]),
             topology_epoch_id=identity["topology_epoch_id"],
@@ -608,7 +648,7 @@ def test_ale_context_consumer_version_check_is_jittable():
         jax.block_until_ready(consume(jnp.asarray(24, dtype=jnp.int32)))
 
 
-def test_static_slip_wall_accepts_oblique_ale_normal():
+def test_static_slip_wall_accepts_oblique_ale_normal() -> None:
     system = phx.equations.EulerSystem(2)
     interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.7, -0.2, 1.1]]))
     normal = jnp.asarray([0.6, 0.8])
@@ -629,7 +669,7 @@ def test_static_slip_wall_accepts_oblique_ale_normal():
     np.testing.assert_allclose(exterior, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_axis_based_reflective_ale_boundary_rejects_oblique_normal():
+def test_axis_based_reflective_ale_boundary_rejects_oblique_normal() -> None:
     system = phx.equations.EulerSystem(2)
     interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, -0.1, 1.0]]))
     context = _ale_context(_moving_wall(), [0.0, 0.0], [0.6, 0.8])
@@ -645,7 +685,7 @@ def test_axis_based_reflective_ale_boundary_rejects_oblique_normal():
 @pytest.mark.parametrize(
     "kind", ("characteristic-inflow", "characteristic-outflow", "far-field")
 )
-def test_characteristic_ale_boundaries_accept_oblique_normals(kind):
+def test_characteristic_ale_boundaries_accept_oblique_normals(kind: Any) -> None:
     system = phx.equations.EulerSystem(2)
     interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, -0.1, 1.0]]))
     context = _ale_context(_moving_wall(), [0.0, 0.0], [0.6, 0.8])
@@ -664,7 +704,7 @@ def test_characteristic_ale_boundaries_accept_oblique_normals(kind):
         "far-field",
     ),
 )
-def test_axis_aligned_ale_boundary_dispatch_matches_static_parity(kind):
+def test_axis_aligned_ale_boundary_dispatch_matches_static_parity(kind: Any) -> None:
     system = phx.equations.EulerSystem(2)
     interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, -0.1, 1.0]]))
     normal = jnp.asarray([0.0, -1.0])
@@ -685,7 +725,7 @@ def test_axis_aligned_ale_boundary_dispatch_matches_static_parity(kind):
     np.testing.assert_allclose(exterior, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_moving_slip_wall_fingerprints_provider_identity_and_tolerances():
+def test_moving_slip_wall_fingerprints_provider_identity_and_tolerances() -> None:
     baseline = _moving_wall()
     changed_provider = _moving_wall(provider_id="different-provider")
     changed_tolerance = _moving_wall(relative_tolerance=2.0e-10)
@@ -694,13 +734,13 @@ def test_moving_slip_wall_fingerprints_provider_identity_and_tolerances():
     assert baseline.boundary_id != changed_tolerance.boundary_id
 
 
-def test_moving_slip_wall_is_jittable_and_differentiable_in_wall_speed():
+def test_moving_slip_wall_is_jittable_and_differentiable_in_wall_speed() -> None:
     system = phx.equations.EulerSystem(2)
     interior = system.primitive_to_conserved(jnp.asarray([[1.0, 0.9, 0.2, 1.0]]))
     normal = jnp.asarray([1.0, 0.0])
     boundary = _moving_wall()
 
-    def reflected_normal_velocity(wall_speed):
+    def reflected_normal_velocity(wall_speed: Any) -> Any:
         wall_velocity = jnp.asarray([wall_speed, 0.0])
         context = _ale_context(boundary, wall_velocity, normal)
         exterior = boundary.ale_exterior_state(system, interior, context, 0)
@@ -713,7 +753,7 @@ def test_moving_slip_wall_is_jittable_and_differentiable_in_wall_speed():
     np.testing.assert_allclose(derivative, 2.0, rtol=1e-12)
 
 
-def test_moving_slip_wall_rejects_scalar_and_ale_no_slip_thermal_systems():
+def test_moving_slip_wall_rejects_scalar_and_ale_no_slip_thermal_systems() -> None:
     euler = phx.equations.EulerSystem(2)
     moving = _moving_wall()
     context = _ale_context(moving, [0.0, 0.0], [1.0, 0.0])

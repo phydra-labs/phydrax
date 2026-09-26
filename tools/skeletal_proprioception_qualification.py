@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -26,7 +27,7 @@ def qualify() -> dict[str, object]:
     step_s = runtime.plan.maximum_step_s
     step_count = round(runtime.parameters.dynamic_time_constant_s.item() / step_s)
 
-    def step(current, _):
+    def step(current: Any, _: Any) -> Any:
         candidate = runtime.candidate(current, driven, step_s)
         return candidate.commit(), candidate.evidence.successful
 

@@ -21,6 +21,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
+from ...typing import parse
 from .._conservation_boundary import SourceFunction
 from .._core import (
     DiscretizationCapability,
@@ -73,8 +74,7 @@ class TensorSBPPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Field and component names must be unique and non-empty.")
         order = int(interior_order)
-        if order not in (2, 4, 6, 8):
-            raise ValueError("Tensor SBP order must be 2, 4, 6, or 8.")
+        order = parse(order, SBPInteriorOrder, "order")
         self.grid = grid
         self.field_name = field
         self.component_names = components

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _measure(points, weights, *, provenance="uq-barycenter"):
+def _measure(points: Any, weights: Any, *, provenance: Any = "uq-barycenter") -> Any:
     return phx.integration.discrete(
         jnp.asarray(points, dtype="float64"),
         cx.AxisArray(jnp.asarray(weights, dtype="float64"), dims=("atom",)),
@@ -21,14 +24,14 @@ def _measure(points, weights, *, provenance="uq-barycenter"):
     )
 
 
-def _problem():
+def _problem() -> Any:
     first = _measure([[-1.0], [1.0]], [0.5, 0.5], provenance="forecast-a")
     second = _measure([[0.0], [2.0]], [0.5, 0.5], provenance="forecast-b")
     support = _measure([[-0.5], [0.5], [1.5]], [0.2, 0.5, 0.3])
     return first, second, support
 
 
-def test_uq_fixed_support_aggregation_retains_native_solution():
+def test_uq_fixed_support_aggregation_retains_native_solution() -> None:
     first, second, support = _problem()
     aggregation = phx.uq.aggregate_transport_barycenter(
         (first, second),
@@ -53,7 +56,7 @@ def test_uq_fixed_support_aggregation_retains_native_solution():
     )
 
 
-def test_uq_free_support_aggregation_keeps_local_search_provenance():
+def test_uq_free_support_aggregation_keeps_local_search_provenance() -> None:
     first = _measure([[0.0]], [1.0])
     second = _measure([[2.0]], [1.0])
     initialization = _measure([[0.4]], [1.0], provenance="uq-explicit-initial")
@@ -67,6 +70,7 @@ def test_uq_free_support_aggregation_keeps_local_search_provenance():
         (first, second),
         initialization,
         measure_weights=jnp.asarray([0.5, 0.5]),
+        # ty: ignore[invalid-argument-type]
         cost=phx.transport.WeightedSquaredEuclideanCost([2.0]),
         solver=phx.transport.FreeSupportBarycenter(
             inner,
@@ -85,7 +89,7 @@ def test_uq_free_support_aggregation_keeps_local_search_provenance():
     assert aggregation.measure.provenance == "uq-free-support-transport-barycenter"
 
 
-def test_barycenter_objective_term_is_composable_and_returns_native_diagnostics():
+def test_barycenter_objective_term_is_composable_and_returns_native_diagnostics() -> None:
     first, second, support = _problem()
     problem = phx.transport.fixed_support_barycenter_problem(
         (first, second),
@@ -117,7 +121,7 @@ def test_barycenter_objective_term_is_composable_and_returns_native_diagnostics(
     assert term.label == "ensemble-law-barycenter"
 
 
-def test_barycenter_training_objective_rejects_nonconvergence():
+def test_barycenter_training_objective_rejects_nonconvergence() -> None:
     first, second, support = _problem()
     problem = phx.transport.fixed_support_barycenter_problem(
         (first, second),
@@ -140,7 +144,7 @@ def test_barycenter_training_objective_rejects_nonconvergence():
         jax.block_until_ready(evaluation.value)
 
 
-def test_scientific_barycenter_symbols_are_public():
+def test_scientific_barycenter_symbols_are_public() -> None:
     uq_symbols = {
         "FreeSupportTransportBarycenterAggregationResult",
         "TransportBarycenterAggregationResult",

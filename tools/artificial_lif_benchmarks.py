@@ -15,6 +15,7 @@ import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -30,7 +31,7 @@ from benchmarks._runtime import (
 )
 
 
-def _measure(function, arguments, *, repetitions):
+def _measure(function: Any, arguments: Any, *, repetitions: Any) -> Any:
     jitted = jax.jit(function)
     compiled, compilation = measure_lower_and_compile(
         lambda: jitted.lower(*arguments), lambda lowered: lowered.compile()
@@ -70,10 +71,10 @@ def benchmark_case(*, length: int, width: int, repetitions: int) -> dict:
     valid = jnp.ones((length,), dtype="bool")
     time = jnp.arange(length, dtype=jnp.float32)
 
-    def forward(current, values):
+    def forward(current: Any, values: Any) -> Any:
         return current(phx.nn.layers.RecurrentBatch(values, valid, time=time))
 
-    def objective(current, values):
+    def objective(current: Any, values: Any) -> Any:
         spikes = forward(current, values)
         return jnp.mean(spikes)
 

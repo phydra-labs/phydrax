@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 
@@ -34,7 +36,7 @@ from phydrax.applications.conformal_bootstrap import (
 )
 
 
-def _data(dimension: float):
+def _data(dimension: float) -> Any:
     external = tuple(
         ExternalScalarOperator(f"phi-{index}", 0.6, "scalar") for index in range(4)
     )
@@ -55,7 +57,7 @@ def _data(dimension: float):
     )
 
 
-def _pmp():
+def _pmp() -> Any:
     block = PolynomialMatrixBlock(
         DampedRationalPrefactor("0.3678794411714423215955", "1"),
         (((("1", "0", "1"), ("0", "1")),),),
@@ -72,7 +74,7 @@ def _pmp():
     )
 
 
-def benchmark_case(dimension: float, recursion_order: int, repeats: int):
+def benchmark_case(dimension: float, recursion_order: int, repeats: int) -> Any:
     points = np.asarray(((0.2, 0.3), (0.3, 0.2), (0.25, 0.25)))
     plan, plan_seconds = measure_host(
         lambda: GlobalScalarBlockPlan(

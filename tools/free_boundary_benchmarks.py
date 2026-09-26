@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -15,7 +16,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def _stefan(points):
+def _stefan(points: Any) -> Any:
     started = time.perf_counter()
     result = phx.applications.free_boundary.ExactStefanBenchmark().run(
         points_per_block=points,
@@ -30,7 +31,7 @@ def _stefan(points):
     }
 
 
-def _instability():
+def _instability() -> Any:
     times = jnp.linspace(0.0, 1.0, 16)
     modes = jnp.asarray((2, 3, 4))
     rates = jnp.asarray((0.2, 0.05, -0.1))
@@ -50,7 +51,7 @@ def _instability():
     }
 
 
-def _topology():
+def _topology() -> Any:
     report = phx.applications.free_boundary.topology_event_benchmark(
         jnp.asarray((1, 1, 2, 2)),
         jnp.asarray((1, 1, 2, 2)),
@@ -63,7 +64,7 @@ def _topology():
     }
 
 
-def _bubble():
+def _bubble() -> Any:
     angle = jnp.linspace(0.0, 2.0 * jnp.pi, 129)[:-1]
     contour = jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
     report = phx.applications.free_boundary.hysing_bubble_benchmark(
@@ -81,7 +82,7 @@ def _bubble():
     }
 
 
-def _fsi_obstacle_fracture():
+def _fsi_obstacle_fracture() -> Any:
     time = jnp.arange(128) * 0.01
     signal = jnp.sin(2.0 * jnp.pi * 2.0 * time)
     fsi = phx.applications.free_boundary.turek_hron_fsi_benchmark(
@@ -116,7 +117,7 @@ def _fsi_obstacle_fracture():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--points", type=int, default=64)
     parser.add_argument("--smoke", action="store_true")

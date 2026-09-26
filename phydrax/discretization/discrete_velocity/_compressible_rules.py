@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._compressible_contracts import CompressibleKineticModelKind
 
 
@@ -83,13 +84,7 @@ class CompressibleVelocityRule(StrictModule, NonTrainableState):
         )
         if len(shift) != dimension:
             raise ValueError("frame_shift must match the velocity dimension.")
-        if model_kind not in (
-            "guided-d3q39",
-            "entropic-d3q343",
-            "filtered-d3q33",
-            "adaptive-gauge",
-        ):
-            raise ValueError(f"Unknown kinetic model kind {model_kind!r}.")
+        model_kind = parse(model_kind, CompressibleKineticModelKind, "model_kind")
         if not name:
             raise ValueError("Velocity rule name must be non-empty.")
         dtype = np.result_type(velocity_host.dtype, base_host.dtype, feature_host.dtype)

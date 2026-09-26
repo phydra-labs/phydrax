@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -25,7 +28,9 @@ from phydrax.stochastic import (
 )
 
 
-def _paths(*, path_id="planner-paths", valid=None, particles=None):
+def _paths(
+    *, path_id: Any = "planner-paths", valid: Any = None, particles: Any = None
+) -> Any:
     if particles is None:
         particles = jnp.ones((2, 2, 1))
     particles = jnp.asarray(particles)
@@ -42,7 +47,7 @@ def _paths(*, path_id="planner-paths", valid=None, particles=None):
     )
 
 
-def _base_problem(paths, flow, *, terminal_target=0.0):
+def _base_problem(paths: Any, flow: Any, *, terminal_target: Any = 0.0) -> Any:
     adapter = MeanFieldBSDEControlAdapter(
         lambda time, state, law, value, control, args: control.reshape((1,)),
         lambda time, state, law, action, args: jnp.asarray([0.0]),
@@ -68,7 +73,7 @@ def _base_problem(paths, flow, *, terminal_target=0.0):
     )
 
 
-def _analytic_externality(*, running=None, terminal=None):
+def _analytic_externality(*, running: Any = None, terminal: Any = None) -> Any:
     if running is None:
         running = lambda time, state, law, value, control, action, args: jnp.asarray(
             [law.mean[0]]
@@ -86,13 +91,13 @@ def _analytic_externality(*, running=None, terminal=None):
 
 
 def _problem(
-    paths,
+    paths: Any,
     *,
-    flow=None,
-    externality=None,
-    terminal_target=0.0,
-    stationarity=None,
-):
+    flow: Any = None,
+    externality: Any = None,
+    terminal_target: Any = 0.0,
+    stationarity: Any = None,
+) -> Any:
     if flow is None:
         flow = EmpiricalMeanField.from_paths(paths, mean_field_id="planner-law")
     if externality is None:
@@ -116,7 +121,7 @@ def _problem(
     )
 
 
-def _evaluate(problem, paths, *, action=0.0, value=0.0):
+def _evaluate(problem: Any, paths: Any, *, action: Any = 0.0, value: Any = 0.0) -> Any:
     return evaluate_mean_field_control_planner(
         problem,
         paths,
@@ -125,7 +130,7 @@ def _evaluate(problem, paths, *, action=0.0, value=0.0):
     )
 
 
-def test_one_period_social_planner_control_differs_from_mfg_control():
+def test_one_period_social_planner_control_differs_from_mfg_control() -> None:
     """The population term doubles the mean coupling in the planner FOC."""
     paths = _paths()
     problem = _problem(paths)
@@ -158,7 +163,7 @@ def test_one_period_social_planner_control_differs_from_mfg_control():
     assert mfc.certificate_label == MEAN_FIELD_CONTROL_PLANNER_STATIONARITY
 
 
-def test_explicit_zero_externality_reduces_to_base_bsde_residuals():
+def test_explicit_zero_externality_reduces_to_base_bsde_residuals() -> None:
     paths = _paths()
     zero = _analytic_externality(
         running=lambda time, state, law, value, control, action, args: jnp.zeros((1,)),
@@ -178,9 +183,10 @@ def test_explicit_zero_externality_reduces_to_base_bsde_residuals():
     )
 
 
-def test_missing_externality_derivative_is_rejected_instead_of_dropped():
+def test_missing_externality_derivative_is_rejected_instead_of_dropped() -> None:
     with pytest.raises(TypeError, match="running must be callable"):
         MeanFieldExternality(
+            # ty: ignore[invalid-argument-type]
             None,
             lambda state, law, args: jnp.zeros((1,)),
             mode="analytic-lions",
@@ -196,6 +202,7 @@ def test_missing_externality_derivative_is_rejected_instead_of_dropped():
                 paths,
                 EmpiricalMeanField.from_paths(paths, mean_field_id="planner-law"),
             ),
+            # ty: ignore[invalid-argument-type]
             None,
             lambda time, state, law, action, args: jnp.asarray(0.0),
             lambda state, law, args: jnp.asarray(0.0),
@@ -207,7 +214,7 @@ def test_missing_externality_derivative_is_rejected_instead_of_dropped():
         )
 
 
-def test_finite_particle_adjoint_preserves_bias_audit_evidence():
+def test_finite_particle_adjoint_preserves_bias_audit_evidence() -> None:
     paths = _paths()
     particle_externality = MeanFieldExternality(
         lambda time, state, law, value, control, action, args: jnp.asarray([law.mean[0]]),
@@ -244,7 +251,7 @@ def test_finite_particle_adjoint_preserves_bias_audit_evidence():
         )
 
 
-def test_invalid_law_low_ess_and_wrong_path_identity_have_distinct_statuses():
+def test_invalid_law_low_ess_and_wrong_path_identity_have_distinct_statuses() -> None:
     invalid_paths = _paths(valid=jnp.asarray([[True, True], [False, False]]))
     invalid = _evaluate(_problem(invalid_paths), invalid_paths)
     assert not bool(invalid.valid)
@@ -284,7 +291,7 @@ def test_invalid_law_low_ess_and_wrong_path_identity_have_distinct_statuses():
     )
 
 
-def test_terminal_residual_includes_terminal_measure_externality():
+def test_terminal_residual_includes_terminal_measure_externality() -> None:
     paths = _paths()
     externality = _analytic_externality(
         running=lambda time, state, law, value, control, action, args: jnp.zeros((1,)),
@@ -302,7 +309,7 @@ def test_terminal_residual_includes_terminal_measure_externality():
     np.testing.assert_allclose(result.terminal_infinity_norm, 1.5)
 
 
-def test_result_makes_only_the_explicit_planner_stationarity_claim():
+def test_result_makes_only_the_explicit_planner_stationarity_claim() -> None:
     paths = _paths()
     result = _evaluate(_problem(paths), paths, action=-2.0)
 

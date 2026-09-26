@@ -21,7 +21,7 @@ from phydrax.nn.parameters import (
 )
 
 
-def test_scalar_parameter_transforms_are_strict_and_differentiable():
+def test_scalar_parameter_transforms_are_strict_and_differentiable() -> None:
     raw = jnp.asarray([-3.0, 0.0, 2.0])
     positive = PositiveTransform(0.25)
     bounded = IntervalTransform(-2.0, 3.0)
@@ -35,7 +35,7 @@ def test_scalar_parameter_transforms_are_strict_and_differentiable():
     assert jnp.all(jnp.isfinite(jax.jacrev(bounded)(raw)))
 
 
-def test_simplex_transform_is_strict_positive_and_identifiable():
+def test_simplex_transform_is_strict_positive_and_identifiable() -> None:
     raw = jnp.asarray([[1.0, -2.0], [0.5, 0.25]])
     transform = SimplexTransform()
     value = jax.jit(transform)(raw)
@@ -46,7 +46,7 @@ def test_simplex_transform_is_strict_positive_and_identifiable():
     assert jnp.all(jnp.isfinite(jax.jacrev(transform)(raw)))
 
 
-def test_matrix_projection_transforms_enforce_exact_structure():
+def test_matrix_projection_transforms_enforce_exact_structure() -> None:
     raw = jnp.asarray([[1.0, 2.0], [-3.0, 4.0]])
     symmetric = SymmetricTransform()(raw)
     skew = SkewSymmetricTransform()(raw)
@@ -56,7 +56,7 @@ def test_matrix_projection_transforms_enforce_exact_structure():
     assert jnp.array_equal(jnp.diag(skew), jnp.zeros((2,)))
 
 
-def test_positive_definite_transform_uses_packed_coordinates():
+def test_positive_definite_transform_uses_packed_coordinates() -> None:
     raw = jnp.asarray([0.2, -0.4, 0.7, 0.3, -0.2, 0.1])
     transform = PositiveDefiniteTransform(1e-4)
     matrix = jax.jit(transform)(raw)
@@ -67,7 +67,7 @@ def test_positive_definite_transform_uses_packed_coordinates():
     assert jnp.all(jnp.isfinite(jax.jacrev(transform)(raw)))
 
 
-def test_packed_skew_transform_uses_only_independent_coordinates():
+def test_packed_skew_transform_uses_only_independent_coordinates() -> None:
     raw = jnp.asarray([[1.0, -2.0, 3.0], [0.5, 0.25, -0.75]])
     transform = PackedSkewSymmetricTransform()
     matrices = jax.jit(transform)(raw)
@@ -78,7 +78,7 @@ def test_packed_skew_transform_uses_only_independent_coordinates():
     assert jnp.all(jnp.isfinite(jax.jacrev(transform)(raw)))
 
 
-def test_positive_semidefinite_transform_preserves_exact_zero_factor():
+def test_positive_semidefinite_transform_preserves_exact_zero_factor() -> None:
     transform = PositiveSemidefiniteTransform()
     raw = jnp.asarray([[0.0, 0.0, 0.0], [1.0, -2.0, 0.5]])
     factors = jax.jit(transform.factor)(raw)
@@ -91,7 +91,7 @@ def test_positive_semidefinite_transform_preserves_exact_zero_factor():
     assert jnp.all(jnp.isfinite(jax.jacrev(transform)(raw)))
 
 
-def test_stability_transforms_enforce_continuous_and_discrete_stability():
+def test_stability_transforms_enforce_continuous_and_discrete_stability() -> None:
     skew_raw = jnp.asarray([[0.1, 1.2], [-0.3, 0.7]])
     damping_raw = jnp.asarray([0.2, -0.1, 0.4])
     raw = (skew_raw, damping_raw)
@@ -104,14 +104,14 @@ def test_stability_transforms_enforce_continuous_and_discrete_stability():
     assert jnp.max(jnp.abs(jnp.linalg.eigvals(discrete))) < 1.0
 
 
-def test_stiefel_transform_returns_orthonormal_columns():
+def test_stiefel_transform_returns_orthonormal_columns() -> None:
     raw = jnp.asarray([[1.0, 2.0], [0.5, -1.0], [2.5, 0.25], [-0.3, 0.8]])
     value = StiefelTransform()(raw)
     assert value.shape == (4, 2)
     assert jnp.allclose(value.T @ value, jnp.eye(2), atol=1e-12, rtol=1e-12)
 
 
-def test_transformed_parameter_exposes_only_raw_coordinates_as_arrays():
+def test_transformed_parameter_exposes_only_raw_coordinates_as_arrays() -> None:
     parameter = TransformedParameter(jnp.asarray([-1.0, 0.5]), PositiveTransform(0.1))
     assert jnp.allclose(parameter(), PositiveTransform(0.1)(parameter.raw))
     leaves = jax.tree_util.tree_leaves(parameter)
@@ -119,7 +119,7 @@ def test_transformed_parameter_exposes_only_raw_coordinates_as_arrays():
     assert leaves[0] is parameter.raw
 
 
-def test_linear_applies_shape_preserving_weight_transforms_on_demand():
+def test_linear_applies_shape_preserving_weight_transforms_on_demand() -> None:
     layer = Linear(
         in_size=2,
         out_size=1,
@@ -142,6 +142,7 @@ def test_linear_applies_shape_preserving_weight_transforms_on_demand():
         weight_transform=StiefelTransform(),
         key=jr.key(3),
     )
+    # ty: ignore[call-non-callable]
     effective_weight = stiefel_layer.weight_transform(stiefel_layer.weight)
     assert jnp.allclose(
         effective_weight.T @ effective_weight,
@@ -152,7 +153,7 @@ def test_linear_applies_shape_preserving_weight_transforms_on_demand():
     assert stiefel_layer(jnp.ones(2)).shape == (3,)
 
 
-def test_linear_rejects_incompatible_weight_parameterizations():
+def test_linear_rejects_incompatible_weight_parameterizations() -> None:
     with pytest.raises(ValueError, match="shape-preserving"):
         Linear(
             in_size=2,
@@ -171,7 +172,7 @@ def test_linear_rejects_incompatible_weight_parameterizations():
         )
 
 
-def test_transforms_reject_invalid_coordinate_shapes():
+def test_transforms_reject_invalid_coordinate_shapes() -> None:
     with pytest.raises(ValueError, match="packed-triangle"):
         PositiveDefiniteTransform()(jnp.ones((4,)))
     with pytest.raises(ValueError, match="strict-triangle"):

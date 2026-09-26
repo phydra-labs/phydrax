@@ -23,6 +23,7 @@ def _measure(operation: Callable[[], Any], /, *, repeats: int) -> tuple[Any, flo
         warmup=1,
         repeats=repeats,
     )
+    # ty: ignore[invalid-argument-type]
     return result, 1_000.0 * float(distribution.mean_seconds)
 
 
@@ -58,7 +59,7 @@ def run_benchmarks(
     )
 
     @domain.Function("x", "t")
-    def field(x, t):
+    def field(x: Any, t: Any) -> Any:
         return jnp.exp(-jnp.sum(x**2)) * jnp.cos(2.0 * jnp.pi * t)
 
     sample_points = eqx.filter_jit(lambda key: component.sample(point_plan, key=key))

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -34,7 +36,7 @@ from phydrax.optics import wave
 from phydrax.particle_physics import integrate_native_rge, NativeSpectrumModelPlan
 
 
-def _timed_case(name: str, function):
+def _timed_case(name: str, function: Any) -> Any:
     value, seconds = measure_host(function)
     return {
         "name": name,

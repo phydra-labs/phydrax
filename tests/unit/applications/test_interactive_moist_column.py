@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,13 +22,13 @@ from phydrax.metrix import EuclideanStateGeometry
 from phydrax.solver._fixed_step import FixedStepProblem, FixedStepRolloutPlan
 
 
-def _quiet(**kwargs):
+def _quiet(**kwargs: Any) -> Any:
     return InteractiveMoistColumnPlan(
         mixing_length=0.0, rain_fall_speed=0.0, snow_fall_speed=0.0, **kwargs
     )
 
 
-def _radiation():
+def _radiation() -> Any:
     optics = ColumnOpticalProperties(
         shortwave_absorption=(1e-5, 0.002, 0.04, 0.03),
         shortwave_scattering=(0.0, 0.0, 60.0, 30.0),
@@ -36,12 +39,12 @@ def _radiation():
     return ColumnRadiationPlan(optics)
 
 
-def _same_state(actual, expected):
+def _same_state(actual: Any, expected: Any) -> None:
     for a, b in zip(jax.tree.leaves(actual), jax.tree.leaves(expected)):
         np.testing.assert_array_equal(a, b)
 
 
-def test_fixed_composition_diagnosis_and_finite_condensation():
+def test_fixed_composition_diagnosis_and_finite_condensation() -> None:
     plan = _quiet()
     initial = plan.initialize(
         jnp.asarray([100.0]), 2.0, 285.0, 100.0, rain_mass=0.1, surface_water_mass=10.0
@@ -58,7 +61,7 @@ def test_fixed_composition_diagnosis_and_finite_condensation():
     np.testing.assert_allclose(result.state.total_energy, initial.total_energy, atol=2e-8)
 
 
-def test_rain_has_adjacent_cell_time_of_flight_not_instant_fallout():
+def test_rain_has_adjacent_cell_time_of_flight_not_instant_fallout() -> None:
     thermo = MoistThermodynamicPlan()
     plan = InteractiveMoistColumnPlan(
         thermo,
@@ -90,7 +93,7 @@ def test_rain_has_adjacent_cell_time_of_flight_not_instant_fallout():
     _same_state(rejected.state, initial)
 
 
-def test_below_cloud_rain_evaporation_cools_and_retains_latent_energy():
+def test_below_cloud_rain_evaporation_cools_and_retains_latent_energy() -> None:
     plan = _quiet(condensation_timescale=1e12, rain_evaporation_timescale=20.0)
     initial = plan.initialize(jnp.asarray([100.0]), 0.3, 290.0, 100.0, rain_mass=0.2)
     result = plan.step(initial, 0.1)
@@ -113,7 +116,9 @@ def test_below_cloud_rain_evaporation_cools_and_retains_latent_energy():
 @pytest.mark.parametrize(
     "temperature,rain,snow,warms", [(280.0, 0.0, 1.0, False), (260.0, 1.0, 0.0, True)]
 )
-def test_falling_phase_conversion_retains_caloric_energy(temperature, rain, snow, warms):
+def test_falling_phase_conversion_retains_caloric_energy(
+    temperature: Any, rain: Any, snow: Any, warms: Any
+) -> None:
     plan = _quiet(
         condensation_timescale=1e12,
         rain_evaporation_timescale=1e12,
@@ -135,7 +140,7 @@ def test_falling_phase_conversion_retains_caloric_energy(temperature, rain, snow
     np.testing.assert_allclose(result.state.total_water, initial.total_water, atol=1e-13)
 
 
-def test_radiative_environment_matches_independent_interface_fluxes():
+def test_radiative_environment_matches_independent_interface_fluxes() -> None:
     plan = _quiet(radiation=_radiation())
     initial = plan.initialize(
         jnp.asarray([100.0, 120.0]),
@@ -168,7 +173,7 @@ def test_radiative_environment_matches_independent_interface_fluxes():
     np.testing.assert_allclose(result.state.total_energy, initial.total_energy, atol=2e-8)
 
 
-def test_exhausted_wet_slab_rejects_entire_transaction_even_with_rainfall():
+def test_exhausted_wet_slab_rejects_entire_transaction_even_with_rainfall() -> None:
     exchange = BulkSurfaceExchangePlan(
         stability="neutral",
         heat_transfer_coefficient=0.0,
@@ -191,7 +196,7 @@ def test_exhausted_wet_slab_rejects_entire_transaction_even_with_rainfall():
     assert result.precipitated_water == 0 and result.surface_water_flux == 0
 
 
-def test_restart_exactness_and_numeric_parameter_binding(tmp_path):
+def test_restart_exactness_and_numeric_parameter_binding(tmp_path: Any) -> None:
     plan = _quiet(radiation=_radiation(), surface_exchange=BulkSurfaceExchangePlan())
     initial = plan.initialize(
         jnp.asarray([100.0, 110.0]),
@@ -224,7 +229,7 @@ def test_restart_exactness_and_numeric_parameter_binding(tmp_path):
     _same_state(native.accepted_state, direct.state)
 
 
-def test_interior_learned_flux_uses_same_closed_budget_and_donor_veto():
+def test_interior_learned_flux_uses_same_closed_budget_and_donor_veto() -> None:
     plan = _quiet(condensation_timescale=1e12, rain_evaporation_timescale=1e12)
     initial = plan.initialize(
         jnp.asarray([100.0, 110.0]),
@@ -250,7 +255,7 @@ def test_interior_learned_flux_uses_same_closed_budget_and_donor_veto():
     _same_state(rejected.state, initial)
 
 
-def test_short_observable_derivative_epsilon_sweep_and_switch_invalidity():
+def test_short_observable_derivative_epsilon_sweep_and_switch_invalidity() -> None:
     plan = _quiet(radiation=_radiation(), background_diffusivity=0.2)
     initial = plan.initialize(
         jnp.asarray([100.0, 110.0]),
@@ -259,7 +264,7 @@ def test_short_observable_derivative_epsilon_sweep_and_switch_invalidity():
         100.0,
     )
 
-    def observable(heating):
+    def observable(heating: Any) -> Any:
         state = initial
         valid = jnp.asarray(True)
         for _ in range(3):
@@ -287,7 +292,9 @@ def test_short_observable_derivative_epsilon_sweep_and_switch_invalidity():
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-def test_state_precision_survives_mixed_parameter_precision_and_native_scan(dtype):
+def test_state_precision_survives_mixed_parameter_precision_and_native_scan(
+    dtype: Any,
+) -> None:
     with jax.enable_x64(True):
         # Radiation, slab and exchange constructors contain float64 numerical
         # leaves under x64. Explicit float32 inventory ownership must still be
@@ -335,12 +342,14 @@ def test_state_precision_survives_mixed_parameter_precision_and_native_scan(dtyp
         for leaf in jax.tree.leaves(native.final_state):
             if eqx.is_inexact_array(leaf):
                 assert leaf.dtype == jnp.dtype(dtype)
+        # ty: ignore[no-matching-overload]
         np.testing.assert_allclose(
             native.final_state.internal_energy,
             final.internal_energy,
             rtol=16 * jnp.finfo(dtype).eps,
             atol=0.0,
         )
+        # ty: ignore[no-matching-overload]
         np.testing.assert_allclose(
             native.final_state.slab.energy,
             final.slab.energy,
@@ -353,7 +362,7 @@ def test_state_precision_survives_mixed_parameter_precision_and_native_scan(dtyp
             <= 256 * jnp.finfo(dtype).eps * scale
         )
 
-        def observable(coefficient):
+        def observable(coefficient: Any) -> Any:
             varied = eqx.tree_at(
                 lambda p: p.surface_exchange.heat_transfer_coefficient, plan, coefficient
             )
@@ -364,7 +373,7 @@ def test_state_precision_survives_mixed_parameter_precision_and_native_scan(dtyp
         assert jnp.isfinite(derivative) and derivative > 0
 
 
-def test_active_mixing_length_floor_has_unequal_one_sided_physical_derivatives():
+def test_active_mixing_length_floor_has_unequal_one_sided_physical_derivatives() -> None:
     with jax.enable_x64(True):
         plan = InteractiveMoistColumnPlan(
             mixing_length=1.0, rain_fall_speed=0.0, snow_fall_speed=0.0
@@ -376,7 +385,7 @@ def test_active_mixing_length_floor_has_unequal_one_sided_physical_derivatives()
             jnp.asarray([100.0, 100.0]),
         )
 
-        def result(length, ventilation):
+        def result(length: Any, ventilation: Any) -> Any:
             varied = eqx.tree_at(lambda p: p.mixing_length, plan, jnp.asarray(length))
             step = varied.step(initial, 0.1, ventilation=ventilation, shear=0.01)
             return step, varied.diagnose(step.state).temperature[-1]
@@ -398,7 +407,9 @@ def test_active_mixing_length_floor_has_unequal_one_sided_physical_derivatives()
 
 
 @pytest.mark.parametrize("outward", [-1.0, 1.0])
-def test_temperature_admission_boundary_is_not_a_regular_heating_response(outward):
+def test_temperature_admission_boundary_is_not_a_regular_heating_response(
+    outward: Any,
+) -> None:
     with jax.enable_x64(True):
         plan = _quiet()
         temperature = (

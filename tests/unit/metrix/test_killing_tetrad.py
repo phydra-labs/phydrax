@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -37,15 +40,15 @@ def _spherical_chart(name: str = "spherical") -> CoordinateChart:
     return CoordinateChart(name, ("t", "r", "theta", "phi"))
 
 
-def _spherical_minkowski_metric(coordinates):
+def _spherical_minkowski_metric(coordinates: Any) -> Any:
     _, radius, polar, _ = coordinates
     return jnp.diag(jnp.asarray((-1.0, 1.0, radius**2, radius**2 * jnp.sin(polar) ** 2)))
 
 
 @pytest.mark.parametrize("metric_signature", ("mostly_plus", "mostly_minus"))
 def test_stationary_axial_killing_fields_and_inner_product_evidence(
-    metric_signature,
-):
+    metric_signature: Any,
+) -> None:
     chart = _spherical_chart("kerr-killing")
     metric = kerr_boyer_lindquist_metric(
         1.0, 0.7, chart=chart, convention=metric_signature
@@ -76,7 +79,7 @@ def test_stationary_axial_killing_fields_and_inner_product_evidence(
     assert jnp.allclose(axial_residual, 0.0, atol=2e-12)
 
 
-def test_ergoregion_classification_does_not_invalidate_zamo_orbit_plane():
+def test_ergoregion_classification_does_not_invalidate_zamo_orbit_plane() -> None:
     chart = _spherical_chart("kerr-ergoregion")
     metric = kerr_boyer_lindquist_metric(1.0, 0.8, chart=chart)
     point = jnp.asarray((0.0, 1.8, jnp.pi / 2.0, 0.0))
@@ -96,8 +99,8 @@ def test_ergoregion_classification_does_not_invalidate_zamo_orbit_plane():
 
 @pytest.mark.parametrize("metric_signature", ("mostly_plus", "mostly_minus"))
 def test_schwarzschild_zamo_limit_orientation_dual_and_projection_round_trips(
-    metric_signature,
-):
+    metric_signature: Any,
+) -> None:
     chart = _spherical_chart("schwarzschild-zamo")
     mass = 1.3
     radius = 5.2
@@ -148,7 +151,7 @@ def test_schwarzschild_zamo_limit_orientation_dual_and_projection_round_trips(
     )
 
 
-def test_declared_time_and_spacetime_orientations_control_tetrad_evidence():
+def test_declared_time_and_spacetime_orientations_control_tetrad_evidence() -> None:
     chart = CoordinateChart("oriented-flat", ("t", "x", "y", "z"))
     metric = minkowski_metric(chart)
     convention = RelativityConvention(
@@ -173,7 +176,7 @@ def test_declared_time_and_spacetime_orientations_control_tetrad_evidence():
     assert tetrad.convention.convention_id == convention.convention_id
 
 
-def test_zamo_reports_axis_and_regular_horizon_as_observer_domain_failures():
+def test_zamo_reports_axis_and_regular_horizon_as_observer_domain_failures() -> None:
     chart = _spherical_chart("observer-domain")
     spherical_flat = LorentzianMetric(_spherical_minkowski_metric, chart=chart)
     axis = zamo_observer_tetrad(
@@ -208,7 +211,9 @@ def test_zamo_reports_axis_and_regular_horizon_as_observer_domain_failures():
 
 @pytest.mark.parametrize("metric_signature", ("mostly_plus", "mostly_minus"))
 @pytest.mark.parametrize("spin", (0.6, -0.6))
-def test_kerr_principal_null_tetrad_normalization_and_dual(metric_signature, spin):
+def test_kerr_principal_null_tetrad_normalization_and_dual(
+    metric_signature: Any, spin: Any
+) -> None:
     chart = _spherical_chart("kerr-principal")
     mass = 1.4
     metric = kerr_boyer_lindquist_metric(
@@ -242,7 +247,7 @@ def test_kerr_principal_null_tetrad_normalization_and_dual(metric_signature, spi
     assert jnp.allclose(tetrad_reconstruct_vector(tetrad, components), vector, atol=3e-12)
 
 
-def test_principal_null_tetrad_has_exact_schwarzschild_limit_and_domain_mask():
+def test_principal_null_tetrad_has_exact_schwarzschild_limit_and_domain_mask() -> None:
     chart = _spherical_chart("schwarzschild-principal")
     mass = 1.0
     radius = 4.0
@@ -285,7 +290,7 @@ def test_principal_null_tetrad_has_exact_schwarzschild_limit_and_domain_mask():
     assert jnp.all(horizon.vectors == 0.0)
 
 
-def test_overextremal_kerr_still_has_local_principal_null_directions():
+def test_overextremal_kerr_still_has_local_principal_null_directions() -> None:
     chart = _spherical_chart("overextremal-principal")
     metric = kerr_boyer_lindquist_metric(1.0, 1.2, chart=chart)
     tetrad = kerr_principal_null_tetrad(
@@ -301,7 +306,7 @@ def test_overextremal_kerr_still_has_local_principal_null_directions():
     assert tetrad.inner_products.maximum_absolute_residual < 3e-12
 
 
-def test_identities_are_immutable_and_bind_source_and_convention():
+def test_identities_are_immutable_and_bind_source_and_convention() -> None:
     chart = _spherical_chart("identity")
     metric = schwarzschild_metric(1.0, chart=chart)
     point = jnp.asarray((0.0, 4.0, 1.0, 0.0))
@@ -320,7 +325,7 @@ def test_identities_are_immutable_and_bind_source_and_convention():
         first.vectors = jnp.zeros((4, 4))
 
 
-def test_batched_jit_and_parallel_transport_evidence_are_fixed_shape():
+def test_batched_jit_and_parallel_transport_evidence_are_fixed_shape() -> None:
     spherical_chart = _spherical_chart("batched-kerr")
     kerr_metric = kerr_boyer_lindquist_metric(1.0, 0.5, chart=spherical_chart)
     points = jnp.asarray(
@@ -368,7 +373,7 @@ def test_batched_jit_and_parallel_transport_evidence_are_fixed_shape():
     cartesian_chart = CoordinateChart("cartesian-flat", ("t", "x", "y", "z"))
     flat_metric = minkowski_metric(cartesian_chart)
 
-    def constant_frame(point):
+    def constant_frame(point: Any) -> Any:
         return orthonormal_tetrad(
             flat_metric,
             jnp.eye(4),

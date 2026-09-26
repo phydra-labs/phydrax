@@ -9,6 +9,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -38,7 +39,7 @@ class VelocimetryBenchmarkReport:
         return bool(self.cases and all(case.successful for case in self.cases))
 
 
-def _timed(function, arguments, *, repetitions: int):
+def _timed(function: Any, arguments: Any, *, repetitions: int) -> Any:
     started = perf_counter()
     first = function(*arguments)
     jax.block_until_ready(first)
@@ -52,7 +53,7 @@ def _timed(function, arguments, *, repetitions: int):
     return result, first_ms, steady_ms
 
 
-def _rig(image_shape: tuple[int, int]):
+def _rig(image_shape: tuple[int, int]) -> Any:
     principal = ((image_shape[0] - 1) / 2, (image_shape[1] - 1) / 2)
     intrinsics = phx.imaging.camera.CameraIntrinsics(
         (24.0, 24.0),
@@ -75,7 +76,7 @@ def _rig(image_shape: tuple[int, int]):
     )
 
 
-def _piv_case(*, smoke: bool, repetitions: int):
+def _piv_case(*, smoke: bool, repetitions: int) -> Any:
     size = 32 if smoke else 64
     first = jr.normal(jr.key(1), (size, size))
     second = jnp.zeros_like(first).at[2:, 1:].set(first[:-2, :-1])
@@ -106,7 +107,7 @@ def _piv_case(*, smoke: bool, repetitions: int):
     )
 
 
-def _camera_case(*, repetitions: int):
+def _camera_case(*, repetitions: int) -> Any:
     rig = _rig((32, 32))
     truth = jnp.asarray((0.1, -0.1, 5.0))
     rays = tuple(
@@ -144,7 +145,7 @@ def _camera_case(*, repetitions: int):
     )
 
 
-def _raster_case(*, smoke: bool, repetitions: int):
+def _raster_case(*, smoke: bool, repetitions: int) -> Any:
     size = 32 if smoke else 64
     capacity = 16 if smoke else 64
     geometry = phx.imaging.ImagePlaneSupport((size, size))
@@ -178,7 +179,7 @@ def _raster_case(*, smoke: bool, repetitions: int):
     )
 
 
-def _learned_case(*, smoke: bool, repetitions: int):
+def _learned_case(*, smoke: bool, repetitions: int) -> Any:
     size = 8 if smoke else 16
     level_count = 2
     plan = phx.velocimetry.piv.LearnedDensePIVPlan(
@@ -214,7 +215,7 @@ def _learned_case(*, smoke: bool, repetitions: int):
     )
 
 
-def run_velocimetry_benchmarks(*, smoke: bool = False):
+def run_velocimetry_benchmarks(*, smoke: bool = False) -> Any:
     repetitions = 1 if smoke else 5
     cases = (
         _piv_case(smoke=smoke, repetitions=repetitions),
@@ -231,7 +232,7 @@ def run_velocimetry_benchmarks(*, smoke: bool = False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

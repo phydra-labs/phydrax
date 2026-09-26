@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -10,13 +13,13 @@ import phydrax as phx
 from tests.unit.control.test_global_control_search import _quadratic_problem
 
 
-def _catalog(rows):
+def _catalog(rows: Any) -> Any:
     return phx.optim.FiniteProductSpace(
         phx.optim.FiniteAxis(jnp.asarray(rows, dtype="float64"))
     )
 
 
-def test_control_candidate_search_finds_exact_catalog_minimum_and_reconstructs():
+def test_control_candidate_search_finds_exact_catalog_minimum_and_reconstructs() -> None:
     problem, parameterization = _quadratic_problem()
     candidates = _catalog(
         [
@@ -62,11 +65,13 @@ def test_control_candidate_search_finds_exact_catalog_minimum_and_reconstructs()
     assert result.case_shape == ()
     assert result.parameter_shape == (2, 1)
     assert result.coefficient_shape == (2, 1)
+    # ty: ignore[unresolved-attribute]
     assert result.trajectory is result.evaluation.trajectory
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(result.controls, result.evaluation.trajectory.controls)
 
 
-def test_control_candidate_search_counts_infeasible_candidates_as_invalid():
+def test_control_candidate_search_counts_infeasible_candidates_as_invalid() -> None:
     base, parameterization = _quadratic_problem()
     problem = phx.control.ControlProblem(
         base.dynamics,
@@ -95,7 +100,7 @@ def test_control_candidate_search_counts_infeasible_candidates_as_invalid():
     assert result.winner_evaluations == 1
 
 
-def test_control_candidate_search_has_explicit_all_invalid_result():
+def test_control_candidate_search_has_explicit_all_invalid_result() -> None:
     base, parameterization = _quadratic_problem()
     problem = phx.control.ControlProblem(
         base.dynamics,
@@ -140,7 +145,7 @@ def test_control_candidate_search_has_explicit_all_invalid_result():
         _ = result.controls
 
 
-def test_control_candidate_search_preserves_case_and_coefficient_axes():
+def test_control_candidate_search_preserves_case_and_coefficient_axes() -> None:
     initial_state = jnp.asarray([[0.0], [0.5]])
     problem, parameterization = _quadratic_problem(initial_state=initial_state)
     candidates = _catalog(
@@ -161,7 +166,7 @@ def test_control_candidate_search_preserves_case_and_coefficient_axes():
     assert result.trajectory.controls.shape == (2, 2, 1)
 
 
-def test_control_candidate_search_has_stable_first_index_ties():
+def test_control_candidate_search_has_stable_first_index_ties() -> None:
     problem, parameterization = _quadratic_problem()
     repeated = jnp.asarray([[0.5], [0.5]])
     candidates = _catalog([repeated, repeated, [[1.0], [0.0]]])
@@ -176,7 +181,7 @@ def test_control_candidate_search_has_stable_first_index_ties():
     assert result.flat_index == 0
 
 
-def test_control_candidate_space_rejects_ambiguous_or_invalid_coefficients():
+def test_control_candidate_space_rejects_ambiguous_or_invalid_coefficients() -> None:
     problem, parameterization = _quadratic_problem()
 
     wrong_shape = _catalog([[[0.0]], [[1.0]]])

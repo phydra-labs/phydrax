@@ -6,6 +6,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -101,7 +102,7 @@ class OperatorUQBenchmarkSuite:
     calibration_case_checksums: tuple[tuple[str, str], ...]
     results: tuple[OperatorUQBenchmarkResult, ...]
 
-    def to_dict(self):
+    def to_dict(self) -> Any:
         return {
             "metadata": self.metadata.to_dict(),
             "calibration_case_checksums": [
@@ -419,7 +420,7 @@ def _evaluate_operator_uq(
     evaluation: OperatorBenchmarkEvaluation,
     /,
     *,
-    key,
+    key: Any,
     repeats: int,
 ) -> OperatorUQEvaluationResult:
     target = evaluation.target
@@ -429,7 +430,7 @@ def _evaluate_operator_uq(
         )
 
     @eqx.filter_jit
-    def predict(current_key):
+    def predict(current_key: Any) -> Any:
         return _predict_ensemble_evaluation(
             ensemble,
             members,
@@ -438,6 +439,7 @@ def _evaluate_operator_uq(
         )
 
     compiled_predict, compilation = measure_lower_and_compile(
+        # ty: ignore[unresolved-attribute]
         lambda: predict.lower(key),
         lambda lowered: lowered.compile(),
     )
@@ -562,7 +564,7 @@ def _predict_ensemble_evaluation(
     evaluation: OperatorBenchmarkEvaluation,
     /,
     *,
-    key,
+    key: Any,
 ) -> phx.uq.OperatorPredictiveField:
     if evaluation.rollout_steps <= 0:
         raise ValueError("rollout_steps must be positive.")
@@ -613,7 +615,7 @@ def _fit_final_projection_laplace(
     *,
     observation_scale: float,
     num_samples: int,
-    key,
+    key: Any,
 ) -> OperatorUQLaplaceResult:
     subspace = phx.nn.parameters.ParameterSubspace.from_subtree_paths(
         model, (".projection",)
@@ -622,7 +624,7 @@ def _fit_final_projection_laplace(
     prior_scale = 1.0
     initial_leaves = tuple(jax.tree_util.tree_leaves(initial))
 
-    def log_prior(selected):
+    def log_prior(selected: Any) -> Any:
         selected_leaves = tuple(jax.tree_util.tree_leaves(selected))
         terms = tuple(
             -0.5 * jnp.sum(((value - center) / prior_scale) ** 2)
@@ -630,13 +632,14 @@ def _fit_final_projection_laplace(
         )
         return sum(terms, jnp.asarray(0.0))
 
-    def predict(selected):
+    def predict(selected: Any) -> Any:
         reconstructed = subspace.reconstruct(selected)
         return reconstructed.evaluate(calibration.batch)
 
     term = phx.uq.FixedOperatorObservationLikelihood(
         predict,
         calibration.batch,
+        # ty: ignore[invalid-argument-type]
         calibration.target,
         phx.uq.GaussianLikelihood(observation_scale),
         output_spec=model.operator_output_specs["output"],
@@ -704,7 +707,7 @@ def _fit_final_projection_laplace(
     )
 
 
-def _physical_mean(values, batch, output_spec) -> jax.Array:
+def _physical_mean(values: Any, batch: Any, output_spec: Any) -> jax.Array:
     weights = batch.require_single_query().weights(case_shape=batch.case_shape)
     mask = batch.require_single_query().mask_array(case_shape=batch.case_shape)
     if output_spec.channels != "scalar":
@@ -724,7 +727,7 @@ def _physical_mean(values, batch, output_spec) -> jax.Array:
 
 def _observation_scale(
     center: phx.nn.operator.OperatorPrediction,
-    target,
+    target: Any,
     /,
 ) -> float:
     field = center.field("output")
@@ -765,7 +768,7 @@ def _case_count(case_shape: tuple[int, ...], /) -> int:
     return count
 
 
-def _checksum_array(digest, value) -> None:
+def _checksum_array(digest: Any, value: Any) -> None:
     array = np.asarray(jax.device_get(value))
     digest.update(str(array.dtype).encode("utf-8"))
     digest.update(str(array.shape).encode("utf-8"))

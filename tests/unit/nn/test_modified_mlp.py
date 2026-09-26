@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,11 +23,11 @@ from phydrax.nn.models import ModifiedMLP, SeparableModifiedMLP
     ],
 )
 def test_modified_mlp_value_shapes(
-    in_size,
-    out_size,
+    in_size: Any,
+    out_size: Any,
     input_shape: tuple[int, ...],
     output_shape: tuple[int, ...],
-):
+) -> None:
     model = ModifiedMLP(
         in_size=in_size,
         out_size=out_size,
@@ -36,7 +39,7 @@ def test_modified_mlp_value_shapes(
     assert value.shape == output_shape
 
 
-def test_modified_mlp_uses_persistent_encoder_gate_formula():
+def test_modified_mlp_uses_persistent_encoder_gate_formula() -> None:
     model = ModifiedMLP(
         in_size=2,
         out_size="scalar",
@@ -54,7 +57,7 @@ def test_modified_mlp_uses_persistent_encoder_gate_formula():
     assert jnp.allclose(model(x), expected)
 
 
-def test_modified_mlp_scan_matches_unrolled_execution():
+def test_modified_mlp_scan_matches_unrolled_execution() -> None:
     model = ModifiedMLP(
         in_size=3,
         out_size=2,
@@ -72,7 +75,7 @@ def test_modified_mlp_scan_matches_unrolled_execution():
     assert jnp.allclose(eqx.filter_jit(model)(x), unrolled(x))
 
 
-def test_modified_mlp_is_differentiable_through_input_and_parameters():
+def test_modified_mlp_is_differentiable_through_input_and_parameters() -> None:
     model = ModifiedMLP(
         in_size=2,
         out_size="scalar",
@@ -89,7 +92,7 @@ def test_modified_mlp_is_differentiable_through_input_and_parameters():
     assert any(leaf is not None and jnp.any(jnp.asarray(leaf) != 0.0) for leaf in leaves)
 
 
-def test_separable_modified_mlp_supports_dense_and_coordinate_inputs():
+def test_separable_modified_mlp_supports_dense_and_coordinate_inputs() -> None:
     model = SeparableModifiedMLP(
         in_size=2,
         out_size="scalar",
@@ -104,7 +107,7 @@ def test_separable_modified_mlp_supports_dense_and_coordinate_inputs():
     assert grid.shape == (5, 7)
 
 
-def test_separable_modified_mlp_split_input_contract():
+def test_separable_modified_mlp_split_input_contract() -> None:
     model = SeparableModifiedMLP(
         in_size="scalar",
         out_size=2,
@@ -118,7 +121,7 @@ def test_separable_modified_mlp_split_input_contract():
     assert value.shape == (2,)
 
 
-def test_modified_mlp_supports_zero_bias_initialization():
+def test_modified_mlp_supports_zero_bias_initialization() -> None:
     model = ModifiedMLP(
         in_size=2,
         out_size="scalar",
@@ -135,7 +138,7 @@ def test_modified_mlp_supports_zero_bias_initialization():
     assert all(bias is not None and jnp.all(bias == 0.0) for bias in biases)
 
 
-def test_modified_mlp_rejects_nonpositive_width_and_depth():
+def test_modified_mlp_rejects_nonpositive_width_and_depth() -> None:
     with pytest.raises(ValueError, match="width_size must be positive"):
         ModifiedMLP(
             in_size=2,

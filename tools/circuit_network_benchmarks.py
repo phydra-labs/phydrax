@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import platform
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ import phydrax as phx
 from benchmarks._runtime import measure_repeated, measure_synchronized
 
 
-def _chain(size: int):
+def _chain(size: int) -> Any:
     reference = phx.circuit.ElectricalWaveReference(50.0)
     through = phx.circuit.MatrixScatteringComponent(
         jnp.asarray([[0.0, 0.999], [0.999, 0.0]], dtype=jnp.complex128),
@@ -45,7 +47,7 @@ def _chain(size: int):
     )
 
 
-def main():
+def main() -> None:
     rows = []
     for size in (8, 32, 128):
         network = _chain(size)

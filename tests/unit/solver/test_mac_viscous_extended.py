@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _compiled(count=6):
+def _compiled(count: Any = 6) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(2)
@@ -32,7 +35,7 @@ def _compiled(count=6):
     return operators, momentum, compiled, compiled.project_state(velocity)
 
 
-def test_component_helmholtz_and_imex_euler_are_fail_closed_and_divergence_free():
+def test_component_helmholtz_and_imex_euler_are_fail_closed_and_divergence_free() -> None:
     operators, momentum, compiled, state = _compiled()
     stage = momentum.boundaries.evaluate(0.01)
     velocity = compiled.unpack_velocity(state)
@@ -56,7 +59,7 @@ def test_component_helmholtz_and_imex_euler_are_fail_closed_and_divergence_free(
     assert jnp.all(jnp.isfinite(step.state))
 
 
-def test_mac_sbdf2_startup_and_history_step_complete():
+def test_mac_sbdf2_startup_and_history_step_complete() -> None:
     operators, _, compiled, state = _compiled()
     method = phx.solver.MACSBDF2Method(
         compiled, 0.005, solve_method="transform", tolerance=1e-9
@@ -71,7 +74,7 @@ def test_mac_sbdf2_startup_and_history_step_complete():
     assert jnp.isclose(following.pressure_correction_coefficient, 2.0 * 0.005 / 3.0)
 
 
-def test_transform_line_solver_matches_its_physical_action():
+def test_transform_line_solver_matches_its_physical_action() -> None:
     representation = phx.linalg.TransformLineRepresentation(
         (phx.linalg.FFTLinearTransform(4),),
         1,

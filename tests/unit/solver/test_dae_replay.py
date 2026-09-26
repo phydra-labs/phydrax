@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _prepared(*, replay, problem_id):
+def _prepared(*, replay: Any, problem_id: Any) -> Any:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, parameter: state_rate + parameter * state,
         state_shape=(1,),
@@ -36,13 +38,13 @@ def _prepared(*, replay, problem_id):
     return phx.solver.prepare_dae(problem, grid, policy=policy)
 
 
-def test_frozen_grid_replay_jvp_vjp_and_vmap_match_continuous_sensitivity():
+def test_frozen_grid_replay_jvp_vjp_and_vmap_match_continuous_sensitivity() -> None:
     prepared = _prepared(
         replay=phx.solver.DAEReplayPolicy("full"),
         problem_id="adaptive-replay-derivatives",
     )
 
-    def terminal(parameter):
+    def terminal(parameter: Any) -> Any:
         return phx.solver.solve_dae(prepared, args=parameter).states[-1, 0]
 
     parameters = jnp.asarray((0.5, 1.0, 1.5))
@@ -64,7 +66,7 @@ def test_frozen_grid_replay_jvp_vjp_and_vmap_match_continuous_sensitivity():
     assert jnp.allclose(value, values[1], rtol=1e-10, atol=1e-11)
 
 
-def test_frozen_grid_replay_differentiates_semiexplicit_constraints():
+def test_frozen_grid_replay_differentiates_semiexplicit_constraints() -> None:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, parameter: jnp.asarray(
             (
@@ -101,7 +103,7 @@ def test_frozen_grid_replay_differentiates_semiexplicit_constraints():
         ),
     )
 
-    def terminal_constraint(parameter):
+    def terminal_constraint(parameter: Any) -> Any:
         solution = phx.solver.solve_dae(prepared, args=parameter)
         return solution.states[-1, 1]
 
@@ -114,7 +116,7 @@ def test_frozen_grid_replay_differentiates_semiexplicit_constraints():
     assert jnp.allclose(gradient, expected_gradient, rtol=8e-4, atol=5e-6)
 
 
-def test_segmented_replay_gradient_matches_monolithic_frozen_grid_gradient():
+def test_segmented_replay_gradient_matches_monolithic_frozen_grid_gradient() -> None:
     replay = phx.solver.DAEReplayPolicy("chunked", chunk_size=5)
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, parameter: state_rate + parameter * state,
@@ -163,7 +165,7 @@ def test_segmented_replay_gradient_matches_monolithic_frozen_grid_gradient():
         policy=policy,
     )
 
-    def segmented(parameter):
+    def segmented(parameter: Any) -> Any:
         leading = phx.solver.solve_dae(first, args=parameter)
         trailing = phx.solver.solve_dae(
             second,
@@ -172,7 +174,7 @@ def test_segmented_replay_gradient_matches_monolithic_frozen_grid_gradient():
         )
         return trailing.states[-1, 0]
 
-    def full(parameter):
+    def full(parameter: Any) -> Any:
         return phx.solver.solve_dae(monolithic, args=parameter).states[-1, 0]
 
     parameter = jnp.asarray(1.0)
@@ -183,7 +185,7 @@ def test_segmented_replay_gradient_matches_monolithic_frozen_grid_gradient():
     assert jnp.allclose(segmented_result[1], full_result[1], rtol=2e-10, atol=2e-11)
 
 
-def test_chunked_replay_matches_full_replay_values_and_gradients():
+def test_chunked_replay_matches_full_replay_values_and_gradients() -> None:
     full = _prepared(
         replay=phx.solver.DAEReplayPolicy("full"),
         problem_id="adaptive-replay-full",
@@ -193,7 +195,7 @@ def test_chunked_replay_matches_full_replay_values_and_gradients():
         problem_id="adaptive-replay-chunked",
     )
 
-    def evaluate(prepared, parameter):
+    def evaluate(prepared: Any, parameter: Any) -> Any:
         solution = phx.solver.solve_dae(prepared, args=parameter)
         return solution.states[-1, 0]
 
@@ -212,7 +214,7 @@ def test_chunked_replay_matches_full_replay_values_and_gradients():
     assert chunked_solution.replay.estimated_memory_bytes < full.plan.replay_memory_bytes
 
 
-def test_replay_memory_budget_selects_a_feasible_chunk_or_fails_at_planning():
+def test_replay_memory_budget_selects_a_feasible_chunk_or_fails_at_planning() -> None:
     budget = 4096
     prepared = _prepared(
         replay=phx.solver.DAEReplayPolicy(
@@ -235,7 +237,7 @@ def test_replay_memory_budget_selects_a_feasible_chunk_or_fails_at_planning():
         )
 
 
-def test_failed_adaptive_primal_has_no_valid_derivative():
+def test_failed_adaptive_primal_has_no_valid_derivative() -> None:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, parameter: state_rate + parameter * state,
         state_shape=(1,),
@@ -267,7 +269,7 @@ def test_failed_adaptive_primal_has_no_valid_derivative():
         ),
     )
 
-    def terminal(parameter):
+    def terminal(parameter: Any) -> Any:
         return phx.solver.solve_dae(prepared, args=parameter).states[-1, 0]
 
     value, tangent = jax.jvp(

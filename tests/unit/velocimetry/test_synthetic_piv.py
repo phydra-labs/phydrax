@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from dataclasses import fields
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -16,7 +18,7 @@ from phydrax.velocimetry.synthetic import (
 )
 
 
-def _small_plan(kind: PIVScenarioKind, **overrides) -> PIVScenarioPlan:
+def _small_plan(kind: PIVScenarioKind, **overrides: Any) -> PIVScenarioPlan:
     options = {
         "image_shape": (24, 28),
         "particle_capacity": 32,
@@ -25,6 +27,7 @@ def _small_plan(kind: PIVScenarioKind, **overrides) -> PIVScenarioPlan:
         "seed": 17,
     }
     options.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return PIVScenarioPlan(kind, **options)
 
 

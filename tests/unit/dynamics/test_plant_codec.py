@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,7 +27,7 @@ from phydrax.metrix._quaternion_state_geometry import (
 )
 
 
-def _identities(*, point_shape=(4,), point_dtype=np.float32):
+def _identities(*, point_shape: Any = (4,), point_dtype: Any = np.float32) -> Any:
     semantic = SemanticProvenance(
         {"plant": "codec-test", "state_convention": "complete-payload"},
         resource_ids={"model": "codec-test-model"},
@@ -44,7 +47,7 @@ def _identities(*, point_shape=(4,), point_dtype=np.float32):
     return semantic, numeric, executable
 
 
-def _assert_tree_exact(actual, expected):
+def _assert_tree_exact(actual: Any, expected: Any) -> None:
     assert jax.tree.structure(actual) == jax.tree.structure(expected)
     for actual_leaf, expected_leaf in zip(
         jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True
@@ -54,7 +57,7 @@ def _assert_tree_exact(actual, expected):
         np.testing.assert_array_equal(actual_leaf, expected_leaf)
 
 
-def test_mixed_pytree_state_and_control_round_trip_exactly():
+def test_mixed_pytree_state_and_control_round_trip_exactly() -> None:
     template = {
         "configuration": {"position": jnp.asarray([1.0, -2.0], dtype=jnp.float32)},
         "memory": (
@@ -121,7 +124,7 @@ def test_mixed_pytree_state_and_control_round_trip_exactly():
     _assert_tree_exact(control_codec.decode_command(encoded_command), command)
 
 
-def test_quaternion_point_four_local_three_and_power_duality():
+def test_quaternion_point_four_local_three_and_power_duality() -> None:
     template = {
         "orientation": jnp.asarray([1.0, 0.0, 0.0, 0.0], dtype=jnp.float32),
         "mode": jnp.asarray(1, dtype=jnp.int32),
@@ -180,7 +183,7 @@ def test_quaternion_point_four_local_three_and_power_duality():
     np.testing.assert_allclose(evidence.local_power, local_power)
 
 
-def test_dynamic_discrete_modes_round_trip_and_bind_fixed_mode_operations():
+def test_dynamic_discrete_modes_round_trip_and_bind_fixed_mode_operations() -> None:
     template = {
         "configuration": jnp.asarray([1.0, 0.0], dtype=jnp.float32),
         "memory": jnp.asarray([0.25], dtype=jnp.float32),
@@ -288,7 +291,7 @@ def test_dynamic_discrete_modes_round_trip_and_bind_fixed_mode_operations():
         immutable_codec.encode_point(changed_mode).vector.block_until_ready()
 
 
-def test_stale_provenance_shape_dtype_and_vector_role_are_rejected():
+def test_stale_provenance_shape_dtype_and_vector_role_are_rejected() -> None:
     template = {
         "state": jnp.asarray([1.0, 2.0], dtype=jnp.float32),
         "mode": jnp.asarray(0, dtype=jnp.int32),
@@ -365,7 +368,7 @@ def test_stale_provenance_shape_dtype_and_vector_role_are_rejected():
         codec.retraction_vjp(encoded, local, malformed_cotangent)
 
 
-def test_identity_chain_must_match_before_a_codec_can_exist():
+def test_identity_chain_must_match_before_a_codec_can_exist() -> None:
     template = {"state": jnp.asarray([1.0], dtype=jnp.float32)}
     schema = ArrayPyTreeSchema.from_tree(template, case_ndim=0)
     layout = StateLayout(

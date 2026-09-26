@@ -7,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def test_scip_backend_declares_optional_host_milp_boundary():
+def test_scip_backend_declares_optional_host_milp_boundary() -> None:
     capabilities = phx.backends.SCIP_CAPABILITIES
     availability = phx.backends.scip_availability()
 
@@ -18,7 +18,7 @@ def test_scip_backend_declares_optional_host_milp_boundary():
     assert availability.requirement == "install phydrax[scip] (pyscipopt==6.2.1)"
 
 
-def test_unavailable_scip_fails_at_explicit_prepare_boundary():
+def test_unavailable_scip_fails_at_explicit_prepare_boundary() -> None:
     availability = phx.backends.scip_availability()
     if availability.available:
         pytest.skip("PySCIPOpt is installed in this environment.")
@@ -27,7 +27,7 @@ def test_unavailable_scip_fails_at_explicit_prepare_boundary():
         phx.backends.prepare_scip()
 
 
-def test_scip_plan_rejects_invalid_resource_settings():
+def test_scip_plan_rejects_invalid_resource_settings() -> None:
     with pytest.raises(ValueError, match="positive"):
         phx.backends.SCIPPlan(maximum_nodes=0)
     with pytest.raises(ValueError, match="positive"):

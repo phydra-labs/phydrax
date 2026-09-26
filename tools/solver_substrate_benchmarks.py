@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -17,16 +18,17 @@ import phydrax as phx
 from benchmarks._runtime import measure_repeated
 
 
-def _timed(function, repeats):
+def _timed(function: Any, repeats: Any) -> Any:
     value, distribution = measure_repeated(
         function,
         warmup=0,
         repeats=repeats,
     )
+    # ty: ignore[invalid-argument-type]
     return value, float(distribution.mean_seconds)
 
 
-def _periodic_grid(points):
+def _periodic_grid(points: Any) -> Any:
     return phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(
@@ -39,7 +41,7 @@ def _periodic_grid(points):
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def _finite_difference(points, repeats):
+def _finite_difference(points: Any, repeats: Any) -> Any:
     grid = _periodic_grid(points)
     request = phx.discretization.DerivativeRequest(
         "dxx",
@@ -66,7 +68,7 @@ def _finite_difference(points, repeats):
     }
 
 
-def _execution_pipeline(points, repeats):
+def _execution_pipeline(points: Any, repeats: Any) -> Any:
     grid = _periodic_grid(points)
     request = phx.discretization.DerivativeRequest(
         "dxx",
@@ -126,7 +128,7 @@ def _execution_pipeline(points, repeats):
     }
 
 
-def _transform_solve(points, repeats):
+def _transform_solve(points: Any, repeats: Any) -> Any:
     grid = _periodic_grid(points)
     request = phx.discretization.DerivativeRequest(
         "dxx",
@@ -151,7 +153,7 @@ def _transform_solve(points, repeats):
     }
 
 
-def _mixed_boundary_solve(points, repeats):
+def _mixed_boundary_solve(points: Any, repeats: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(points),),
         axis_names=("x",),
@@ -174,7 +176,7 @@ def _mixed_boundary_solve(points, repeats):
     }
 
 
-def _pml_reflection(points):
+def _pml_reflection(points: Any) -> Any:
     width = max(2, min(points // 6, (points - 1) // 2))
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(points),),
@@ -217,7 +219,7 @@ def _pml_reflection(points):
     }
 
 
-def _patch_kernel(points, repeats):
+def _patch_kernel(points: Any, repeats: Any) -> Any:
     prepared = phx.discretization.PatchKernelPlan(
         (3,),
         lambda patch, args: jnp.sum(patch),
@@ -232,7 +234,7 @@ def _patch_kernel(points, repeats):
     }
 
 
-def _weno(points, repeats):
+def _weno(points: Any, repeats: Any) -> Any:
     reconstruction = phx.discretization.WENOReconstructionPlan(5)
     values = jnp.sin(2.0 * jnp.pi * jnp.arange(points) / points)
     action = eqx.filter_jit(reconstruction.reconstruct)
@@ -244,7 +246,7 @@ def _weno(points, repeats):
     }
 
 
-def _industrial_extensions(points, repeats):
+def _industrial_extensions(points: Any, repeats: Any) -> Any:
     bounded = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(points),),
         axis_names=("x",),
@@ -301,6 +303,7 @@ def _industrial_extensions(points, repeats):
         phx.discretization.FiniteVolumeBoundarySet(("x",), (pair,)),
     )
     euler_method = phx.discretization.FiniteVolumeMethodPlan(
+        # ty: ignore[unknown-argument]
         phx.discretization.HighResolutionReconstructionPlan("weno_z", boundary="outflow"),
         phx.discretization.HLLCFluxPlan(),
         positivity=phx.discretization.ConvexStateLimiterPlan(),
@@ -309,8 +312,10 @@ def _industrial_extensions(points, repeats):
         euler_problem, euler_discretization, euler_method
     ).dynamics
     euler_step = eqx.filter_jit(
+        # ty: ignore[invalid-argument-type]
         phx.solver.UnsplitFiniteVolumeSSPRK3Plan(euler_dynamics).advance
     )
+    # ty: ignore[unresolved-attribute]
     dt = 0.3 * euler_dynamics.stable_step(euler_state)
     jax.block_until_ready(euler_step(jnp.asarray(0.0), euler_state, dt))
     euler_result, euler_seconds = _timed(
@@ -335,7 +340,7 @@ def _industrial_extensions(points, repeats):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--points", type=int, default=256)
     parser.add_argument("--repeats", type=int, default=10)

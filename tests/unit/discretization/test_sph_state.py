@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,16 +12,19 @@ import pytest
 import phydrax as phx
 
 
-def _particles():
+def _particles() -> Any:
     return phx.discretization.ParticleSetPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1, -1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0, np.nan],
         ambient_dimension=2,
+        # ty: ignore[invalid-argument-type]
         active_mask=[True, True, False],
     ).prepare()
 
 
-def test_summation_density_state_layout_round_trips_and_masks_padding():
+def test_summation_density_state_layout_round_trips_and_masks_padding() -> None:
     layout = phx.discretization.WeaklyCompressibleSPHStateLayout(
         _particles(), density_evolved=False
     )
@@ -41,7 +47,7 @@ def test_summation_density_state_layout_round_trips_and_masks_padding():
         layout.density(state)
 
 
-def test_continuity_density_state_layout_round_trips_density_and_rates():
+def test_continuity_density_state_layout_round_trips_density_and_rates() -> None:
     layout = phx.discretization.WeaklyCompressibleSPHStateLayout(
         _particles(), density_evolved=True
     )
@@ -57,7 +63,9 @@ def test_continuity_density_state_layout_round_trips_density_and_rates():
     )
 
     assert layout.shape == (3, 5)
+    # ty: ignore[not-subscriptable]
     assert jnp.allclose(density_[:2], density[:2])
+    # ty: ignore[not-subscriptable]
     assert density_[2] == pytest.approx(1.0)
     assert jnp.array_equal(rate[2], jnp.zeros((5,)))
     assert jnp.allclose(layout.validate(state), state)
@@ -69,7 +77,7 @@ def test_continuity_density_state_layout_round_trips_density_and_rates():
         ).block_until_ready()
 
 
-def test_wcsph_state_layout_rejects_wrong_shapes():
+def test_wcsph_state_layout_rejects_wrong_shapes() -> None:
     layout = phx.discretization.WeaklyCompressibleSPHStateLayout(
         _particles(), density_evolved=True
     )
@@ -81,7 +89,7 @@ def test_wcsph_state_layout_rejects_wrong_shapes():
         layout.pack_rate(jnp.zeros((3, 2)), jnp.zeros((3, 2)), jnp.zeros((2,)))
 
 
-def test_runtime_sph_source_emits_atomically_with_exact_ledgers():
+def test_runtime_sph_source_emits_atomically_with_exact_ledgers() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(3),
         jnp.ones((3,)),

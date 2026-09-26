@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -34,11 +36,11 @@ def _poisson_line(size: int) -> tuple[jax.Array, jax.Array, jax.Array]:
     return lower, diagonal, upper
 
 
-def _dense_tridiagonal(lower, diagonal, upper):
+def _dense_tridiagonal(lower: Any, diagonal: Any, upper: Any) -> Any:
     return jnp.diag(diagonal) + jnp.diag(lower, -1) + jnp.diag(upper, 1)
 
 
-def test_line_contiguous_transverse_batch_matches_existing_local_factors():
+def test_line_contiguous_transverse_batch_matches_existing_local_factors() -> None:
     transform = DenseLinearTransform(jnp.eye(5), jnp.eye(5))
     lower, diagonal, upper = _poisson_line(6)
     representation = TransformLineRepresentation(
@@ -68,7 +70,7 @@ def test_line_contiguous_transverse_batch_matches_existing_local_factors():
     assert not distributed.communication.host_gather
 
 
-def test_uneven_partitioned_thomas_matches_dense_reference():
+def test_uneven_partitioned_thomas_matches_dense_reference() -> None:
     lower, diagonal, upper = _poisson_line(11)
     topology = StructuredSolveTopologyPlan(11, 3)
     prepared = DistributedLineSolvePlan(topology, lower, diagonal, upper).prepare()
@@ -85,7 +87,7 @@ def test_uneven_partitioned_thomas_matches_dense_reference():
     np.testing.assert_allclose(result.value, expected, rtol=1.0e-10, atol=1.0e-11)
 
 
-def test_distributed_line_preserves_complex_right_hand_sides_with_real_factors():
+def test_distributed_line_preserves_complex_right_hand_sides_with_real_factors() -> None:
     lower, diagonal, upper = _poisson_line(11)
     prepared = DistributedLineSolvePlan(
         StructuredSolveTopologyPlan(11, 3),
@@ -103,7 +105,7 @@ def test_distributed_line_preserves_complex_right_hand_sides_with_real_factors()
     np.testing.assert_allclose(result.value, expected, rtol=1.0e-10, atol=1.0e-11)
 
 
-def test_spike_matches_reference_and_reports_bounded_interface():
+def test_spike_matches_reference_and_reports_bounded_interface() -> None:
     lower, diagonal, upper = _poisson_line(12)
     topology = StructuredSolveTopologyPlan(
         12,
@@ -130,7 +132,7 @@ def test_spike_matches_reference_and_reports_bounded_interface():
         )
 
 
-def test_pcr_eligibility_and_balanced_parallel_cyclic_reduction():
+def test_pcr_eligibility_and_balanced_parallel_cyclic_reduction() -> None:
     lower, diagonal, upper = _poisson_line(16)
     topology = StructuredSolveTopologyPlan(16, 4, algorithm="pcr")
     prepared = DistributedLineSolvePlan(topology, lower, diagonal, upper).prepare()
@@ -148,7 +150,7 @@ def test_pcr_eligibility_and_balanced_parallel_cyclic_reduction():
         StructuredSolveTopologyPlan(18, 3, algorithm="pcr")
 
 
-def test_singular_line_projects_compatibility_and_applies_exact_gauge():
+def test_singular_line_projects_compatibility_and_applies_exact_gauge() -> None:
     size = 12
     lower = -jnp.ones(size - 1, dtype=jnp.float64)
     upper = -jnp.ones(size - 1, dtype=jnp.float64)
@@ -174,7 +176,7 @@ def test_singular_line_projects_compatibility_and_applies_exact_gauge():
     assert float(result.relative_residual) < 1.0e-10
 
 
-def test_rhs_jvp_and_vjp_are_the_linear_inverse_actions():
+def test_rhs_jvp_and_vjp_are_the_linear_inverse_actions() -> None:
     lower, diagonal, upper = _poisson_line(12)
     prepared = DistributedLineSolvePlan(
         StructuredSolveTopologyPlan(12, 3), lower, diagonal, upper
@@ -196,7 +198,7 @@ def test_rhs_jvp_and_vjp_are_the_linear_inverse_actions():
     )
 
 
-def test_communication_and_resource_evidence_fail_before_factor_allocation():
+def test_communication_and_resource_evidence_fail_before_factor_allocation() -> None:
     lower, diagonal, upper = _poisson_line(12)
     topology = StructuredSolveTopologyPlan(12, 3, maximum_resource_bytes=64)
     with pytest.raises(ValueError, match="exceed maximum_resource_bytes"):
@@ -212,7 +214,9 @@ def test_communication_and_resource_evidence_fail_before_factor_allocation():
     assert evidence.communication.scalar_values_per_line > 0
 
 
-def test_multiblock_requires_full_invariance_and_reduces_global_residual_iteratively():
+def test_multiblock_requires_full_invariance_and_reduces_global_residual_iteratively() -> (
+    None
+):
     rejected = ExtrudedAxisInvarianceCertificate(0.0, 0.0, 1.0e-3, 0.0)
     lower, diagonal, upper = _poisson_line(7)
     local_lower = jnp.stack((lower, lower))

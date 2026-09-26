@@ -650,7 +650,8 @@ def _numeric_fields(problem: LinearQuadraticControlProblem, /) -> dict[str, Arra
 
 def _required_window_field(value: Array | None, /) -> Array:
     # Windows slice the problem's required fields, which are never None.
-    assert value is not None
+    if not (value is not None):
+        raise RuntimeError("Internal invariant failed: value is not None.")
     return value
 
 

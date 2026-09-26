@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -24,7 +27,7 @@ from phydrax.operators.path_integral import (
 from phydrax.stochastic import StochasticPathEnsembleResult
 
 
-def test_regulated_real_time_is_finite_slice_with_phase_evidence():
+def test_regulated_real_time_is_finite_slice_with_phase_evidence() -> None:
     mesh = TemporalMesh.uniform(0.0, 0.2, 2, role="path")
     plan = RealTimePathIntegralPlan(
         mesh,
@@ -46,7 +49,7 @@ def test_regulated_real_time_is_finite_slice_with_phase_evidence():
     assert float(result.regulator) == 0.5
 
 
-def test_source_feynman_kac_separates_terminal_and_duhamel_terms():
+def test_source_feynman_kac_separates_terminal_and_duhamel_terms() -> None:
     mesh = TemporalMesh.uniform(0.0, 1.0, 2, role="path")
     paths = jnp.zeros((8, 3, 1))
     result = source_feynman_kac_from_paths(
@@ -60,7 +63,7 @@ def test_source_feynman_kac_separates_terminal_and_duhamel_terms():
     assert jnp.allclose(result.source_term, 2.0)
 
 
-def test_interval_images_periodic_ring_and_finite_u1_invariants():
+def test_interval_images_periodic_ring_and_finite_u1_invariants() -> None:
     reflecting = PreparedGeometryPathKernel(
         0.0,
         1.0,
@@ -97,7 +100,7 @@ def test_interval_images_periodic_ring_and_finite_u1_invariants():
     assert jnp.allclose(jnp.abs(wilson_loop(links, loop)), 1.0)
 
 
-def test_finite_exchange_sector_reports_sign_collapse_without_repair():
+def test_finite_exchange_sector_reports_sign_collapse_without_repair() -> None:
     plan = ExchangePathPlan(
         jnp.array([[0, 1], [1, 0]], dtype=jnp.int32),
         statistics="fermion",
@@ -113,7 +116,7 @@ def test_finite_exchange_sector_reports_sign_collapse_without_repair():
     assert result.sector == "full-enumeration"
 
 
-def test_single_active_signed_ratio_sample_has_no_uncertainty_evidence():
+def test_single_active_signed_ratio_sample_has_no_uncertainty_evidence() -> None:
     plan = ExchangePathPlan(
         jnp.array([[0, 1], [1, 0]], dtype=jnp.int32),
         statistics="fermion",
@@ -131,7 +134,7 @@ def test_single_active_signed_ratio_sample_has_no_uncertainty_evidence():
     assert jnp.isnan(result.standard_error)
 
 
-def test_signed_ratio_uncertainty_has_inverse_sqrt_sample_scaling():
+def test_signed_ratio_uncertainty_has_inverse_sqrt_sample_scaling() -> None:
     plan = ExchangePathPlan(
         jnp.array([[0, 1], [1, 0]], dtype=jnp.int32),
         statistics="fermion",
@@ -159,7 +162,7 @@ def test_signed_ratio_uncertainty_has_inverse_sqrt_sample_scaling():
     assert jnp.allclose(four.standard_error / eight.standard_error, jnp.sqrt(2.0))
 
 
-def test_path_boundary_convention_keeps_negative_interior_until_outward_exit():
+def test_path_boundary_convention_keeps_negative_interior_until_outward_exit() -> None:
     mask = killed_path_mask(
         jnp.array(
             [
@@ -195,11 +198,11 @@ def test_path_boundary_convention_keeps_negative_interior_until_outward_exit():
     assert bool(absorbing_result.terminal[0])
     assert jnp.allclose(absorbing_result.event_times[0], 1.0, atol=1e-8)
 
-    def specular_state(time, args):
+    def specular_state(time: Any, args: Any) -> Any:
         del args
         return jnp.array([time, 0.0, 0.0, 1.0, 0.0, 0.0])
 
-    def kinetic_field(time, state, args):
+    def kinetic_field(time: Any, state: Any, args: Any) -> Any:
         del time, args
         return jnp.concatenate((state[3:], jnp.zeros((3,))))
 
@@ -224,7 +227,7 @@ def test_path_boundary_convention_keeps_negative_interior_until_outward_exit():
     )
 
 
-def _stochastic_paths(times):
+def _stochastic_paths(times: Any) -> Any:
     return StochasticPathEnsembleResult(
         solution=None,
         states=jnp.zeros((2, 3, 1)),
@@ -245,7 +248,7 @@ def _stochastic_paths(times):
     )
 
 
-def test_adaptive_feynman_kac_extracts_and_validates_common_time_axis():
+def test_adaptive_feynman_kac_extracts_and_validates_common_time_axis() -> None:
     common = jnp.array([0.0, 0.5, 1.0])
     result = source_feynman_kac_from_stochastic_paths(
         _stochastic_paths(jnp.broadcast_to(common, (2, 3))),

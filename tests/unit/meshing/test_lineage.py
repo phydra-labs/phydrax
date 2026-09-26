@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _mesh():
+def _mesh() -> Any:
     return phx.discretization.CellMesh.from_triangles(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5))),
         np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int32),
@@ -13,7 +15,7 @@ def _mesh():
     )
 
 
-def test_triangle_transition_lineage_stencil_and_atomic_commit():
+def test_triangle_transition_lineage_stencil_and_atomic_commit() -> None:
     mesh = _mesh()
     transition, transfer = phx.meshing.refine_triangle_mesh(
         mesh,

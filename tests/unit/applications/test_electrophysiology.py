@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,7 +19,7 @@ from phydrax.units import MILLIVOLT, TIME, UnitDefinition
 jax.config.update("jax_enable_x64", True)
 
 
-def _single(*mechanisms, dt=0.05, scheme="backward-euler"):
+def _single(*mechanisms: Any, dt: Any = 0.05, scheme: Any = "backward-euler") -> Any:
     diameter = np.sqrt(100_000.0 / np.pi)
     morphology = ep.CellMorphologyPlan(
         "cell",
@@ -29,7 +31,7 @@ def _single(*mechanisms, dt=0.05, scheme="backward-euler"):
     )
 
 
-def _branched():
+def _branched() -> Any:
     plan = ep.CellMorphologyPlan(
         "branched",
         [
@@ -46,7 +48,7 @@ def _branched():
     return plan.prepare()
 
 
-def test_explicit_unit_conversion_and_dimension_validation():
+def test_explicit_unit_conversion_and_dimension_validation() -> None:
     np.testing.assert_allclose(ep.convert_quantity(1.0, "V", "mV"), 1000.0)
     np.testing.assert_allclose(ep.convert_quantity(250.0, "pA", "nA"), 0.25)
     np.testing.assert_allclose(ep.convert_quantity(2.5, "mS", "uS"), 2500.0)
@@ -62,7 +64,7 @@ def test_explicit_unit_conversion_and_dimension_validation():
         ep.conversion_factor(shifted_time, ep.ELECTROPHYSIOLOGY_UNITS.time)
 
 
-def test_uniform_branched_voltage_has_no_axial_current():
+def test_uniform_branched_voltage_has_no_axial_current() -> None:
     morphology = _branched()
     runtime = ep.CableSolverPlan(0.1, residual_tolerance=1.0e-9).prepare(
         morphology, ep.MembraneProgram((ep.PassiveLeak(0.0, -65.0),))
@@ -77,7 +79,9 @@ def test_uniform_branched_voltage_has_no_axial_current():
 @pytest.mark.parametrize(
     "scheme,theta", [("backward-euler", 1.0), ("crank-nicolson", 0.5)]
 )
-def test_passive_single_compartment_matches_analytic_theta_mode(scheme, theta):
+def test_passive_single_compartment_matches_analytic_theta_mode(
+    scheme: Any, theta: Any
+) -> None:
     runtime = _single(ep.PassiveLeak(0.3, -65.0), dt=0.2, scheme=scheme)
     state = ep.initialize_cable_state(runtime, jnp.asarray([-40.0]))
     result = ep.step_cable(runtime, state, ep.zero_cable_inputs(runtime))
@@ -92,7 +96,7 @@ def test_passive_single_compartment_matches_analytic_theta_mode(scheme, theta):
     assert bool(result.evidence.successful)
     neutral = ep.zero_cable_inputs(runtime)
 
-    def voltage_for_current(current):
+    def voltage_for_current(current: Any) -> Any:
         inputs = ep.CableStepInputs(
             jnp.asarray([current]),
             neutral.synaptic_conductance_uS,
@@ -115,7 +119,7 @@ def test_passive_single_compartment_matches_analytic_theta_mode(scheme, theta):
     )
 
 
-def test_branched_cable_satisfies_kirchhoff_balance():
+def test_branched_cable_satisfies_kirchhoff_balance() -> None:
     morphology = _branched()
     runtime = ep.CableSolverPlan(0.1, residual_tolerance=1.0e-9).prepare(
         morphology, ep.MembraneProgram((ep.PassiveLeak(0.1, -68.0),))
@@ -136,7 +140,7 @@ def test_branched_cable_satisfies_kirchhoff_balance():
     )
 
 
-def test_exact_gate_update_and_hh_current_affinity():
+def test_exact_gate_update_and_hh_current_affinity() -> None:
     gate = jnp.asarray([0.2, 0.7])
     steady = jnp.asarray([0.8, 0.1])
     tau = jnp.asarray([2.0, 5.0])
@@ -166,7 +170,7 @@ def test_exact_gate_update_and_hh_current_affinity():
     )
 
 
-def test_nonfinite_updated_hh_gates_reject_entire_cable_transition():
+def test_nonfinite_updated_hh_gates_reject_entire_cable_transition() -> None:
     runtime = _single(ep.HodgkinHuxleyNaK(), dt=0.1)
     state = ep.initialize_cable_state(runtime, jnp.asarray([-65.0]))
     inputs = ep.CableStepInputs(
@@ -185,12 +189,12 @@ def test_nonfinite_updated_hh_gates_reject_entire_cable_transition():
     np.testing.assert_array_equal(result.state.time_ms, state.time_ms)
 
 
-def test_hodgkin_huxley_program_is_excitable_under_inward_current():
+def test_hodgkin_huxley_program_is_excitable_under_inward_current() -> None:
     runtime = _single(ep.HodgkinHuxleyNaK(), ep.PassiveLeak(0.0, -65.0), dt=0.02)
     state = ep.initialize_cable_state(runtime, jnp.asarray([-65.0]))
     neutral = ep.zero_cable_inputs(runtime)
 
-    def advance(carry, index):
+    def advance(carry: Any, index: Any) -> Any:
         current = jnp.where((index >= 50) & (index < 300), 10.0, 0.0)
         inputs = ep.CableStepInputs(
             jnp.asarray([current]),
@@ -207,7 +211,7 @@ def test_hodgkin_huxley_program_is_excitable_under_inward_current():
     assert float(voltage[-1]) < float(jnp.max(voltage)) - 20.0
 
 
-def test_current_and_voltage_clamp_signs_are_explicit():
+def test_current_and_voltage_clamp_signs_are_explicit() -> None:
     runtime = _single(ep.PassiveLeak(0.0, -65.0), dt=0.1)
     state = ep.initialize_cable_state(runtime, jnp.asarray([-65.0]))
     neutral = ep.zero_cable_inputs(runtime)
@@ -232,7 +236,7 @@ def test_current_and_voltage_clamp_signs_are_explicit():
     assert float(clamped.evidence.clamp_current_nA[0]) > 0.0
 
 
-def test_synapse_network_preserves_exact_voltage_affinity_and_delay():
+def test_synapse_network_preserves_exact_voltage_affinity_and_delay() -> None:
     plan = ep.SynapseNetworkPlan(
         (2, 2),
         3,
@@ -271,7 +275,7 @@ def test_synapse_network_preserves_exact_voltage_affinity_and_delay():
     assert float(conductance * voltage + offset) < 0.0
 
 
-def test_dynamic_synaptogenesis_and_pair_stdp_are_candidate_commit_transitions():
+def test_dynamic_synaptogenesis_and_pair_stdp_are_candidate_commit_transitions() -> None:
     runtime = ep.SynapseNetworkPlan((1, 1), 2, 0.0, 1.0).prepare()
     relations = ep.initialize_synapse_network(runtime).relations
     event = ep.SynapseRelationEvent(
@@ -301,7 +305,9 @@ def test_dynamic_synaptogenesis_and_pair_stdp_are_candidate_commit_transitions()
     stdp_plan = ep.PairSTDPPlan(20.0, 20.0, 0.1, 0.05, 0.0, 1.0, trace_bound=1.5)
     pre = jnp.asarray([1.0, 0.0])
     post = jnp.asarray([0.0, 0.0])
+    # ty: ignore[invalid-argument-type]
     first = ep.evaluate_pair_stdp(runtime, stdp_plan, relations, plasticity, pre, post)
+    # ty: ignore[invalid-argument-type]
     relations, plasticity = ep.commit_pair_stdp(first, relations, plasticity)
     repeated_pre = ep.evaluate_pair_stdp(
         runtime,
@@ -350,7 +356,7 @@ def test_dynamic_synaptogenesis_and_pair_stdp_are_candidate_commit_transitions()
     assert int(rejected.status) == int(ep.SynapseStatus.CAPACITY_EXCEEDED)
 
 
-def test_concentration_transfer_conserves_moles_charge_and_nernst_sign():
+def test_concentration_transfer_conserves_moles_charge_and_nernst_sign() -> None:
     runtime = ep.IonDynamicsPlan(
         (ep.IonSpecies("Na", 1), ep.IonSpecies("K", 1)),
         (2.0, 3.0),
@@ -403,7 +409,7 @@ def test_concentration_transfer_conserves_moles_charge_and_nernst_sign():
         )
 
 
-def test_stochastic_channel_counts_are_reproducible_and_key_lineage_is_explicit():
+def test_stochastic_channel_counts_are_reproducible_and_key_lineage_is_explicit() -> None:
     generator = jnp.asarray([[-0.2, 0.2], [0.1, -0.1]])
     runtime = ep.MarkovChannelPlan(generator, 3).prepare(0.5)
     state_a = ep.initialize_stochastic_channels(
@@ -432,6 +438,7 @@ def test_stochastic_channel_counts_are_reproducible_and_key_lineage_is_explicit(
     with pytest.raises(ValueError, match="int32"):
         ep.initialize_stochastic_channels(
             runtime,
+            # ty: ignore[invalid-argument-type]
             overflowing,
             jax.random.key(91),
         )
@@ -441,7 +448,7 @@ def test_stochastic_channel_counts_are_reproducible_and_key_lineage_is_explicit(
     assert bool(first.evidence.successful)
 
 
-def test_swc_parser_validates_topology_and_reports_stable_mapping():
+def test_swc_parser_validates_topology_and_reports_stable_mapping() -> None:
     text = """
     # id type x y z radius parent
     1 1 0 0 0 5 -1
@@ -481,7 +488,7 @@ def test_swc_parser_validates_topology_and_reports_stable_mapping():
         ep.parse_swc_text("1 1 0 0 0 1 -1\n2 1 1 0 0 1 -1", "bad")
 
 
-def test_rejected_cable_step_does_not_create_a_valid_recording():
+def test_rejected_cable_step_does_not_create_a_valid_recording() -> None:
     runtime = _single(
         ep.SodiumPotassiumPump(0.05, 10.0, 1.5),
         dt=0.1,
@@ -503,7 +510,7 @@ def test_rejected_cable_step_does_not_create_a_valid_recording():
     assert not bool(jnp.any(result.state.recording.valid))
 
 
-def test_checkpoint_replay_matches_uninterrupted_identity():
+def test_checkpoint_replay_matches_uninterrupted_identity() -> None:
     runtime = _single(ep.PassiveLeak(0.2, -65.0), dt=0.1)
     protocol = ep.ElectrophysiologyProtocol(
         ep.RecordingPlan(("soma",), 20),

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import numpy as np
@@ -34,7 +35,7 @@ from phydrax.applications.conformal_bootstrap import (
 jax.config.update("jax_enable_x64", True)
 
 
-def _data():
+def _data() -> Any:
     external = tuple(
         ExternalScalarOperator(f"phi-{index}", 0.5, "scalar") for index in range(4)
     )
@@ -55,7 +56,7 @@ def _data():
     )
 
 
-def _program():
+def _program() -> Any:
     block = PolynomialMatrixBlock(
         DampedRationalPrefactor("0.3678794411714423215955", "1"),
         (
@@ -85,6 +86,7 @@ def run_qualification() -> dict[str, object]:
         CrossingSectorPlan(
             data,
             ("identity",),
+            # ty: ignore[invalid-argument-type]
             (((1.0,),),),
             basis_gauge_id="one-component-control",
         )
@@ -92,6 +94,7 @@ def run_qualification() -> dict[str, object]:
     blocks = prepare_global_scalar_blocks(
         GlobalScalarBlockPlan(
             data,
+            # ty: ignore[invalid-argument-type]
             ((0.2, 0.2), (0.3, 0.3)),
             (0,),
             ((0, 0), (1, 0)),
@@ -103,7 +106,9 @@ def run_qualification() -> dict[str, object]:
     closed = np.log1p(-np.asarray((0.2, 0.3))) ** 2
     block_residual = float(np.max(np.abs(np.asarray(block_evidence.values) - closed)))
     program = _program()
+    # ty: ignore[invalid-argument-type]
     audit = audit_pmp_samples(program, (1.0, 0.0), (0.0, 0.5, 1.0))
+    # ty: ignore[invalid-argument-type]
     virasoro = ising_sigma_crossing_evidence((0.2, 0.35, 0.65, 0.8))
     successful = bool(
         crossing.evidence.accepted

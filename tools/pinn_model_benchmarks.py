@@ -8,7 +8,7 @@ import argparse
 import json
 import time
 from dataclasses import asdict, dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -118,7 +118,7 @@ def _build_model(
     width: int,
     depth: int,
     key: jax.Array,
-):
+) -> Any:
     if architecture == "mlp":
         return phx.nn.models.MLP(
             in_size=1,
@@ -191,8 +191,8 @@ def _manufactured_solution(points: jax.Array, frequency: int, /) -> jax.Array:
     return jnp.sin(float(frequency) * jnp.pi * points[..., 0])
 
 
-def _pointwise_derivatives(model, points: jax.Array, /) -> tuple[jax.Array, ...]:
-    def scalar_value(point):
+def _pointwise_derivatives(model: Any, points: jax.Array, /) -> tuple[jax.Array, ...]:
+    def scalar_value(point: Any) -> Any:
         return jnp.asarray(model(point)).reshape(())
 
     values = jax.vmap(scalar_value)(points)
@@ -225,7 +225,7 @@ def _pde_residual(
 
 
 def _loss_components(
-    model,
+    model: Any,
     scenario: PINNBenchmarkScenario,
     interior: jax.Array,
     boundary: jax.Array,
@@ -240,7 +240,7 @@ def _loss_components(
     return total, residual_loss, boundary_loss
 
 
-def _tree_l2_norm(tree, /) -> jax.Array:
+def _tree_l2_norm(tree: Any, /) -> jax.Array:
     leaves = tuple(
         leaf for leaf in jax.tree_util.tree_leaves(tree) if isinstance(leaf, jax.Array)
     )
@@ -311,7 +311,7 @@ def run_pinn_model_benchmark(
     require_parameter_roles(model, context="run_pinn_model_benchmark")
     parameters, model_state, fixed = partition_parameters(model)
 
-    def objective(candidate):
+    def objective(candidate: Any) -> Any:
         current = combine_parameters(candidate, model_state, fixed)
         return _loss_components(current, scenario, interior, boundary)[0]
 
@@ -322,7 +322,7 @@ def run_pinn_model_benchmark(
     optimizer_state = optimizer.init(parameters)
 
     @eqx.filter_jit
-    def train_step(current_parameters, current_state):
+    def train_step(current_parameters: Any, current_state: Any) -> Any:
         value, gradient = eqx.filter_value_and_grad(objective)(current_parameters)
         updates, next_state = optimizer.update(
             gradient, current_state, current_parameters
@@ -672,6 +672,7 @@ def main() -> None:
     result = run_pinn_model_benchmarks(
         architectures=_comma_tuple(arguments.architectures),
         scenarios=_comma_tuple(arguments.scenarios),
+        # ty: ignore[invalid-argument-type]
         seeds=tuple(_comma_tuple(arguments.seeds)),
         width=arguments.width,
         depth=arguments.depth,

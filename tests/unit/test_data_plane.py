@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import sys
 import threading
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -17,7 +19,7 @@ from phydrax._data_plane import (
 )
 
 
-def _wait_until(predicate, *, timeout=2.0):
+def _wait_until(predicate: Any, *, timeout: Any = 2.0) -> None:
     deadline = time.monotonic() + timeout
     while not predicate():
         if time.monotonic() >= deadline:
@@ -39,11 +41,11 @@ def _wait_until(predicate, *, timeout=2.0):
 )
 @pytest.mark.parametrize("seed", [0, 1, 2**31 - 1])
 def test_index_epoch_plan_is_deterministic_bijective_and_directly_resumable(
-    population,
-    batch_size,
-    drop_last,
-    seed,
-):
+    population: Any,
+    batch_size: Any,
+    drop_last: Any,
+    seed: Any,
+) -> None:
     plan = IndexEpochPlan(
         population,
         batch_size,
@@ -82,7 +84,7 @@ def test_index_epoch_plan_is_deterministic_bijective_and_directly_resumable(
         assert sorted(flattened) == list(range(population))
 
 
-def test_index_epoch_plan_sequential_boundaries_and_validation():
+def test_index_epoch_plan_sequential_boundaries_and_validation() -> None:
     plan = IndexEpochPlan(5, 2, False, 0, 3, False)
 
     assert tuple(plan) == ((0, 1), (2, 3), (4,))
@@ -111,7 +113,7 @@ def test_index_epoch_plan_sequential_boundaries_and_validation():
             IndexEpochPlan(*arguments)
 
 
-def test_epoch_order_matches_jax_mapping_and_preserves_golden_vector():
+def test_epoch_order_matches_jax_mapping_and_preserves_golden_vector() -> None:
     permutation = StatelessIndexPermutation(127, 23, 6)
     positions = jnp.arange(127, dtype=jnp.int32)
     compiled = jax.jit(jax.vmap(permutation.jax))(positions)
@@ -144,7 +146,7 @@ def test_epoch_order_matches_jax_mapping_and_preserves_golden_vector():
     )
 
 
-def test_epoch_order_and_plan_reject_invalid_bounds_without_population_storage():
+def test_epoch_order_and_plan_reject_invalid_bounds_without_population_storage() -> None:
     for arguments, message in [
         ((0, 0, 0), "population"),
         ((2**31 + 1, 0, 0), "must not exceed"),
@@ -166,11 +168,11 @@ def test_epoch_order_and_plan_reject_invalid_bounds_without_population_storage()
     assert len(large.batch(1)) == 4
 
 
-def test_bounded_prefetch_is_lazy_and_capacity_zero_runs_synchronously():
+def test_bounded_prefetch_is_lazy_and_capacity_zero_runs_synchronously() -> None:
     calls = []
     main_thread = threading.current_thread().name
 
-    def prepare(value):
+    def prepare(value: Any) -> Any:
         calls.append((value, threading.current_thread().name))
         return value * 2
 
@@ -189,11 +191,11 @@ def test_bounded_prefetch_is_lazy_and_capacity_zero_runs_synchronously():
     iterator.close()
 
 
-def test_bounded_prefetch_preserves_order_and_bounded_read_ahead():
+def test_bounded_prefetch_preserves_order_and_bounded_read_ahead() -> None:
     calls = []
     thread_name = "phydrax-data-plane-bounded-test"
 
-    def prepare(value):
+    def prepare(value: Any) -> Any:
         calls.append((value, threading.current_thread().name))
         return value * 10
 
@@ -218,10 +220,10 @@ def test_bounded_prefetch_preserves_order_and_bounded_read_ahead():
     assert not any(thread.name == thread_name for thread in threading.enumerate())
 
 
-def test_bounded_prefetch_propagates_preparation_and_input_errors():
+def test_bounded_prefetch_propagates_preparation_and_input_errors() -> None:
     prepare_thread = "phydrax-data-plane-prepare-error"
 
-    def fail_prepare(value):
+    def fail_prepare(value: Any) -> Any:
         if value == 1:
             raise ValueError("preparation failed")
         return value
@@ -240,7 +242,7 @@ def test_bounded_prefetch_propagates_preparation_and_input_errors():
 
     input_thread = "phydrax-data-plane-input-error"
 
-    def failing_items():
+    def failing_items() -> Any:
         yield 4
         raise RuntimeError("input iteration failed")
 
@@ -258,7 +260,7 @@ def test_bounded_prefetch_propagates_preparation_and_input_errors():
     assert not any(thread.name == input_thread for thread in threading.enumerate())
 
 
-def test_bounded_prefetch_closes_empty_full_and_synchronous_failure_paths():
+def test_bounded_prefetch_closes_empty_full_and_synchronous_failure_paths() -> None:
     empty_thread = "phydrax-data-plane-empty"
     empty = BoundedPrefetchIterator(
         (),

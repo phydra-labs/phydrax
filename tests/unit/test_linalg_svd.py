@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -16,21 +19,21 @@ svd = la.svd
 class _DensePairing(la.AbstractPairing):
     matrix: jax.Array
 
-    def __init__(self, matrix):
+    def __init__(self, matrix: Any) -> None:
         self.matrix = jnp.asarray(matrix)
         self.pairing_id = "svd-eligibility-dense-pairing"
 
-    def inner(self, left, right, /):
+    def inner(self, left: Any, right: Any, /) -> Any:
         return jnp.vdot(left, self.matrix @ right)
 
-    def riesz(self, vector, /):
+    def riesz(self, vector: Any, /) -> Any:
         return self.matrix @ vector
 
-    def inverse_riesz(self, covector, /):
+    def inverse_riesz(self, covector: Any, /) -> Any:
         return jnp.linalg.solve(self.matrix, covector)
 
 
-def test_dense_linear_svd_planning_requires_every_materialized_metric():
+def test_dense_linear_svd_planning_requires_every_materialized_metric() -> None:
     source = la.ArraySpace(
         (2,),
         dtype=jnp.float64,
@@ -61,7 +64,7 @@ def test_dense_linear_svd_planning_requires_every_materialized_metric():
         la.plan(minimum_norm, policy)
 
 
-def test_dense_svd_is_jittable_refreshable_and_reports_rank():
+def test_dense_svd_is_jittable_refreshable_and_reports_rank() -> None:
     matrix = jnp.asarray([[3.0, 1.0], [0.0, 2.0], [1.0, 0.0]])
     operator = la.DenseLinearOperator(matrix, operator_id="refreshable-svd")
     problem = svd.SVDProblem(operator, problem_id="svd-problem")
@@ -99,7 +102,9 @@ def test_dense_svd_is_jittable_refreshable_and_reports_rank():
 
 @pytest.mark.parametrize("entry, expected_rank", [(1.0, 1), (0.0, 0)])
 @pytest.mark.parametrize("which", ["largest", "smallest"])
-def test_svd_certifies_rank_deficient_and_zero_operators(entry, expected_rank, which):
+def test_svd_certifies_rank_deficient_and_zero_operators(
+    entry: Any, expected_rank: Any, which: Any
+) -> None:
     matrix = jnp.full((2, 2), entry)
     result = svd.svd(
         svd.SVDProblem(la.DenseLinearOperator(matrix)),
@@ -119,7 +124,7 @@ def test_svd_certifies_rank_deficient_and_zero_operators(entry, expected_rank, w
     )
 
 
-def test_svd_refuses_stale_decomposition_state():
+def test_svd_refuses_stale_decomposition_state() -> None:
     matrix = jnp.asarray([[3.0, 1.0], [0.0, 2.0]])
     operator = la.DenseLinearOperator(matrix, operator_id="stale-svd")
     problem = svd.SVDProblem(operator, problem_id="stale-svd-problem")
@@ -138,7 +143,7 @@ def test_svd_refuses_stale_decomposition_state():
     assert result.status == int(svd.SVDSolveStatus.RESIDUAL_TOLERANCE_NOT_MET)
 
 
-def test_svd_honors_source_and_target_pairings_and_smallest_target():
+def test_svd_honors_source_and_target_pairings_and_smallest_target() -> None:
     source_weights = jnp.asarray([2.0, 5.0])
     target_weights = jnp.asarray([3.0, 4.0, 6.0])
     source = la.ArraySpace(
@@ -182,13 +187,13 @@ def test_svd_honors_source_and_target_pairings_and_smallest_target():
     )
 
 
-def test_singular_value_derivatives_require_nonzero_isolated_values():
+def test_singular_value_derivatives_require_nonzero_isolated_values() -> None:
     policy = svd.SVDSolvePolicy(
         count=2,
         differentiation="singular-values",
     )
 
-    def nuclear_norm(matrix):
+    def nuclear_norm(matrix: Any) -> Any:
         return jnp.sum(
             svd.svd(
                 svd.SVDProblem(la.DenseLinearOperator(matrix)),
@@ -231,13 +236,15 @@ def test_singular_value_derivatives_require_nonzero_isolated_values():
         )
 
 
-def test_matrix_free_singular_value_gradient_supports_closure_converted_operator():
+def test_matrix_free_singular_value_gradient_supports_closure_converted_operator() -> (
+    None
+):
     policy = svd.SVDSolvePolicy(
         count=2,
         differentiation="singular-values",
     )
 
-    def nuclear_norm(coefficient):
+    def nuclear_norm(coefficient: Any) -> Any:
         diagonal = jnp.stack((coefficient, jnp.asarray(3.0)))
         space = la.ArraySpace((2,), dtype=diagonal.dtype)
         operator = la.FunctionLinearOperator(

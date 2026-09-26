@@ -1,32 +1,34 @@
 """Evaluate one state-feedback policy on disjoint prepared noise bundles."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def transition(context, state, action, noise, args):
+def transition(context: Any, state: Any, action: Any, noise: Any, args: Any) -> Any:
     """Advance after the action is chosen, exposing noise only to the dynamics."""
     return state + context.duration * (args["decay"] * state + action) + noise
 
 
-def stage_cost(context, state, action, args):
+def stage_cost(context: Any, state: Any, action: Any, args: Any) -> Any:
     del args
     return context.duration * (state @ state + 0.25 * (action @ action))
 
 
-def terminal_cost(time, state, args):
+def terminal_cost(time: Any, state: Any, args: Any) -> Any:
     del time, args
     return state @ state
 
 
-def full_state_policy(context, state, args):
+def full_state_policy(context: Any, state: Any, args: Any) -> Any:
     """Use only the current full state and time context--never noise or a key."""
     del context
     return args["feedback_gain"] * state
 
 
-def prepared_noise(prefix, coupling_id, increments, labels):
+def prepared_noise(prefix: Any, coupling_id: Any, increments: Any, labels: Any) -> Any:
     path_count = increments.shape[0]
     return phx.control.stochastic.PreparedControlledNoise(
         increments,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _mesh(system):
+def _mesh(system: Any) -> Any:
     vertices = np.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
     )
@@ -26,11 +29,11 @@ def _mesh(system):
 
 def _compiled(
     *,
-    hole_mask=None,
-    epoch_id="overset-epoch",
-    donor_cell=0,
-    receptor_cell=1,
-):
+    hole_mask: Any = None,
+    epoch_id: Any = "overset-epoch",
+    donor_cell: Any = 0,
+    receptor_cell: Any = 1,
+) -> Any:
     system = phx.equations.EulerSystem(2)
     plan = _mesh(system)
     discretization = plan.prepare()
@@ -81,6 +84,7 @@ def _compiled(
         problem, discretization, method, coupling=coupling
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(maximum_retries=2),
@@ -88,7 +92,9 @@ def _compiled(
     return system, discretization, overset, dynamics, runtime
 
 
-def _nonuniform_state(system, discretization, *, donor_cell=0, receptor_cell=1):
+def _nonuniform_state(
+    system: Any, discretization: Any, *, donor_cell: Any = 0, receptor_cell: Any = 1
+) -> Any:
     assert donor_cell != receptor_cell
     primitive = jnp.broadcast_to(
         jnp.asarray((1.0, 0.0, 0.0, 1.0)),
@@ -98,7 +104,7 @@ def _nonuniform_state(system, discretization, *, donor_cell=0, receptor_cell=1):
     return system.primitive_to_conserved(primitive)
 
 
-def test_donor_traces_and_accepted_correction_are_jit_safe_and_conservative():
+def test_donor_traces_and_accepted_correction_are_jit_safe_and_conservative() -> None:
     system, discretization, overset, dynamics, runtime = _compiled()
     constant = jnp.ones((discretization.cell_count, system.component_count))
     np.testing.assert_allclose(eqx.filter_jit(overset.interpolate)(constant), 1.0)
@@ -131,7 +137,7 @@ def test_donor_traces_and_accepted_correction_are_jit_safe_and_conservative():
     np.testing.assert_allclose(scattered.sum(axis=0), 0.0, atol=1e-12)
 
 
-def test_canonical_route_sign_reverses_receptor_normal_and_preserves_cfl():
+def test_canonical_route_sign_reverses_receptor_normal_and_preserves_cfl() -> None:
     route_rates = []
     route_speeds = []
     route_measures = []
@@ -150,7 +156,7 @@ def test_canonical_route_sign_reverses_receptor_normal_and_preserves_cfl():
             receptor_cell=receptor_cell,
         )
 
-        def correction_flux(value):
+        def correction_flux(value: Any) -> Any:
             block, _, _ = dynamics._overset_correction(value, metrics, None)
             assert block is not None
             return block.flux_rate
@@ -190,12 +196,12 @@ def test_canonical_route_sign_reverses_receptor_normal_and_preserves_cfl():
     np.testing.assert_allclose(route_measures[1], route_measures[0], rtol=1e-12)
 
 
-def test_holes_cannot_be_donors_and_fail_closed():
+def test_holes_cannot_be_donors_and_fail_closed() -> None:
     with pytest.raises(ValueError, match="ineligible|hole"):
         _compiled(hole_mask=np.asarray((True, False), dtype="bool"))
 
 
-def test_overset_map_epoch_and_geometry_are_compiler_identities():
+def test_overset_map_epoch_and_geometry_are_compiler_identities() -> None:
     system, discretization, overset, dynamics, runtime = _compiled(epoch_id="epoch-a")
     assert dynamics.coupling.overset_epoch_id == "epoch-a"
     assert dynamics.overset_mapping_id == overset.identity
@@ -208,7 +214,7 @@ def test_overset_map_epoch_and_geometry_are_compiler_identities():
     assert prepared.overset_epoch_id == "stale-epoch"
 
 
-def test_vof_overset_uses_one_donor_aperture_for_partial_mass_and_alpha_fluxes():
+def test_vof_overset_uses_one_donor_aperture_for_partial_mass_and_alpha_fluxes() -> None:
     eos = phx.equations.TwoMaterialEOSClosure(
         phx.equations.IdealGasMaterial(1.4),
         phx.equations.StiffenedGasMaterial(4.4, 2.0, 1.0),
@@ -279,6 +285,7 @@ def test_vof_overset_uses_one_donor_aperture_for_partial_mass_and_alpha_fluxes()
         coupling=coupling,
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(
             fallback_flux=phx.discretization.RusanovFluxPlan()

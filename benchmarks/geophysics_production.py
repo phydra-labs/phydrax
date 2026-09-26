@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -54,14 +56,14 @@ def _distributed_case(part_count: int, entities_per_part: int) -> dict[str, obje
     left_valid_ = jnp.asarray(left_valid)
     right_valid_ = jnp.asarray(right_valid)
 
-    def local_action(part, local, global_ids, local_valid, local_owned):
+    def local_action(part: Any, local: Any, global_ids: Any, local_valid: Any, local_owned: Any) -> Any:
         del global_ids
         left = jnp.where(left_valid_[part], local[left_indices_[part]], 0.0)
         right = jnp.where(right_valid_[part], local[right_indices_[part]], 0.0)
         result = 2.0 * local - left - right
         return jnp.where(local_valid & local_owned, result, 0.0)
 
-    def local_transpose(part, local, global_ids, local_valid, local_owned):
+    def local_transpose(part: Any, local: Any, global_ids: Any, local_valid: Any, local_owned: Any) -> Any:
         del global_ids
         rows = jnp.where(local_owned, local, 0.0)
         result = 2.0 * rows
@@ -154,14 +156,14 @@ def _advance(
     source: np.ndarray,
     start: int,
     stop: int,
-):
+) -> Any:
     value = state
     for index in range(start, stop):
         value = plan.step(value, 1.5, acquisition, source[index])
     return value
 
 
-def _expected_failure(error_type, action) -> bool:
+def _expected_failure(error_type: Any, action: Any) -> bool:
     try:
         action()
     except error_type:

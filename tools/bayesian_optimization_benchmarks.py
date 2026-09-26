@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from time import perf_counter
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -14,7 +15,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def run(*, budget: int, batch_size: int, candidates: int, fantasies: int):
+def run(*, budget: int, batch_size: int, candidates: int, fantasies: int) -> Any:
     domain = phx.uq.BayesianOptimizationDomain(
         jnp.asarray([0.5, 0.5]),
         lower_bounds=jnp.zeros((2,)),

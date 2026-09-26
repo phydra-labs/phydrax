@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -9,7 +12,7 @@ import phydrax as phx
 
 
 class _IncomingWeightedSource:
-    def __call__(self, graph):
+    def __call__(self, graph: Any) -> Any:
         nodes = graph.nodes if graph.nodes.ndim == 1 else graph.nodes[:, 0]
         messages = graph.edges * nodes[graph.senders]
         nodes = phx.graph.segment_sum(messages, graph.receivers, graph.num_nodes)
@@ -44,7 +47,7 @@ def _domain() -> phx.domain.GraphTrajectoryDatasetDomain:
     )
 
 
-def test_graph_trajectory_points_from_case_time_repeats_time_over_nodes():
+def test_graph_trajectory_points_from_case_time_repeats_time_over_nodes() -> None:
     domain = _domain()
     component = domain.component(
         {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
@@ -69,7 +72,7 @@ def test_graph_trajectory_points_from_case_time_repeats_time_over_nodes():
     )
 
 
-def test_graph_trajectory_domain_function_evaluates_graph_and_time():
+def test_graph_trajectory_domain_function_evaluates_graph_and_time() -> None:
     domain = _domain()
     component = domain.component(
         {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
@@ -82,15 +85,16 @@ def test_graph_trajectory_domain_function_evaluates_graph_and_time():
     )
 
     @domain.Function("graph", "t")
-    def u(node, t):
+    def u(node: Any, t: Any) -> Any:
         return node[0] + t
 
     assert jnp.allclose(jnp.asarray(u(batch).data), jnp.array([0.5, 1.5, 3.0, 5.0, 9.0]))
 
 
-def test_graph_trajectory_gradient_remaps_time_from_edges_to_nodes():
+def test_graph_trajectory_gradient_remaps_time_from_edges_to_nodes() -> None:
     domain = _domain()
     component = domain.component(
+        # ty: ignore[invalid-argument-type]
         {"graph": phx.domain.EdgeSet([0]), "t": phx.domain.Interior()}
     )
     batch = domain.points_from_case_time(
@@ -101,22 +105,23 @@ def test_graph_trajectory_gradient_remaps_time_from_edges_to_nodes():
     )
 
     @domain.Function("graph", "t")
-    def u(node, t):
+    def u(node: Any, t: Any) -> Any:
         return node[0] + t
 
     grad = phx.operators.graph_gradient(u)
     assert jnp.allclose(jnp.asarray(grad(batch).data), jnp.array([1.0, 2.0]))
 
 
-def test_graph_trajectory_residual_penalty_samples_fixed_start_edges():
+def test_graph_trajectory_residual_penalty_samples_fixed_start_edges() -> None:
     domain = _domain()
     component = domain.component(
+        # ty: ignore[invalid-argument-type]
         {"graph": phx.domain.EdgeSet([0]), "t": phx.domain.FixedStart()}
     )
     structure = phx.domain.SampleLayout((("graph", "t"),))
 
     @domain.Function("graph", "t")
-    def u(node, t):
+    def u(node: Any, t: Any) -> float:
         del node, t
         return 2.0
 
@@ -130,9 +135,10 @@ def test_graph_trajectory_residual_penalty_samples_fixed_start_edges():
     assert term.loss({"u": u}, key=jr.key(0)) < 1e-12
 
 
-def test_graph_trajectory_graph_model_input_fn_uses_time_on_full_node_view():
+def test_graph_trajectory_graph_model_input_fn_uses_time_on_full_node_view() -> None:
     domain = _domain()
     component = domain.component(
+        # ty: ignore[invalid-argument-type]
         {"graph": phx.domain.BoundaryNodes([1]), "t": phx.domain.Interior()}
     )
     batch = domain.points_from_case_time(
@@ -143,7 +149,7 @@ def test_graph_trajectory_graph_model_input_fn_uses_time_on_full_node_view():
     )
 
     @domain.Function("graph", "t")
-    def input_fn(node, t):
+    def input_fn(node: Any, t: Any) -> Any:
         return node[0] + t
 
     model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes)
@@ -152,9 +158,10 @@ def test_graph_trajectory_graph_model_input_fn_uses_time_on_full_node_view():
     assert jnp.allclose(jnp.asarray(u(batch).data), jnp.array([1.5, 5.0]))
 
 
-def test_graph_trajectory_graph_model_edge_input_fn_uses_time_on_full_edge_view():
+def test_graph_trajectory_graph_model_edge_input_fn_uses_time_on_full_edge_view() -> None:
     domain = _domain()
     component = domain.component(
+        # ty: ignore[invalid-argument-type]
         {"graph": phx.domain.BoundaryNodes([1]), "t": phx.domain.Interior()}
     )
     batch = domain.points_from_case_time(
@@ -165,11 +172,11 @@ def test_graph_trajectory_graph_model_edge_input_fn_uses_time_on_full_edge_view(
     )
 
     @domain.Function("graph", "t")
-    def u(node, t):
+    def u(node: Any, t: Any) -> Any:
         return node[0] + t
 
     @domain.Function("graph", "t")
-    def k(edge, t):
+    def k(edge: Any, t: Any) -> Any:
         return edge[0] + t
 
     model = domain.GraphModel(
@@ -181,7 +188,7 @@ def test_graph_trajectory_graph_model_edge_input_fn_uses_time_on_full_edge_view(
     assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([0.75, 6.0]))
 
 
-def test_graph_trajectory_layout_packs_topology_but_exposes_real_time_rows():
+def test_graph_trajectory_layout_packs_topology_but_exposes_real_time_rows() -> None:
     base = _domain()
     domain = base.with_layout(base.layout_for_batch_size(2, multiple=2))
     component = domain.component(

@@ -637,8 +637,7 @@ class GraphAttentionOperator(StrictModule):
         node_type_key: str = "type",
         target_node_type: int | None = None,
     ) -> None:
-        if flow not in ("source_to_target", "target_to_source"):
-            raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
+        flow = parse(flow, GraphFlow, "flow")
         if head_reduction not in ("concat", "mean"):
             raise ValueError("head_reduction must be 'concat' or 'mean'.")
         self.query_fn = query_fn

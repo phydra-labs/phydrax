@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from pathlib import Path
+from typing import Any
 
 import pytest
 from OCP.BOPAlgo import BOPAlgo_CellsBuilder
@@ -41,11 +43,11 @@ from phydrax.units import MILLIMETER
 _COORDINATES = SpatialCoordinateContract(MILLIMETER)
 
 
-def _box(x: float, length: float = 1.0):
+def _box(x: float, length: float = 1.0) -> Any:
     return BRepPrimAPI_MakeBox(gp_Pnt(x, 0.0, 0.0), length, 1.0, 1.0).Shape()
 
 
-def _persist(tmp_path: Path, name: str, shape):
+def _persist(tmp_path: Path, name: str, shape: Any) -> Any:
     return persist_occt_shape(
         shape,
         tmp_path / f"{name}.brep",
@@ -57,11 +59,11 @@ def _persist(tmp_path: Path, name: str, shape):
 
 def _operand(
     operand_id: str,
-    model,
+    model: Any,
     role: BRepPartitionRole = BRepPartitionRole.REGION,
     *,
     targets: tuple[str, ...] = (),
-):
+) -> Any:
     revision = cad_revision_from_brep_model(model)
     selection = CADSelectionSet.from_revision(
         revision,
@@ -81,11 +83,11 @@ def _operand(
 
 
 def _plan(
-    operands,
+    operands: Any,
     precedence: tuple[str, ...],
     *,
     overwrite: bool = False,
-):
+) -> Any:
     return BRepPartitionPlan(
         _COORDINATES,
         tuple(operands),
@@ -93,7 +95,7 @@ def _plan(
     )
 
 
-def _execute(plan, destination: Path):
+def _execute(plan: Any, destination: Path) -> Any:
     return partition_brep(
         plan,
         destination=destination,
@@ -102,13 +104,14 @@ def _execute(plan, destination: Path):
     )
 
 
-def _solid_volumes(result) -> dict[BRepEntityId, float]:
+def _solid_volumes(result: Any) -> dict[BRepEntityId, float]:
     shape, source_format, source_digest = read_occt_shape(result.model.source_id)
     assert source_format == "brep"
     assert source_digest == result.model.source_digest
     explorer = TopExp_Explorer(shape, TopAbs_SOLID)
     solids = []
     while explorer.More():
+        # ty: ignore[unresolved-attribute]
         candidate = TopoDS.Solid_s(explorer.Current())
         if not any(value.IsSame(candidate) for value in solids):
             solids.append(candidate)
@@ -121,7 +124,9 @@ def _solid_volumes(result) -> dict[BRepEntityId, float]:
     return volumes
 
 
-def test_touching_regions_publish_exact_interface_and_meshing_entity_sets(tmp_path):
+def test_touching_regions_publish_exact_interface_and_meshing_entity_sets(
+    tmp_path: Any,
+) -> None:
     left = _persist(tmp_path, "left", _box(0.0))
     right = _persist(tmp_path, "right", _box(1.0))
     result = _execute(
@@ -178,7 +183,7 @@ def test_touching_regions_publish_exact_interface_and_meshing_entity_sets(tmp_pa
     assert interface_scope.entity_dimension == 2
 
 
-def test_disjoint_regions_have_only_one_sided_boundary_patches(tmp_path):
+def test_disjoint_regions_have_only_one_sided_boundary_patches(tmp_path: Any) -> None:
     first = _persist(tmp_path, "first", _box(0.0))
     second = _persist(tmp_path, "second", _box(2.0))
     result = _execute(
@@ -197,7 +202,7 @@ def test_disjoint_regions_have_only_one_sided_boundary_patches(tmp_path):
     assert all(len(indices) == 1 for indices in result.model.topology.face_solids)
 
 
-def test_explicit_precedence_is_independent_of_operand_order(tmp_path):
+def test_explicit_precedence_is_independent_of_operand_order(tmp_path: Any) -> None:
     high = _persist(tmp_path, "high", _box(0.0, 2.0))
     low = _persist(tmp_path, "low", _box(1.0, 2.0))
     forward = _execute(
@@ -226,7 +231,7 @@ def test_explicit_precedence_is_independent_of_operand_order(tmp_path):
     ) == pytest.approx(1.0)
 
 
-def test_void_subtracts_only_its_declared_target_region(tmp_path):
+def test_void_subtracts_only_its_declared_target_region(tmp_path: Any) -> None:
     left = _persist(tmp_path, "void-left", _box(0.0, 2.0))
     right = _persist(tmp_path, "void-right", _box(3.0, 2.0))
     cutting = _persist(tmp_path, "cutting", _box(1.0, 3.0))
@@ -256,7 +261,7 @@ def test_void_subtracts_only_its_declared_target_region(tmp_path):
     ) == pytest.approx(2.0)
 
 
-def test_split_and_deleted_histories_map_exact_selection_sets(tmp_path):
+def test_split_and_deleted_histories_map_exact_selection_sets(tmp_path: Any) -> None:
     region = _persist(tmp_path, "split-region", _box(0.0, 3.0))
     cutting = _persist(tmp_path, "split-cut", _box(1.0, 1.0))
     result = _execute(
@@ -300,11 +305,11 @@ def test_split_and_deleted_histories_map_exact_selection_sets(tmp_path):
 
 
 def test_missing_binding_history_is_unresolved_and_publishes_nothing(
-    tmp_path,
-    monkeypatch,
-):
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
     class NoHistoryCellsBuilder(BOPAlgo_CellsBuilder):
-        def HasHistory(self):
+        def HasHistory(self) -> bool:
             return False
 
     region = _persist(tmp_path, "unresolved-region", _box(0.0))
@@ -336,13 +341,15 @@ def test_missing_binding_history_is_unresolved_and_publishes_nothing(
     assert not tuple(tmp_path.glob(f".{destination.name}.partition-*"))
 
 
-def test_staging_failure_does_not_clobber_existing_destination(tmp_path, monkeypatch):
+def test_staging_failure_does_not_clobber_existing_destination(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     region = _persist(tmp_path, "failure-region", _box(0.0))
     disjoint_void = _persist(tmp_path, "failure-void", _box(2.0))
     destination = tmp_path / "existing.brep"
     destination.write_bytes(b"existing-artifact")
 
-    def fail_persistence(*args, **kwargs):
+    def fail_persistence(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("staged persistence failed")
 
     monkeypatch.setattr(
@@ -371,7 +378,7 @@ def test_staging_failure_does_not_clobber_existing_destination(tmp_path, monkeyp
     assert not tuple(tmp_path.glob(f".{destination.name}.partition-*"))
 
 
-def test_revision_children_rejects_a_forged_parent_selector():
+def test_revision_children_rejects_a_forged_parent_selector() -> None:
     parent = CADOccurrence(
         "revision",
         "root",

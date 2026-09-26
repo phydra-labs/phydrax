@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -30,12 +32,12 @@ _VERTICES = jnp.asarray(
 _FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32)
 
 
-def _region():
+def _region() -> Any:
     return phx.geometry.MeshRegion(_VERTICES, _FACES)
 
 
 @pytest.fixture(scope="module")
-def elasticity_prepared():
+def elasticity_prepared() -> Any:
     return prepare_elasticity_single_layer_dp0_3d(
         _region(),
         shear_modulus=2.0,
@@ -53,7 +55,7 @@ def elasticity_prepared():
 
 
 @pytest.fixture(scope="module")
-def stokes_prepared():
+def stokes_prepared() -> Any:
     return prepare_stokes_single_layer_dp0_3d(
         _region(),
         viscosity=2.0,
@@ -69,7 +71,7 @@ def stokes_prepared():
     )
 
 
-def test_kelvin_kernel_matches_point_source_and_reciprocity():
+def test_kelvin_kernel_matches_point_source_and_reciprocity() -> None:
     mu = 2.0
     nu = 0.25
     kernel = ElasticityLayerKernel3D(mu, nu)
@@ -95,7 +97,7 @@ def test_kelvin_kernel_matches_point_source_and_reciprocity():
     assert "dynamic" in " ".join(kernel.contract.non_goals)
 
 
-def test_stokeslet_matches_point_source_pressure_and_reciprocity():
+def test_stokeslet_matches_point_source_pressure_and_reciprocity() -> None:
     viscosity = 2.0
     kernel = StokesLayerKernel3D(viscosity)
     source = jnp.asarray([0.0, 0.0, 0.0])
@@ -122,7 +124,9 @@ def test_stokeslet_matches_point_source_pressure_and_reciprocity():
     assert "Navier-Stokes" in " ".join(kernel.contract.non_goals)
 
 
-def test_elasticity_prepared_reciprocity_transpose_modes_and_field(elasticity_prepared):
+def test_elasticity_prepared_reciprocity_transpose_modes_and_field(
+    elasticity_prepared: Any,
+) -> None:
     prepared = elasticity_prepared
     weak = prepared.weak_operator.matrix
     assert prepared.assembly_report.pair_counts == (4, 12, 0, 0)
@@ -164,7 +168,9 @@ def test_elasticity_prepared_reciprocity_transpose_modes_and_field(elasticity_pr
     assert jnp.all(jnp.isfinite(value))
 
 
-def test_stokes_prepared_reciprocity_transpose_constraints_and_field(stokes_prepared):
+def test_stokes_prepared_reciprocity_transpose_constraints_and_field(
+    stokes_prepared: Any,
+) -> None:
     prepared = stokes_prepared
     weak = prepared.weak_operator.matrix
     assert prepared.assembly_report.pair_counts == (4, 12, 0, 0)
@@ -218,8 +224,8 @@ def test_stokes_prepared_reciprocity_transpose_constraints_and_field(stokes_prep
 
 
 def test_named_elasticity_and_stokes_dirichlet_solves(
-    elasticity_prepared, stokes_prepared
-):
+    elasticity_prepared: Any, stokes_prepared: Any
+) -> None:
     elastic_trace = jnp.broadcast_to(
         jnp.asarray([0.2, -0.1, 0.3]), (elasticity_prepared.face_count, 3)
     )
@@ -250,7 +256,9 @@ def test_named_elasticity_and_stokes_dirichlet_solves(
     assert jnp.all(jnp.isfinite(stokes_value))
 
 
-def test_pressure_unsupported_and_displacement_discontinuity_contract(stokes_prepared):
+def test_pressure_unsupported_and_displacement_discontinuity_contract(
+    stokes_prepared: Any,
+) -> None:
     double_layer = StokesLayerPotential3D(
         stokes_prepared.panelization,
         viscosity=2.0,

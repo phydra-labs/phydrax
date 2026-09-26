@@ -19,7 +19,7 @@ def _make_graph(n_nodes: int = 3) -> vx.GraphIR:
     )
 
 
-def test_layout_pack_and_unpack():
+def test_layout_pack_and_unpack() -> None:
     graph = _make_graph(3)
     plan = vx.LayoutPlan(max_nodes=8, max_edges=8, max_graphs=4)
 
@@ -33,7 +33,7 @@ def test_layout_pack_and_unpack():
     assert restored.num_edges == graph.num_edges
 
 
-def test_layout_pack_jit_runs():
+def test_layout_pack_jit_runs() -> None:
     graph = _make_graph(3)
     plan = vx.LayoutPlan(max_nodes=8, max_edges=8, max_graphs=4)
 
@@ -44,7 +44,7 @@ def test_layout_pack_jit_runs():
     assert packed.n_node.shape[0] == 4
 
 
-def test_layout_unpack_jit_raises_shape_error():
+def test_layout_unpack_jit_raises_shape_error() -> None:
     graph = _make_graph(3)
     plan = vx.LayoutPlan(max_nodes=8, max_edges=8, max_graphs=4)
     packed = plan.pack(graph)
@@ -53,7 +53,7 @@ def test_layout_unpack_jit_raises_shape_error():
         jax.jit(plan.unpack)(packed)
 
 
-def test_pack_graphs_helper():
+def test_pack_graphs_helper() -> None:
     g1 = _make_graph(2)
     g2 = _make_graph(3)
     plan = vx.LayoutPlan(max_nodes=8, max_edges=8, max_graphs=4)

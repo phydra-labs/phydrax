@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,7 +17,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _mesh(width):
+def _mesh(width: Any) -> Any:
     coordinates = np.linspace(0.0, 1.0, width + 1)
     vertices = np.asarray([(x, y) for y in coordinates for x in coordinates])
     triangles = []
@@ -35,7 +36,7 @@ def _mesh(width):
     return vertices, np.asarray(triangles, dtype=np.int32)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--width", type=int, default=64)
     parser.add_argument("--repeats", type=int, default=10)

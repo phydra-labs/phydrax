@@ -567,7 +567,10 @@ def _validate_policy(
             "player-partition binding."
         )
     # The compatibility check above admits only these two time-bound policies.
-    assert isinstance(policy, (BoundGameInputPolicy, LocalAffineGamePolicy))
+    if not (isinstance(policy, (BoundGameInputPolicy, LocalAffineGamePolicy))):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(policy, (BoundGameInputPolicy, LocalAffineGamePolicy))."
+        )
     checked_times = eqx.error_if(
         policy.time_grid.times,
         jnp.any(policy.time_grid.times != problem.time_grid.times),

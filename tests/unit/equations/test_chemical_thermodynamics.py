@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _gas_schema():
+def _gas_schema() -> Any:
     return phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A",),
         (phx.equations.ChemicalPhaseKind.GAS,),
@@ -21,7 +24,7 @@ def _gas_schema():
     )
 
 
-def test_nasa7_constant_heat_capacity_identities_and_derivative():
+def test_nasa7_constant_heat_capacity_identities_and_derivative() -> None:
     schema = _gas_schema()
     coefficients = jnp.asarray([[[3.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]])
     plan = phx.equations.NASASpeciesThermodynamicsPlan(
@@ -57,7 +60,7 @@ def test_nasa7_constant_heat_capacity_identities_and_derivative():
     assert not plan.evaluate(jnp.asarray(100.0)).successful
 
 
-def test_polynomial_thermodynamics_and_particle_energy_inversion():
+def test_polynomial_thermodynamics_and_particle_energy_inversion() -> None:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("solid",),
         (phx.equations.ChemicalPhaseKind.SOLID,),

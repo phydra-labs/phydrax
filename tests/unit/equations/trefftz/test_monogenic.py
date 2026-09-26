@@ -13,7 +13,7 @@ import phydrax as phx
 cl = phx.metrix.clifford
 
 
-def test_monogenic_basis_rank_is_deterministic_and_dirac_null():
+def test_monogenic_basis_rank_is_deterministic_and_dirac_null() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1, 1))
     first = phx.equations.MonogenicPolynomialBasis(algebra, 2)
     second = phx.equations.MonogenicPolynomialBasis(algebra, 2)
@@ -27,7 +27,7 @@ def test_monogenic_basis_rank_is_deterministic_and_dirac_null():
     assert float(first.certificate.construction_residual) == 0.0
 
 
-def test_monogenic_analytic_partial_matches_forward_ad():
+def test_monogenic_analytic_partial_matches_forward_ad() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     basis = phx.equations.MonogenicPolynomialBasis(algebra, 3)
     point = jnp.asarray([0.2, -0.35])
@@ -42,9 +42,10 @@ def test_monogenic_analytic_partial_matches_forward_ad():
         )
 
 
-def test_dirac_square_matches_flat_signed_laplacian():
+def test_dirac_square_matches_flat_signed_laplacian() -> None:
     algebra = cl.CliffordAlgebraSpec((1, -1))
     layout = cl.CliffordBladeLayout.full(algebra)
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0))
     field = domain.Function("x")(
         lambda x: jnp.asarray([x[0] ** 2 + 3.0 * x[1] ** 2, 0.0, 0.0, 0.0])
@@ -57,7 +58,7 @@ def test_dirac_square_matches_flat_signed_laplacian():
     assert jnp.allclose(second(batch).data, expected)
 
 
-def test_bound_monogenic_field_audits_and_generic_algebra_drops_certificate():
+def test_bound_monogenic_field_audits_and_generic_algebra_drops_certificate() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     basis = phx.equations.MonogenicPolynomialBasis(algebra, 2)
     model = phx.equations.LinearMonogenicField(
@@ -65,18 +66,21 @@ def test_bound_monogenic_field_audits_and_generic_algebra_drops_certificate():
         initial_scale=0.2,
         key=jr.key(2),
     )
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0))
     field = domain.Model("x")(model)
     batch = domain.component().sample(phx.domain.PointSampling(12), key=jr.key(3))
+    # ty: ignore[invalid-argument-type]
     report = phx.equations.audit_trial_space(field, batch)
 
     assert bool(report.valid)
     assert float(report.maximum_residual) < 1e-11
     with pytest.raises(TypeError, match="no TrialSpaceCertificate"):
+        # ty: ignore[invalid-argument-type]
         phx.equations.audit_trial_space(2.0 * field, batch)
 
 
-def test_monogenic_resource_budget_fails_before_basis_materialization():
+def test_monogenic_resource_budget_fails_before_basis_materialization() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1, 1))
     resources = phx.equations.TrefftzResourceBudget(maximum_rank=10)
     with pytest.raises(ValueError, match="exceeds its resource budget"):
@@ -87,7 +91,7 @@ def test_monogenic_resource_budget_fails_before_basis_materialization():
         )
 
 
-def test_degenerate_monogenic_basis_and_dirac_are_rejected():
+def test_degenerate_monogenic_basis_and_dirac_are_rejected() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 0))
     with pytest.raises(ValueError, match="nondegenerate"):
         phx.equations.MonogenicPolynomialBasis(algebra, 1)

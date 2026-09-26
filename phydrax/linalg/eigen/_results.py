@@ -13,6 +13,7 @@ from jax import Array
 from jaxtyping import PyTree
 
 from ..._strict import StrictModule
+from ...typing import parse
 from ._policies import EigenDifferentiationMode, EigenTarget
 
 
@@ -133,15 +134,10 @@ class EigenSolveProvenance(StrictModule):
         method_, problem_id_, plan_id_ = str(method), str(problem_id), str(plan_id)
         if not method_ or not problem_id_ or not plan_id_:
             raise ValueError("Eigen provenance identifiers must be non-empty.")
-        if which not in (
-            "smallest-algebraic",
-            "largest-algebraic",
-            "smallest-magnitude",
-            "largest-magnitude",
-        ):
-            raise ValueError("Unknown eigen provenance target.")
-        if differentiation not in ("none", "eigenvalues"):
-            raise ValueError("Unknown eigen provenance differentiation mode.")
+        which = parse(which, EigenTarget, "which")
+        differentiation = parse(
+            differentiation, EigenDifferentiationMode, "differentiation"
+        )
         rejections_ = tuple(str(value) for value in rejections)
         if any(not value for value in rejections_):
             raise ValueError("Eigen provenance rejection reasons must be non-empty.")

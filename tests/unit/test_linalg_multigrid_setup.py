@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _positive_definite_properties():
+def _positive_definite_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -24,13 +27,13 @@ def _positive_definite_properties():
     )
 
 
-def _poisson_matrix(size):
+def _poisson_matrix(size: Any) -> Any:
     diagonal = 2.0 * jnp.eye(size)
     off_diagonal = jnp.eye(size, k=1) + jnp.eye(size, k=-1)
     return diagonal - off_diagonal
 
 
-def _sparse_map(matrix, *, properties=None):
+def _sparse_map(matrix: Any, *, properties: Any = None) -> Any:
     rows, columns = jnp.nonzero(matrix)
     relation = phx.sparse.EdgeRelation(
         columns,
@@ -45,7 +48,7 @@ def _sparse_map(matrix, *, properties=None):
     )
 
 
-def test_exact_galerkin_builder_constructs_rap_and_reuses_transfers_on_refresh():
+def test_exact_galerkin_builder_constructs_rap_and_reuses_transfers_on_refresh() -> None:
     fine = la.ArraySpace((4,), dtype=jnp.float64)
     coarse = la.ArraySpace((2,), dtype=jnp.float64)
     fine_matrix = _poisson_matrix(4)
@@ -114,12 +117,14 @@ def test_exact_galerkin_builder_constructs_rap_and_reuses_transfers_on_refresh()
         materialization=materialization,
     )
     refreshed_coarse = la.materialize(
+        # ty: ignore[unresolved-attribute]
         refreshed.hierarchy.levels[1].operator,
         materialization,
     )
 
     assert any(
         "transfers-reused" in decision
+        # ty: ignore[unresolved-attribute]
         for decision in refreshed.hierarchy.diagnostics.reuse_decisions
     )
     assert jnp.allclose(
@@ -128,7 +133,7 @@ def test_exact_galerkin_builder_constructs_rap_and_reuses_transfers_on_refresh()
     )
 
 
-def test_explicit_hierarchy_reports_peak_level_setup_workspace():
+def test_explicit_hierarchy_reports_peak_level_setup_workspace() -> None:
     fine = la.ArraySpace((4,), dtype=jnp.float64)
     coarse = la.ArraySpace((2,), dtype=jnp.float64)
     fine_matrix = _poisson_matrix(4)
@@ -194,7 +199,7 @@ def test_explicit_hierarchy_reports_peak_level_setup_workspace():
     )
 
 
-def test_smoothed_aggregation_builds_decreasing_deterministic_hierarchy():
+def test_smoothed_aggregation_builds_decreasing_deterministic_hierarchy() -> None:
     size = 8
     space = la.ArraySpace((size,), dtype=jnp.float64)
     operator = la.DenseLinearOperator(
@@ -256,13 +261,16 @@ def test_smoothed_aggregation_builds_decreasing_deterministic_hierarchy():
     )
     assert any(
         "reuse-invalidated-builder-dependency-change" in decision
+        # ty: ignore[unresolved-attribute]
         for decision in invalidated.hierarchy.diagnostics.reuse_decisions
     )
     assert not any(
         "aggregates-reused" in decision
+        # ty: ignore[unresolved-attribute]
         for decision in invalidated.hierarchy.diagnostics.reuse_decisions
     )
     assert (
+        # ty: ignore[unresolved-attribute]
         invalidated.hierarchy.diagnostics.reuse_dependency_fingerprint
         == changed_builder.builder_id
     )
@@ -278,7 +286,7 @@ def test_smoothed_aggregation_builds_decreasing_deterministic_hierarchy():
     assert "explicit dense/canonical-CSR" in rejected.reason
 
 
-def test_galerkin_route_planning_preserves_sparse_and_matrix_free_paths():
+def test_galerkin_route_planning_preserves_sparse_and_matrix_free_paths() -> None:
     fine_matrix = _poisson_matrix(4)
     prolongation_matrix = jnp.asarray(
         [
@@ -313,6 +321,7 @@ def test_galerkin_route_planning_preserves_sparse_and_matrix_free_paths():
     assert sparse_hierarchy.diagnostics.coarse_construction_modes == (
         "planned-sparse-assembly",
     )
+    # ty: ignore[unresolved-attribute]
     assert sparse_hierarchy.levels[1].operator.sparse_storage().canonical
     assert sparse_hierarchy.sparse_assemblies[0] is not None
     assert jnp.allclose(
@@ -380,7 +389,9 @@ def test_galerkin_route_planning_preserves_sparse_and_matrix_free_paths():
     assert "matrix-free" in guarded.reason
 
 
-def test_symbolic_sparse_galerkin_refresh_reuses_routes_and_invalidates_patterns():
+def test_symbolic_sparse_galerkin_refresh_reuses_routes_and_invalidates_patterns() -> (
+    None
+):
     fine_matrix = _poisson_matrix(4)
     prolongation_matrix = jnp.asarray(
         [
@@ -404,6 +415,7 @@ def test_symbolic_sparse_galerkin_refresh_reuses_routes_and_invalidates_patterns
     )
     materialization = la.MaterializationPolicy(max_entries=1, max_bytes=64)
     action = builder.prepare(operator, materialization=materialization)
+    # ty: ignore[unresolved-attribute]
     original_assembly = action.hierarchy.sparse_assemblies[0]
     assert original_assembly is not None
 
@@ -417,6 +429,7 @@ def test_symbolic_sparse_galerkin_refresh_reuses_routes_and_invalidates_patterns
         changed_operator,
         materialization=materialization,
     )
+    # ty: ignore[unresolved-attribute]
     refreshed_assembly = refreshed.hierarchy.sparse_assemblies[0]
 
     assert refreshed_assembly is not None
@@ -424,10 +437,12 @@ def test_symbolic_sparse_galerkin_refresh_reuses_routes_and_invalidates_patterns
     assert refreshed_assembly.numeric_version == 1
     assert any(
         "sparse-route-reused;coarse-values-refreshed" in decision
+        # ty: ignore[unresolved-attribute]
         for decision in refreshed.hierarchy.diagnostics.reuse_decisions
     )
     assert jnp.allclose(
         la.materialize(
+            # ty: ignore[unresolved-attribute]
             refreshed.hierarchy.levels[1].operator,
             la.MaterializationPolicy(max_entries=4, max_bytes=1024),
         ),
@@ -443,17 +458,19 @@ def test_symbolic_sparse_galerkin_refresh_reuses_routes_and_invalidates_patterns
         ),
         materialization=materialization,
     )
+    # ty: ignore[unresolved-attribute]
     rebuilt_assembly = rebuilt.hierarchy.sparse_assemblies[0]
 
     assert rebuilt_assembly is not None
     assert rebuilt_assembly.numeric_version == 0
     assert any(
         "reuse-invalidated-pattern-change" in decision
+        # ty: ignore[unresolved-attribute]
         for decision in rebuilt.hierarchy.diagnostics.reuse_decisions
     )
 
 
-def test_smoothed_aggregation_reuses_symbolic_sparse_products():
+def test_smoothed_aggregation_reuses_symbolic_sparse_products() -> None:
     size = 8
     matrix = _poisson_matrix(size)
     operator = _sparse_map(
@@ -484,20 +501,24 @@ def test_smoothed_aggregation_reuses_symbolic_sparse_products():
         materialization=materialization,
     )
 
+    # ty: ignore[unresolved-attribute]
     assert all(value is not None for value in action.hierarchy.sparse_assemblies)
     assert all(
         value is not None and value.numeric_version == 1
+        # ty: ignore[unresolved-attribute]
         for value in refreshed.hierarchy.sparse_assemblies
     )
     assert all(
         "sparse-route-reused;coarse-values-refreshed" in decision
+        # ty: ignore[unresolved-attribute]
         for decision in refreshed.hierarchy.diagnostics.reuse_decisions[
+            # ty: ignore[unresolved-attribute]
             : len(refreshed.hierarchy.sparse_assemblies)
         ]
     )
 
 
-def test_smoothed_aggregation_costs_terminal_coarse_solver_not_fine_operator():
+def test_smoothed_aggregation_costs_terminal_coarse_solver_not_fine_operator() -> None:
     size = 8
     operator = _sparse_map(
         _poisson_matrix(size),
@@ -530,7 +551,7 @@ def test_smoothed_aggregation_costs_terminal_coarse_solver_not_fine_operator():
     assert "dense" in rejected.reason
 
 
-def test_optional_pyamg_conversion_produces_jittable_phydrax_hierarchy():
+def test_optional_pyamg_conversion_produces_jittable_phydrax_hierarchy() -> None:
     pyamg = pytest.importorskip("pyamg")
     scipy_sparse = pytest.importorskip("scipy.sparse")
     matrix = scipy_sparse.diags(

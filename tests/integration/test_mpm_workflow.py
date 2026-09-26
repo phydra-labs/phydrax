@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_public_material_point_compile_rollout_and_gradient_workflow():
+def test_public_material_point_compile_rollout_and_gradient_workflow() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(16, periodic=True, endpoint=False),
@@ -74,7 +76,7 @@ def test_public_material_point_compile_rollout_and_gradient_workflow():
     assert jnp.all(result.transfer_successful)
     assert jnp.all(jnp.isfinite(result.final_state.particles.position))
 
-    def loss(scale):
+    def loss(scale: Any) -> Any:
         scaled_velocity = velocity * scale
         state = compiled.initialize_state(position, scaled_velocity, volume, arguments)
         final = (

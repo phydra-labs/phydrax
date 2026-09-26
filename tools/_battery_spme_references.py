@@ -19,13 +19,14 @@ import platform
 from dataclasses import asdict, dataclass
 from importlib.metadata import distribution, version
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from scipy.sparse import block_diag, bmat, csr_matrix, diags
 from scipy.sparse.linalg import expm_multiply
 
 
-def _reference_fingerprint(value):
+def _reference_fingerprint(value: Any) -> Any:
     # Same canonical JSON byte contract, without importing the engine under test
     # into the independently installed reference process.
     return hashlib.sha256(
@@ -50,7 +51,7 @@ REFERENCE_CURRENTS = (0.2, 0.0, -0.05)
 REFERENCE_ENGINES = ("self-authored-marquis-eq48", f"pybamm:{PYBAMM_VERSION}")
 
 
-def reference_runtime_identity(engine):
+def reference_runtime_identity(engine: Any) -> Any:
     """Fingerprint actual installed code/binaries, not the upstream tag assumed."""
     names = (
         ("numpy", "scipy")
@@ -78,10 +79,12 @@ def reference_runtime_identity(engine):
             ):
                 continue
             path = installed.locate_file(item)
+            # ty: ignore[unresolved-attribute]
             if not path.is_file():
                 raise FileNotFoundError(
                     f"Installed reference dependency bytes are missing: {item}"
                 )
+            # ty: ignore[unresolved-attribute]
             with path.open("rb") as stream:
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
             files.append((str(item), digest))
@@ -129,7 +132,7 @@ class SyntheticSpmeData:
     initial_stoichiometries: tuple[float, float] = (0.5, 0.5)
     maximum_current: float = 0.5
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         positive = (
             self.area,
             *self.lengths,
@@ -164,12 +167,12 @@ class SyntheticSpmeData:
             raise ValueError("OCP values must be finite.")
 
     @property
-    def data_id(self):
+    def data_id(self) -> Any:
         return _reference_fingerprint(
             {"kind": "self-authored-spme-equation-fixture", **asdict(self)}
         )
 
-    def mapping_record(self):
+    def mapping_record(self) -> Any:
         return {
             "data_id": self.data_id,
             "parameters_si": asdict(self),
@@ -185,7 +188,7 @@ class SyntheticSpmeData:
         }
 
 
-def native_parameters(data: SyntheticSpmeData = SyntheticSpmeData()):
+def native_parameters(data: SyntheticSpmeData = SyntheticSpmeData()) -> Any:
     """Map synthetic SI data to existing native property and parameter substrates."""
     import jax.numpy as jnp
 
@@ -196,7 +199,7 @@ def native_parameters(data: SyntheticSpmeData = SyntheticSpmeData()):
     from phydrax.applications.battery._spm import SpmParameters
     from phydrax.applications.battery._spme_marquis2019 import Marquis2019SpmeParameters
 
-    def constant(value, quantity, unit):
+    def constant(value: Any, quantity: Any, unit: Any) -> Any:
         potential = unit == "V"
         return ConstantPropertyLaw(
             jnp.asarray(value),
@@ -209,7 +212,7 @@ def native_parameters(data: SyntheticSpmeData = SyntheticSpmeData()):
             source_id=data.data_id,
         )
 
-    def electrolyte(value, quantity, unit):
+    def electrolyte(value: Any, quantity: Any, unit: Any) -> Any:
         return ConcentrationTemperaturePropertyLaw(
             jnp.asarray((100.0, 2000.0)),
             jnp.asarray((250.0, 350.0)),
@@ -272,8 +275,8 @@ def native_parameters(data: SyntheticSpmeData = SyntheticSpmeData()):
 
 
 def conservative_projection(
-    source_faces, target_faces, source_averages, *, spherical=False
-):
+    source_faces: Any, target_faces: Any, source_averages: Any, *, spherical: Any = False
+) -> Any:
     """Exact overlap projection of cell averages; no point interpolation of mass."""
     source, target = np.asarray(source_faces, float), np.asarray(target_faces, float)
     values = np.asarray(source_averages, float)
@@ -302,15 +305,16 @@ def conservative_projection(
     return values @ (overlaps / np.diff(target**power)[:, None]).T
 
 
-def _diffusion_matrix(capacities, conductances):
+def _diffusion_matrix(capacities: Any, conductances: Any) -> Any:
     n = len(capacities)
+    # ty: ignore[no-matching-overload]
     incidence = diags(
         (-np.ones(n - 1), np.ones(n - 1)), (0, 1), shape=(n - 1, n), format="csr"
     )
     return -diags(1 / capacities) @ incidence.T @ diags(conductances) @ incidence
 
 
-def _schedule(times, boundaries, currents, data):
+def _schedule(times: Any, boundaries: Any, currents: Any, data: Any) -> Any:
     times, boundaries, currents = (
         np.asarray(times, float),
         np.asarray(boundaries, float),
@@ -339,14 +343,14 @@ def _schedule(times, boundaries, currents, data):
 
 
 def paper_reference(
-    times,
-    boundaries,
-    currents,
+    times: Any,
+    boundaries: Any,
+    currents: Any,
     *,
-    data=SyntheticSpmeData(),
-    radial_cells=32,
-    region_cells=(24, 12, 24),
-):
+    data: Any = SyntheticSpmeData(),
+    radial_cells: Any = 32,
+    region_cells: Any = (24, 12, 24),
+) -> Any:
     """Solve the independently assembled Eq. 48 linear transport via sparse expm.
 
     Small reference-only FV operators; affine forcing is exponentiated exactly in
@@ -486,7 +490,7 @@ def paper_reference(
     }
 
 
-def eq48_voltage(data, current, surfaces, electrolyte_regions):
+def eq48_voltage(data: Any, current: Any, surfaces: Any, electrolyte_regions: Any) -> Any:
     """Paper's electrode-averaged Eq. 48 voltage (not a fitted terminal curve)."""
     reaction = np.zeros_like(current, dtype="float64")
     for k in range(2):
@@ -541,9 +545,10 @@ def eq48_voltage(data, current, surfaces, electrolyte_regions):
     )
 
 
-def pybamm_parameter_values(data=SyntheticSpmeData()):
+def pybamm_parameter_values(data: Any = SyntheticSpmeData()) -> Any:
     """Construct from an empty mapping, never PyBaMM's bundled parameter sets."""
     os.environ["PYBAMM_DISABLE_TELEMETRY"] = "true"
+    # ty: ignore[unresolved-import]
     import pybamm
 
     if version("pybamm") != PYBAMM_VERSION:
@@ -582,7 +587,13 @@ def pybamm_parameter_values(data=SyntheticSpmeData()):
     }
     for k, name in enumerate(("Negative", "Positive")):
 
-        def exchange(c_e, c_s_surf, c_s_max, T, scale=data.exchange_scales[k]):
+        def exchange(
+            c_e: Any,
+            c_s_surf: Any,
+            c_s_max: Any,
+            T: Any,
+            scale: Any = data.exchange_scales[k],
+        ) -> Any:
             theta = c_s_surf / c_s_max
             return (
                 2
@@ -621,16 +632,16 @@ def pybamm_parameter_values(data=SyntheticSpmeData()):
 
 
 def pybamm_reference(
-    times,
-    boundaries,
-    currents,
+    times: Any,
+    boundaries: Any,
+    currents: Any,
     *,
-    data=SyntheticSpmeData(),
-    radial_cells=32,
-    region_cells=(24, 12, 24),
-    rtol=1e-10,
-    atol=1e-10,
-):
+    data: Any = SyntheticSpmeData(),
+    radial_cells: Any = 32,
+    region_cells: Any = (24, 12, 24),
+    rtol: Any = 1e-10,
+    atol: Any = 1e-10,
+) -> Any:
     """Execute pinned PyBaMM SPMe; each hold restarts with the retained state.
 
     PyBaMM's composite voltage uses nonlinear log concentration terms; return it
@@ -638,6 +649,7 @@ def pybamm_reference(
     the linearized Eq.48 voltage for the canonical equation comparison.
     """
     os.environ["PYBAMM_DISABLE_TELEMETRY"] = "true"
+    # ty: ignore[unresolved-import]
     import pybamm
 
     times, boundaries, currents = _schedule(times, boundaries, currents, data)
@@ -715,7 +727,7 @@ def pybamm_reference(
     return result
 
 
-def reference_payload(engine):
+def reference_payload(engine: Any) -> Any:
     """Generate finite three-level output without importing PHYDRAX or signing."""
     if engine not in REFERENCE_ENGINES:
         raise ValueError("Reference engine must be an exact registered identity.")
@@ -758,7 +770,7 @@ def reference_payload(engine):
     }
 
 
-def main(argv=None):
+def main(argv: Any = None) -> int:
     import argparse
     from pathlib import Path
 

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -8,7 +10,15 @@ from phydrax.solver._functional_run import partition_functional_parameters
 from phydrax.solver._functional_surrogate import prepare_functional_update
 
 
-def _fixed_term(domain, field_name, operator, *, points, label, blocks=None):
+def _fixed_term(
+    domain: Any,
+    field_name: Any,
+    operator: Any,
+    *,
+    points: Any,
+    label: Any,
+    blocks: Any = None,
+) -> Any:
     component = domain.component()
     condition = phx.conditions.Residual(field_name, component, operator, label=label)
     batch = component.points({domain.labels[0]: jnp.asarray(points)})
@@ -23,15 +33,15 @@ def _fixed_term(domain, field_name, operator, *, points, label, blocks=None):
     )
 
 
-def _identity_map(value):
+def _identity_map(value: Any) -> Any:
     return value
 
 
-def _negated_map(value):
+def _negated_map(value: Any) -> Any:
     return -value
 
 
-def test_relaxation_map_identity_is_content_addressed_or_declared():
+def test_relaxation_map_identity_is_content_addressed_or_declared() -> None:
     first_plain = phx.solver.ResidualRelaxationMap("u", _identity_map)
     assert (
         phx.solver.ResidualRelaxationMap("u", _identity_map).map_id == first_plain.map_id
@@ -58,7 +68,7 @@ def test_relaxation_map_identity_is_content_addressed_or_declared():
     assert identity.map_id != negation.map_id
 
 
-def test_pseudo_transient_root_uses_explicit_relaxation_map():
+def test_pseudo_transient_root_uses_explicit_relaxation_map() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     current = domain.Parameter(jnp.asarray(2.0))
     previous = domain.Parameter(jnp.asarray(1.0))
@@ -103,7 +113,7 @@ def test_pseudo_transient_root_uses_explicit_relaxation_map():
     assert jnp.allclose(update.physical_values(solver.functions).total, 4.0)
 
 
-def test_gauss_newton_uses_pseudo_transient_residual_roots():
+def test_gauss_newton_uses_pseudo_transient_residual_roots() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     solver = phx.solver.FunctionalSolver(
         functions={"u": domain.Parameter(jnp.asarray(2.0))},
@@ -133,6 +143,7 @@ def test_gauss_newton_uses_pseudo_transient_residual_roots():
     )
     trained = solver.solve(
         num_iter=1,
+        # ty: ignore[invalid-argument-type]
         optim=phx.optim.GaussNewton(),
         keep_best=False,
         log_every=0,
@@ -143,7 +154,7 @@ def test_gauss_newton_uses_pseudo_transient_residual_roots():
     assert jnp.allclose(trained.functions["u"].func(), 1.0, atol=1e-8)
 
 
-def test_causal_gates_reduce_later_slab_contribution():
+def test_causal_gates_reduce_later_slab_contribution() -> None:
     domain = phx.domain.TimeInterval(0.0, 1.0)
     field = domain.Parameter(jnp.asarray(1.0))
     term = _fixed_term(
@@ -182,7 +193,7 @@ def test_causal_gates_reduce_later_slab_contribution():
     assert jnp.allclose(update.physical_values(solver.functions).total, 1.0)
 
 
-def _two_term_solver(points=((0.2,), (0.8,))):
+def _two_term_solver(points: Any = ((0.2,), (0.8,))) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = domain.Parameter(jnp.asarray(1.0))
     v = domain.Parameter(jnp.asarray(10.0))
@@ -203,7 +214,7 @@ def _two_term_solver(points=((0.2,), (0.8,))):
     return phx.solver.FunctionalSolver(functions={"u": u, "v": v}, terms=(first, second))
 
 
-def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment():
+def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment() -> None:
     solver = _two_term_solver()
     params, fixed = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
@@ -242,7 +253,7 @@ def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment():
     assert update.diagnostic_gradient is not None
 
 
-def test_ntk_trace_balancing_preserves_equal_linear_sensitivities():
+def test_ntk_trace_balancing_preserves_equal_linear_sensitivities() -> None:
     # One point per term makes each block NTK a 1x1 matrix, so every Rademacher
     # probe measures its trace exactly and the balance is realization-independent.
     solver = _two_term_solver(points=((0.5,),))
@@ -279,7 +290,7 @@ def test_ntk_trace_balancing_preserves_equal_linear_sensitivities():
     assert jnp.all(jnp.isfinite(update.balance_statistics))
 
 
-def test_stateful_transforms_tolerate_unselected_sampled_terms():
+def test_stateful_transforms_tolerate_unselected_sampled_terms() -> None:
     solver = _two_term_solver()
     balance = phx.solver.FunctionalTermBalancePolicy(
         (

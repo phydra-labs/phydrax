@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +15,7 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._sharp_measures import exact_sharp_geometry
 
 
-def _two_phase(*, surface_tension=0.0, body=None):
+def _two_phase(*, surface_tension: Any = 0.0, body: Any = None) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8, periodic=True),
@@ -48,7 +51,7 @@ def _two_phase(*, surface_tension=0.0, body=None):
     return two_phase, method, method.initial_continuation(state)
 
 
-def _qualified_static_two_phase():
+def _qualified_static_two_phase() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8, periodic=True),
@@ -99,7 +102,7 @@ def _qualified_static_two_phase():
     return discretization, geometry, prepared
 
 
-def test_plic_and_two_phase_state_are_bounded():
+def test_plic_and_two_phase_state_are_bounded() -> None:
     two_phase, _, continuation = _two_phase()
     view = two_phase.view(continuation.state)
 
@@ -109,7 +112,7 @@ def test_plic_and_two_phase_state_are_bounded():
     assert jnp.all(view.density > 0.0)
 
 
-def test_consistent_vof_step_preserves_phase_volume_and_divergence():
+def test_consistent_vof_step_preserves_phase_volume_and_divergence() -> None:
     two_phase, method, continuation = _two_phase()
     initial_volume = jnp.sum(continuation.state.liquid_content)
 
@@ -129,7 +132,7 @@ def test_consistent_vof_step_preserves_phase_volume_and_divergence():
     assert result.accepted_state.evidence.alpha_maximum <= 1.0 + 1e-12
 
 
-def test_qualified_static_solid_uses_fluid_content_and_rejects_triple_cut():
+def test_qualified_static_solid_uses_fluid_content_and_rejects_triple_cut() -> None:
     discretization, geometry, two_phase = _qualified_static_two_phase()
     alpha = jnp.zeros(discretization.cell_shape).at[3:5, 3:5].set(1.0)
     state = two_phase.initial_state(alpha)
@@ -142,7 +145,7 @@ def test_qualified_static_solid_uses_fluid_content_and_rejects_triple_cut():
         two_phase.initial_state(triple_cut)
 
 
-def test_qualified_static_solid_step_conserves_liquid_and_geometry_identity():
+def test_qualified_static_solid_step_conserves_liquid_and_geometry_identity() -> None:
     discretization, geometry, two_phase = _qualified_static_two_phase()
     alpha = jnp.zeros(discretization.cell_shape).at[3:5, 3:5].set(1.0)
     state = two_phase.initial_state(alpha)
@@ -166,7 +169,7 @@ def test_qualified_static_solid_step_conserves_liquid_and_geometry_identity():
     )
 
 
-def test_qualified_static_vof_stale_epoch_rolls_back_atomically():
+def test_qualified_static_vof_stale_epoch_rolls_back_atomically() -> None:
     discretization, _, two_phase = _qualified_static_two_phase()
     alpha = jnp.zeros(discretization.cell_shape).at[3:5, 3:5].set(1.0)
     method = phx.applications.two_phase_flow.IncompressibleTwoPhaseVOFMethod(two_phase)
@@ -192,9 +195,14 @@ def test_qualified_static_vof_stale_epoch_rolls_back_atomically():
     )
 
 
-def test_balanced_capillarity_and_moving_body_are_finite():
+def test_balanced_capillarity_and_moving_body_are_finite() -> None:
     body = phx.applications.two_phase_flow.TwoPhaseMovingBodyPlan(
-        (0.5, 0.5), 0.1, velocity=(0.0, 0.0), penalty=0.5
+        # ty: ignore[invalid-argument-type]
+        (0.5, 0.5),
+        0.1,
+        # ty: ignore[invalid-argument-type]
+        velocity=(0.0, 0.0),
+        penalty=0.5,
     )
     _, method, continuation = _two_phase(surface_tension=0.072, body=body)
 
@@ -212,7 +220,7 @@ def test_balanced_capillarity_and_moving_body_are_finite():
     assert jnp.isfinite(result.accepted_state.evidence.clsvof_correction)
 
 
-def test_two_phase_checkpoint_round_trip(tmp_path):
+def test_two_phase_checkpoint_round_trip(tmp_path: Any) -> None:
     two_phase, method, continuation = _two_phase()
     target = tmp_path / "two-phase.chk"
 

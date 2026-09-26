@@ -13,14 +13,14 @@ import pytest
 import phydrax as phx
 
 
-def _single_leaf_geometry(parameters, manifold):
+def _single_leaf_geometry(parameters: Any, manifold: Any) -> Any:
     return phx.optim.ParameterGeometry.from_leaf_paths(
         parameters,
         {"['point']": manifold},
     )
 
 
-def test_riemannian_sgd_reduces_exactly_to_optax_sgd_in_euclidean_space():
+def test_riemannian_sgd_reduces_exactly_to_optax_sgd_in_euclidean_space() -> None:
     parameters = {"point": jnp.array([1.5, -2.0])}
     gradients = {"point": jnp.array([0.25, -0.75])}
     geometry = _single_leaf_geometry(
@@ -42,7 +42,7 @@ def test_riemannian_sgd_reduces_exactly_to_optax_sgd_in_euclidean_space():
     assert jnp.allclose(state.metrics.tangent_step_norm, 0.2 * jnp.sqrt(0.625))
 
 
-def test_simplex_riemannian_sgd_is_exact_entropy_mirror_descent():
+def test_simplex_riemannian_sgd_is_exact_entropy_mirror_descent() -> None:
     probability = jnp.asarray([0.2, 0.3, 0.5])
     gradient = jnp.asarray([1.2, -0.4, 0.7])
     learning_rate = 0.15
@@ -73,7 +73,7 @@ def test_simplex_riemannian_sgd_is_exact_entropy_mirror_descent():
     assert jnp.allclose(shifted["point"], expected)
 
 
-def test_riemannian_sgd_mixed_update_and_global_clipping():
+def test_riemannian_sgd_mixed_update_and_global_clipping() -> None:
     parameters = {
         "offset": jnp.array(1.0),
         "point": jnp.array([1.0, 0.0, 0.0]),
@@ -104,7 +104,7 @@ def test_riemannian_sgd_mixed_update_and_global_clipping():
     assert destination["offset"] == parameters["offset"]
 
 
-def test_riemannian_sgd_schedule_and_jit_use_logical_step():
+def test_riemannian_sgd_schedule_and_jit_use_logical_step() -> None:
     parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
     geometry = _single_leaf_geometry(parameters, phx.metrix.SphereManifold(3))
     optimizer = phx.optim.riemannian_sgd(
@@ -122,7 +122,7 @@ def test_riemannian_sgd_schedule_and_jit_use_logical_step():
     assert bool(geometry.contains(parameters))
 
 
-def test_riemannian_optimizer_configuration_and_nonfinite_failures():
+def test_riemannian_optimizer_configuration_and_nonfinite_failures() -> None:
     parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
     geometry = _single_leaf_geometry(parameters, phx.metrix.SphereManifold(3))
     invalid_learning_rate: Any = []
@@ -145,7 +145,7 @@ def test_riemannian_optimizer_configuration_and_nonfinite_failures():
         )
 
 
-def test_transported_momentum_remains_tangent_at_new_point():
+def test_transported_momentum_remains_tangent_at_new_point() -> None:
     parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
     geometry = _single_leaf_geometry(parameters, phx.metrix.SphereManifold(3))
     optimizer = phx.optim.riemannian_momentum(
@@ -172,7 +172,7 @@ def test_transported_momentum_remains_tangent_at_new_point():
     assert state.metrics.momentum_norm > 0.0
 
 
-def test_riemannian_momentum_reduces_to_heavy_ball_in_euclidean_space():
+def test_riemannian_momentum_reduces_to_heavy_ball_in_euclidean_space() -> None:
     parameters = {"point": jnp.array([1.0, -2.0])}
     geometry = _single_leaf_geometry(
         parameters,
@@ -198,7 +198,7 @@ def test_riemannian_momentum_reduces_to_heavy_ball_in_euclidean_space():
         assert jnp.allclose(state.momentum["point"], expected_momentum)
 
 
-def test_sphere_rayleigh_quotient_converges_to_extremal_eigenvector():
+def test_sphere_rayleigh_quotient_converges_to_extremal_eigenvector() -> None:
     matrix = jnp.diag(jnp.array([5.0, 2.0, 0.5]))
     initial = jnp.array([1.0, 1.0, 1.0]) / jnp.sqrt(3.0)
     parameters = {"point": initial}
@@ -206,7 +206,7 @@ def test_sphere_rayleigh_quotient_converges_to_extremal_eigenvector():
     optimizer = phx.optim.riemannian_sgd(geometry, learning_rate=0.08)
     state = optimizer.init(parameters)
 
-    def objective(tree):
+    def objective(tree: Any) -> Any:
         point = tree["point"]
         return -(point @ matrix @ point)
 
@@ -222,7 +222,7 @@ def test_sphere_rayleigh_quotient_converges_to_extremal_eigenvector():
     assert bool(geometry.contains(parameters))
 
 
-def test_grassmann_pca_converges_to_leading_projector():
+def test_grassmann_pca_converges_to_leading_projector() -> None:
     covariance = jnp.diag(jnp.array([6.0, 4.0, 1.0, 0.2]))
     initial, _ = jnp.linalg.qr(
         jnp.array([[1.0, 0.2], [0.3, 1.0], [0.8, -0.4], [0.5, 0.7]])
@@ -235,7 +235,7 @@ def test_grassmann_pca_converges_to_leading_projector():
     optimizer = phx.optim.riemannian_sgd(geometry, learning_rate=0.06)
     state = optimizer.init(parameters)
 
-    def objective(tree):
+    def objective(tree: Any) -> Any:
         point = tree["point"]
         return -jnp.trace(point.T @ covariance @ point)
 

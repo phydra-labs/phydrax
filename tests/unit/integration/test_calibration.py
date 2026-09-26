@@ -20,11 +20,11 @@ TERMINATION = phx.optim.OptimizationTermination(
 )
 
 
-def _array(value):
+def _array(value: Any) -> Any:
     return value.data if isinstance(value, cx.AxisArray) else value
 
 
-def test_named_calibration_preserves_mass_support_ancestry_and_provenance():
+def test_named_calibration_preserves_mass_support_ancestry_and_provenance() -> None:
     axis = "sample"
     coordinates = jnp.linspace(0.0, 1.0, 21)
     samples = cx.AxisArray(coordinates, dims=(axis,))
@@ -78,7 +78,7 @@ def test_named_calibration_preserves_mass_support_ancestry_and_provenance():
     assert diagnostics.source_provenance == "observed-ensemble"
 
 
-def test_raw_callable_features_calibrate_normalized_expectations():
+def test_raw_callable_features_calibrate_normalized_expectations() -> None:
     samples = jnp.linspace(-1.0, 1.0, 31)
     source = phx.integration.materialize(
         phx.integration.weighted(
@@ -102,7 +102,9 @@ def test_raw_callable_features_calibrate_normalized_expectations():
     assert jnp.allclose(_array(second.value), 0.5, atol=1e-8)
 
 
-def test_calibration_then_recombination_preserves_calibrated_moments_and_history():
+def test_calibration_then_recombination_preserves_calibrated_moments_and_history() -> (
+    None
+):
     samples = jnp.linspace(-1.0, 1.0, 65)
     features = jnp.stack((samples, samples**2), axis=1)
     source = phx.integration.materialize(
@@ -144,7 +146,7 @@ def test_calibration_then_recombination_preserves_calibrated_moments_and_history
     )
 
 
-def test_recombination_then_calibration_uses_the_compressed_prior_and_order():
+def test_recombination_then_calibration_uses_the_compressed_prior_and_order() -> None:
     samples = jnp.linspace(0.0, 1.0, 41)
     source = phx.integration.materialize(
         phx.integration.weighted(samples, jnp.zeros_like(samples))
@@ -176,7 +178,7 @@ def test_recombination_then_calibration_uses_the_compressed_prior_and_order():
     assert estimate.provenance.method == "calibrated"
 
 
-def test_soft_calibration_returns_a_finite_measure_for_unreachable_targets():
+def test_soft_calibration_returns_a_finite_measure_for_unreachable_targets() -> None:
     samples = jnp.array([0.0, 1.0, 2.0])
     source = phx.integration.materialize(
         phx.integration.weighted(samples, jnp.log(jnp.array([0.2, 0.5, 0.3])))
@@ -198,7 +200,7 @@ def test_soft_calibration_returns_a_finite_measure_for_unreachable_targets():
     assert jnp.isclose(jnp.sum(result.weights), 1.0)
 
 
-def test_calibration_rejects_unpreserved_grouping_and_failed_exact_targets():
+def test_calibration_rejects_unpreserved_grouping_and_failed_exact_targets() -> None:
     samples = jnp.linspace(0.0, 1.0, 12)
     identifiers = jnp.arange(12, dtype=jnp.int32) // 2
     for identifier in ("stratum_ids", "pair_ids", "replicate_ids"):

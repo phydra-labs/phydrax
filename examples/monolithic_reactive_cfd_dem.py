@@ -125,6 +125,8 @@ print("successful=True")
 print(f"fluid_temperature={float(result.accepted_state.fluid.temperature[0]):.6f}")
 print(f"particle_velocity={float(result.accepted_state.particle_velocity[0, 0]):.6f}")
 print(
+    # ty: ignore[unresolved-attribute]
     f"momentum_residual={float(jnp.linalg.norm(result.evaluation.momentum_residual)):.6e}"
 )
+# ty: ignore[unresolved-attribute]
 print(f"energy_residual={float(result.evaluation.energy_residual):.6e}")

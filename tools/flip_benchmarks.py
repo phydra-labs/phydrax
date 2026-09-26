@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from importlib.metadata import version
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -33,7 +34,7 @@ class FLIPBenchmarkReport:
     successful: bool
 
 
-def _case(count):
+def _case(count: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(count) for _ in range(2)),
         axis_names=("x", "y"),
@@ -63,12 +64,12 @@ def _case(count):
     return compiled, state, particle_count
 
 
-def run_flip_benchmark(*, smoke=False):
+def run_flip_benchmark(*, smoke: Any = False) -> Any:
     count = 8 if smoke else 24
     compiled, state, particle_count = _case(count)
 
     @jax.jit
-    def apply(value):
+    def apply(value: Any) -> Any:
         return compiled.step_detailed(value, jnp.asarray(2.0e-4))
 
     started = perf_counter()
@@ -98,7 +99,7 @@ def run_flip_benchmark(*, smoke=False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

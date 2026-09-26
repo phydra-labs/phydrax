@@ -13,7 +13,7 @@ import phydrax as phx
 import phydrax.uq._sgmcmc as sgmcmc_module
 
 
-def _problem_source(*, seed=17, batch_size=3):
+def _problem_source(*, seed: Any = 17, batch_size: Any = 3) -> Any:
     data = jnp.linspace(-1.0, 1.0, 7)
     source = phx.uq.ArrayMinibatchSource(data, batch_size=batch_size, seed=seed)
     problem = phx.uq.MinibatchPosteriorProblem(
@@ -28,12 +28,12 @@ def _problem_source(*, seed=17, batch_size=3):
     return problem, source
 
 
-def _assert_tree_equal(left, right):
+def _assert_tree_equal(left: Any, right: Any) -> None:
     comparisons = jax.tree_util.tree_map(jnp.array_equal, left, right)
     assert all(jax.tree_util.tree_leaves(comparisons))
 
 
-def _assert_exact_result(left, right):
+def _assert_exact_result(left: Any, right: Any) -> None:
     _assert_tree_equal(left.samples, right.samples)
     _assert_tree_equal(left.unconstrained_samples, right.unconstrained_samples)
     _assert_tree_equal(left.final_states, right.final_states)
@@ -56,10 +56,10 @@ def _assert_exact_result(left, right):
 
 @pytest.mark.parametrize("interrupt_update", [2, 4, 5, 6])
 def test_sgld_resume_is_exact_across_lifecycle_boundaries(
-    tmp_path,
-    monkeypatch,
-    interrupt_update,
-):
+    tmp_path: Any,
+    monkeypatch: Any,
+    interrupt_update: Any,
+) -> None:
     problem, source = _problem_source()
     common: dict[str, Any] = {
         "key": jr.key(30),
@@ -74,7 +74,7 @@ def test_sgld_resume_is_exact_across_lifecycle_boundaries(
     checkpoint = tmp_path / f"sgld-{interrupt_update}.phxckpt"
     original_write = sgmcmc_module._write_sgmcmc_checkpoint
 
-    def interrupting_write(destination, **kwargs):
+    def interrupting_write(destination: Any, **kwargs: Any) -> None:
         original_write(destination, **kwargs)
         if kwargs["completed_updates"] == interrupt_update:
             raise RuntimeError("simulated interruption")
@@ -108,7 +108,9 @@ def test_sgld_resume_is_exact_across_lifecycle_boundaries(
     _assert_exact_result(resumed, direct)
 
 
-def test_sgnht_resume_preserves_momentum_thermostat_and_samples(tmp_path, monkeypatch):
+def test_sgnht_resume_preserves_momentum_thermostat_and_samples(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     problem, source = _problem_source(seed=18)
     common: dict[str, Any] = {
         "key": jr.key(31),
@@ -125,7 +127,7 @@ def test_sgnht_resume_preserves_momentum_thermostat_and_samples(tmp_path, monkey
     checkpoint = tmp_path / "sgnht.phxckpt"
     original_write = sgmcmc_module._write_sgmcmc_checkpoint
 
-    def interrupting_write(destination, **kwargs):
+    def interrupting_write(destination: Any, **kwargs: Any) -> None:
         original_write(destination, **kwargs)
         if kwargs["completed_updates"] == 4:
             raise RuntimeError("simulated interruption")
@@ -159,7 +161,7 @@ def test_sgnht_resume_preserves_momentum_thermostat_and_samples(tmp_path, monkey
     _assert_exact_result(resumed, direct)
 
 
-def test_completed_sgmcmc_checkpoint_extends_without_restarting(tmp_path):
+def test_completed_sgmcmc_checkpoint_extends_without_restarting(tmp_path: Any) -> None:
     problem, source = _problem_source(seed=19)
     checkpoint = tmp_path / "extend.phxckpt"
     common: dict[str, Any] = {
@@ -205,7 +207,9 @@ def test_completed_sgmcmc_checkpoint_extends_without_restarting(tmp_path):
         )
 
 
-def test_sgmcmc_checkpoint_rejects_identity_source_settings_and_corruption(tmp_path):
+def test_sgmcmc_checkpoint_rejects_identity_source_settings_and_corruption(
+    tmp_path: Any,
+) -> None:
     problem, source = _problem_source(seed=20)
     checkpoint = tmp_path / "compatibility.phxckpt"
     common: dict[str, Any] = {

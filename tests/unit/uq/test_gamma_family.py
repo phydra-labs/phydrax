@@ -11,7 +11,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_gamma_density_duality_kl_and_fisher_are_exact():
+def test_gamma_density_duality_kl_and_fisher_are_exact() -> None:
     family = phx.uq.GammaFamily()
     natural = family.natural_from_shape_rate(2.7, 1.4)
     mean = family.mean_from_natural(natural)
@@ -55,7 +55,7 @@ def test_gamma_density_duality_kl_and_fisher_are_exact():
     assert int(conversion.iterations) > 0
 
 
-def test_gamma_domains_distinguish_numerical_failure_boundary_and_exterior():
+def test_gamma_domains_distinguish_numerical_failure_boundary_and_exterior() -> None:
     family = phx.uq.GammaFamily()
     boundary = family.mean_domain(family.mean(jnp.asarray([jnp.log(2.0), 2.0])))
     exterior = family.mean_domain(family.mean(jnp.asarray([1.0, 2.0])))
@@ -84,7 +84,7 @@ def test_gamma_domains_distinguish_numerical_failure_boundary_and_exterior():
     assert not bool(family.sufficient_statistics(-1.0).valid)
 
 
-def test_gamma_batched_inverse_is_jittable_and_batch_local():
+def test_gamma_batched_inverse_is_jittable_and_batch_local() -> None:
     family = phx.uq.GammaFamily()
     shapes = jnp.asarray([0.08, 0.5, 2.0, 25.0], dtype=jnp.float32)
     rates = jnp.asarray([3.0, 0.7, 1.2, 4.0], dtype=jnp.float32)
@@ -103,7 +103,9 @@ def test_gamma_batched_inverse_is_jittable_and_batch_local():
     assert jnp.any(converted.iterations > 0)
 
 
-def test_gamma_inverse_has_implicit_reverse_derivative_and_supports_empty_batches():
+def test_gamma_inverse_has_implicit_reverse_derivative_and_supports_empty_batches() -> (
+    None
+):
     family = phx.uq.GammaFamily()
     natural = family.natural_from_shape_rate(2.0, 1.3)
     mean = family.mean_from_natural(natural)
@@ -127,7 +129,7 @@ def test_gamma_inverse_has_implicit_reverse_derivative_and_supports_empty_batche
     assert empty.valid.shape == (0,)
 
 
-def test_gamma_sampling_and_weighted_projection_recover_sufficient_statistics():
+def test_gamma_sampling_and_weighted_projection_recover_sufficient_statistics() -> None:
     family = phx.uq.GammaFamily()
     law = family.law_from_shape_rate(3.5, 1.8)
     samples = law.sample(jr.key(10), sample_shape=(40_000,))
@@ -163,7 +165,7 @@ def test_gamma_sampling_and_weighted_projection_recover_sufficient_statistics():
     assert bool(merged.valid)
 
 
-def test_gamma_law_is_a_positive_posterior_prior():
+def test_gamma_law_is_a_positive_posterior_prior() -> None:
     prior = phx.uq.GammaFamily().law_from_shape_rate(2.5, 1.2)
     initial = jnp.log(jnp.asarray(1.7))
     space = phx.uq.ParameterSpace(

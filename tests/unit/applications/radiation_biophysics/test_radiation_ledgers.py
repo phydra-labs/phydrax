@@ -5,6 +5,7 @@
 
 import hashlib
 from dataclasses import replace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -23,8 +24,11 @@ from phydrax.units import ANGSTROM, ELECTRONVOLT, JOULE, KILOGRAM, MILLIGRAM, SE
 
 
 def source_for(
-    payload, *, training=True, artifact_kind="synthetic-external-radiation-columns"
-):
+    payload: Any,
+    *,
+    training: Any = True,
+    artifact_kind: Any = "synthetic-external-radiation-columns",
+) -> Any:
     digest = hashlib.sha256(payload).hexdigest()
     rights = ReferenceArtifactManifest(
         "synthetic-radiation-contract-fixture",
@@ -71,8 +75,12 @@ def source_for(
 
 
 def fixture(
-    *, circular=True, direct_probability=1.0, threshold=17.5, extra_reaction=False
-):
+    *,
+    circular: Any = True,
+    direct_probability: Any = 1.0,
+    threshold: Any = 17.5,
+    extra_reaction: Any = False,
+) -> Any:
     physical = {
         "x": [0.0, 0.0, 2.0, 0.0],
         "y": [0.0] * 4,
@@ -142,7 +150,7 @@ def fixture(
     return imported, geometry, mapping, policy, candidates, lesions
 
 
-def test_event_order_dedup_history_identity_and_cause_union():
+def test_event_order_dedup_history_identity_and_cause_union() -> None:
     imported, geometry, mapping, policy, candidates, lesions = fixture(
         extra_reaction=True
     )
@@ -179,7 +187,7 @@ def test_event_order_dedup_history_identity_and_cause_union():
     )
 
 
-def test_inclusive_deposition_threshold_and_exact_probability_edges():
+def test_inclusive_deposition_threshold_and_exact_probability_edges() -> None:
     _, _, _, _, candidates, _ = fixture(direct_probability=0.5)
     uniforms = tuple((item.candidate_id, 0.5) for item in candidates.candidates)
     realized = rad.realize_radiation_lesions(
@@ -207,7 +215,7 @@ def test_inclusive_deposition_threshold_and_exact_probability_edges():
         )
 
 
-def test_circular_dsb_and_linear_ssb_are_different_topologies():
+def test_circular_dsb_and_linear_ssb_are_different_topologies() -> None:
     _, circle, _, _, _, circular_lesions = fixture(circular=True)
     circular = rad.cluster_radiation_lesions(
         circular_lesions, circle, maximum_contour_gap=1
@@ -220,7 +228,7 @@ def test_circular_dsb_and_linear_ssb_are_different_topologies():
         rad.cluster_radiation_lesions(circular_lesions, line, maximum_contour_gap=1)
 
 
-def test_transitive_clusters_require_an_actual_opposite_strand_break_pair():
+def test_transitive_clusters_require_an_actual_opposite_strand_break_pair() -> None:
     _, geometry, _, _, candidates, lesions = fixture()
     original = lesions.lesions[0]
     history = original.history
@@ -256,7 +264,7 @@ def test_transitive_clusters_require_an_actual_opposite_strand_break_pair():
     )  # The base bridge is not a DSB.
 
 
-def test_many_to_many_routes_conserve_deposition_and_units():
+def test_many_to_many_routes_conserve_deposition_and_units() -> None:
     imported, geometry, _, policy, _, _ = fixture()
     geometry = replace(
         geometry,
@@ -306,7 +314,7 @@ def test_many_to_many_routes_conserve_deposition_and_units():
         replace(geometry, losses=(loss,))
 
 
-def test_untimed_chemistry_cannot_be_recut_and_rights_are_admitted():
+def test_untimed_chemistry_cannot_be_recut_and_rights_are_admitted() -> None:
     imported, geometry, mapping, policy, _, _ = fixture()
     with pytest.raises(ValueError, match="Untimed"):
         rad.candidate_radiation_lesions(
@@ -327,7 +335,7 @@ def test_untimed_chemistry_cannot_be_recut_and_rights_are_admitted():
     assert imported.physical.records[0].kinetic_energy_loss == 99.0
 
 
-def test_yields_include_zero_histories_and_explicit_mass_basepair_conventions():
+def test_yields_include_zero_histories_and_explicit_mass_basepair_conventions() -> None:
     _, geometry, _, _, _, lesions = fixture()
     clusters = rad.cluster_radiation_lesions(lesions, geometry, maximum_contour_gap=1)
     histories = sorted({item.history for item in lesions.lesions})
@@ -360,7 +368,9 @@ def test_yields_include_zero_histories_and_explicit_mass_basepair_conventions():
         )
 
 
-def test_real_uproot_binary_ttree_roundtrip_and_required_semantic_refusal(tmp_path):
+def test_real_uproot_binary_ttree_roundtrip_and_required_semantic_refusal(
+    tmp_path: Any,
+) -> None:
     # This is a real binary-provider invocation, but hand-authored scientific data.
     uproot = pytest.importorskip("uproot")
     path = tmp_path / "synthetic-dnadamage1.root"

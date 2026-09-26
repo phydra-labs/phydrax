@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,7 +19,7 @@ from phydrax._interpolation import (
 from phydrax.operators.interpolation import InterpolationResult, linear_interpolate
 
 
-def test_linear_interpolation_is_public_without_moving_implementation():
+def test_linear_interpolation_is_public_without_moving_implementation() -> None:
     result = linear_interpolate(
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([2.0, 4.0]),
@@ -27,7 +30,7 @@ def test_linear_interpolation_is_public_without_moving_implementation():
     assert isinstance(result, InterpolationResult)
 
 
-def test_nearest_ties_and_fill_support_are_explicit():
+def test_nearest_ties_and_fill_support_are_explicit() -> None:
     nodes = jnp.asarray([0.0, 1.0, 2.0, 3.0])
     values = jnp.arange(4.0)
     query = jnp.asarray([0.5, 1.5, -1.0, 4.0])
@@ -44,7 +47,7 @@ def test_nearest_ties_and_fill_support_are_explicit():
     assert jnp.allclose(round_even.values, jnp.asarray([0.0, 2.0, 0.0, 3.0]))
 
 
-def test_linear_interpolation_is_affine_exact_and_has_exact_derivative():
+def test_linear_interpolation_is_affine_exact_and_has_exact_derivative() -> None:
     nodes = jnp.asarray([-1.0, 0.5, 2.0])
     values = 3.0 * nodes - 2.0
     query = jnp.asarray([-0.25, 1.25])
@@ -60,7 +63,7 @@ def test_linear_interpolation_is_affine_exact_and_has_exact_derivative():
     )
 
 
-def test_linear_endpoints_interior_and_bounds_policies_are_explicit():
+def test_linear_endpoints_interior_and_bounds_policies_are_explicit() -> None:
     nodes = jnp.asarray([0.0, 1.0, 3.0])
     values = jnp.asarray([0.0, 2.0, 8.0])
     query = jnp.asarray([-1.0, 0.0, 0.5, 3.0, 4.0])
@@ -81,7 +84,7 @@ def test_linear_endpoints_interior_and_bounds_policies_are_explicit():
         jax.block_until_ready(unsupported.values)
 
 
-def test_linear_fill_can_preserve_distinct_boundary_values():
+def test_linear_fill_can_preserve_distinct_boundary_values() -> None:
     result = linear_interpolate(
         jnp.asarray([1.0, 2.0, 4.0]),
         jnp.asarray([3.0, 5.0, 9.0]),
@@ -103,7 +106,7 @@ def test_linear_fill_can_preserve_distinct_boundary_values():
         )
 
 
-def test_linear_interpolation_preserves_payload_axes_around_source_axis():
+def test_linear_interpolation_preserves_payload_axes_around_source_axis() -> None:
     nodes = jnp.asarray([0.0, 1.0, 3.0])
     values = jnp.asarray([[0.0, 2.0, 8.0], [10.0, 12.0, 18.0]])
     query = jnp.asarray([0.5, 2.0])
@@ -115,7 +118,7 @@ def test_linear_interpolation_preserves_payload_axes_around_source_axis():
     assert jnp.array_equal(result.support, jnp.ones(2, dtype="bool"))
 
 
-def test_linear_source_mask_support_is_strict_or_renormalized():
+def test_linear_source_mask_support_is_strict_or_renormalized() -> None:
     nodes = jnp.asarray([0.0, 1.0, 3.0])
     values = jnp.asarray([0.0, 2.0, 8.0])
     query = jnp.asarray([0.5, 2.0])
@@ -143,7 +146,7 @@ def test_linear_source_mask_support_is_strict_or_renormalized():
     assert jnp.allclose(renormalized.values, jnp.asarray([0.0, 8.0]))
 
 
-def test_linear_query_jvp_uses_right_hand_slope_at_an_interior_knot():
+def test_linear_query_jvp_uses_right_hand_slope_at_an_interior_knot() -> None:
     nodes = jnp.asarray([0.0, 1.0, 2.0])
     values = jnp.asarray([0.0, 1.0, 3.0])
     query = jnp.asarray([0.5, 1.0])
@@ -168,7 +171,9 @@ def test_linear_query_jvp_uses_right_hand_slope_at_an_interior_knot():
 
 
 @pytest.mark.parametrize("derivative_order", (True, 1.5, "1"))
-def test_piecewise_derivative_orders_require_exact_integers(derivative_order):
+def test_piecewise_derivative_orders_require_exact_integers(
+    derivative_order: Any,
+) -> None:
     nodes = jnp.asarray([0.0, 1.0, 2.0])
     values = nodes**2
 
@@ -188,17 +193,18 @@ def test_piecewise_derivative_orders_require_exact_integers(derivative_order):
         )
 
 
-def test_piecewise_source_axis_is_strictly_validated():
+def test_piecewise_source_axis_is_strictly_validated() -> None:
     nodes = jnp.asarray([0.0, 1.0, 2.0])
     values = jnp.ones((2, 3))
 
     with pytest.raises(TypeError, match="axis"):
+        # ty: ignore[invalid-argument-type]
         linear_interpolate(nodes, values, 0.5, axis=1.5)
     with pytest.raises(ValueError, match="out of bounds"):
         linear_interpolate(nodes, values, 0.5, axis=2)
 
 
-def test_local_cubic_slopes_use_one_sided_and_secant_average_rules():
+def test_local_cubic_slopes_use_one_sided_and_secant_average_rules() -> None:
     nodes = jnp.asarray([0.0, 1.0, 3.0, 6.0])
     values = jnp.asarray([0.0, 2.0, 8.0, 20.0])
 
@@ -207,7 +213,7 @@ def test_local_cubic_slopes_use_one_sided_and_secant_average_rules():
     assert jnp.allclose(slopes, jnp.asarray([2.0, 2.5, 3.5, 4.0]))
 
 
-def test_cubic_hermite_value_and_derivatives_match_interior_quadratic():
+def test_cubic_hermite_value_and_derivatives_match_interior_quadratic() -> None:
     nodes = jnp.asarray([0.0, 1.0, 2.0, 3.0])
     values = nodes**2
     query = jnp.asarray([1.25, 1.5, 1.75])
@@ -225,7 +231,7 @@ def test_cubic_hermite_value_and_derivatives_match_interior_quadratic():
     )
 
 
-def test_single_node_piecewise_methods_are_constant_and_complex_safe():
+def test_single_node_piecewise_methods_are_constant_and_complex_safe() -> None:
     nodes = jnp.asarray([2.0])
     values = jnp.asarray([[1.0 + 2.0j, 3.0 - 4.0j]])
     query = jnp.asarray([-1.0, 2.0, 5.0])

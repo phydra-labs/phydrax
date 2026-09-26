@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -51,14 +53,14 @@ from phydrax.stochastic.path_sampling import (
 
 
 def _deterministic_kernel(*, fail: bool = False) -> FunctionalDynamicsKernel:
-    def step(key, state, direction):
+    def step(key: Any, state: Any, direction: Any) -> Any:
         del key
         value = state + direction.astype(state.dtype)
         valid = jnp.asarray(not fail)
         status = jnp.where(valid, 0, PATH_PROPAGATION_KERNEL_FAILURE)
         return DynamicsStep(value, jnp.asarray(0.0), valid, status)
 
-    def transition(source, destination, direction):
+    def transition(source: Any, destination: Any, direction: Any) -> Any:
         expected = source + direction.astype(source.dtype)
         return jnp.where(jnp.all(jnp.abs(destination - expected) < 1.0e-6), 0.0, -jnp.inf)
 
@@ -78,13 +80,13 @@ def _deterministic_kernel(*, fail: bool = False) -> FunctionalDynamicsKernel:
 
 
 def _gaussian_kernel(scale: float = 0.5) -> FunctionalDynamicsKernel:
-    def log_density(source, destination, direction):
+    def log_density(source: Any, destination: Any, direction: Any) -> Any:
         residual = (destination - source - 0.25 * direction.astype(source.dtype)) / scale
         return -0.5 * jnp.sum(residual**2) - source.size * jnp.log(
             scale * jnp.sqrt(2.0 * jnp.pi)
         )
 
-    def step(key, state, direction):
+    def step(key: Any, state: Any, direction: Any) -> Any:
         proposed = (
             state
             + 0.25 * direction.astype(state.dtype)
@@ -288,7 +290,7 @@ def test_deterministic_two_way_shooting_obeys_detailed_balance() -> None:
 
 
 def test_variable_length_shooting_reports_separate_length_correction() -> None:
-    def step(key, state, direction):
+    def step(key: Any, state: Any, direction: Any) -> Any:
         del key
         return DynamicsStep(
             state + direction.astype(state.dtype),
@@ -390,7 +392,7 @@ def test_failed_propagation_rejects_once_without_retry() -> None:
 
 
 def test_nonfinite_propagation_is_classified_and_rejected() -> None:
-    def step(key, state, direction):
+    def step(key: Any, state: Any, direction: Any) -> Any:
         del key, direction
         return DynamicsStep(
             jnp.full_like(state, jnp.nan),
@@ -399,7 +401,7 @@ def test_nonfinite_propagation_is_classified_and_rejected() -> None:
             jnp.asarray(0, jnp.int32),
         )
 
-    def transition(source, destination, direction):
+    def transition(source: Any, destination: Any, direction: Any) -> Any:
         del source, destination, direction
         return jnp.asarray(0.0)
 
@@ -430,7 +432,7 @@ def test_nonfinite_propagation_is_classified_and_rejected() -> None:
 
 
 def test_capacity_overflow_rejects_without_extending_path_shape() -> None:
-    def step(key, state, direction):
+    def step(key: Any, state: Any, direction: Any) -> Any:
         del key
         return DynamicsStep(
             state + direction.astype(state.dtype),
@@ -439,7 +441,7 @@ def test_capacity_overflow_rejects_without_extending_path_shape() -> None:
             jnp.asarray(0, jnp.int32),
         )
 
-    def transition(source, destination, direction):
+    def transition(source: Any, destination: Any, direction: Any) -> Any:
         del source, destination, direction
         return jnp.asarray(0.0)
 
@@ -648,6 +650,7 @@ def test_path_reweighting_fails_closed_for_surrogates_and_crosses_normalized_act
     with pytest.raises(ValueError, match="normalized stochastic"):
         ReducedPathPotential(
             ensemble,
+            # ty: ignore[invalid-argument-type]
             SurrogatePathAction(lambda path: jnp.asarray(0.0), action_id="surrogate"),
             inverse_temperature=2.0,
         )

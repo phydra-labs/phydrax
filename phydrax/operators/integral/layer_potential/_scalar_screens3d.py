@@ -284,7 +284,10 @@ def _support_arrays(
         vertices = np.asarray(mesh.coordinates, dtype=np.float64)
         connectivity = mesh.connectivity
         # SurfaceModel requires a two-dimensional CellMesh, which carries polygonal connectivity.
-        assert isinstance(connectivity, PolygonalConnectivity)
+        if not (isinstance(connectivity, PolygonalConnectivity)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(connectivity, PolygonalConnectivity)."
+            )
         faces = np.asarray(connectivity.cell_vertices, dtype=np.int32)
         kinds = np.asarray(connectivity.cell_kinds, dtype=np.int32)
         if faces.ndim != 2 or kinds.shape != (faces.shape[0],) or np.any(kinds != 3):

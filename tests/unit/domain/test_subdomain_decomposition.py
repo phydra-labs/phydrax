@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _batch(domain, count=9):
+def _batch(domain: Any, count: Any = 9) -> Any:
     return domain.component().sample(
         phx.domain.PointSampling(
             count,
@@ -21,7 +24,7 @@ def _batch(domain, count=9):
     )
 
 
-def test_cartesian_cover_has_exact_local_domains_pairing_and_audit():
+def test_cartesian_cover_has_exact_local_domains_pairing_and_audit() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(
         domain,
@@ -57,7 +60,7 @@ def test_cartesian_cover_has_exact_local_domains_pairing_and_audit():
     )
 
 
-def test_cartesian_cover_splits_one_scalar_factor_in_a_product_domain():
+def test_cartesian_cover_splits_one_scalar_factor_in_a_product_domain() -> None:
     space = phx.domain.Interval1d(-1.0, 1.0)
     time = phx.domain.TimeInterval(0.0, 1.0)
     domain = space @ time
@@ -92,7 +95,9 @@ def test_cartesian_cover_splits_one_scalar_factor_in_a_product_domain():
     )
 
 
-def test_partition_of_unity_uses_sparse_active_fields_and_differentiable_windows():
+def test_partition_of_unity_uses_sparse_active_fields_and_differentiable_windows() -> (
+    None
+):
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(
         domain,
@@ -112,7 +117,7 @@ def test_partition_of_unity_uses_sparse_active_fields_and_differentiable_windows
     right_window = right.window
     assert left_window is not None and right_window is not None
 
-    def reference(value):
+    def reference(value: Any) -> Any:
         point = jnp.asarray([value])
         left_value = left_window.func(point, key=jr.key(0))
         right_value = right_window.func(point, key=jr.key(0))
@@ -157,7 +162,7 @@ def test_partition_of_unity_uses_sparse_active_fields_and_differentiable_windows
     assert jnp.isfinite(sparse.func(jnp.asarray([0.1]), key=jr.key(1)))
 
 
-def test_normalized_coordinate_is_unclipped_and_broken_field_is_side_aware():
+def test_normalized_coordinate_is_unclipped_and_broken_field_is_side_aware() -> None:
     domain = phx.domain.Interval1d(-2.0, 2.0)
     cover = phx.domain.cartesian_subdomain_cover(domain, "x", 2)
     left, right = cover.patches

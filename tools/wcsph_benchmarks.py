@@ -9,6 +9,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -47,11 +48,12 @@ class WCSPHBenchmarkRecord:
         )
 
 
-def _acoustic_problem(count, backend):
+def _acoustic_problem(count: Any, backend: Any) -> Any:
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
         phx.discretization.WendlandC2SPHKernel(1),
@@ -84,7 +86,9 @@ def _acoustic_problem(count, backend):
     return compiled, position, velocity
 
 
-def _solve(compiled, position, velocity, final_time, step):
+def _solve(
+    compiled: Any, position: Any, velocity: Any, final_time: Any, step: Any
+) -> Any:
     return phx.solver.solve_diffrax(
         compiled.as_differential_problem(position, velocity, t0=0.0, t1=final_time),
         save_times=jnp.asarray([final_time]),
@@ -94,7 +98,7 @@ def _solve(compiled, position, velocity, final_time, step):
     )
 
 
-def _shear_case(resolution):
+def _shear_case(resolution: Any) -> Any:
     count = resolution**2
     spacing = 1.0 / resolution
     viscosity = 0.01
@@ -114,6 +118,7 @@ def _shear_case(resolution):
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.full((count,), spacing**2), ambient_dimension=2
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0, 0.0], [1.0, 1.0])
     method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
         phx.discretization.WendlandC2SPHKernel(2),
@@ -160,7 +165,7 @@ def _shear_case(resolution):
     }
 
 
-def run_wcsph_benchmark(acoustic_count=24, shear_resolution=8):
+def run_wcsph_benchmark(acoustic_count: Any = 24, shear_resolution: Any = 8) -> Any:
     dense, position, velocity = _acoustic_problem(acoustic_count, "dense")
     cell, _, _ = _acoustic_problem(acoustic_count, "cell")
     dense_state = dense.initialize_state(position, velocity)
@@ -172,7 +177,7 @@ def run_wcsph_benchmark(acoustic_count=24, shear_resolution=8):
     cell_solution = _solve(cell, position, velocity, final_time, 2.0e-4)
     diagnostics = cell.dynamics.diagnostics(0.0, cell_state, None)
 
-    def terminal(amplitude):
+    def terminal(amplitude: Any) -> Any:
         shifted = position + amplitude * jnp.sin(2.0 * jnp.pi * position)
         solution = _solve(cell, shifted, velocity, 0.001, 5.0e-4)
         return solution.states[-1, 0, 0]
@@ -213,7 +218,7 @@ def run_wcsph_benchmark(acoustic_count=24, shear_resolution=8):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Qualify periodic engineering WCSPH.")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

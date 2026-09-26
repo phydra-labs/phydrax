@@ -1,4 +1,5 @@
 import warnings
+from typing import Any
 
 import diffrax as dfx
 import equinox as eqx
@@ -12,7 +13,7 @@ import phydrax as phx
 class _ScaledPathValue(eqx.Module):
     amplitude: jax.Array
 
-    def __call__(self, time, side):
+    def __call__(self, time: Any, side: Any) -> Any:
         del side
         return jnp.asarray([self.amplitude * time])
 
@@ -20,7 +21,7 @@ class _ScaledPathValue(eqx.Module):
 class _ScaledPathDerivative(eqx.Module):
     amplitude: jax.Array
 
-    def __call__(self, time, side):
+    def __call__(self, time: Any, side: Any) -> Any:
         del time, side
         return jnp.asarray([self.amplitude])
 
@@ -28,12 +29,14 @@ class _ScaledPathDerivative(eqx.Module):
 class _LinearField(eqx.Module):
     rate: jax.Array
 
-    def __call__(self, time, state, args):
+    def __call__(self, time: Any, state: Any, args: Any) -> Any:
         del time, args
         return self.rate * state[..., None]
 
 
-def _declared_path(value, derivative, *, dimension, path_id, breakpoints=()):
+def _declared_path(
+    value: Any, derivative: Any, *, dimension: Any, path_id: Any, breakpoints: Any = ()
+) -> Any:
     points = jnp.asarray(breakpoints, dtype="float64")
     return phx.solver.CallableDrivingPath(
         value,
@@ -46,7 +49,7 @@ def _declared_path(value, derivative, *, dimension, path_id, breakpoints=()):
     )
 
 
-def test_smooth_cde_matches_analytic_solution_and_preserves_provenance():
+def test_smooth_cde_matches_analytic_solution_and_preserves_provenance() -> None:
     rate = 0.7
     path = _declared_path(
         lambda time, side: jnp.asarray([time**2]),
@@ -90,7 +93,7 @@ def test_smooth_cde_matches_analytic_solution_and_preserves_provenance():
     )
 
 
-def test_drift_and_multidimensional_control_contract_along_driver_axis():
+def test_drift_and_multidimensional_control_contract_along_driver_axis() -> None:
     matrix = jnp.asarray([[1.0, -2.0], [0.5, 3.0]])
     drift = jnp.asarray([0.3, -0.2])
     initial = jnp.asarray([0.4, -1.0])
@@ -119,7 +122,7 @@ def test_drift_and_multidimensional_control_contract_along_driver_axis():
     assert jnp.allclose(solution.states[0], expected, rtol=2e-8, atol=2e-9)
 
 
-def test_piecewise_linear_derivative_knot_is_declared_and_landed():
+def test_piecewise_linear_derivative_knot_is_declared_and_landed() -> None:
     path = phx.solver.PiecewiseLinearDrivingPath(
         jnp.asarray([0.0, 0.3, 1.0]),
         jnp.asarray([[0.0], [0.3], [3.1]]),
@@ -151,9 +154,9 @@ def test_piecewise_linear_derivative_knot_is_declared_and_landed():
 
 @pytest.mark.parametrize("right_offset", [1.0, jnp.nan])
 def test_callable_value_jumps_and_nonfinite_breakpoint_limits_are_rejected(
-    right_offset,
-):
-    def value(time, side):
+    right_offset: Any,
+) -> None:
+    def value(time: Any, side: Any) -> Any:
         offset = jnp.where(time == 0.5, right_offset, 0.0) if side == "right" else 0.0
         return jnp.asarray([time + offset])
 
@@ -180,24 +183,24 @@ def test_callable_value_jumps_and_nonfinite_breakpoint_limits_are_rejected(
 
 
 def test_callable_derivative_jump_works_and_inactive_capacity_is_not_terminal_jump(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     captured = {}
     clip_controller = dfx.ClipStepSizeController
 
     class CaptureSchedule(clip_controller):
-        def __init__(self, controller, *args, **kwargs):
+        def __init__(self, controller: Any, *args: Any, **kwargs: Any) -> None:
             captured["step_ts"] = kwargs["step_ts"]
             captured["jump_ts"] = kwargs["jump_ts"]
             super().__init__(controller, *args, **kwargs)
 
     monkeypatch.setattr(dfx, "ClipStepSizeController", CaptureSchedule)
 
-    def value(time, side):
+    def value(time: Any, side: Any) -> Any:
         del side
         return jnp.asarray([jnp.where(time <= 0.5, time, 2.0 * time - 0.5)])
 
-    def derivative(time, side):
+    def derivative(time: Any, side: Any) -> Any:
         before_break = time <= 0.5 if side == "left" else time < 0.5
         return jnp.asarray([jnp.where(before_break, 1.0, 2.0)])
 
@@ -232,8 +235,8 @@ def test_callable_derivative_jump_works_and_inactive_capacity_is_not_terminal_ju
     assert jnp.isposinf(captured["step_ts"][1])
 
 
-def test_gradients_flow_through_vector_field_and_path_coefficients():
-    def terminal(rate, amplitude):
+def test_gradients_flow_through_vector_field_and_path_coefficients() -> None:
+    def terminal(rate: Any, amplitude: Any) -> Any:
         path = _declared_path(
             _ScaledPathValue(amplitude),
             _ScaledPathDerivative(amplitude),
@@ -262,7 +265,7 @@ def test_gradients_flow_through_vector_field_and_path_coefficients():
     assert jnp.allclose(path_gradient, rate * expected, rtol=2e-5, atol=2e-6)
 
 
-def test_smooth_cde_agrees_with_refined_geometric_rough_solve():
+def test_smooth_cde_agrees_with_refined_geometric_rough_solve() -> None:
     rate = 0.45
     problem = phx.solver.RoughDifferentialProblem(
         lambda time, state, args: rate * state[..., None],
@@ -296,7 +299,7 @@ def test_smooth_cde_agrees_with_refined_geometric_rough_solve():
     assert jnp.allclose(cde.states[0], rde.states[0], rtol=2e-6, atol=2e-6)
 
 
-def test_rough_second_level_control_is_rejected_with_rde_direction():
+def test_rough_second_level_control_is_rejected_with_rde_direction() -> None:
     rough_path = phx.stochastic.GeometricRoughPath.from_values(
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([[0.0], [1.0]]),
@@ -315,7 +318,7 @@ def test_rough_second_level_control_is_rejected_with_rde_direction():
         )
 
 
-def test_complex_cde_uses_declared_real_coordinates():
+def test_complex_cde_uses_declared_real_coordinates() -> None:
     path = _declared_path(
         lambda time, side: jnp.asarray([time]),
         lambda time, side: jnp.asarray([1.0]),

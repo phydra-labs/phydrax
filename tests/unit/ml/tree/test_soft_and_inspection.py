@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -36,7 +39,9 @@ from phydrax.ml.tree import (
 )
 
 
-def _soft_model(model_type=SoftDecisionTree, *, tree_count=1, temperature=0.2):
+def _soft_model(
+    model_type: Any = SoftDecisionTree, *, tree_count: Any = 1, temperature: Any = 0.2
+) -> Any:
     logits = jnp.broadcast_to(jnp.array([[[8.0, -8.0]]]), (tree_count, 1, 2))
     thresholds = jnp.broadcast_to(jnp.array([[[0.0, 20.0]]]), logits.shape)
     leaves = jnp.stack(
@@ -63,7 +68,7 @@ def _soft_model(model_type=SoftDecisionTree, *, tree_count=1, temperature=0.2):
     )
 
 
-def _hard_inspection_tree():
+def _hard_inspection_tree() -> Any:
     return TreeEnsemble(
         feature_index=jnp.array([[0, -1, -1]]),
         threshold=jnp.array([[0.0, 0.0, 0.0]]),
@@ -84,7 +89,7 @@ def _hard_inspection_tree():
     )
 
 
-def _soft_batch(case=False):
+def _soft_batch(case: Any = False) -> Any:
     features = jnp.array(
         [
             [-2.0, 0.3],
@@ -115,7 +120,9 @@ def _soft_batch(case=False):
         pytest.param(SoftGradientBoostedTrees, 3, id="soft-boosted"),
     ),
 )
-def test_every_soft_model_family_is_jittable_vmappable_and_smooth(model_type, tree_count):
+def test_every_soft_model_family_is_jittable_vmappable_and_smooth(
+    model_type: Any, tree_count: Any
+) -> None:
     model = _soft_model(model_type, tree_count=tree_count)
     points = jnp.array([[-2.0, 3.0], [-0.5, -4.0], [1.0, 9.0]])
     predictions = model(points)
@@ -135,7 +142,9 @@ def test_every_soft_model_family_is_jittable_vmappable_and_smooth(model_type, tr
     assert hardened(points).shape == predictions.shape
 
 
-def test_soft_temperature_missing_routing_and_hardening_are_explicit_relaxations():
+def test_soft_temperature_missing_routing_and_hardening_are_explicit_relaxations() -> (
+    None
+):
     soft = _soft_model(temperature=0.02)
     hard = soft.harden()
     points = jnp.array([[-2.0, 100.0], [2.0, -100.0], [jnp.nan, 7.0]])
@@ -146,7 +155,7 @@ def test_soft_temperature_missing_routing_and_hardening_are_explicit_relaxations
     assert bool(hard.default_left[0, 0])
     assert hard(jnp.array([[jnp.nan, -999.0]]))[0] == hard(jnp.array([[-2.0, 999.0]]))[0]
 
-    def hardened_prediction(left_leaf):
+    def hardened_prediction(left_leaf: Any) -> Any:
         model = SoftDecisionTree(
             feature_logits=soft.feature_logits,
             threshold=soft.threshold,
@@ -162,12 +171,14 @@ def test_soft_temperature_missing_routing_and_hardening_are_explicit_relaxations
     assert jax.grad(hardened_prediction)(jnp.array(-2.0)) == 0.0
 
 
-def test_soft_model_parameter_and_input_prediction_gradients_match_declared_smoothness():
+def test_soft_model_parameter_and_input_prediction_gradients_match_declared_smoothness() -> (
+    None
+):
     model = _soft_model()
     point = jnp.array([0.3, -1.0])
     input_gradient = jax.grad(model)(point)
 
-    def parameterized_prediction(threshold, leaf):
+    def parameterized_prediction(threshold: Any, leaf: Any) -> Any:
         changed = SoftDecisionTree(
             feature_logits=model.feature_logits,
             threshold=model.threshold.at[0, 0, 0].set(threshold),
@@ -205,8 +216,8 @@ _SOFT_RECIPES = (
 
 @pytest.mark.parametrize("factory,model_type", _SOFT_RECIPES)
 def test_every_soft_recipe_requires_keys_is_deterministic_and_declares_unrolled_gradients(
-    factory, model_type
-):
+    factory: Any, model_type: Any
+) -> None:
     recipe = factory()
     batch = _soft_batch(case=True)
     with pytest.raises(ValueError, match="explicit JAX key"):
@@ -253,7 +264,7 @@ def test_every_soft_recipe_requires_keys_is_deterministic_and_declares_unrolled_
     assert jnp.all(diagnostics.iterations == 4)
 
 
-def test_soft_fit_feature_target_weight_and_hyperparameter_gradients_are_finite():
+def test_soft_fit_feature_target_weight_and_hyperparameter_gradients_are_finite() -> None:
     batch = _soft_batch()
     features = batch.features
     targets = batch.targets
@@ -269,7 +280,9 @@ def test_soft_fit_feature_target_weight_and_hyperparameter_gradients_are_finite(
         temperature_schedule="linear",
     )
 
-    def fit_prediction(feature_values, target_values, sample_weights, learning_rate):
+    def fit_prediction(
+        feature_values: Any, target_values: Any, sample_weights: Any, learning_rate: Any
+    ) -> Any:
         recipe = eqx.tree_at(
             lambda candidate: candidate.learning_rate,
             base_recipe,
@@ -289,7 +302,9 @@ def test_soft_fit_feature_target_weight_and_hyperparameter_gradients_are_finite(
     assert all(bool(jnp.any(jnp.abs(gradient) > 0.0)) for gradient in gradients)
 
 
-def test_soft_fit_respects_masks_zero_statistical_weight_and_ignores_measure_weight():
+def test_soft_fit_respects_masks_zero_statistical_weight_and_ignores_measure_weight() -> (
+    None
+):
     batch = _soft_batch()
     feature_mask = jnp.ones_like(batch.features, dtype="bool").at[5, 1].set(False)
     common = dict(
@@ -301,6 +316,7 @@ def test_soft_fit_respects_masks_zero_statistical_weight_and_ignores_measure_wei
         batch.features,
         batch.targets,
         measure_weight=jnp.arange(1.0, 7.0),
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     changed_features = batch.features.at[5].set(jnp.array([999.0, -999.0]))
@@ -309,6 +325,7 @@ def test_soft_fit_respects_masks_zero_statistical_weight_and_ignores_measure_wei
         changed_features,
         changed_targets,
         measure_weight=jnp.ones((6,)),
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     recipe = SoftDecisionTreeRecipe(depth=1, iterations=4)
@@ -321,7 +338,9 @@ def test_soft_fit_respects_masks_zero_statistical_weight_and_ignores_measure_wei
     )
 
 
-def test_soft_classification_objectives_labels_and_failure_status_are_observable():
+def test_soft_classification_objectives_labels_and_failure_status_are_observable() -> (
+    None
+):
     binary_batch = MLBatch(
         jnp.linspace(-2.0, 2.0, 8)[:, None],
         jnp.array([0, 0, 0, 0, 1, 1, 1, 1]),
@@ -331,10 +350,15 @@ def test_soft_classification_objectives_labels_and_failure_status_are_observable
         depth=1, iterations=4, objective="logistic", num_classes=2
     ).fit_batch(binary_batch, key=jax.random.key(2))
     logistic_model = logistic.as_trainable()
+    # ty: ignore[unresolved-attribute]
     assert logistic_model.objective_transform == "sigmoid"
+    # ty: ignore[unresolved-attribute]
     assert logistic_model.predict_labels(binary_batch.features).shape == (8,)
+    # ty: ignore[unresolved-attribute]
     assert logistic_model.predict(binary_batch.features).shape == (8,)
+    # ty: ignore[unresolved-attribute]
     assert logistic_model.predict_proba(binary_batch.features).shape == (8, 2)
+    # ty: ignore[unresolved-attribute]
     assert logistic_model.decision_function(binary_batch.features).shape == (8,)
 
     multiclass_batch = MLBatch(
@@ -349,13 +373,17 @@ def test_soft_classification_objectives_labels_and_failure_status_are_observable
     probabilities = softmax_model(multiclass_batch.features)
     assert probabilities.shape == (9, 3)
     assert jnp.allclose(jnp.sum(probabilities, axis=-1), 1.0)
+    # ty: ignore[unresolved-attribute]
     assert softmax_model.predict_labels(multiclass_batch.features).shape == (9,)
+    # ty: ignore[unresolved-attribute]
     assert softmax_model.predict(multiclass_batch.features).shape == (9,)
+    # ty: ignore[unresolved-attribute]
     assert softmax_model.predict_proba(multiclass_batch.features).shape == (9, 3)
 
     empty = SoftDecisionTreeRecipe(depth=1, iterations=2).fit_batch(
         MLBatch(
             binary_batch.features,
+            # ty: ignore[unresolved-attribute]
             binary_batch.targets.astype("float64"),
             sample_weight=jnp.zeros((8,)),
         ),
@@ -366,7 +394,9 @@ def test_soft_classification_objectives_labels_and_failure_status_are_observable
     assert not bool(empty.diagnostics.converged)
 
 
-def test_soft_temperatures_categorical_and_complex_feature_paths_fail_explicitly():
+def test_soft_temperatures_categorical_and_complex_feature_paths_fail_explicitly() -> (
+    None
+):
     with pytest.raises(ValueError, match="finite and positive"):
         _soft_model(temperature=0.0)
     with pytest.raises(ValueError, match="strictly positive"):
@@ -388,7 +418,9 @@ def test_soft_temperatures_categorical_and_complex_feature_paths_fail_explicitly
         _soft_model()(jnp.array([[1.0 + 1.0j, 0.0]]))
 
 
-def test_feature_importance_export_and_capacity_diagnostics_report_stored_structure():
+def test_feature_importance_export_and_capacity_diagnostics_report_stored_structure() -> (
+    None
+):
     model = _hard_inspection_tree()
     importance = feature_importance(model)
     capacity = capacity_diagnostics(model)
@@ -412,9 +444,12 @@ def test_feature_importance_export_and_capacity_diagnostics_report_stored_struct
         .fit_batch(_soft_batch(case=True))
         .as_trainable()
     )
+    # ty: ignore[invalid-argument-type]
     assert feature_importance(case_model).gain.shape == (2, 2)
+    # ty: ignore[invalid-argument-type]
     assert export_tree(case_model, 0, case_index=1).leaf_value.shape[-1] == 1
     with pytest.raises(IndexError, match="identify every case axis"):
+        # ty: ignore[invalid-argument-type]
         export_tree(case_model, 0)
     with pytest.raises(IndexError, match="outside"):
         export_tree(model, 1)
@@ -422,7 +457,9 @@ def test_feature_importance_export_and_capacity_diagnostics_report_stored_struct
         feature_importance(_soft_model())
 
 
-def test_partial_dependence_preserves_samples_weights_and_rejects_invalid_domains():
+def test_partial_dependence_preserves_samples_weights_and_rejects_invalid_domains() -> (
+    None
+):
     model = _hard_inspection_tree()
     samples = jnp.array([[-3.0, 10.0], [4.0, -7.0], [9.0, 1.0]])
     result = partial_dependence(
@@ -453,7 +490,11 @@ def test_partial_dependence_preserves_samples_weights_and_rejects_invalid_domain
     case_batch = _soft_batch(case=True)
     case_model = DecisionTreeRegressor(max_depth=1).fit_batch(case_batch).as_trainable()
     case_result = partial_dependence(
-        case_model, case_batch.features, 0, jnp.array([-1.0, 1.0])
+        # ty: ignore[invalid-argument-type]
+        case_model,
+        case_batch.features,
+        0,
+        jnp.array([-1.0, 1.0]),
     )
     assert case_result.average.shape == (2, 2)
     with pytest.raises(IndexError, match="out of range"):
@@ -476,7 +517,7 @@ def test_partial_dependence_preserves_samples_weights_and_rejects_invalid_domain
         )
 
 
-def test_exact_tree_shap_is_additive_case_independent_and_explicitly_bounded():
+def test_exact_tree_shap_is_additive_case_independent_and_explicitly_bounded() -> None:
     model = _hard_inspection_tree()
     points = jnp.array([[-2.0, 100.0], [3.0, -100.0]])
     baseline = jnp.array([[-1.0, 0.0], [-1.0, 0.0]])
@@ -501,13 +542,14 @@ def test_exact_tree_shap_is_additive_case_independent_and_explicitly_bounded():
     )
     with pytest.raises(ValueError, match="case-independent"):
         tree_shap(
+            # ty: ignore[invalid-argument-type]
             case_model,
             _soft_batch(case=True).features,
             jnp.zeros_like(_soft_batch(case=True).features),
         )
 
 
-def test_soft_gradient_attribution_matches_autodiff_and_baseline_displacement():
+def test_soft_gradient_attribution_matches_autodiff_and_baseline_displacement() -> None:
     model = _soft_model()
     points = jnp.array([[-1.0, 0.5], [0.4, -0.2]])
     baseline = jnp.zeros_like(points)
@@ -529,4 +571,5 @@ def test_soft_gradient_attribution_matches_autodiff_and_baseline_displacement():
         .as_trainable()
     )
     with pytest.raises(ValueError, match="case-independent"):
+        # ty: ignore[invalid-argument-type]
         soft_tree_gradient_attribution(case_model, _soft_batch(case=True).features)

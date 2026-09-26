@@ -9,6 +9,7 @@ import argparse
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -45,11 +46,11 @@ from phydrax.discretization import (
 )
 
 
-def _maximum_absolute(value):
+def _maximum_absolute(value: Any) -> Any:
     return jnp.max(jnp.abs(value))
 
 
-def _material_frame():
+def _material_frame() -> Any:
     return CardiacMaterialFrame(
         jnp.asarray(((1.0, 0.0, 0.0),)),
         jnp.asarray(((0.0, 1.0, 0.0),)),
@@ -59,7 +60,7 @@ def _material_frame():
     )
 
 
-def _mixed_hexahedral_mesh():
+def _mixed_hexahedral_mesh() -> Any:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -80,7 +81,7 @@ def _mixed_hexahedral_mesh():
     return CellMesh(coordinates, (block,))
 
 
-def _material_qualification():
+def _material_qualification() -> Any:
     frame = _material_frame()
     energies = (
         Guccione1991Energy(
@@ -131,7 +132,7 @@ def _material_qualification():
     return {"passed": all_passed, "cases": cases}
 
 
-def _mixed_qualification():
+def _mixed_qualification() -> Any:
     energy = Guccione1991Energy(
         Guccione1991Parameters(0.9, 8.0, 2.0, 4.0),
         _material_frame(),
@@ -189,7 +190,7 @@ def _mixed_qualification():
     }
 
 
-def _chamber_qualification():
+def _chamber_qualification() -> Any:
     coordinates = jnp.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -233,12 +234,14 @@ def _chamber_qualification():
     }
 
 
-def _support_qualification():
+def _support_qualification() -> Any:
     displacement = jnp.asarray((0.11, -0.04, 0.08))
+    # ty: ignore[invalid-argument-type]
     support = PericardialSupport((0.0, 0.0, 1.0), 3.0, 1.5)
     response = support.evaluate(displacement)
     gradient = jax.grad(support.energy_density)(displacement)
     traction_error = _maximum_absolute(response.restoring_traction + gradient)
+    # ty: ignore[invalid-argument-type]
     free = PericardialSupport((0.0, 0.0, 1.0), 0.0, 0.0).evaluate(displacement)
     free_error = jnp.maximum(
         jnp.abs(free.energy_density),
@@ -253,7 +256,7 @@ def _support_qualification():
     }
 
 
-def _unloading_qualification():
+def _unloading_qualification() -> Any:
     unloaded = jnp.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -262,7 +265,7 @@ def _unloading_qualification():
     )
     loaded = unloaded + displacement
 
-    def forward_path(reference, factors, args):
+    def forward_path(reference: Any, factors: Any, args: Any) -> Any:
         del args
         coordinates = reference[None, ...] + factors[:, None, None] * displacement
         return ForwardContinuationResult(

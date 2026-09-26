@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_tait_material_matches_reference_state_and_energy_identity():
+def test_tait_material_matches_reference_state_and_energy_identity() -> None:
     material = phx.equations.TaitBarotropicMaterial(
         997.0,
         20.0,
@@ -34,7 +34,7 @@ def test_tait_material_matches_reference_state_and_energy_identity():
         )
 
 
-def test_tait_material_admissibility_is_explicit_without_clipping():
+def test_tait_material_admissibility_is_explicit_without_clipping() -> None:
     material = phx.equations.TaitBarotropicMaterial(
         1.0,
         2.0,
@@ -49,7 +49,7 @@ def test_tait_material_admissibility_is_explicit_without_clipping():
     assert material.pressure(jnp.asarray(0.09)) != material.pressure(jnp.asarray(0.1))
 
 
-def test_tait_material_rejects_invalid_parameters():
+def test_tait_material_rejects_invalid_parameters() -> None:
     with pytest.raises(ValueError, match="positive finite"):
         phx.equations.TaitBarotropicMaterial(0.0, 1.0)
     with pytest.raises(ValueError, match="exponent > 1"):

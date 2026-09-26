@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +17,9 @@ import phydrax as phx
 
 @pytest.mark.parametrize("kind", ["dct", "dst"])
 @pytest.mark.parametrize("transform_type", [1, 2, 3, 4])
-def test_fast_trigonometric_transforms_match_scipy_and_invert(kind, transform_type):
+def test_fast_trigonometric_transforms_match_scipy_and_invert(
+    kind: Any, transform_type: Any
+) -> None:
     transform = phx.linalg.RealTrigonometricTransform(kind, transform_type, 17)
     values = jnp.linspace(-1.0, 2.0, 17)
     reference = scipy_fft.dct if kind == "dct" else scipy_fft.dst
@@ -31,7 +36,9 @@ def test_fast_trigonometric_transforms_match_scipy_and_invert(kind, transform_ty
     np.testing.assert_allclose(reconstructed, values, rtol=2e-12, atol=2e-12)
 
 
-def test_tensor_fast_transform_handles_complex_intermediate_values_and_gradients():
+def test_tensor_fast_transform_handles_complex_intermediate_values_and_gradients() -> (
+    None
+):
     transform = phx.linalg.TensorLinearTransform(
         (
             phx.linalg.FFTLinearTransform(8),

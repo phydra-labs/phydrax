@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -17,7 +18,7 @@ from examples.interactive_column_inference import run_twin
 from phydrax.applications.geophysics._inference import column_local_information
 
 
-def qualify(*, steps=12, maximum_steps=24):
+def qualify(*, steps: Any = 12, maximum_steps: Any = 24) -> Any:
     linear = column_local_information(
         lambda z: jnp.asarray([2 * z[0], 3 * z[1]]), jnp.ones(2)
     )

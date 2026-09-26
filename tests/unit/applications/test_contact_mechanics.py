@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,7 +19,7 @@ contact = phx.applications.contact
 collision = phx.discretization.contact
 
 
-def _material_table():
+def _material_table() -> Any:
     return contact.ContactMaterialPairTable.uniform(
         normal_stiffness=100.0,
         static_friction=0.5,
@@ -32,7 +34,7 @@ def _material_table():
     )
 
 
-def _canonical_pair(*, friction=False):
+def _canonical_pair(*, friction: Any = False) -> Any:
     moving_space = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
     static_space = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
     moving_plan = collision.CollisionSurfacePlan(
@@ -100,7 +102,7 @@ def _canonical_pair(*, friction=False):
     return scene, search, closure, state, states, rates, rest, epoch
 
 
-def _evaluate(case, states=None, rates=None):
+def _evaluate(case: Any, states: Any = None, rates: Any = None) -> Any:
     scene, search, closure, state, initial_states, initial_rates, rest, epoch = case
     return contact.evaluate_cross_discretization_contact(
         scene,
@@ -116,7 +118,9 @@ def _evaluate(case, states=None, rates=None):
     )
 
 
-def test_collision_surface_search_is_deterministic_and_fixed_epoch_residual_is_dense():
+def test_collision_surface_search_is_deterministic_and_fixed_epoch_residual_is_dense() -> (
+    None
+):
     case = _canonical_pair()
     scene, search, _, _, states, rates, rest, epoch = case
     repeated = search.build(scene, scene.positions(states))
@@ -139,7 +143,7 @@ def test_collision_surface_search_is_deterministic_and_fixed_epoch_residual_is_d
         second.assembly.action_reaction_residual, 0.0, atol=1.0e-12
     )
 
-    def residual(moving_state):
+    def residual(moving_state: Any) -> Any:
         evaluation = contact.evaluate_cross_discretization_contact(
             scene,
             (moving_state, states[1]),
@@ -159,7 +163,7 @@ def test_collision_surface_search_is_deterministic_and_fixed_epoch_residual_is_d
     assert jnp.all(jnp.isfinite(action))
 
 
-def test_closure_candidate_history_is_committed_or_rolled_back_explicitly():
+def test_closure_candidate_history_is_committed_or_rolled_back_explicitly() -> None:
     case = _canonical_pair(friction=True)
     rates = (
         jnp.broadcast_to(jnp.asarray([0.2, -0.05]), case[4][0].shape),
@@ -177,7 +181,7 @@ def test_closure_candidate_history_is_committed_or_rolled_back_explicitly():
     )
 
 
-def test_mortar_and_nitsche_evidence_are_derived_from_discrete_actions():
+def test_mortar_and_nitsche_evidence_are_derived_from_discrete_actions() -> None:
     mortar = contact.ContactMortarSpace(
         jnp.asarray([[1.0, 0.0], [0.0, 1.0]]),
         jnp.asarray([[0.75, 0.25], [0.25, 0.75]]),
@@ -210,12 +214,12 @@ def test_mortar_and_nitsche_evidence_are_derived_from_discrete_actions():
     assert bool(nitsche_evidence.coercive)
 
 
-def test_neural_contact_uses_canonical_fixed_manifold_virtual_work():
+def test_neural_contact_uses_canonical_fixed_manifold_virtual_work() -> None:
     case = _canonical_pair()
     scene, search, closure, state, states, _, rest, epoch = case
     functions = {"moving": states[0], "static": states[1]}
 
-    def state_trace(root, args):
+    def state_trace(root: Any, args: Any) -> Any:
         del args
         return root["moving"], root["static"]
 
@@ -245,7 +249,7 @@ def test_neural_contact_uses_canonical_fixed_manifold_virtual_work():
     assert prepared.formulation == "virtual-work"
 
 
-def test_mpm_participant_uses_canonical_manifold_and_conservative_pullback():
+def test_mpm_participant_uses_canonical_manifold_and_conservative_pullback() -> None:
     query_space = phx.linalg.ArraySpace((1, 2), dtype=np.float64)
     query = contact.prepare_point_contact_participant(
         query_space,

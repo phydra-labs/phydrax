@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 import pytest
 
 import phydrax as phx
 
 
-def _mesh():
+def _mesh() -> Any:
     coordinates = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     block = phx.discretization.CellBlock(
         "triangles",
@@ -27,7 +30,7 @@ def _mesh():
     )
 
 
-def _scope(mesh, dimension, rows, **overrides):
+def _scope(mesh: Any, dimension: Any, rows: Any, **overrides: Any) -> Any:
     entities = mesh.entity_set(dimension)
     return phx.meshing.MeshingScope(
         overrides.get("source_id", mesh.mesh_id),
@@ -39,7 +42,7 @@ def _scope(mesh, dimension, rows, **overrides):
     )
 
 
-def _facet_row(mesh, vertices):
+def _facet_row(mesh: Any, vertices: Any) -> Any:
     expected = frozenset(vertices)
     return next(
         row
@@ -48,7 +51,7 @@ def _facet_row(mesh, vertices):
     )
 
 
-def _discretization(mesh, *, degree=1):
+def _discretization(mesh: Any, *, degree: Any = 1) -> Any:
     return phx.discretization.FiniteElementPlan(
         mesh,
         phx.discretization.FiniteElementFieldSpec(
@@ -57,7 +60,7 @@ def _discretization(mesh, *, degree=1):
     ).prepare()
 
 
-def test_resolve_mesh_scope_returns_exact_persistent_id_selection():
+def test_resolve_mesh_scope_returns_exact_persistent_id_selection() -> None:
     mesh = _mesh()
     scope = _scope(mesh, 2, (1,))
 
@@ -80,14 +83,16 @@ def test_resolve_mesh_scope_returns_exact_persistent_id_selection():
         ({"entity_set_id": "another-entity-set"}, "entity set"),
     ),
 )
-def test_resolve_mesh_scope_rejects_foreign_or_stale_bindings(overrides, message):
+def test_resolve_mesh_scope_rejects_foreign_or_stale_bindings(
+    overrides: Any, message: Any
+) -> None:
     mesh = _mesh()
 
     with pytest.raises(ValueError, match=message):
         phx.meshing.resolve_mesh_scope(mesh, _scope(mesh, 2, (0,), **overrides))
 
 
-def test_resolve_mesh_scope_rejects_undeclared_global_ids():
+def test_resolve_mesh_scope_rejects_undeclared_global_ids() -> None:
     mesh = _mesh()
     cells = mesh.entity_set(2)
     scope = phx.meshing.MeshingScope(
@@ -103,7 +108,7 @@ def test_resolve_mesh_scope_rejects_undeclared_global_ids():
         phx.meshing.resolve_mesh_scope(mesh, scope)
 
 
-def test_p1_cell_and_boundary_facet_selections_resolve_exact_dofs():
+def test_p1_cell_and_boundary_facet_selections_resolve_exact_dofs() -> None:
     mesh = _mesh()
     discretization = _discretization(mesh)
     cell_selection = phx.meshing.resolve_mesh_scope(mesh, _scope(mesh, 2, (1,)))
@@ -136,7 +141,7 @@ def test_p1_cell_and_boundary_facet_selections_resolve_exact_dofs():
     np.testing.assert_array_equal(constraint.free_dofs, (0, 1))
 
 
-def test_dirichlet_selection_rejects_interior_facets():
+def test_dirichlet_selection_rejects_interior_facets() -> None:
     mesh = _mesh()
     discretization = _discretization(mesh)
     interior_facet = int(
@@ -152,7 +157,7 @@ def test_dirichlet_selection_rejects_interior_facets():
         )
 
 
-def test_entity_selection_to_dofs_rejects_high_order_fields():
+def test_entity_selection_to_dofs_rejects_high_order_fields() -> None:
     mesh = _mesh()
     discretization = _discretization(mesh, degree=2)
     selection = phx.meshing.resolve_mesh_scope(mesh, _scope(mesh, 2, (0,)))

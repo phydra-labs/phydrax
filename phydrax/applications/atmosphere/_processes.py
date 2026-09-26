@@ -281,7 +281,10 @@ class GlobalAtmosphereProcesses(StrictModule):
         if self.surface_physics is not None:
             thermodynamics = self.thermodynamics
             # __init__ rejects surface_physics without moist thermodynamics.
-            assert thermodynamics is not None
+            if not (thermodynamics is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: thermodynamics is not None."
+                )
             boundary = self.surface_physics.evaluate(
                 thermodynamics, view, surface_water, surface_energy, held.solar_down
             )

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import meshio
 import numpy as np
@@ -14,7 +17,7 @@ import phydrax as phx
 
 
 @pytest.fixture
-def simple_square_mesh():
+def simple_square_mesh() -> Any:
     # Create a simple square mesh using meshio
     points = np.array(
         [[-0.5, -0.5, 0.0], [0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [-0.5, 0.5, 0.0]]
@@ -26,7 +29,7 @@ def simple_square_mesh():
 
 
 @pytest.fixture
-def geometry_from_square(simple_square_mesh):
+def geometry_from_square(simple_square_mesh: Any) -> Any:
     # Compile the mesh source and adapt it to the domain algebra.
     return phx.domain.GeometryDomain(
         phx.geometry.planar_region_from_source(
@@ -35,7 +38,7 @@ def geometry_from_square(simple_square_mesh):
     )
 
 
-def test_initialization(geometry_from_square):
+def test_initialization(geometry_from_square: Any) -> None:
     assert isinstance(geometry_from_square, phx.domain.GeometryDomain)
     assert geometry_from_square.geometry.kind is phx.geometry.GeometryKind.REGION
     assert geometry_from_square.geometry.has_capability(
@@ -43,14 +46,16 @@ def test_initialization(geometry_from_square):
     )
 
 
-def test_area_property(geometry_from_square):
+def test_area_property(geometry_from_square: Any) -> None:
     geom = geometry_from_square
     expected_area = 1.0  # Square with side length 1m
     computed_area = float(geom.area)
     assert np.isclose(computed_area, expected_area, atol=1e-6)
 
 
-def test_boundary_atlas_partition_matches_boundary_measure(geometry_from_square):
+def test_boundary_atlas_partition_matches_boundary_measure(
+    geometry_from_square: Any,
+) -> None:
     geom = geometry_from_square
     partition = phx.geometry.BoundaryAtlasPartition(geom.boundary_atlas)
     assert partition.num_strata == 4
@@ -65,7 +70,7 @@ def test_boundary_atlas_partition_matches_boundary_measure(geometry_from_square)
     assert np.isclose(float(jnp.sum(base_mass)), 1.0)
 
 
-def test_curved_boundary_normals_obey_divergence_theorem():
+def test_curved_boundary_normals_obey_divergence_theorem() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile()
     )
@@ -76,6 +81,7 @@ def test_curved_boundary_normals_obey_divergence_theorem():
     )
     points = np.asarray(realization.batch.points["x"].data)
     weights = np.asarray(realization.batch.weights.data)
+    # ty: ignore[invalid-argument-type]
     normals = np.asarray(geom._boundary_normals(points))
 
     closure = np.sum(weights[:, None] * normals, axis=0)
@@ -87,8 +93,8 @@ def test_curved_boundary_normals_obey_divergence_theorem():
 
 
 def test_boundary_chart_lowering_integrates_arclength_without_seam_duplication(
-    geometry_from_square,
-):
+    geometry_from_square: Any,
+) -> None:
     geom = geometry_from_square
     component = geom.component({"x": phx.domain.Boundary()})
     target = phx.integration.over(component)
@@ -102,14 +108,14 @@ def test_boundary_chart_lowering_integrates_arclength_without_seam_duplication(
     assert jnp.allclose(jnp.asarray(estimate.value.data), geom.boundary_length_value)
 
 
-def test_bounds_property(geometry_from_square):
+def test_bounds_property(geometry_from_square: Any) -> None:
     geom = geometry_from_square
     bounds = np.asarray(geom.bounds, dtype="float64")
     expected_bounds = np.array([[-0.5, -0.5], [0.5, 0.5]])
     assert np.allclose(bounds, expected_bounds, atol=1e-6)
 
 
-def test_contains_method(geometry_from_square):
+def test_contains_method(geometry_from_square: Any) -> None:
     geom = geometry_from_square
     inside_point = jnp.array([[0.0, 0.0]], dtype="float64")
     outside_point = jnp.array([[2.0, 2.0]], dtype="float64")
@@ -117,7 +123,7 @@ def test_contains_method(geometry_from_square):
     assert ~geom._contains(outside_point)[0]
 
 
-def test_on_boundary_method(geometry_from_square):
+def test_on_boundary_method(geometry_from_square: Any) -> None:
     geom = geometry_from_square
     boundary_point = jnp.array([[0.5, 0.0]], dtype="float64")
     interior_point = jnp.array([[0.0, 0.0]], dtype="float64")
@@ -125,7 +131,7 @@ def test_on_boundary_method(geometry_from_square):
     assert ~geom._on_boundary(interior_point)[0]
 
 
-def test_sample_boundary(geometry_from_square):
+def test_sample_boundary(geometry_from_square: Any) -> None:
     geom = geometry_from_square
     num_points = 100
     sampled_points = geom.sample_boundary(num_points=num_points)
@@ -135,7 +141,7 @@ def test_sample_boundary(geometry_from_square):
     assert np.allclose(distances, 0.0, atol=1e-8)
 
 
-def test_sample_interior(geometry_from_square):
+def test_sample_interior(geometry_from_square: Any) -> None:
     geom = geometry_from_square
     num_points = 100
     sampled_points = geom.sample_interior(num_points=num_points)
@@ -145,7 +151,7 @@ def test_sample_interior(geometry_from_square):
     assert np.all(distances <= 0.0)
 
 
-def test_geometry_from_cad_file(tmp_path):
+def test_geometry_from_cad_file(tmp_path: Any) -> None:
     # Test initialization from a mesh file
     vertices = np.array(
         [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]]
@@ -162,7 +168,7 @@ def test_geometry_from_cad_file(tmp_path):
     assert np.isclose(float(geom.area), mesh.area, atol=1e-6)
 
 
-def test_boundary_normals(geometry_from_square):
+def test_boundary_normals(geometry_from_square: Any) -> None:
     geom = geometry_from_square
     boundary_points = jnp.array(
         [
@@ -187,7 +193,7 @@ def test_boundary_normals(geometry_from_square):
     assert np.allclose(computed_normals, expected_normals, atol=1e-6)
 
 
-def test_sample_interior_separable(geometry_from_square):
+def test_sample_interior_separable(geometry_from_square: Any) -> None:
     """Test separable interior sampling through the geometry domain adapter."""
     import jax.random as jr
     import numpy as np
@@ -225,7 +231,7 @@ def test_sample_interior_separable(geometry_from_square):
     # Test with where condition
     key = jr.key(44)
 
-    def where_condition(point):
+    def where_condition(point: Any) -> Any:
         # Only include points in the positive quadrant
         return (point[0] > 0) & (point[1] > 0)
 

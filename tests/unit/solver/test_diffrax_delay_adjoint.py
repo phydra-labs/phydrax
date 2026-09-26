@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _constant_history_terminal(parameters, adjoint):
+def _constant_history_terminal(parameters: Any, adjoint: Any) -> Any:
     scale, rate = parameters
     problem = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: args * memory["lag"],
@@ -29,7 +32,7 @@ def _constant_history_terminal(parameters, adjoint):
     return jnp.dot(solution.states[:, 0], jnp.asarray([0.2, -0.5, 1.3]))
 
 
-def test_checkpointed_delay_adjoint_matches_direct_discrete_gradient():
+def test_checkpointed_delay_adjoint_matches_direct_discrete_gradient() -> None:
     parameters = jnp.asarray([1.2, 0.4])
     checkpointed = jax.grad(
         lambda value: _constant_history_terminal(
@@ -52,7 +55,7 @@ def test_checkpointed_delay_adjoint_matches_direct_discrete_gradient():
     )
 
 
-def test_checkpoint_count_does_not_change_delay_gradient():
+def test_checkpoint_count_does_not_change_delay_gradient() -> None:
     parameters = jnp.asarray([0.9, -0.2])
     gradients = tuple(
         jax.grad(
@@ -66,10 +69,10 @@ def test_checkpoint_count_does_not_change_delay_gradient():
     assert all(jnp.allclose(gradients[0], gradient) for gradient in gradients[1:])
 
 
-def test_checkpointed_delay_adjoint_differentiates_trainable_delay():
+def test_checkpointed_delay_adjoint_differentiates_trainable_delay() -> None:
     terminal_time = 0.25
 
-    def terminal(lag):
+    def terminal(lag: Any) -> Any:
         problem = phx.solver.DelayDifferentialProblem(
             lambda time, state, memory, args: memory["lag"],
             lambda time, args: jnp.asarray([time]),
@@ -90,7 +93,7 @@ def test_checkpointed_delay_adjoint_differentiates_trainable_delay():
     assert jnp.isclose(jax.grad(terminal)(lag), -terminal_time, atol=2e-9)
 
 
-def test_checkpointed_delay_adjoint_is_jittable():
+def test_checkpointed_delay_adjoint_is_jittable() -> None:
     operation = jax.jit(
         jax.value_and_grad(
             lambda parameters: _constant_history_terminal(
@@ -104,8 +107,8 @@ def test_checkpointed_delay_adjoint_is_jittable():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_checkpointed_delay_adjoint_supports_bounded_rolling_history():
-    def terminal(parameters, history_mode):
+def test_checkpointed_delay_adjoint_supports_bounded_rolling_history() -> None:
+    def terminal(parameters: Any, history_mode: Any) -> Any:
         scale, rate = parameters
         problem = phx.solver.DelayDifferentialProblem(
             lambda time, state, memory, args: args * memory["lag"],
@@ -133,8 +136,8 @@ def test_checkpointed_delay_adjoint_supports_bounded_rolling_history():
     assert jnp.array_equal(rolling, full)
 
 
-def test_segmented_delay_adjoint_matches_whole_discrete_gradient_and_jits():
-    def terminal(parameters):
+def test_segmented_delay_adjoint_matches_whole_discrete_gradient_and_jits() -> None:
+    def terminal(parameters: Any) -> Any:
         scale, rate = parameters
         problem = phx.solver.DelayDifferentialProblem(
             lambda time, state, memory, args: args * memory["lag"],
@@ -162,12 +165,14 @@ def test_segmented_delay_adjoint_matches_whole_discrete_gradient_and_jits():
 
 
 @pytest.mark.parametrize("max_segments", [0, -1, True, 1.5])
-def test_segmented_delay_adjoint_rejects_invalid_segment_bound(max_segments):
+def test_segmented_delay_adjoint_rejects_invalid_segment_bound(max_segments: Any) -> None:
     with pytest.raises(ValueError, match="positive integer"):
         phx.solver.SegmentedDelayAdjoint(max_segments)
 
 
 @pytest.mark.parametrize("checkpoints", [0, -1, True, 1.5])
-def test_checkpointed_delay_adjoint_rejects_invalid_checkpoint_count(checkpoints):
+def test_checkpointed_delay_adjoint_rejects_invalid_checkpoint_count(
+    checkpoints: Any,
+) -> None:
     with pytest.raises(ValueError, match="positive integer"):
         phx.solver.CheckpointedDelayAdjoint(checkpoints)

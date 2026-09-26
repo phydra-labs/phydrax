@@ -1762,7 +1762,10 @@ def fit_operator(
             assert task is not None
             assert rollout_route is not None
             assert rollout_policy is not None
-            assert output_routes is not None
+            if not (output_routes is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: output_routes is not None."
+                )
             _, scanned = _operator_rollout_scan(
                 _operator_prediction,
                 evaluated_model,
@@ -2347,7 +2350,8 @@ def fit_operator(
         if kernel is None:
             return model
         # A prepared kernel always has an initialized kernel state.
-        assert state is not None
+        if not (state is not None):
+            raise RuntimeError("Internal invariant failed: state is not None.")
         evaluated = kernel.rule.evaluation_parameters(state.rule_state, state.parameters)
         return fit_model(combine_parameters(evaluated, state.model_state, kernel.fixed))
 
@@ -2359,7 +2363,8 @@ def fit_operator(
         if kernel is None:
             return model
         # A prepared kernel always has an initialized kernel state.
-        assert state is not None
+        if not (state is not None):
+            raise RuntimeError("Internal invariant failed: state is not None.")
         return fit_model(kernel.target_tree(state))
 
     def attempt(

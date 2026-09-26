@@ -5,9 +5,11 @@ import phydrax as phx
 from phydrax.applications import polymer_field_theory as pft, polymer_liquids as pl
 
 
-def test_particle_form_factor_lowers_into_prism_and_observation_product():
+def test_particle_form_factor_lowers_into_prism_and_observation_product() -> None:
     layout = phx.atomistic.PolymerChainLayoutPlan(
+        # ty: ignore[invalid-argument-type]
         [[0, 1], [2, 3]],
+        # ty: ignore[invalid-argument-type]
         [[True, True], [True, True]],
         maximum_frames=1,
     )
@@ -20,6 +22,7 @@ def test_particle_form_factor_lowers_into_prism_and_observation_product():
         wave,
         positions,
         layout,
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0, 0],
         1,
         source_id="particle-trajectory",
@@ -29,6 +32,7 @@ def test_particle_form_factor_lowers_into_prism_and_observation_product():
         pl.PRISMClosurePlan(pl.PRISMClosureKind.HNC), maximum_iterations=8
     ).prepare(
         transform,
+        # ty: ignore[invalid-argument-type]
         pl.SiteMixturePlan(("A",), [0.1]),
         form_factor,
         pl.SitePairPotentialPlan(
@@ -49,11 +53,14 @@ def test_particle_form_factor_lowers_into_prism_and_observation_product():
     assert vector.values.shape == (4,)
 
 
-def test_particle_and_scft_scattering_adapters_preserve_product_identity():
+def test_particle_and_scft_scattering_adapters_preserve_product_identity() -> None:
     positions = jnp.asarray([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
     debye = phx.atomistic.debye_scattering(
         phx.atomistic.DebyeScatteringPlan(
-            [0.0, 1.0], maximum_frames=1, maximum_particles=2
+            # ty: ignore[invalid-argument-type]
+            [0.0, 1.0],
+            maximum_frames=1,
+            maximum_particles=2,
         ),
         positions,
     )
@@ -73,7 +80,9 @@ def test_particle_and_scft_scattering_adapters_preserve_product_identity():
     )
     model = pft.IncompressibleGaussianMixturePlan(
         ("A", "B"),
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0], [0.0, 0.0]],
         (pft.PolymerComponentPlan("AB", architecture, 1.0, 10.0),),
     )
@@ -85,6 +94,7 @@ def test_particle_and_scft_scattering_adapters_preserve_product_identity():
     scft_vector = pl.scft_density_scattering_theory_vector(
         evaluation,
         spectral,
+        # ty: ignore[invalid-argument-type]
         [1.0, -1.0],
         reciprocal_unit_id="reduced-inverse-length",
         normalization_id="orthonormal-fourier",

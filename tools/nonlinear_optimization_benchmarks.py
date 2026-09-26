@@ -45,7 +45,7 @@ def _matrix_free_newton(size: int) -> dict[str, Any]:
         maximum_steps=30,
     )
 
-    def solve(current_weights):
+    def solve(current_weights: Any) -> Any:
         return phx.optim.minimize(
             problem,
             initial,
@@ -99,7 +99,7 @@ def _newton_iteration_lifecycle(size: int) -> dict[str, Any]:
         lambda: method.prepare_state(value_function, parameters)
     )
 
-    def step(current_parameters, current_state):
+    def step(current_parameters: Any, current_state: Any) -> Any:
         return method.step(
             value_function,
             current_parameters,
@@ -132,13 +132,13 @@ def _dense_newton_reference(size: int) -> dict[str, Any]:
     weights = jnp.linspace(0.5, 2.0, size)
     initial = jnp.full((size,), 2.0)
 
-    def objective(parameters):
+    def objective(parameters: Any) -> Any:
         return _nonlinear_diagonal_objective(parameters, weights)
 
     gradient = jax.grad(objective)
     hessian = jax.hessian(objective)
 
-    def solve():
+    def solve() -> Any:
         parameters = initial
         for _ in range(12):
             parameters = parameters - jnp.linalg.solve(
@@ -161,7 +161,7 @@ def _dense_newton_reference(size: int) -> dict[str, Any]:
 
 
 def _line_search_accounting() -> dict[str, Any]:
-    def rosenbrock(parameters, _):
+    def rosenbrock(parameters: Any, _: Any) -> Any:
         x, y = parameters
         return (1.0 - x) ** 2 + 100.0 * (y - x**2) ** 2
 
@@ -192,7 +192,7 @@ def _line_search_accounting() -> dict[str, Any]:
 
 
 def _common_random_numbers(sample_size: int, repeats: int) -> dict[str, Any]:
-    def sampler(key, size):
+    def sampler(key: Any, size: Any) -> Any:
         return jr.normal(key, (size,))
 
     fixed = phx.optim.MonteCarloSampling(sampler, sample_size, refresh="fixed")
@@ -204,7 +204,7 @@ def _common_random_numbers(sample_size: int, repeats: int) -> dict[str, Any]:
     risk = phx.optim.ExpectationRisk()
     key = jr.key(42)
 
-    def estimates(policy):
+    def estimates(policy: Any) -> Any:
         values = []
         for iteration in range(repeats):
             batch = policy.sample(key, iteration)
@@ -229,7 +229,7 @@ def _common_random_numbers(sample_size: int, repeats: int) -> dict[str, Any]:
 def _poorly_scaled_bounds() -> dict[str, Any]:
     bounds = phx.optim.Bounds(-1.0, 1.0)
 
-    def objective(parameters, _):
+    def objective(parameters: Any, _: Any) -> Any:
         return 1e6 * (parameters[0] - 0.2) ** 2 + 1e-3 * (parameters[1] + 0.4) ** 2
 
     result, wall_seconds = _timed(

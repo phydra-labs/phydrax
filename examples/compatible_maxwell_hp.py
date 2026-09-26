@@ -2,10 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     complex_ = phx.discretization.fem.TensorDeRhamComplex(4, 3)
     return {
         "gradient_shape": complex_.gradient.shape,

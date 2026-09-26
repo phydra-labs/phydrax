@@ -26,7 +26,7 @@ from phydrax.applications.numerical_relativity import (
 )
 
 
-def test_exact_ads_satisfies_every_metric_conformal_zero_quantity():
+def test_exact_ads_satisfies_every_metric_conformal_zero_quantity() -> None:
     system = ConformalEinsteinSystem(
         -3.0,
         scalar_curvature_gauge=-12.0,
@@ -49,9 +49,13 @@ def test_exact_ads_satisfies_every_metric_conformal_zero_quantity():
     assert float(jnp.max(jnp.abs(failed.scalar_constraint))) > 0.0
 
 
-def test_generalized_wave_gauge_transition_retains_source_and_curvature_residual():
+def test_generalized_wave_gauge_transition_retains_source_and_curvature_residual() -> (
+    None
+):
     plan = GeneralizedWaveGaugePlan(
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.0, 0.0, 0.0),
+        # ty: ignore[invalid-argument-type]
         (0.0, 1.0, 0.0, 0.0),
         transition_time=1.0,
         transition_time_width=0.2,
@@ -74,7 +78,7 @@ def test_generalized_wave_gauge_transition_retains_source_and_curvature_residual
     np.testing.assert_allclose(evidence.maximum_wave_constraint, 0.0)
 
 
-def test_timelike_boundary_checks_omega_normal_metric_radiation_and_corner():
+def test_timelike_boundary_checks_omega_normal_metric_radiation_and_corner() -> None:
     shape = (5, 5, 5)
     metric = jnp.broadcast_to(
         jnp.diag(jnp.asarray((-1.0, 1.0, 1.0, 1.0))).reshape(4, 4, 1, 1, 1),
@@ -111,7 +115,7 @@ def test_timelike_boundary_checks_omega_normal_metric_radiation_and_corner():
     np.testing.assert_allclose(evidence.minimum_normal_norm, 1.0)
 
 
-def test_conformal_scalar_normal_mode_and_reflecting_runtime():
+def test_conformal_scalar_normal_mode_and_reflecting_runtime() -> None:
     plan = ConformalAdSScalarPlan(
         65,
         time_step=0.002,
@@ -131,7 +135,7 @@ def test_conformal_scalar_normal_mode_and_reflecting_runtime():
     np.testing.assert_allclose(run.evidence.maximum_boundary_residual, 0.0)
 
 
-def test_conformal_scalar_stress_and_holographic_observables_are_audited():
+def test_conformal_scalar_stress_and_holographic_observables_are_audited() -> None:
     metric = jnp.diag(jnp.asarray((-1.0, 1.0, 1.0, 1.0)))
     stress = conformal_scalar_stress_energy(
         metric,

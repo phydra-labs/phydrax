@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -16,7 +17,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _ocean(shape, *, coriolis, directional):
+def _ocean(shape: Any, *, coriolis: Any, directional: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(shape[0], periodic=True),
@@ -50,7 +51,7 @@ def _ocean(shape, *, coriolis, directional):
     return ocean, continuation
 
 
-def _measure(shape, repeats, *, coriolis, directional):
+def _measure(shape: Any, repeats: Any, *, coriolis: Any, directional: Any) -> Any:
     ocean, continuation = _ocean(shape, coriolis=coriolis, directional=directional)
     rhs = eqx.filter_jit(ocean.dynamics)
     started = time.perf_counter()
@@ -104,7 +105,7 @@ def _measure(shape, repeats, *, coriolis, directional):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shape", default="16,16,8")
     parser.add_argument("--repeats", type=int, default=5)

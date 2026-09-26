@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.operators.quantum import (
@@ -12,7 +15,7 @@ from phydrax.operators.quantum import (
 )
 
 
-def _amplitude_damping(probability=0.25):
+def _amplitude_damping(probability: Any = 0.25) -> Any:
     return jnp.array(
         [
             [[1.0, 0.0], [0.0, jnp.sqrt(1.0 - probability)]],
@@ -22,7 +25,7 @@ def _amplitude_damping(probability=0.25):
     )
 
 
-def test_finite_cptp_representations_apply_and_compose_without_state_repair():
+def test_finite_cptp_representations_apply_and_compose_without_state_repair() -> None:
     damping = finite_cptp_from_kraus(_amplitude_damping())
     identity = finite_cptp_from_unitary(jnp.eye(2, dtype=jnp.complex64))
     excited = jnp.array([[0.0, 0.0], [0.0, 1.0]], dtype=jnp.complex64)
@@ -34,7 +37,7 @@ def test_finite_cptp_representations_apply_and_compose_without_state_repair():
     assert jnp.allclose(apply_finite_cptp(composed, excited), output)
 
 
-def test_rectangular_finite_channel_has_explicit_input_output_dimensions():
+def test_rectangular_finite_channel_has_explicit_input_output_dimensions() -> None:
     kraus = jnp.zeros((3, 2, 3), dtype=jnp.complex64)
     kraus = kraus.at[0, 0, 0].set(1.0)
     kraus = kraus.at[1, 1, 1].set(1.0)
@@ -46,7 +49,7 @@ def test_rectangular_finite_channel_has_explicit_input_output_dimensions():
     assert apply_finite_cptp(channel, jnp.eye(3, dtype=jnp.complex64) / 3).shape == (2, 2)
 
 
-def test_local_kraus_operation_adapter_preserves_channel_evidence():
+def test_local_kraus_operation_adapter_preserves_channel_evidence() -> None:
     operation = LocalKrausChannelOperation(_amplitude_damping(), ("q",))
     adapted = finite_cptp_from_local_kraus_operation(operation)
     assert bool(adapted.valid)

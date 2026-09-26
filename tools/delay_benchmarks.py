@@ -23,7 +23,9 @@ from benchmarks._runtime import (
 )
 
 
-def _constant_delay_problem(drift, history, delays, /, **kwargs):
+def _constant_delay_problem(
+    drift: Any, history: Any, delays: Any, /, **kwargs: Any
+) -> Any:
     delay_values = jnp.asarray(delays).reshape((-1,))
     delay_terms = tuple(
         phx.solver.ConstantDelay(f"delay_{index}", delay_values[index])
@@ -60,6 +62,7 @@ def _measure(
         "compile_ms": 1_000.0
         * (compilation.lowering_seconds + compilation.compilation_seconds),
         "first_execution_ms": 1_000.0 * first_execution_seconds,
+        # ty: ignore[invalid-argument-type]
         "steady_ms": 1_000.0 * float(distribution.mean_seconds),
     }
 
@@ -81,6 +84,7 @@ def _measure_eager(
         "execution_mode": "eager-host-orchestrated",
         "compile_ms": None,
         "first_execution_ms": 1_000.0 * first_execution_seconds,
+        # ty: ignore[invalid-argument-type]
         "steady_ms": 1_000.0 * float(distribution.mean_seconds),
     }
 
@@ -125,7 +129,7 @@ def run_benchmarks(
     smooth_rate = jnp.asarray(0.4)
     smooth_expected = jnp.exp(smooth_rate * smooth_t1) * base
 
-    def ordinary_smooth(rate):
+    def ordinary_smooth(rate: Any) -> Any:
         solution = dfx.diffeqsolve(
             dfx.ODETerm(lambda time, state, args: args * state),
             dfx.Tsit5(),
@@ -143,7 +147,7 @@ def run_benchmarks(
             solution.stats["num_rejected_steps"],
         )
 
-    def delay_smooth(rate):
+    def delay_smooth(rate: Any) -> Any:
         problem = _constant_delay_problem(
             lambda time, state, delayed, args: jnp.tensordot(
                 args * weights * jnp.exp(args * delays),
@@ -167,7 +171,7 @@ def run_benchmarks(
             solution.stats["num_rejected_steps"],
         )
 
-    def fixed_delay_smooth(rate):
+    def fixed_delay_smooth(rate: Any) -> Any:
         problem = _constant_delay_problem(
             lambda time, state, delayed, args: jnp.tensordot(
                 args * weights * jnp.exp(args * delays),
@@ -198,7 +202,7 @@ def run_benchmarks(
     stiff_t1 = 0.5
     stiff_expected = jnp.exp(-stiff_t1) * base
 
-    def implicit_stiff(scale):
+    def implicit_stiff(scale: Any) -> Any:
         problem = _constant_delay_problem(
             lambda time, state, delayed, args: (
                 -1000.0 * state + 999.0 * jnp.exp(-stiff_delay) * delayed[0]
@@ -221,7 +225,7 @@ def run_benchmarks(
             solution.stats["num_rejected_steps"],
         )
 
-    def fixed_stiff(scale):
+    def fixed_stiff(scale: Any) -> Any:
         problem = _constant_delay_problem(
             lambda time, state, delayed, args: (
                 -1000.0 * state + 999.0 * jnp.exp(-stiff_delay) * delayed[0]
@@ -252,7 +256,7 @@ def run_benchmarks(
     family_lags = jnp.asarray([0.1, 0.2, 0.3])
     family_weights = jnp.asarray([0.2, 0.3, 0.5])
 
-    def functional_delay(rate):
+    def functional_delay(rate: Any) -> Any:
         functional = phx.solver.FunctionalDelay(
             "window",
             lambda time, state, history, args: (
@@ -291,7 +295,7 @@ def run_benchmarks(
     neutral_delay = 0.2
     neutral_weight = 0.2
 
-    def transformed_neutral(rate):
+    def transformed_neutral(rate: Any) -> Any:
         coefficient = rate * (1.0 - neutral_weight * jnp.exp(-rate * neutral_delay))
         problem = phx.solver.NeutralDelayProblem(
             lambda time, memory, args: neutral_weight * memory["past"],
@@ -322,7 +326,7 @@ def run_benchmarks(
         family_times[:, None],
     )
 
-    def rough_delay_davie(rate):
+    def rough_delay_davie(rate: Any) -> Any:
         problem = phx.solver.RoughDelayDifferentialProblem(
             lambda time, state, memory, args: (
                 args * jnp.exp(args * rough_delay) * memory["past"]
@@ -367,7 +371,7 @@ def run_benchmarks(
         mark_shape=(1,),
     )
 
-    def prescribed_jump_delay(_rate):
+    def prescribed_jump_delay(_rate: Any) -> Any:
         solution = phx.solver.solve_jump_delay(
             jump_problem,
             jump_events,
@@ -382,7 +386,7 @@ def run_benchmarks(
             solution.stats["num_rejected_steps"],
         )
 
-    def convolution_volterra(rate):
+    def convolution_volterra(rate: Any) -> Any:
         problem = phx.solver.ConvolutionVolterraProblem(
             lambda time, state, args: args * state,
             base,
@@ -400,7 +404,7 @@ def run_benchmarks(
             solution.stats["num_rejected_steps"],
         )
 
-    def caputo_order_one(rate):
+    def caputo_order_one(rate: Any) -> Any:
         problem = phx.solver.CaputoFractionalProblem(
             lambda time, state, args: args * state,
             base,
@@ -509,7 +513,7 @@ def run_benchmarks(
         timings,
     )
 
-    def rolling_memory(horizon):
+    def rolling_memory(horizon: Any) -> Any:
         problem = _constant_delay_problem(
             lambda time, state, delayed, args: jnp.tensordot(
                 args * weights * jnp.exp(args * delays),
@@ -553,7 +557,7 @@ def run_benchmarks(
             "active_history_bytes": int(solution.stats["active_history_bytes"]),
         }
 
-    def segmented_memory(horizon):
+    def segmented_memory(horizon: Any) -> Any:
         problem = _constant_delay_problem(
             lambda time, state, delayed, args: jnp.tensordot(
                 args * weights * jnp.exp(args * delays),

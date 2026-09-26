@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _cell_grid(points, dimension=1, *, periodic=False):
+def _cell_grid(points: Any, dimension: Any = 1, *, periodic: Any = False) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(points, periodic=periodic)
@@ -19,12 +22,13 @@ def _cell_grid(points, dimension=1, *, periodic=False):
     ).prepare(jnp.asarray([[0.0] * dimension, [1.0] * dimension]))
 
 
-def test_red_black_and_line_smoothers_contract_anisotropic_diffusion_residual():
+def test_red_black_and_line_smoothers_contract_anisotropic_diffusion_residual() -> None:
     grid = _cell_grid(24, 2)
     coefficient = jnp.broadcast_to(jnp.asarray((50.0, 1.0)), grid.shape + (2,))
     boundaries = {axis: ("dirichlet", "dirichlet") for axis in grid.axis_names}
     diffusion = phx.discretization.ConservativeDiffusionPlan(
         grid,
+        # ty: ignore[invalid-argument-type]
         boundaries=boundaries,
     ).prepare(coefficient)
     x = grid.axes[0].nodes[:, None]
@@ -54,7 +58,9 @@ def test_red_black_and_line_smoothers_contract_anisotropic_diffusion_residual():
     assert ratios["line"] < ratios["jacobi"]
 
 
-def test_multi_axis_collective_schedule_exposes_mesh_permutations_and_corner_routes():
+def test_multi_axis_collective_schedule_exposes_mesh_permutations_and_corner_routes() -> (
+    None
+):
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(8, endpoint=False, periodic=True),
@@ -81,7 +87,7 @@ def test_multi_axis_collective_schedule_exposes_mesh_permutations_and_corner_rou
     assert any(route.codimension == 2 for route in schedule.exchanges)
 
 
-def test_variable_density_projection_and_extended_compatible_systems():
+def test_variable_density_projection_and_extended_compatible_systems() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_cell_grid(3, 3))
     velocity = jnp.sin(jnp.arange(bridge.cochain.cell_counts[1], dtype="float64"))
     density = 1.0 + 0.2 * jnp.cos(
@@ -109,7 +115,7 @@ def test_variable_density_projection_and_extended_compatible_systems():
     assert jnp.all(jnp.isfinite(thermo_drift.temperature))
 
 
-def test_compatible_mhd_induction_preserves_discrete_magnetic_divergence():
+def test_compatible_mhd_induction_preserves_discrete_magnetic_divergence() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_cell_grid(3, 3))
     electric = jnp.sin(jnp.arange(bridge.cochain.cell_counts[1], dtype="float64"))
     magnetic = bridge.exterior_derivative(1, electric)
@@ -119,12 +125,13 @@ def test_compatible_mhd_induction_preserves_discrete_magnetic_divergence():
     )
     state = dynamics.pack(magnetic)
 
+    # ty: ignore[invalid-argument-type]
     stepped = dynamics.step(0.0, state, 0.01)
 
     np.testing.assert_allclose(dynamics.magnetic_constraint(stepped), 0.0, atol=2e-12)
 
 
-def test_precision_and_resource_preflight_enforce_memory_budget():
+def test_precision_and_resource_preflight_enforce_memory_budget() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(128, endpoint=False, periodic=True),),
         axis_names=("x",),

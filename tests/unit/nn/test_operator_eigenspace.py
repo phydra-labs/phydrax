@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     properties = phx.linalg.OperatorProperties(
         self_adjoint=True,
         evidence={"self_adjoint": "construction"},
@@ -20,7 +23,7 @@ def _problem():
     return phx.linalg.eigen.Eigenproblem(operator)
 
 
-def _samples(values, *, mask=None):
+def _samples(values: Any, *, mask: Any = None) -> Any:
     return phx.nn.operator.FunctionSamples(
         values=jnp.asarray(values),
         coordinates=jnp.arange(3.0)[:, None],
@@ -28,7 +31,7 @@ def _samples(values, *, mask=None):
     )
 
 
-def test_operator_trial_subspace_lowers_modes_and_honors_mask():
+def test_operator_trial_subspace_lowers_modes_and_honors_mask() -> None:
     problem = _problem()
     samples = _samples(
         [[1.0, 0.0], [0.0, 1.0], [5.0, -2.0]],
@@ -48,7 +51,7 @@ def test_operator_trial_subspace_lowers_modes_and_honors_mask():
     assert bool(result.valid)
 
 
-def test_warm_started_eigensolve_refines_predicted_trial_space():
+def test_warm_started_eigensolve_refines_predicted_trial_space() -> None:
     problem = _problem()
     samples = _samples([[1.0, 0.0], [0.0, 1.0], [0.2, 0.0]])
     trial = phx.nn.operator.rayleigh_ritz_from_samples(problem, samples)
@@ -72,7 +75,7 @@ def test_warm_started_eigensolve_refines_predicted_trial_space():
     )
 
 
-def test_operator_trial_subspace_rejects_unsliced_case_axes():
+def test_operator_trial_subspace_rejects_unsliced_case_axes() -> None:
     problem = _problem()
     samples = phx.nn.operator.FunctionSamples(
         values=jnp.ones((2, 3, 2)),

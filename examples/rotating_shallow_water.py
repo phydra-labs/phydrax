@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     shape = (8, 8)
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -42,6 +45,7 @@ def run():
     depth = jnp.ones(shape)
     state = jnp.stack((depth, jnp.ones(shape), jnp.zeros(shape)), axis=-1)
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         compiled.dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.25),

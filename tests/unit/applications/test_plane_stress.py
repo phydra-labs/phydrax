@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -36,19 +38,19 @@ from phydrax.operators.mechanics import (
 )
 
 
-def _law():
+def _law() -> Any:
     return NeoHookeanLaw(NeoHookeanParameters.from_shear_bulk(3.0, 11.0))
 
 
-def _isochoric_energy(deformation):
+def _isochoric_energy(deformation: Any) -> Any:
     return 1.5 * (jnp.sum(deformation * deformation) - 3.0)
 
 
-def _jacobian_constraint(deformation):
+def _jacobian_constraint(deformation: Any) -> Any:
     return jnp.linalg.det(deformation) - 1.0
 
 
-def test_plane_stress_root_implicit_derivative_and_schur_tangent():
+def test_plane_stress_root_implicit_derivative_and_schur_tangent() -> None:
     plan = BlockDiagonalPlaneStressReductionPlan()
     law = _law()
     deformation = jnp.asarray([[1.12, 0.06], [0.02, 0.93]])
@@ -79,7 +81,7 @@ def test_plane_stress_root_implicit_derivative_and_schur_tangent():
     )
 
 
-def test_reference_thickness_scales_areal_response_but_not_closure_root():
+def test_reference_thickness_scales_areal_response_but_not_closure_root() -> None:
     plan = BlockDiagonalPlaneStressReductionPlan()
     law = _law()
     deformation = jnp.asarray([[1.08, 0.04], [0.01, 0.96]])
@@ -103,7 +105,7 @@ def test_reference_thickness_scales_areal_response_but_not_closure_root():
     )
 
 
-def test_plane_stress_batches_and_reports_bracket_and_input_failures():
+def test_plane_stress_batches_and_reports_bracket_and_input_failures() -> None:
     law = _law()
     plan = BlockDiagonalPlaneStressReductionPlan()
     batch = jnp.asarray(
@@ -134,7 +136,7 @@ def test_plane_stress_batches_and_reports_bracket_and_input_failures():
     assert not bool(jnp.isfinite(invalid.reference_energy_density))
 
 
-def test_field_and_fe_adapters_match_point_reduction_and_h0():
+def test_field_and_fe_adapters_match_point_reduction_and_h0() -> None:
     law = _law()
     plan = BlockDiagonalPlaneStressReductionPlan()
     h0 = 1.7
@@ -146,7 +148,7 @@ def test_field_and_fe_adapters_match_point_reduction_and_h0():
     )
 
     @geometry.Function("x")
-    def displacement(x):
+    def displacement(x: Any) -> Any:
         return displacement_gradient @ x
 
     fields = plane_stress_hyperelastic_response(
@@ -175,7 +177,8 @@ def test_field_and_fe_adapters_match_point_reduction_and_h0():
     values = jnp.zeros((1, 1, 2))
     points = jnp.zeros((1, 1, 2))
 
-    def energy(gradient):
+    def energy(gradient: Any) -> Any:
+        # ty: ignore[unresolved-attribute]
         return jnp.sum(action.density(values, gradient, points, None))
 
     np.testing.assert_allclose(
@@ -189,7 +192,7 @@ def test_field_and_fe_adapters_match_point_reduction_and_h0():
     )
 
 
-def test_plane_stress_fe_form_compiles_at_identity():
+def test_plane_stress_fe_form_compiles_at_identity() -> None:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     cells = jnp.asarray([[0, 1, 3], [1, 2, 3]], dtype=jnp.int32)
     mesh = phx.discretization.CellMesh.from_triangles(vertices, cells)
@@ -209,7 +212,7 @@ def test_plane_stress_fe_form_compiles_at_identity():
         np.testing.assert_allclose(leaf, 0.0, atol=2.0e-10)
 
 
-def test_mpm_reduction_matches_pointwise_energy_stress_root_and_tangent():
+def test_mpm_reduction_matches_pointwise_energy_stress_root_and_tangent() -> None:
     law = _law()
     plan = BlockDiagonalPlaneStressReductionPlan()
     deformation = jnp.asarray([[[1.12, 0.06], [0.02, 0.93]]])
@@ -249,8 +252,8 @@ def test_mpm_reduction_matches_pointwise_energy_stress_root_and_tangent():
 
 @pytest.mark.parametrize("bulk_modulus", [None, 25.0])
 def test_coupled_plane_stress_incompressibility_solves_both_equations_and_tangent(
-    bulk_modulus,
-):
+    bulk_modulus: Any,
+) -> None:
     law = MixedHyperelasticLaw(
         _isochoric_energy,
         _jacobian_constraint,
@@ -302,7 +305,7 @@ def test_coupled_plane_stress_incompressibility_solves_both_equations_and_tangen
     )
 
 
-def test_coupled_plane_stress_batches_and_scalar_plan_rejects_mixed_law():
+def test_coupled_plane_stress_batches_and_scalar_plan_rejects_mixed_law() -> None:
     law = MixedHyperelasticLaw(_isochoric_energy, _jacobian_constraint)
     coupled = CoupledPlaneStressIncompressiblePlan(
         None,
@@ -336,4 +339,5 @@ def test_coupled_plane_stress_batches_and_scalar_plan_rejects_mixed_law():
     assert not bool(bounded_out.successful)
     assert bounded_out.failure == int(PlaneStressFailure.MAX_STEPS)
     with pytest.raises(TypeError, match="mixed pressure laws"):
+        # ty: ignore[invalid-argument-type]
         BlockDiagonalPlaneStressReductionPlan().evaluate(jnp.eye(2), law)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -12,7 +15,7 @@ from phydrax.domain import Boundary, PointSampling, SampleLayout
 from phydrax.operators.differential import laplacian, partial_n
 
 
-def _model(domain, in_size, key):
+def _model(domain: Any, in_size: Any, key: Any) -> Any:
     network = phx.nn.models.MLP(
         in_size=in_size,
         out_size="scalar",
@@ -26,14 +29,14 @@ def _model(domain, in_size, key):
 
 
 def _residual_term(
-    component,
-    operator,
-    fields,
+    component: Any,
+    operator: Any,
+    fields: Any,
     *,
-    points,
-    key,
-    scale=1.0,
-):
+    points: Any,
+    key: Any,
+    scale: Any = 1.0,
+) -> Any:
     condition = phx.conditions.Residual(fields, component, operator)
     batch = component.sample(
         PointSampling(points, layout=SampleLayout((component.domain.labels,))),
@@ -50,7 +53,7 @@ def _residual_term(
     )
 
 
-def _train_and_assert_decrease(solver, *, seed, steps=1):
+def _train_and_assert_decrease(solver: Any, *, seed: Any, steps: Any = 1) -> Any:
     initial = solver.loss(key=jr.key(seed + 100))
     trained = solver.solve(
         num_iter=steps,
@@ -66,12 +69,12 @@ def _train_and_assert_decrease(solver, *, seed, steps=1):
     return trained
 
 
-def test_kfac_trains_soft_poisson_pinn():
+def test_kfac_trains_soft_poisson_pinn() -> None:
     domain = phx.domain.Interval1d(-1.0, 1.0)
     u = _model(domain, 1, jr.key(0))
 
     @domain.Function("x")
-    def forcing(x):
+    def forcing(x: Any) -> Any:
         return (jnp.pi**2) * jnp.sin(jnp.pi * x[0])
 
     interior = _residual_term(
@@ -98,7 +101,7 @@ def test_kfac_trains_soft_poisson_pinn():
     _train_and_assert_decrease(solver, seed=3)
 
 
-def test_kfac_rejects_composed_fidelity_correction_without_curvature_layout():
+def test_kfac_rejects_composed_fidelity_correction_without_curvature_layout() -> None:
     domain = phx.domain.Interval1d(-1.0, 1.0)
     low = phx.fidelity.FidelityLevelSpec(
         "low",
@@ -185,7 +188,7 @@ def test_kfac_rejects_composed_fidelity_correction_without_curvature_layout():
     assert jnp.array_equal(parent.functions["u"](reference_batch).data, parent_before)
 
 
-def test_kfac_trains_hard_dirichlet_poisson_pinn():
+def test_kfac_trains_hard_dirichlet_poisson_pinn() -> None:
     domain = phx.domain.Interval1d(-1.0, 1.0)
     raw = _model(domain, 1, jr.key(4))
     boundary_component = domain.component({"x": Boundary()})
@@ -220,14 +223,14 @@ def test_kfac_trains_hard_dirichlet_poisson_pinn():
     assert jnp.allclose(values, 0.0, atol=1e-8)
 
 
-def test_kfac_trains_heat_equation_pinn():
+def test_kfac_trains_heat_equation_pinn() -> None:
     space = phx.domain.Interval1d(0.0, 1.0)
     time = phx.domain.TimeInterval(0.0, 1.0)
     domain = space @ time
     u = _model(domain, 2, jr.key(9))
 
     @domain.Function("x", "t")
-    def forcing(x, t):
+    def forcing(x: Any, t: Any) -> Any:
         return (jnp.pi**2 - 1.0) * jnp.sin(jnp.pi * x[0]) * jnp.exp(-t)
 
     residual = _residual_term(
@@ -244,14 +247,14 @@ def test_kfac_trains_heat_equation_pinn():
     _train_and_assert_decrease(solver, seed=11)
 
 
-def test_kfac_trains_nonlinear_burgers_pinn():
+def test_kfac_trains_nonlinear_burgers_pinn() -> None:
     space = phx.domain.Interval1d(0.0, 1.0)
     time = phx.domain.TimeInterval(0.0, 1.0)
     domain = space @ time
     u = _model(domain, 2, jr.key(12))
 
     @domain.Function("x", "t")
-    def forcing(x, t):
+    def forcing(x: Any, t: Any) -> Any:
         return 1.0 + x[0] + t
 
     residual = _residual_term(
@@ -271,17 +274,17 @@ def test_kfac_trains_nonlinear_burgers_pinn():
     _train_and_assert_decrease(solver, seed=14)
 
 
-def test_kfac_trains_coupled_field_residuals():
+def test_kfac_trains_coupled_field_residuals() -> None:
     domain = phx.domain.Interval1d(-1.0, 1.0)
     u = _model(domain, 1, jr.key(15))
     v = _model(domain, 1, jr.key(16))
 
     @domain.Function("x")
-    def first_forcing(x):
+    def first_forcing(x: Any) -> Any:
         return 2.0 + x[0]
 
     @domain.Function("x")
-    def second_forcing(x):
+    def second_forcing(x: Any) -> Any:
         return x[0] ** 2 - x[0]
 
     first = _residual_term(
@@ -306,17 +309,17 @@ def test_kfac_trains_coupled_field_residuals():
     _train_and_assert_decrease(solver, seed=19)
 
 
-def test_kfac_trains_inverse_physical_scalar_block():
+def test_kfac_trains_inverse_physical_scalar_block() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = _model(domain, 1, jr.key(20))
     coefficient = domain.Parameter(0.5)
 
     @domain.Function("x")
-    def state_target(x):
+    def state_target(x: Any) -> Any:
         return x[0]
 
     @domain.Function("x")
-    def equation_target(x):
+    def equation_target(x: Any) -> Any:
         return 2.0 * x[0]
 
     state_data = _residual_term(
@@ -344,7 +347,7 @@ def test_kfac_trains_inverse_physical_scalar_block():
     assert not jnp.isclose(final_coefficient, initial_coefficient)
 
 
-def test_kfac_accepts_mass_preserving_residual_attention_weights():
+def test_kfac_accepts_mass_preserving_residual_attention_weights() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = _model(domain, 1, jr.key(24))
     condition = phx.conditions.Residual("u", domain.component(), lambda field: field)

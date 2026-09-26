@@ -452,9 +452,15 @@ def fit_coordinate_model(
     learned_function = fitted.functions["velocity"]
     learned_evaluator = learned_function.func
     # _velocity_function binds the velocity model through a PointwiseEvaluator.
-    assert isinstance(learned_evaluator, PointwiseEvaluator)
+    if not (isinstance(learned_evaluator, PointwiseEvaluator)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(learned_evaluator, PointwiseEvaluator)."
+        )
     learned = learned_evaluator.function
-    assert isinstance(learned, ConditionalCoordinateVelocity)
+    if not (isinstance(learned, ConditionalCoordinateVelocity)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(learned, ConditionalCoordinateVelocity)."
+        )
     final = float(evaluation.loss({"velocity": learned_function}, key=eval_key))
     heldout = float(validation.loss({"velocity": learned_function}, key=validation_key))
     if not np.isfinite((initial, final, heldout)).all():

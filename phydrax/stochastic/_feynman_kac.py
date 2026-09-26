@@ -124,8 +124,7 @@ class FeynmanKacSamplingPlan(StrictModule):
         steps = int(num_time_steps)
         if paths < 1 or steps < 1:
             raise ValueError("num_paths_per_query and num_time_steps must be positive.")
-        if quadrature not in ("left", "trapezoid"):
-            raise ValueError("quadrature must be 'left' or 'trapezoid'.")
+        quadrature = parse(quadrature, BSDEQuadrature, "quadrature")
         control_target_mode = parse(
             control_target_mode, FeynmanKacControlTargetMode, "control_target_mode"
         )

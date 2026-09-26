@@ -8,6 +8,7 @@ import argparse
 import json
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -25,11 +26,11 @@ from phydrax.optim._state_design_linearization import (
 )
 
 
-def _drive(_time, velocity, _args):
+def _drive(_time: Any, velocity: Any, _args: Any) -> Any:
     return jnp.ones_like(velocity[0]), jnp.zeros_like(velocity[1])
 
 
-def heated_channel(count, resistance, *, smoke=False):
+def heated_channel(count: Any, resistance: Any, *, smoke: Any = False) -> Any:
     """Pressure-gradient-driven periodic channel with cold stationary side walls."""
     grid = phx.discretization.TensorGridPlan(
         (
@@ -109,7 +110,7 @@ def heated_channel(count, resistance, *, smoke=False):
     return workflow, design.reshape((-1,))
 
 
-def _ledger(evidence):
+def _ledger(evidence: Any) -> Any:
     return {
         "objective": float(evidence.objective),
         "solid_fraction": float(evidence.solid_fraction),
@@ -135,7 +136,7 @@ def _ledger(evidence):
     }
 
 
-def _balanced(evidence):
+def _balanced(evidence: Any) -> Any:
     defects = jnp.asarray(
         (
             evidence.thermal_balance_defect,
@@ -153,7 +154,7 @@ def _balanced(evidence):
     )
 
 
-def _feasible_transfer(workflow, design):
+def _feasible_transfer(workflow: Any, design: Any) -> Any:
     """Preserve the material bound after grid transfer by monotone raw scaling."""
     if bool(
         workflow.solid_fraction(workflow.density(design))
@@ -162,10 +163,10 @@ def _feasible_transfer(workflow, design):
         return design, 1.0
     plan = workflow.transform.plan.filter
 
-    def scaled(scale):
+    def scaled(scale: Any) -> Any:
         return jnp.where(plan.design_mask, scale * design, plan.fixed_density)
 
-    def bisect(_index, interval):
+    def bisect(_index: Any, interval: Any) -> Any:
         lower, upper = interval
         midpoint = 0.5 * (lower + upper)
         fraction = workflow.solid_fraction(workflow.density(scaled(midpoint)))
@@ -181,7 +182,7 @@ def _feasible_transfer(workflow, design):
     return scaled(lower), float(lower)
 
 
-def run_thermofluid_topology_benchmark(*, smoke=False):
+def run_thermofluid_topology_benchmark(*, smoke: Any = False) -> Any:
     records = []
     previous_design = None
     previous_shape = None
@@ -220,7 +221,7 @@ def run_thermofluid_topology_benchmark(*, smoke=False):
             derivative = jnp.sum(sensitivity.design_cotangent * direction)
             epsilon = 2e-4
 
-            def terminal_objective(design):
+            def terminal_objective(design: Any) -> Any:
                 run = workflow.integrate(design)
                 return workflow.objective(run.final_state, design)
 
@@ -319,11 +320,12 @@ def run_thermofluid_topology_benchmark(*, smoke=False):
         ),
         "records": records,
         "passed": all(record["passed"] for record in records)
+        # ty: ignore[unsupported-operator]
         and any(record["objective_improvement"] > 1e-9 for record in records),
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

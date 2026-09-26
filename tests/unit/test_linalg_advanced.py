@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +17,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _positive_definite_properties():
+def _positive_definite_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -26,7 +29,7 @@ def _positive_definite_properties():
     )
 
 
-def test_block_arnoldi_deflates_and_preserves_the_block_relation():
+def test_block_arnoldi_deflates_and_preserves_the_block_relation() -> None:
     matrix = jnp.asarray(
         [
             [4.0, 1.0, 0.0, 0.0],
@@ -69,7 +72,7 @@ def test_block_arnoldi_deflates_and_preserves_the_block_relation():
     assert jnp.allclose(jitted_projected, decomposition.projected)
 
 
-def test_recycling_subspace_coarse_correction_is_jittable_and_metric_orthogonal():
+def test_recycling_subspace_coarse_correction_is_jittable_and_metric_orthogonal() -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
     matrix = jnp.diag(jnp.asarray([1.0, 10.0, 100.0]))
     operator = la.DenseLinearOperator(matrix, source=space, target=space)
@@ -102,7 +105,7 @@ def test_recycling_subspace_coarse_correction_is_jittable_and_metric_orthogonal(
         la.prepare_recycling_subspace(operator, jnp.ones((3, 2)))
 
 
-def test_saddle_point_system_and_schur_complement_match_dense_algebra():
+def test_saddle_point_system_and_schur_complement_match_dense_algebra() -> None:
     primal_space = la.ArraySpace((2,), dtype=jnp.float64)
     dual_space = la.ArraySpace((1,), dtype=jnp.float64)
     primal_matrix = jnp.asarray([[2.0, 0.0], [0.0, 3.0]])
@@ -156,7 +159,7 @@ def test_saddle_point_system_and_schur_complement_match_dense_algebra():
     )
 
 
-def test_tensor_and_low_rank_operators_retain_structure_and_exact_solves():
+def test_tensor_and_low_rank_operators_retain_structure_and_exact_solves() -> None:
     left_matrix = jnp.asarray([[2.0, 1.0], [0.0, 3.0]])
     right_matrix = jnp.asarray([[4.0, 0.0], [1.0, 5.0]])
     left = la.DenseLinearOperator(left_matrix)
@@ -212,7 +215,7 @@ def test_tensor_and_low_rank_operators_retain_structure_and_exact_solves():
     assert jnp.allclose(certified_result.value, low_rank_expected)
 
 
-def test_embedded_tensor_product_operator_contracts_only_selected_axes():
+def test_embedded_tensor_product_operator_contracts_only_selected_axes() -> None:
     factors = tuple(la.ArraySpace((size,), dtype=jnp.float64) for size in (2, 3, 2))
     ambient = la.TensorProductSpace(factors)
     local_matrix = jnp.asarray(
@@ -263,7 +266,7 @@ def test_embedded_tensor_product_operator_contracts_only_selected_axes():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_embedded_tensor_product_operator_validates_axes_and_local_size():
+def test_embedded_tensor_product_operator_validates_axes_and_local_size() -> None:
     ambient = la.TensorProductSpace(
         (
             la.ArraySpace((2,), dtype=jnp.float64),
@@ -282,7 +285,7 @@ def test_embedded_tensor_product_operator_validates_axes_and_local_size():
         la.EmbeddedTensorProductLinearOperator(local, ambient, (1,))
 
 
-def test_factorization_capabilities_nullspaces_and_numeric_refresh_are_truthful():
+def test_factorization_capabilities_nullspaces_and_numeric_refresh_are_truthful() -> None:
     matrix = jnp.asarray([[1.0, 2.0, 3.0], [2.0, 4.0, 6.0]])
     operator = la.DenseLinearOperator(matrix, operator_id="rank-one-design")
     factorization = la.factorize(
@@ -313,7 +316,7 @@ def test_factorization_capabilities_nullspaces_and_numeric_refresh_are_truthful(
     )
 
 
-def test_nullspace_projection_returns_compatible_gauge_fixed_solution():
+def test_nullspace_projection_returns_compatible_gauge_fixed_solution() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     matrix = jnp.asarray([[1.0, -1.0], [-1.0, 1.0]])
     nullspace = la.LinearSubspace(
@@ -354,7 +357,7 @@ def test_nullspace_projection_returns_compatible_gauge_fixed_solution():
     assert float(result.diagnostics.gauge_residual) < 1e-12
 
 
-def test_kernel_certificate_selects_projected_pcg_and_rebinds_coefficients():
+def test_kernel_certificate_selects_projected_pcg_and_rebinds_coefficients() -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
     matrix = jnp.asarray([[1.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 1.0]])
     properties = la.OperatorProperties(
@@ -432,7 +435,7 @@ def test_kernel_certificate_selects_projected_pcg_and_rebinds_coefficients():
         )
 
 
-def test_projected_pcg_requires_complete_valid_kernel_evidence():
+def test_projected_pcg_requires_complete_valid_kernel_evidence() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     matrix = jnp.asarray([[1.0, -1.0], [-1.0, 1.0]])
     properties = la.OperatorProperties(
@@ -481,7 +484,7 @@ def test_projected_pcg_requires_complete_valid_kernel_evidence():
         )
 
 
-def test_spectral_matrix_functions_and_stochastic_estimators_are_replayable():
+def test_spectral_matrix_functions_and_stochastic_estimators_are_replayable() -> None:
     matrix = jnp.diag(jnp.asarray([1.5, 2.0, 4.0]))
     operator = la.DenseLinearOperator(
         matrix,
@@ -535,7 +538,7 @@ def test_spectral_matrix_functions_and_stochastic_estimators_are_replayable():
     )
 
 
-def test_host_sparse_direct_and_incomplete_factorization_are_explicit():
+def test_host_sparse_direct_and_incomplete_factorization_are_explicit() -> None:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1, 0, 1, 2], dtype=jnp.int32),
         jnp.asarray([0, 0, 1, 1, 2], dtype=jnp.int32),
@@ -575,7 +578,7 @@ def test_host_sparse_direct_and_incomplete_factorization_are_explicit():
 
 
 @pytest.mark.skipif(jax.default_backend() != "cpu", reason="JAX CPU sparse LU only")
-def test_jax_cpu_sparse_lu_is_jittable_and_mathematically_differentiable():
+def test_jax_cpu_sparse_lu_is_jittable_and_mathematically_differentiable() -> None:
     availability = la.sparse_provider_availability("jax-cpu")
     assert availability.available
     assert availability.capabilities.jit
@@ -591,11 +594,11 @@ def test_jax_cpu_sparse_lu_is_jittable_and_mathematically_differentiable():
     policy = la.LinearSolvePolicy(la.SparseLU(provider="jax-cpu"))
 
     @eqx.filter_jit
-    def solve(values):
+    def solve(values: Any) -> Any:
         operator = eqx.tree_at(lambda item: item.coefficients, template, values)
         return la.solve(la.LinearSystem(operator), right_hand_side, policy=policy).value
 
-    def dense_solve(values):
+    def dense_solve(values: Any) -> Any:
         operator = eqx.tree_at(lambda item: item.coefficients, template, values)
         return jnp.linalg.solve(operator.as_dense(), right_hand_side)
 
@@ -613,7 +616,7 @@ def test_jax_cpu_sparse_lu_is_jittable_and_mathematically_differentiable():
     assert bool(result.successful)
 
 
-def test_structured_exact_edge_cases_and_matrix_free_tensor_actions():
+def test_structured_exact_edge_cases_and_matrix_free_tensor_actions() -> None:
     tridiagonal = la.TridiagonalLinearOperator(
         jnp.asarray([1.0]),
         jnp.asarray([0.0, 1.0]),
@@ -695,7 +698,7 @@ def test_structured_exact_edge_cases_and_matrix_free_tensor_actions():
     assert jnp.allclose(kronecker.mv(vector), expected_image)
 
 
-def test_krylov_validation_scale_invariance_and_stagnation_status():
+def test_krylov_validation_scale_invariance_and_stagnation_status() -> None:
     matrix = jnp.asarray(
         [
             [4.0, 1.0, 0.0, 0.0],
@@ -768,7 +771,7 @@ def test_krylov_validation_scale_invariance_and_stagnation_status():
     assert not bool(stagnated.successful)
 
 
-def test_matrix_function_and_stochastic_evidence_rejects_false_success():
+def test_matrix_function_and_stochastic_evidence_rejects_false_success() -> None:
     jordan = jnp.asarray([[2.0, 1.0], [0.0, 2.0]])
     operator = la.DenseLinearOperator(jordan)
     vector = jnp.asarray([1.0, -0.5])
@@ -880,7 +883,7 @@ def test_matrix_function_and_stochastic_evidence_rejects_false_success():
     assert jnp.all(jnp.isnan(inverse_diagonal.estimate))
 
 
-def test_sparse_preparation_validates_csr_numerical_content():
+def test_sparse_preparation_validates_csr_numerical_content() -> None:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1], dtype=jnp.int32),
         jnp.asarray([0, 1], dtype=jnp.int32),
@@ -904,7 +907,7 @@ def test_sparse_preparation_validates_csr_numerical_content():
         )
 
 
-def test_unknown_property_claims_never_authorize_certified_algorithms():
+def test_unknown_property_claims_never_authorize_certified_algorithms() -> None:
     matrix = jnp.asarray([[2.0, 1.0], [1.0, 3.0]])
     unknown = la.DenseLinearOperator(
         matrix,
@@ -957,7 +960,7 @@ def test_unknown_property_claims_never_authorize_certified_algorithms():
     assert certified_iterative.diagnostics.rank == 2
 
 
-def test_square_krylov_requires_an_explicit_endomorphism():
+def test_square_krylov_requires_an_explicit_endomorphism() -> None:
     source = la.ArraySpace(
         (2,),
         dtype=jnp.float64,
@@ -983,7 +986,7 @@ def test_square_krylov_requires_an_explicit_endomorphism():
 
 
 class _AlternatingPreconditioner(la.AbstractPreconditioner):
-    def __init__(self, space):
+    def __init__(self, space: Any) -> None:
         self.space = space
         self.properties = la.PreconditionerProperties(
             linear=True,
@@ -991,12 +994,12 @@ class _AlternatingPreconditioner(la.AbstractPreconditioner):
         )
         self.preconditioner_id = "alternating-preconditioner"
 
-    def apply(self, residual, /, *, iteration=None):
+    def apply(self, residual: Any, /, *, iteration: Any = None) -> Any:
         index = jnp.asarray(0 if iteration is None else iteration)
         scale = jnp.where(index % 2 == 0, 1.0, 0.5)
         return scale * self.space.validate(residual)
 
-    def cost_for(self, setup_operator, /, *, materialization=None):
+    def cost_for(self, setup_operator: Any, /, *, materialization: Any = None) -> Any:
         return la.PreconditionerCostEstimate(
             component=self.preconditioner_id,
             apply_workspace_bytes_per_rhs=(
@@ -1006,7 +1009,7 @@ class _AlternatingPreconditioner(la.AbstractPreconditioner):
         )
 
 
-def test_preconditioner_builder_owns_distinct_setup_and_refresh_provenance():
+def test_preconditioner_builder_owns_distinct_setup_and_refresh_provenance() -> None:
     properties = _positive_definite_properties()
     space = la.ArraySpace((2,), dtype=jnp.float64)
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])
@@ -1091,7 +1094,7 @@ def test_preconditioner_builder_owns_distinct_setup_and_refresh_provenance():
     assert result.provenance.preconditioner_built_numeric_version == 1
 
 
-def test_fixed_krylov_rejects_variable_preconditioning_but_fgmres_accepts_it():
+def test_fixed_krylov_rejects_variable_preconditioning_but_fgmres_accepts_it() -> None:
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])
     space = la.ArraySpace((2,), dtype=jnp.float64)
     operator = la.DenseLinearOperator(
@@ -1141,7 +1144,7 @@ def test_fixed_krylov_rejects_variable_preconditioning_but_fgmres_accepts_it():
     assert result.provenance.preconditioning_side == "right"
 
 
-def test_bicgstab_preconditioning_is_explicitly_right_sided():
+def test_bicgstab_preconditioning_is_explicitly_right_sided() -> None:
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])
     operator = la.DenseLinearOperator(matrix)
     preconditioner = la.DiagonalPreconditioner(jnp.diag(matrix))
@@ -1168,7 +1171,7 @@ def test_bicgstab_preconditioning_is_explicitly_right_sided():
         )
 
 
-def test_supplied_preconditioner_is_reused_across_refresh():
+def test_supplied_preconditioner_is_reused_across_refresh() -> None:
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])
     operator = la.DenseLinearOperator(matrix, operator_id="frozen-action-system")
     action = la.DiagonalPreconditioner(
@@ -1198,7 +1201,7 @@ def test_supplied_preconditioner_is_reused_across_refresh():
     )
 
 
-def test_sparse_jacobi_builder_avoids_dense_materialization():
+def test_sparse_jacobi_builder_avoids_dense_materialization() -> None:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1, 0, 1, 2, 1, 2]),
         jnp.asarray([0, 0, 1, 1, 1, 2, 2]),
@@ -1231,7 +1234,7 @@ def test_sparse_jacobi_builder_avoids_dense_materialization():
     assert jnp.allclose(operator.mv(result.value), jnp.asarray([1.0, 0.0, 1.0]))
 
 
-def test_multigrid_hierarchy_is_explicit_jittable_and_pyamg_convertible():
+def test_multigrid_hierarchy_is_explicit_jittable_and_pyamg_convertible() -> None:
     from types import SimpleNamespace
 
     import scipy.sparse as sp
@@ -1372,11 +1375,11 @@ def test_multigrid_hierarchy_is_explicit_jittable_and_pyamg_convertible():
     ) < jnp.linalg.norm(residual)
 
 
-def test_preconditioner_setup_is_not_part_of_mathematical_solve_derivative():
+def test_preconditioner_setup_is_not_part_of_mathematical_solve_derivative() -> None:
     rhs = jnp.asarray([2.0, -3.0])
     properties = _positive_definite_properties()
 
-    def objective(system_diagonal, setup_diagonal):
+    def objective(system_diagonal: Any, setup_diagonal: Any) -> Any:
         operator = la.DiagonalLinearOperator(
             system_diagonal,
             properties=properties,

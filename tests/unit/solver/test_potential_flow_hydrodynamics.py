@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -22,7 +24,7 @@ from phydrax.solver._potential_flow_hydrodynamics import (
 )
 
 
-def _region(mesh, *, feature_id):
+def _region(mesh: Any, *, feature_id: Any) -> Any:
     return MeshRegion(
         np.asarray(mesh.vertices),
         np.asarray(mesh.faces, dtype=np.int32),
@@ -30,13 +32,13 @@ def _region(mesh, *, feature_id):
     )
 
 
-def _submerged_sphere():
+def _submerged_sphere() -> Any:
     mesh = trimesh.creation.icosphere(subdivisions=0, radius=0.5)
     mesh.apply_translation((0.0, 0.0, -2.0))
     return _region(mesh, feature_id="submerged-octahedral-sphere")
 
 
-def _fast_policy():
+def _fast_policy() -> Any:
     return FreeSurfaceHydrodynamicsPolicy3D(
         green=FreeSurfaceGreenPolicy3D(
             radial_order_per_interval=8,
@@ -63,7 +65,7 @@ def _fast_policy():
 
 
 @pytest.fixture(scope="module")
-def submerged_problem():
+def submerged_problem() -> Any:
     prepared = prepare_free_surface_hydrodynamics_3d(
         _submerged_sphere(),
         2.0,
@@ -82,7 +84,7 @@ def submerged_problem():
     return prepared, result
 
 
-def test_finite_depth_dispersion_root_has_residual_and_provenance():
+def test_finite_depth_dispersion_root_has_residual_and_provenance() -> None:
     root = solve_finite_depth_dispersion_3d(
         1.7,
         9.81,
@@ -102,7 +104,7 @@ def test_finite_depth_dispersion_root_has_residual_and_provenance():
     assert root.non_goals == ("capillary dispersion", "current-modified dispersion")
 
 
-def test_finite_depth_green_is_reciprocal_and_retains_tail_evidence():
+def test_finite_depth_green_is_reciprocal_and_retains_tail_evidence() -> None:
     green = prepare_free_surface_green_3d(
         1.7,
         9.81,
@@ -135,7 +137,9 @@ def test_finite_depth_green_is_reciprocal_and_retains_tail_evidence():
     assert not green.errors.quadrature_convergence_estimated
 
 
-def test_submerged_sphere_symmetry_reciprocity_and_radiated_power(submerged_problem):
+def test_submerged_sphere_symmetry_reciprocity_and_radiated_power(
+    submerged_problem: Any,
+) -> None:
     prepared, result = submerged_problem
     diagonal_a = jnp.diag(result.added_mass)
     diagonal_b = jnp.diag(result.radiation_damping)
@@ -157,7 +161,9 @@ def test_submerged_sphere_symmetry_reciprocity_and_radiated_power(submerged_prob
     assert jnp.all(jnp.isfinite(result.excitation_loads))
 
 
-def test_operators_have_exact_forward_transpose_and_density_semantics(submerged_problem):
+def test_operators_have_exact_forward_transpose_and_density_semantics(
+    submerged_problem: Any,
+) -> None:
     prepared, result = submerged_problem
     x = jnp.linspace(0.1, 0.8, prepared.face_count).astype(jnp.complex128)
     y = (0.4 - 0.2j) * jnp.linspace(1.0, 2.0, prepared.face_count)
@@ -179,7 +185,7 @@ def test_operators_have_exact_forward_transpose_and_density_semantics(submerged_
     assert prepared.normal_convention == "body-to-fluid"
 
 
-def test_resource_and_error_evidence_is_explicit(submerged_problem):
+def test_resource_and_error_evidence_is_explicit(submerged_problem: Any) -> None:
     prepared, result = submerged_problem
     report = prepared.assembly_report
 
@@ -199,7 +205,7 @@ def test_resource_and_error_evidence_is_explicit(submerged_problem):
     assert "no continuum collocation" in result.error_evidence[-1]
 
 
-def test_transversal_cube_hydrostatics_and_waterline_invalidity():
+def test_transversal_cube_hydrostatics_and_waterline_invalidity() -> None:
     cube = trimesh.creation.box(extents=(2.0, 2.0, 2.0))
     hydrostatics = prepare_hydrostatic_properties_3d(
         _region(cube, feature_id="surface-piercing-cube"),

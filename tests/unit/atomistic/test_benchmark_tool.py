@@ -5,7 +5,7 @@ import numpy as np
 from tools.atomistic_rmd17_benchmarks import _json_safe
 
 
-def test_benchmark_nonfinite_failures_are_structured_strict_json():
+def test_benchmark_nonfinite_failures_are_structured_strict_json() -> None:
     payload = {
         "metrics": {
             "energy_mae_per_atom": float("nan"),

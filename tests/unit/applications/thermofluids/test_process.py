@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _model():
+def _model() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("air",),
         (phx.equations.ChemicalPhaseKind.GAS,),
@@ -34,7 +37,7 @@ def _model():
     )
 
 
-def _initialize_process(process, initial_values=None):
+def _initialize_process(process: Any, initial_values: Any = None) -> Any:
     compilation = phx.dynamics.compile_acausal_dae(
         process.source, phx.dynamics.DAEStructuralPolicy(1, 0, tearing="none")
     )
@@ -110,7 +113,7 @@ def _initialize_process(process, initial_values=None):
     )
 
 
-def test_chained_material_valves_solve_pressure_and_conserve_directed_flow():
+def test_chained_material_valves_solve_pressure_and_conserve_directed_flow() -> None:
     model = _model()
     tf = phx.applications.thermofluids
     identity = dict(
@@ -150,7 +153,7 @@ def test_chained_material_valves_solve_pressure_and_conserve_directed_flow():
     np.testing.assert_allclose(jet.value("sink.mass_flow"), -1.0)
 
 
-def test_material_connection_rejects_mismatched_thermodynamics():
+def test_material_connection_rejects_mismatched_thermodynamics() -> None:
     model = _model()
     tf = phx.applications.thermofluids
     source = tf.fixed_material_boundary_component(
@@ -178,7 +181,7 @@ def test_material_connection_rejects_mismatched_thermodynamics():
         )
 
 
-def test_compressor_map_design_and_ideal_station_balance():
+def test_compressor_map_design_and_ideal_station_balance() -> None:
     model = _model()
     tf = phx.applications.thermofluids
     performance_map = tf.CompressorMapPlan(
@@ -215,7 +218,7 @@ def test_compressor_map_design_and_ideal_station_balance():
     assert result.shaft_power > 0.0
 
 
-def test_two_body_heat_exchange_conserves_energy_with_explicit_orientation():
+def test_two_body_heat_exchange_conserves_energy_with_explicit_orientation() -> None:
     tf = phx.applications.thermofluids
     hot = tf.thermal_capacitance_component("hot", heat_capacity=2.0)
     cold = tf.thermal_capacitance_component(
@@ -290,7 +293,7 @@ def test_two_body_heat_exchange_conserves_energy_with_explicit_orientation():
         np.testing.assert_allclose(hot_heat + cold_heat, 0.0, atol=1e-8)
 
 
-def test_mixer_solves_distinct_advected_enthalpies_and_species():
+def test_mixer_solves_distinct_advected_enthalpies_and_species() -> None:
     tf = phx.applications.thermofluids
     identity = dict(
         catalog_id="two-species", thermodynamics_id="shared-caloric-reference"
@@ -302,6 +305,7 @@ def test_mixer_solves_distinct_advected_enthalpies_and_species():
         direction=tf.MaterialFlowDirection.OUTLET,
         species_count=2,
         mass_fractions=(0.2, 0.8),
+        # ty: ignore[invalid-argument-type]
         **identity,
     )
     second = tf.material_boundary_component(
@@ -311,6 +315,7 @@ def test_mixer_solves_distinct_advected_enthalpies_and_species():
         direction=tf.MaterialFlowDirection.OUTLET,
         species_count=2,
         mass_fractions=(0.8, 0.2),
+        # ty: ignore[invalid-argument-type]
         **identity,
     )
     mixer = tf.material_mixer_component(
@@ -324,6 +329,7 @@ def test_mixer_solves_distinct_advected_enthalpies_and_species():
         pressure=1.0e5,
         direction=tf.MaterialFlowDirection.INLET,
         species_count=2,
+        # ty: ignore[invalid-argument-type]
         **identity,
     )
     process = tf.ThermofluidProcessPlan(
@@ -360,7 +366,7 @@ def test_mixer_solves_distinct_advected_enthalpies_and_species():
         )
 
 
-def test_heat_conversion_accounts_for_environment_and_resistive_losses():
+def test_heat_conversion_accounts_for_environment_and_resistive_losses() -> None:
     tf = phx.applications.thermofluids
     for law, delivered, extracted in (
         (tf.ConstantCOPHeatPumpLaw(3.0), 300.0, 200.0),
@@ -395,7 +401,7 @@ def test_heat_conversion_accounts_for_environment_and_resistive_losses():
     assert not bool(invalid_power.successful)
 
 
-def test_fluid_heat_exchanger_solves_provider_state_and_advective_energy():
+def test_fluid_heat_exchanger_solves_provider_state_and_advective_energy() -> None:
     tf = phx.applications.thermofluids
     model = _model()
     identity = dict(
@@ -462,10 +468,10 @@ def test_fluid_heat_exchanger_solves_provider_state_and_advective_energy():
     np.testing.assert_allclose(jet.value("sink.mass_flow"), -1.0)
 
 
-def test_heat_device_parameters_are_differentiable_and_retain_physical_support():
+def test_heat_device_parameters_are_differentiable_and_retain_physical_support() -> None:
     tf = phx.applications.thermofluids
 
-    def heating_energy(law):
+    def heating_energy(law: Any) -> Any:
         result = law.evaluate(jnp.asarray((100.0, 200.0)), 280.0, 320.0)
         return jnp.sum(result.delivered_heat)
 
@@ -474,7 +480,7 @@ def test_heat_device_parameters_are_differentiable_and_retain_physical_support()
     )
     np.testing.assert_allclose(pump_gradient.coefficient_of_performance, 300.0)
 
-    def resistance_energy(efficiency):
+    def resistance_energy(efficiency: Any) -> Any:
         return heating_energy(tf.ResistiveHeatingLaw(efficiency))
 
     value, derivative = jax.jit(jax.value_and_grad(resistance_energy))(jnp.asarray(0.8))

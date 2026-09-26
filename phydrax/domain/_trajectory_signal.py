@@ -104,7 +104,10 @@ class _TrajectorySignalDerivativeRule(DerivativeRule):
         del mode, basis, periodic
         signal = self.function.func
         # `derivative_rule_for` binds this rule only to functions evaluated by the signal.
-        assert isinstance(signal, _SeriesTrajectorySignal)
+        if not (isinstance(signal, _SeriesTrajectorySignal)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(signal, _SeriesTrajectorySignal)."
+            )
         domain = signal.domain
         reconstruction = signal.reconstruction
         if reconstruction.interpolation == "nearest":

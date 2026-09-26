@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -8,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def _linear_problems():
+def _linear_problems() -> Any:
     drift = jnp.asarray([[-0.35, 0.12], [-0.08, -0.22]])
     dispersion = jnp.asarray([[0.32, 0.04], [0.0, 0.27]])
     prior_mean = jnp.asarray([0.15, -0.2])
@@ -85,7 +87,7 @@ def _linear_problems():
     return euler_problem, linear_problem
 
 
-def _nonlinear_problem():
+def _nonlinear_problem() -> Any:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: -0.3 * state - 0.08 * state**3,
         state_layout=phx.dynamics.StateLayout((1,)),
@@ -135,7 +137,7 @@ def _nonlinear_problem():
     )
 
 
-def _masked_case_problem():
+def _masked_case_problem() -> Any:
     case_shape = (2,)
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: -0.2 * state,
@@ -194,7 +196,9 @@ def _masked_case_problem():
     )
 
 
-def test_linear_gaussian_one_step_matches_exact_smoother_elbo_and_gradients(tmp_path):
+def test_linear_gaussian_one_step_matches_exact_smoother_elbo_and_gradients(
+    tmp_path: Any,
+) -> None:
     problem, reference_problem = _linear_problems()
     initial = phx.uq.initialize_sing(problem)
     update = phx.uq.sing_step(problem, initial, max_backtracks=0)
@@ -244,7 +248,7 @@ def test_linear_gaussian_one_step_matches_exact_smoother_elbo_and_gradients(tmp_
     assert compiled.valid
     assert jnp.allclose(compiled.moments.means, update.moments.means)
 
-    def fixed_posterior_objective(offset):
+    def fixed_posterior_objective(offset: Any) -> Any:
         candidate = eqx.tree_at(
             lambda value: value.model.observation.offset,
             problem,
@@ -259,7 +263,7 @@ def test_linear_gaussian_one_step_matches_exact_smoother_elbo_and_gradients(tmp_
     assert jnp.linalg.norm(offset_gradient) > 0.0
 
 
-def test_sing_samples_are_coherent_and_recover_posterior_moments():
+def test_sing_samples_are_coherent_and_recover_posterior_moments() -> None:
     problem, _ = _linear_problems()
     result = phx.uq.sing_smoother(problem, max_iterations=1, max_backtracks=0)
     samples = phx.uq.sample_sing_paths(jr.key(902), result, sample_shape=(8192,))
@@ -278,7 +282,7 @@ def test_sing_samples_are_coherent_and_recover_posterior_moments():
     assert jnp.allclose(sample_cross, reference_cross, atol=4.5e-2)
 
 
-def test_nonlinear_sing_is_monotone_and_monte_carlo_is_reproducible():
+def test_nonlinear_sing_is_monotone_and_monte_carlo_is_reproducible() -> None:
     problem = _nonlinear_problem()
     result = phx.uq.sing_smoother(
         problem,
@@ -322,7 +326,7 @@ def test_nonlinear_sing_is_monotone_and_monte_carlo_is_reproducible():
     )
 
 
-def test_case_masks_padding_statuses_and_model_guards_are_explicit():
+def test_case_masks_padding_statuses_and_model_guards_are_explicit() -> None:
     problem = _masked_case_problem()
     state = phx.uq.initialize_sing(problem)
     result = phx.uq.sing_smoother(

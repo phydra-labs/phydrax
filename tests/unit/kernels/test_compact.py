@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -14,17 +16,17 @@ import pytest
 import phydrax as phx
 
 
-def _rotation(angle):
+def _rotation(angle: Any) -> Any:
     return jnp.asarray(
         [[jnp.cos(angle), -jnp.sin(angle)], [jnp.sin(angle), jnp.cos(angle)]]
     )
 
 
-def _assert_psd(matrix, tolerance=1e-9):
+def _assert_psd(matrix: Any, tolerance: Any = 1e-9) -> None:
     assert np.min(np.linalg.eigvalsh(np.asarray(matrix))) >= -tolerance
 
 
-def test_sphere_circle_levels_match_fourier_chebyshev_closed_form():
+def test_sphere_circle_levels_match_fourier_chebyshev_closed_form() -> None:
     points = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]])
     time = 0.3
     kernel = phx.kernels.SphereSpectralKernel(
@@ -45,7 +47,7 @@ def test_sphere_circle_levels_match_fourier_chebyshev_closed_form():
     _assert_psd(kernel.matrix(points, points))
 
 
-def test_sphere_two_levels_match_legendre_addition_theorem():
+def test_sphere_two_levels_match_legendre_addition_theorem() -> None:
     points = jnp.eye(3)
     time = 0.2
     kernel = phx.kernels.SphereSpectralKernel(
@@ -65,7 +67,7 @@ def test_sphere_two_levels_match_legendre_addition_theorem():
     assert kernel.spectrum.mode_count == 9
 
 
-def test_sphere_level_multiplicities_preserve_large_integer_exactness():
+def test_sphere_level_multiplicities_preserve_large_integer_exactness() -> None:
     spectrum = phx.metrix.SphereLaplacianLevels(16, 64)
     expected = math.comb(80, 16) - math.comb(78, 16)
 
@@ -75,14 +77,14 @@ def test_sphere_level_multiplicities_preserve_large_integer_exactness():
     assert spectrum.mode_count == sum(spectrum.multiplicities)
 
 
-def test_sphere_kernel_is_rotation_invariant_unit_diagonal_and_differentiable():
+def test_sphere_kernel_is_rotation_invariant_unit_diagonal_and_differentiable() -> None:
     diagonal = 1.0 / jnp.sqrt(3.0)
     points = jnp.asarray(
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [diagonal, diagonal, diagonal]]
     )
     rotation = jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
 
-    def objective(length_scale):
+    def objective(length_scale: Any) -> Any:
         kernel = phx.kernels.SphereSpectralKernel(
             2,
             5,
@@ -105,7 +107,7 @@ def test_sphere_kernel_is_rotation_invariant_unit_diagonal_and_differentiable():
         kernel.matrix(jnp.asarray([[2.0, 0.0, 0.0]]), points)
 
 
-def test_tolerance_near_sphere_points_are_canonicalized_before_expansion():
+def test_tolerance_near_sphere_points_are_canonicalized_before_expansion() -> None:
     squared_radii = jnp.asarray([0.9995, 1.0, 1.0005])
     points = jnp.sqrt(squared_radii)[:, None] * jnp.asarray([[1.0, 0.0, 0.0]])
     kernel = phx.kernels.SphereSpectralKernel(
@@ -123,7 +125,7 @@ def test_tolerance_near_sphere_points_are_canonicalized_before_expansion():
         kernel.pairwise(points[:2], points[0])
 
 
-def test_sphere_kernel_binds_spherical_discretization_radius_and_bandlimit():
+def test_sphere_kernel_binds_spherical_discretization_radius_and_bandlimit() -> None:
     space = phx.discretization.SphericalSpectralPlan(4).prepare(radius=2.0)
     kernel = phx.kernels.SphereSpectralKernel.from_discretization(
         space,
@@ -142,7 +144,7 @@ def test_sphere_kernel_binds_spherical_discretization_radius_and_bandlimit():
         kernel.matrix(points / 2.0, points)
 
 
-def test_special_orthogonal_character_kernel_is_biinvariant_and_psd():
+def test_special_orthogonal_character_kernel_is_biinvariant_and_psd() -> None:
     points = jnp.stack([_rotation(0.0), _rotation(0.4), _rotation(-0.8)])
     left = _rotation(0.3)
     right = _rotation(-0.2)
@@ -159,7 +161,9 @@ def test_special_orthogonal_character_kernel_is_biinvariant_and_psd():
     _assert_psd(matrix)
 
 
-def test_homogeneous_diagonal_tracks_tolerance_near_input_and_pairwise_is_scalar():
+def test_homogeneous_diagonal_tracks_tolerance_near_input_and_pairwise_is_scalar() -> (
+    None
+):
     point = jnp.sqrt(1.0005) * jnp.eye(2)
     kernel = phx.kernels.SpecialOrthogonalCharacterKernel(
         2,
@@ -174,7 +178,7 @@ def test_homogeneous_diagonal_tracks_tolerance_near_input_and_pairwise_is_scalar
         kernel.pairwise(jnp.stack((jnp.eye(2), point)), point)
 
 
-def test_special_unitary_character_kernel_is_biinvariant_real_and_psd():
+def test_special_unitary_character_kernel_is_biinvariant_real_and_psd() -> None:
     angles = jnp.asarray([0.0, 0.3, -0.7])
     points = jax.vmap(
         lambda angle: jnp.diag(jnp.asarray([jnp.exp(1j * angle), jnp.exp(-1j * angle)]))
@@ -195,7 +199,9 @@ def test_special_unitary_character_kernel_is_biinvariant_real_and_psd():
     _assert_psd(matrix)
 
 
-def test_stiefel_kernel_is_left_invariant_and_grassmann_kernel_is_quotient_invariant():
+def test_stiefel_kernel_is_left_invariant_and_grassmann_kernel_is_quotient_invariant() -> (
+    None
+):
     first = jnp.eye(3)[:, :2]
     second = jnp.asarray([[1.0, 0.0], [0.0, 0.0], [0.0, 1.0]])
     frames = jnp.stack((first, second))
@@ -220,10 +226,10 @@ def test_stiefel_kernel_is_left_invariant_and_grassmann_kernel_is_quotient_invar
     assert jnp.allclose(jnp.diag(grassmann_matrix), 1.0)
 
 
-def test_compact_matrix_kernel_hyperparameter_gradients_are_finite():
+def test_compact_matrix_kernel_hyperparameter_gradients_are_finite() -> None:
     points = jnp.stack([_rotation(0.0), _rotation(0.5), _rotation(-0.4)])
 
-    def objective(length_scale, smoothness):
+    def objective(length_scale: Any, smoothness: Any) -> Any:
         kernel = phx.kernels.SpecialOrthogonalCharacterKernel(
             2,
             5,
@@ -237,7 +243,7 @@ def test_compact_matrix_kernel_hyperparameter_gradients_are_finite():
     assert jnp.all(jnp.isfinite(jnp.asarray(gradients)))
 
 
-def test_real_compact_kernel_families_reject_complex_coordinates():
+def test_real_compact_kernel_families_reject_complex_coordinates() -> None:
     sphere = phx.kernels.SphereSpectralKernel(
         1,
         2,

@@ -2,6 +2,7 @@
 """Observable pulse/chase contracts; fixtures are not biological validation."""
 
 import hashlib
+from typing import Any
 
 import numpy as np
 import pytest
@@ -31,7 +32,7 @@ from phydrax.qualification import (
 from phydrax.units import derived_unit, SECOND
 
 
-def _reference(label: str, *, uncertainty=True) -> ReferenceArtifactManifest:
+def _reference(label: str, *, uncertainty: Any = True) -> ReferenceArtifactManifest:
     payload = label.encode()
     return ReferenceArtifactManifest(
         label,
@@ -50,7 +51,7 @@ def _reference(label: str, *, uncertainty=True) -> ReferenceArtifactManifest:
     )
 
 
-def _assay(*, calibration_covariance=True) -> LabeledTranscriptAssay:
+def _assay(*, calibration_covariance: Any = True) -> LabeledTranscriptAssay:
     return LabeledTranscriptAssay(
         np.ones(4),
         np.zeros(4),
@@ -63,8 +64,10 @@ def _assay(*, calibration_covariance=True) -> LabeledTranscriptAssay:
 
 def _schedule() -> PulseChaseSchedule:
     return PulseChaseSchedule(
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0, 2.0],
         np.asarray([[[8.0, 2.0, 1.0, 0.5]], [[8.0, 2.0, 1.0, 0.5]]]),
+        # ty: ignore[invalid-argument-type]
         [1.0, 0.0],
         rate_unit=derived_unit("s^-1", ((SECOND, -1),)),
     )
@@ -153,9 +156,11 @@ def _counts(
     return LabeledTranscriptCounts(
         GeneIdentity(7, "GENE7"),
         (1 if prefix == "cal" else 2,),
+        # ty: ignore[invalid-argument-type]
         [[1, 1, 1, 1]],
         culture_ids=(f"{prefix}-culture",),
         plate_ids=(f"{prefix}-plate",),
+        # ty: ignore[invalid-argument-type]
         times=[time],
         time_unit=SECOND,
         assay_id=assay.assay_id,
@@ -192,7 +197,7 @@ def _identifiability(
     calibration: LabeledTranscriptCounts,
     *,
     model_id: str = "pulse-chase-model",
-):
+) -> Any:
     return pulse_chase_identifiability(
         np.eye(4),
         ("synthesis", "splicing", "decay", "dilution"),
@@ -206,11 +211,13 @@ def _identifiability(
     )
 
 
-def test_physical_schedule_keeps_four_channels_and_does_not_relabel_at_chase():
+def test_physical_schedule_keeps_four_channels_and_does_not_relabel_at_chase() -> None:
     per_second = derived_unit("s^-1", ((SECOND, -1),))
     schedule = PulseChaseSchedule(
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0, 2.0],
         np.asarray([[[8.0, 2.0, 1.0, 0.5]], [[8.0, 2.0, 1.0, 0.5]]]),
+        # ty: ignore[invalid-argument-type]
         [1.0, 0.0],
         rate_unit=per_second,
     )
@@ -224,21 +231,28 @@ def test_physical_schedule_keeps_four_channels_and_does_not_relabel_at_chase():
     assert np.all(means >= 0.0)
 
 
-def test_four_matrix_adapter_preserves_measured_zero_and_reports_missing_rights_inputs():
+def test_four_matrix_adapter_preserves_measured_zero_and_reports_missing_rights_inputs() -> (
+    None
+):
     complete = tuple(_reference(f"channel-{index}") for index in range(4))
     report = sceu_seq_prerequisites((complete[0], None, complete[2], complete[3]))
     assert report.missing == ("source-manifest:labeled-spliced",)
     assert not report.ready
 
     imported = import_sceu_seq_arrays(
+        # ty: ignore[invalid-argument-type]
         [[0], [2]],
+        # ty: ignore[invalid-argument-type]
         [[0], [3]],
+        # ty: ignore[invalid-argument-type]
         [[0], [5]],
+        # ty: ignore[invalid-argument-type]
         [[0], [7]],
         gene_ids=("GENE7",),
         cell_ids=(11, 12),
         culture_ids=("culture-a", "culture-b"),
         plate_ids=("plate-a", "plate-b"),
+        # ty: ignore[invalid-argument-type]
         times=[0.0, 2.0],
         time_unit=SECOND,
         manifests=complete,
@@ -248,7 +262,7 @@ def test_four_matrix_adapter_preserves_measured_zero_and_reports_missing_rights_
     assert imported.report.status == AdapterStatus.LOSSLESS
 
 
-def test_assessment_is_inconclusive_without_timing_and_fails_leaked_holdout():
+def test_assessment_is_inconclusive_without_timing_and_fails_leaked_holdout() -> None:
     assay = _assay()
     schedule = _schedule()
     calibration = _counts(assay, "cal", 0.0)
@@ -271,9 +285,11 @@ def test_assessment_is_inconclusive_without_timing_and_fails_leaked_holdout():
     leaked = LabeledTranscriptCounts(
         locked.gene,
         (3,),
+        # ty: ignore[invalid-argument-type]
         [[1, 1, 1, 1]],
         culture_ids=calibration.culture_ids,
         plate_ids=("locked-plate",),
+        # ty: ignore[invalid-argument-type]
         times=[2.0],
         time_unit=SECOND,
         assay_id=assay.assay_id,
@@ -301,7 +317,7 @@ def test_assessment_is_inconclusive_without_timing_and_fails_leaked_holdout():
     assert "physical-schedule-timing-calibration" in inconclusive.missing_prerequisites
 
 
-def test_prediction_and_identifiability_are_exactly_fit_bound():
+def test_prediction_and_identifiability_are_exactly_fit_bound() -> None:
     assay = _assay()
     schedule = _schedule()
     calibration = _counts(assay, "cal", 0.0)
@@ -317,6 +333,7 @@ def test_prediction_and_identifiability_are_exactly_fit_bound():
             schedule,
             calibration,
             locked,
+            # ty: ignore[invalid-argument-type]
             np.ones((1, 4)),
             unrelated_identity,
             campaign=_campaign(),
@@ -378,6 +395,7 @@ def test_prediction_and_identifiability_are_exactly_fit_bound():
         calibration.counts,
         culture_ids=("locked-culture",),
         plate_ids=("locked-plate",),
+        # ty: ignore[invalid-argument-type]
         times=[2.0],
         time_unit=SECOND,
         assay_id=assay.assay_id,
@@ -403,7 +421,9 @@ def test_prediction_and_identifiability_are_exactly_fit_bound():
     assert "cell-leakage" in relabeled.failed_checks
 
 
-def test_missing_assay_covariance_blocks_readiness_and_latent_covariance_is_propagated():
+def test_missing_assay_covariance_blocks_readiness_and_latent_covariance_is_propagated() -> (
+    None
+):
     missing_assay = _assay(calibration_covariance=False)
     schedule = _schedule()
     calibration = _counts(missing_assay, "cal", 0.0)
@@ -427,8 +447,10 @@ def test_missing_assay_covariance_blocks_readiness_and_latent_covariance_is_prop
     assert "assay-calibration-covariance" in missing.missing_prerequisites
 
     assay = LabeledTranscriptAssay(
+        # ty: ignore[invalid-argument-type]
         [0.5, 0.8, 0.6, 0.7],
         np.zeros(4),
+        # ty: ignore[invalid-argument-type]
         [[0.9, 0.2], [0.1, 0.8]],
         labeling_calibration=_reference("propagation-label-calibration"),
         count_calibration=_reference("propagation-count-calibration"),
@@ -490,7 +512,7 @@ def test_missing_assay_covariance_blocks_readiness_and_latent_covariance_is_prop
     )
 
 
-def test_singular_joint_pulse_chase_covariance_is_inconclusive():
+def test_singular_joint_pulse_chase_covariance_is_inconclusive() -> None:
     assay = LabeledTranscriptAssay(
         np.ones(4),
         np.zeros(4),

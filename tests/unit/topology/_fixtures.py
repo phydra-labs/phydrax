@@ -2,20 +2,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def filled_triangle_topology():
+def filled_triangle_topology() -> Any:
     return phx.geometry.simplicial.TriangleTopology(
         jnp.asarray([[0, 1, 2]], dtype=jnp.int32),
         num_vertices=3,
     ).cell_complex_topology()
 
 
-def filled_triangle_filtration():
+def filled_triangle_filtration() -> Any:
     topology = filled_triangle_topology()
     complex = phx.topology.CellSubcomplex.full(topology)
     filtration = phx.topology.CellFiltration(
@@ -30,7 +33,7 @@ def filled_triangle_filtration():
     return topology, complex, filtration
 
 
-def filled_triangle_vertex_support(topology=None):
+def filled_triangle_vertex_support(topology: Any = None) -> Any:
     topology = filled_triangle_topology() if topology is None else topology
     return phx.topology.cell_vertex_support(
         topology,
@@ -42,7 +45,7 @@ def filled_triangle_vertex_support(topology=None):
     )
 
 
-def annulus_complex():
+def annulus_complex() -> Any:
     outer = np.asarray([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
     vertices = np.concatenate((outer, 0.4 * outer), axis=0)
     faces = np.asarray(
@@ -53,7 +56,7 @@ def annulus_complex():
     return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
 
 
-def projective_plane_topology():
+def projective_plane_topology() -> Any:
     faces = np.asarray(
         [
             [0, 1, 2],

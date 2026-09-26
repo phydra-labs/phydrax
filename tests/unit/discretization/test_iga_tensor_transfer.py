@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -33,7 +36,9 @@ def _field(basis: TensorSplineBasisSpec) -> DiscreteFieldSpace:
     ],
     ids=["knot-refinement", "degree-elevation"],
 )
-def test_exact_tensor_transfer_reproduces_linear_spline(target_knots, target_degree):
+def test_exact_tensor_transfer_reproduces_linear_spline(
+    target_knots: Any, target_degree: Any
+) -> None:
     source_grid = BSplineGrid(jnp.asarray((0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0)), 2)
     target_grid = BSplineGrid(jnp.asarray(target_knots), target_degree)
     source_basis = TensorSplineBasisSpec((source_grid,))

@@ -19,6 +19,7 @@ from .._model import register_artifact_value
 from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._multiresolution import MultiresolutionCoefficients
 from ._wavelet import WaveletBoundary
 
@@ -107,10 +108,7 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
         level_count = int(levels)
         if min(order_value, level_count) <= 0:
             raise ValueError("Multiwavelet order and levels must be positive.")
-        if boundary not in ("periodization", "symmetric", "zero"):
-            raise ValueError(
-                "Multiwavelet boundary must be 'periodization', 'symmetric', or 'zero'."
-            )
+        boundary = parse(boundary, WaveletBoundary, "boundary")
         base = jnp.asarray(_discrete_legendre_analysis(order_value))
         level = jnp.asarray(_alpert_analysis(order_value))
         digest = array_tree_fingerprint((base, level))["sha256"]

@@ -7,13 +7,14 @@
 import json
 import statistics
 import time
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _case(shells):
+def _case(shells: Any) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.ones((1,)), ambient_dimension=3
     ).prepare()
@@ -73,10 +74,12 @@ def _case(shells):
     return compiled, state, boundary
 
 
-def _measure(compiled, state, boundary, backend, repetitions=3):
+def _measure(
+    compiled: Any, state: Any, boundary: Any, backend: Any, repetitions: Any = 3
+) -> Any:
     plan = phx.solver.ParticleConversionSolverPlan(backend)
 
-    def run():
+    def run() -> Any:
         result = phx.solver.advance_particle_conversion(
             compiled.dynamics,
             plan,
@@ -102,7 +105,7 @@ def _measure(compiled, state, boundary, backend, repetitions=3):
     }
 
 
-def main():
+def main() -> None:
     cases = []
     for shells in (2, 8, 32):
         compiled, state, boundary = _case(shells)

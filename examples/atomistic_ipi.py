@@ -1,6 +1,7 @@
 import os
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -8,12 +9,18 @@ import phydrax as phx
 
 
 system = phx.atomistic.AtomisticSystemPlan(
-    [0, 1], [1, 1], [1.0, 1.0], phx.atomistic.AtomisticUnitSystem.reduced()
+    # ty: ignore[invalid-argument-type]
+    [0, 1],
+    # ty: ignore[invalid-argument-type]
+    [1, 1],
+    # ty: ignore[invalid-argument-type]
+    [1.0, 1.0],
+    phx.atomistic.AtomisticUnitSystem.reduced(),
 ).prepare()
 positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
 
 
-def evaluator(prepared, coordinate, cell_vectors):
+def evaluator(prepared: Any, coordinate: Any, cell_vectors: Any) -> Any:
     del prepared, cell_vectors
     return phx.atomistic.ExternalAtomisticEvaluation(
         jnp.sum(coordinate**2),
@@ -30,7 +37,7 @@ transport = phx.atomistic.interchange.IPITransportPlan.unix(socket_path, timeout
 listener = transport.listen()
 
 
-def serve():
+def serve() -> Any:
     with listener.accept() as session:
         return phx.atomistic.interchange.serve_ipi_once(session, provider, system)
 

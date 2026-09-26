@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,12 +13,12 @@ import pytest
 import phydrax as phx
 
 
-def _points():
+def _points() -> Any:
     diagonal = 1.0 / jnp.sqrt(2.0)
     return jnp.asarray([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [diagonal, 0.0, diagonal]])
 
 
-def _scalar_kernel(length_scale=0.7):
+def _scalar_kernel(length_scale: Any = 0.7) -> Any:
     return phx.kernels.SphereSpectralKernel(
         2,
         5,
@@ -23,7 +26,7 @@ def _scalar_kernel(length_scale=0.7):
     )
 
 
-def test_projected_tangent_covariance_is_intrinsic_symmetric_and_psd():
+def test_projected_tangent_covariance_is_intrinsic_symmetric_and_psd() -> None:
     points = _points()
     kernel = phx.kernels.sphere_tangent_kernel(_scalar_kernel())
     covariance = kernel.matrix(points, points)
@@ -40,7 +43,7 @@ def test_projected_tangent_covariance_is_intrinsic_symmetric_and_psd():
             assert jnp.allclose(block @ right, 0.0, atol=1e-9)
 
 
-def test_sphere_tangent_covariance_is_rotation_equivariant():
+def test_sphere_tangent_covariance_is_rotation_equivariant() -> None:
     points = _points()
     rotation = jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     kernel = phx.kernels.sphere_tangent_kernel(_scalar_kernel())
@@ -52,7 +55,7 @@ def test_sphere_tangent_covariance_is_rotation_equivariant():
             assert jnp.allclose(actual, expected, atol=1e-9)
 
 
-def test_sphere_lifts_share_scalar_membership_tolerance_and_canonicalization():
+def test_sphere_lifts_share_scalar_membership_tolerance_and_canonicalization() -> None:
     point = jnp.sqrt(1.0005) * jnp.asarray([1.0, 0.0, 0.0])
     scalar = phx.kernels.SphereSpectralKernel(
         2,
@@ -67,7 +70,7 @@ def test_sphere_lifts_share_scalar_membership_tolerance_and_canonicalization():
     assert jnp.all(jnp.isfinite(one_form.block(point, point)))
 
 
-def test_degree_one_form_kernel_matches_tangent_covariance():
+def test_degree_one_form_kernel_matches_tangent_covariance() -> None:
     points = _points()
     scalar = _scalar_kernel()
     tangent = phx.kernels.sphere_tangent_kernel(scalar)
@@ -78,10 +81,10 @@ def test_degree_one_form_kernel_matches_tangent_covariance():
     assert jnp.allclose(one_form.diagonal(points), tangent.diagonal(points))
 
 
-def test_higher_form_covariance_is_positive_semidefinite_and_differentiable():
+def test_higher_form_covariance_is_positive_semidefinite_and_differentiable() -> None:
     points = _points()
 
-    def objective(length_scale):
+    def objective(length_scale: Any) -> Any:
         kernel = phx.kernels.sphere_differential_form_kernel(
             _scalar_kernel(length_scale), 2
         )
@@ -97,11 +100,12 @@ def test_higher_form_covariance_is_positive_semidefinite_and_differentiable():
     assert jnp.isfinite(jax.jit(jax.grad(objective))(jnp.asarray(0.7)))
 
 
-def test_kernel_functional_terms_require_exact_integer_derivative_orders():
+def test_kernel_functional_terms_require_exact_integer_derivative_orders() -> None:
     with pytest.raises(TypeError, match="exact integers"):
         phx.kernels.KernelFunctionalTerm(
             "field",
             jnp.asarray([[0.0]]),
+            # ty: ignore[invalid-argument-type]
             ((0.5,),),
             jnp.ones((1, 1, 1, 1)),
         )

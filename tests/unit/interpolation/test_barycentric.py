@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ from phydrax._interpolation import (
 )
 
 
-def test_barycentric_primitives_promote_integer_nodes_consistently():
+def test_barycentric_primitives_promote_integer_nodes_consistently() -> None:
     nodes = jnp.asarray((0, 1, 2), dtype=jnp.int32)
     weights = jnp.asarray((0.5, -1.0, 0.5))
 
@@ -32,7 +35,7 @@ def test_barycentric_primitives_promote_integer_nodes_consistently():
         jnp.asarray((0.0, jnp.inf, 1.0)),
     ),
 )
-def test_barycentric_primitives_reject_invalid_nodes(nodes):
+def test_barycentric_primitives_reject_invalid_nodes(nodes: Any) -> None:
     weights = jnp.ones(nodes.shape)
 
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="finite distinct"):
@@ -48,6 +51,6 @@ def test_barycentric_primitives_reject_invalid_nodes(nodes):
         jnp.asarray((1.0, jnp.nan, 1.0)),
     ),
 )
-def test_barycentric_basis_rejects_invalid_weights(weights):
+def test_barycentric_basis_rejects_invalid_weights(weights: Any) -> None:
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="finite nonzero"):
         barycentric_basis(jnp.asarray(0.5), jnp.asarray((0.0, 1.0, 2.0)), weights)

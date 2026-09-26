@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -22,7 +25,9 @@ from phydrax.sampling.collocation import (
 )
 
 
-def _controlled_interval(*, anchors=0.0, budget=None, guard=None):
+def _controlled_interval(
+    *, anchors: Any = 0.0, budget: Any = None, guard: Any = None
+) -> Any:
     domain = Interval1d(0.0, 1.0)
     structure = SampleLayout((("x",),))
     policy = controlled_collocation(
@@ -48,11 +53,11 @@ def _controlled_interval(*, anchors=0.0, budget=None, guard=None):
     return domain, term, policy
 
 
-def _x(population):
+def _x(population: Any) -> Any:
     return population.current.batch.points["x"].data
 
 
-def test_policy_support_tiers_cover_retained_methods():
+def test_policy_support_tiers_cover_retained_methods() -> None:
     assert collocation_policy_support(None).tier == "stable"
     assert collocation_policy_support(PeriodicCollocation()).tier == "stable"
     assert collocation_policy_support(R3()).tier == "stable"
@@ -60,7 +65,7 @@ def test_policy_support_tiers_cover_retained_methods():
     assert collocation_policy_support("hierarchical_axes").tier == "conditional"
 
 
-def test_controlled_population_uses_a_fixed_independent_monitor():
+def test_controlled_population_uses_a_fixed_independent_monitor() -> None:
     domain, constraint, policy = _controlled_interval()
     population = policy.initialize(constraint, key=jr.key(1))
     assert isinstance(population, ControlledCollocationPopulation)
@@ -84,7 +89,7 @@ def test_controlled_population_uses_a_fixed_independent_monitor():
     assert bool(refreshed.proposal_pending)
 
 
-def test_validation_guard_rolls_back_a_regressing_population():
+def test_validation_guard_rolls_back_a_regressing_population() -> None:
     domain, constraint, policy = _controlled_interval(
         guard=RefreshGuard(
             max_relative_regression=0.0,
@@ -117,7 +122,7 @@ def test_validation_guard_rolls_back_a_regressing_population():
     assert bool(policy.should_refresh(rejected, 9))
 
 
-def test_terminal_settlement_rolls_back_without_admitting_another_proposal():
+def test_terminal_settlement_rolls_back_without_admitting_another_proposal() -> None:
     domain, constraint, policy = _controlled_interval()
     initial = policy.initialize(constraint, key=jr.key(15))
     baseline_x = _x(initial)
@@ -142,7 +147,7 @@ def test_terminal_settlement_rolls_back_without_admitting_another_proposal():
     assert not bool(settled.proposal_pending)
 
 
-def test_coverage_anchors_survive_population_proposals():
+def test_coverage_anchors_survive_population_proposals() -> None:
     domain, constraint, policy = _controlled_interval(anchors=0.25)
     initial = policy.initialize(constraint, key=jr.key(6))
     anchors = _x(initial)[:4]
@@ -158,7 +163,7 @@ def test_coverage_anchors_survive_population_proposals():
     assert float(policy.data_metrics(refreshed)["control_anchor_fraction"]) == 0.25
 
 
-def test_budget_prevents_refresh_before_overspending_candidate_scores():
+def test_budget_prevents_refresh_before_overspending_candidate_scores() -> None:
     _domain, constraint, policy = _controlled_interval(
         budget=AdaptationBudget(max_candidate_evaluations=15)
     )
@@ -167,7 +172,7 @@ def test_budget_prevents_refresh_before_overspending_candidate_scores():
     assert not bool(policy.should_refresh(population, 1))
 
 
-def test_exhausted_candidate_budget_still_validates_the_last_proposal():
+def test_exhausted_candidate_budget_still_validates_the_last_proposal() -> None:
     domain, constraint, policy = _controlled_interval(
         budget=AdaptationBudget(max_candidate_evaluations=16)
     )
@@ -199,7 +204,7 @@ def test_exhausted_candidate_budget_still_validates_the_last_proposal():
     assert int(settled.monitor_evaluations) == 32
 
 
-def test_monitor_budget_reserves_validation_for_every_proposal():
+def test_monitor_budget_reserves_validation_for_every_proposal() -> None:
     domain, constraint, policy = _controlled_interval(
         budget=AdaptationBudget(max_monitor_evaluations=32)
     )
@@ -228,7 +233,7 @@ def test_monitor_budget_reserves_validation_for_every_proposal():
     assert not bool(policy.should_refresh(settled, 3))
 
 
-def test_controlled_coreset_policy_preserves_selection_metrics_through_anchors():
+def test_controlled_coreset_policy_preserves_selection_metrics_through_anchors() -> None:
     domain = Interval1d(0.0, 1.0)
     structure = SampleLayout((("x",),))
     policy = controlled_collocation(

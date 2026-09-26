@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -44,7 +47,7 @@ from phydrax.applications.battery._spm import (
 FARADAY = 96485.33212
 
 
-def _constant(value, support, *, quantity, value_unit):
+def _constant(value: Any, support: Any, *, quantity: Any, value_unit: Any) -> Any:
     return ConstantPropertyLaw(
         jnp.asarray(value),
         jnp.asarray(support),
@@ -57,7 +60,9 @@ def _constant(value, support, *, quantity, value_unit):
     )
 
 
-def _diffusivity_table(coordinate, nodes, values, *, electrode):
+def _diffusivity_table(
+    coordinate: Any, nodes: Any, values: Any, *, electrode: Any
+) -> Any:
     coordinate_unit = "1" if coordinate == "stoichiometry" else "mol/m3"
     return TabulatedPropertyLaw(
         jnp.asarray(nodes),
@@ -73,12 +78,12 @@ def _diffusivity_table(coordinate, nodes, values, *, electrode):
 
 def _parameters(
     *,
-    maximum_current=20.0,
-    positive_thickness=1.0e-4,
-    limiting_electrode="balanced",
-    negative_diffusivity=None,
-    positive_diffusivity=None,
-):
+    maximum_current: Any = 20.0,
+    positive_thickness: Any = 1.0e-4,
+    limiting_electrode: Any = "balanced",
+    negative_diffusivity: Any = None,
+    positive_diffusivity: Any = None,
+) -> Any:
     return SpmParameters(
         electrode_area_m2=0.1,
         negative_electrode_thickness_m=1.0e-4,
@@ -131,12 +136,12 @@ def _parameters(
     )
 
 
-def _adapter(shell_count=5):
+def _adapter(shell_count: Any = 5) -> Any:
     adapter = PrescribedCurrentSpmAdapter(PrescribedCurrentSpmPlan(shell_count))
     return adapter, adapter.prepare()
 
 
-def _runtime(parameters, current, *, duration=10.0):
+def _runtime(parameters: Any, current: Any, *, duration: Any = 10.0) -> Any:
     protocol = BatteryProtocolPlan((CurrentStepPlan(duration),))
     values = BatteryProtocolValues(protocol, jnp.asarray((current,)))
     return BatteryRuntimeInputs(
@@ -148,7 +153,14 @@ def _runtime(parameters, current, *, duration=10.0):
     )
 
 
-def _state(adapter, prepared, parameters, *, negative=0.5, positive=0.5):
+def _state(
+    adapter: Any,
+    prepared: Any,
+    parameters: Any,
+    *,
+    negative: Any = 0.5,
+    positive: Any = 0.5,
+) -> Any:
     return adapter.initial_state(
         prepared,
         parameters,
@@ -156,11 +168,11 @@ def _state(adapter, prepared, parameters, *, negative=0.5, positive=0.5):
     )
 
 
-def _observable(adapter, output, name):
+def _observable(adapter: Any, output: Any, name: Any) -> Any:
     return output.values[..., adapter.observable_names.index(name)]
 
 
-def test_capacity_balancing_and_declared_limiting_electrode_are_validated():
+def test_capacity_balancing_and_declared_limiting_electrode_are_validated() -> None:
     balanced = _parameters()
     adapter, prepared = _adapter()
     observed = adapter.observe(
@@ -203,7 +215,9 @@ def test_capacity_balancing_and_declared_limiting_electrode_are_validated():
         _parameters(positive_thickness=1.25e-4, limiting_electrode="positive")
 
 
-def test_passive_positive_current_moves_lithium_negativeward_and_preserves_total():
+def test_passive_positive_current_moves_lithium_negativeward_and_preserves_total() -> (
+    None
+):
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -221,7 +235,9 @@ def test_passive_positive_current_moves_lithium_negativeward_and_preserves_total
     )
 
 
-def test_current_to_outward_flux_uses_exact_representative_particle_area_factors():
+def test_current_to_outward_flux_uses_exact_representative_particle_area_factors() -> (
+    None
+):
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -260,7 +276,7 @@ def test_current_to_outward_flux_uses_exact_representative_particle_area_factors
     )
 
 
-def test_shell_diffusivity_laws_use_runtime_stoichiometry_or_concentration():
+def test_shell_diffusivity_laws_use_runtime_stoichiometry_or_concentration() -> None:
     stoichiometry_nodes = jnp.asarray((0.1, 0.5, 0.9))
     concentration_nodes = 3.0e4 * stoichiometry_nodes
     diffusivity_values = jnp.asarray((1.0e-14, 2.0e-14, 4.0e-14))
@@ -278,7 +294,7 @@ def test_shell_diffusivity_laws_use_runtime_stoichiometry_or_concentration():
     )
     target_stoichiometry = jnp.linspace(0.2, 0.8, 5)
 
-    def evaluate(law):
+    def evaluate(law: Any) -> Any:
         parameters = _parameters(negative_diffusivity=law)
         adapter, prepared = _adapter(5)
         uniform = _state(adapter, prepared, parameters)
@@ -343,7 +359,7 @@ def test_shell_diffusivity_laws_use_runtime_stoichiometry_or_concentration():
     np.testing.assert_allclose(mapped, jnp.stack((expected, expected)))
 
 
-def test_shell_diffusivity_support_failure_invalidates_the_runtime_state():
+def test_shell_diffusivity_support_failure_invalidates_the_runtime_state() -> None:
     bounded_law = _diffusivity_table(
         "stoichiometry",
         (0.1, 0.9),
@@ -375,7 +391,7 @@ def test_shell_diffusivity_support_failure_invalidates_the_runtime_state():
     assert bool(jnp.all(jnp.isfinite(output.values)))
 
 
-def test_soc_coordinates_agree_for_consistent_inventory_and_report_mismatch():
+def test_soc_coordinates_agree_for_consistent_inventory_and_report_mismatch() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     consistent = _state(
@@ -427,12 +443,12 @@ def test_soc_coordinates_agree_for_consistent_inventory_and_report_mismatch():
     )
 
 
-def test_symmetric_butler_volmer_voltage_has_passive_charge_and_discharge_signs():
+def test_symmetric_butler_volmer_voltage_has_passive_charge_and_discharge_signs() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
 
-    def voltage(current):
+    def voltage(current: Any) -> Any:
         output = adapter.observe(
             prepared,
             jnp.asarray(0.0),
@@ -454,7 +470,7 @@ def test_symmetric_butler_volmer_voltage_has_passive_charge_and_discharge_signs(
     assert float(_observable(adapter, charge_output, "positive_overpotential_v")) > 0.0
 
 
-def test_inverse_asinh_ratio_remains_finite_when_direct_division_overflows():
+def test_inverse_asinh_ratio_remains_finite_when_direct_division_overflows() -> None:
     numerator = jnp.asarray(1.0e30)
     denominator = jnp.asarray(1.0e-30)
     value = _stable_asinh_ratio(numerator, denominator)
@@ -463,7 +479,9 @@ def test_inverse_asinh_ratio_remains_finite_when_direct_division_overflows():
     np.testing.assert_allclose(value, expected, rtol=2.0e-6)
 
 
-def test_concentration_property_and_current_support_fail_closed_with_finite_outputs():
+def test_concentration_property_and_current_support_fail_closed_with_finite_outputs() -> (
+    None
+):
     parameters = _parameters(maximum_current=10.0)
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -519,7 +537,7 @@ def test_concentration_property_and_current_support_fail_closed_with_finite_outp
     assert bool(jnp.all(jnp.isfinite(invalid_property.values)))
 
 
-def test_tabulated_ocp_support_failure_is_a_domain_failure():
+def test_tabulated_ocp_support_failure_is_a_domain_failure() -> None:
     parameters = _parameters()
     narrow_ocp = TabulatedPropertyLaw(
         jnp.asarray((0.2, 0.8)),
@@ -546,7 +564,7 @@ def test_tabulated_ocp_support_failure_is_a_domain_failure():
     assert not bool(output.domain_valid)
 
 
-def test_radial_refinement_reduces_boundary_reconstruction_distance():
+def test_radial_refinement_reduces_boundary_reconstruction_distance() -> None:
     parameters = _parameters(
         positive_diffusivity=_diffusivity_table(
             "stoichiometry",
@@ -581,7 +599,9 @@ def test_radial_refinement_reduces_boundary_reconstruction_distance():
     np.testing.assert_allclose(fine_offset, 0.5 * coarse_offset, rtol=1.0e-5)
 
 
-def test_spm_problem_and_observations_are_jittable_vmappable_and_fixed_path_differentiable():
+def test_spm_problem_and_observations_are_jittable_vmappable_and_fixed_path_differentiable() -> (
+    None
+):
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -612,7 +632,7 @@ def test_spm_problem_and_observations_are_jittable_vmappable_and_fixed_path_diff
     assert mapped.values.shape == (2, len(adapter.observable_names))
     assert bool(jnp.all(mapped.domain_valid))
 
-    def voltage_for_current(current):
+    def voltage_for_current(current: Any) -> Any:
         output = adapter.observe(
             prepared,
             jnp.asarray(0.0),
@@ -626,7 +646,7 @@ def test_spm_problem_and_observations_are_jittable_vmappable_and_fixed_path_diff
     assert float(current_derivative) > 0.0
 
 
-def test_protocol_orchestration_conserves_lithium_charge_and_current():
+def test_protocol_orchestration_conserves_lithium_charge_and_current() -> None:
     parameters = _parameters()
     adapter = PrescribedCurrentSpmAdapter(PrescribedCurrentSpmPlan(5))
     protocol = BatteryProtocolPlan(
@@ -637,6 +657,7 @@ def test_protocol_orchestration_conserves_lithium_charge_and_current():
     profile = ISOTHERMAL_SPM_CANDIDATE
     save_times = jnp.asarray((0.0, 1.0, 2.0, 3.0, 4.0, 5.0))
     experiment = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         BatteryOutputPlan(("voltage_v", "current_a", "negative_soc", "positive_soc")),
@@ -663,7 +684,7 @@ def test_protocol_orchestration_conserves_lithium_charge_and_current():
     np.testing.assert_allclose(result.ledger.integrated_terminal_charge_c, 6.0)
     assert bool(jnp.all(result.outputs.valid))
 
-    def final_negative_soc(first_current):
+    def final_negative_soc(first_current: Any) -> Any:
         dynamic_values = BatteryProtocolValues(
             protocol, jnp.stack((first_current, jnp.asarray(-2.0)))
         )

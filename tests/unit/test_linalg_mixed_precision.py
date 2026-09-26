@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -18,7 +21,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _mixed_policy(*, refinement_steps: int = 3):
+def _mixed_policy(*, refinement_steps: int = 3) -> Any:
     return la.LinearSolvePolicy(
         la.DenseLU(),
         tolerance=la.TolerancePolicy(relative=0.0, absolute=0.0),
@@ -32,7 +35,7 @@ def _mixed_policy(*, refinement_steps: int = 3):
     )
 
 
-def test_dense_mixed_precision_refinement_improves_certified_solution():
+def test_dense_mixed_precision_refinement_improves_certified_solution() -> None:
     matrix = jnp.asarray(
         [
             [1.234567890123, 0.345678901234],
@@ -74,7 +77,7 @@ def test_dense_mixed_precision_refinement_improves_certified_solution():
     assert selected.factorization_bytes == matrix.size * jnp.dtype(jnp.float32).itemsize
 
 
-def test_mixed_precision_rejects_unsafe_condition_before_factorization():
+def test_mixed_precision_rejects_unsafe_condition_before_factorization() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 1.0e-8], dtype=jnp.float64))
     problem = la.LinearSystem(la.DenseLinearOperator(matrix))
 
@@ -85,7 +88,7 @@ def test_mixed_precision_rejects_unsafe_condition_before_factorization():
         la.prepare(problem, _mixed_policy())
 
 
-def test_mixed_precision_rejects_unsupported_factor_and_accumulation_dtypes():
+def test_mixed_precision_rejects_unsupported_factor_and_accumulation_dtypes() -> None:
     matrix = jnp.asarray([[2.0, 0.25], [0.5, 1.5]], dtype=jnp.float64)
     problem = la.LinearSystem(la.DenseLinearOperator(matrix))
     unsupported_factor = la.LinearSolvePolicy(
@@ -112,7 +115,7 @@ def test_mixed_precision_rejects_unsupported_factor_and_accumulation_dtypes():
         la.plan(problem, unsupported_accumulation)
 
 
-def test_default_dense_precision_behavior_and_evidence_remain_unchanged():
+def test_default_dense_precision_behavior_and_evidence_remain_unchanged() -> None:
     matrix = jnp.asarray([[2.25, -0.5], [0.75, 1.5]], dtype=jnp.float64)
     rhs = jnp.asarray([1.0, -2.0], dtype=jnp.float64)
     result = la.solve(la.LinearSystem(la.DenseLinearOperator(matrix)), rhs)
@@ -124,7 +127,7 @@ def test_default_dense_precision_behavior_and_evidence_remain_unchanged():
     assert result.diagnostics.refinement_steps == 0
 
 
-def test_dense_mixed_precision_is_compatible_with_eager_and_jit_execution():
+def test_dense_mixed_precision_is_compatible_with_eager_and_jit_execution() -> None:
     matrix = jnp.asarray(
         [[1.234567890123, 0.345678901234], [0.456789012345, 1.876543210987]],
         dtype=jnp.float64,
@@ -151,7 +154,7 @@ def test_dense_mixed_precision_is_compatible_with_eager_and_jit_execution():
         policy,
     )
 
-    def solve_prepared(value):
+    def solve_prepared(value: Any) -> Any:
         result = la.solve(prepared, value)
         return result.value, result.diagnostics.refinement_steps
 

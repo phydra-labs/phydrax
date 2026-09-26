@@ -1,4 +1,5 @@
 import itertools
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +9,7 @@ import scipy.special
 import phydrax as phx
 
 
-def test_carlson_forms_match_scipy_across_scales():
+def test_carlson_forms_match_scipy_across_scales() -> None:
     x = np.asarray([0.0, 1e-100, 0.2, 1.0, 1e100])
     y = np.asarray([0.5, 2e-100, 3.0, 2.0, 2e100])
     z = np.asarray([1.0, 5e-100, 0.7, 4.0, 4e100])
@@ -22,11 +23,12 @@ def test_carlson_forms_match_scipy_across_scales():
     ]
     for function, reference, arguments in cases:
         actual = np.asarray(function(*(jnp.asarray(value) for value in arguments)))
+        # ty: ignore[no-matching-overload]
         expected = reference(*arguments)
         np.testing.assert_allclose(actual, expected, rtol=3e-13, atol=2e-15)
 
 
-def test_carlson_symmetry_homogeneity_and_degeneracies():
+def test_carlson_symmetry_homogeneity_and_degeneracies() -> None:
     values = (0.2, 1.3, 4.7)
     rf_values = [
         float(phx.special.elliprf(*permutation))
@@ -73,10 +75,10 @@ def test_carlson_symmetry_homogeneity_and_degeneracies():
     np.testing.assert_allclose(phx.special.elliprg(2.0, 2.0, 2.0), np.sqrt(2.0))
 
 
-def test_carlson_derivatives_compose_in_forward_and_reverse_modes():
+def test_carlson_derivatives_compose_in_forward_and_reverse_modes() -> None:
     point = jnp.asarray([0.3, 1.2, 2.4, 0.8])
 
-    def observable(arguments):
+    def observable(arguments: Any) -> Any:
         x, y, z, p = arguments
         return (
             phx.special.elliprf(x, y, z)
@@ -93,7 +95,7 @@ def test_carlson_derivatives_compose_in_forward_and_reverse_modes():
     assert np.all(np.isfinite(np.asarray(forward)))
 
 
-def test_carlson_invalid_lanes_do_not_poison_valid_lanes():
+def test_carlson_invalid_lanes_do_not_poison_valid_lanes() -> None:
     values = np.asarray(
         phx.special.elliprf(
             jnp.asarray([0.0, -1.0, 1.0]),
@@ -110,7 +112,7 @@ def test_carlson_invalid_lanes_do_not_poison_valid_lanes():
     assert np.isnan(phx.special.elliprc(1.0, 0.0))
 
 
-def test_carlson_zero_boundary_derivatives_are_finite_for_active_arguments():
+def test_carlson_zero_boundary_derivatives_are_finite_for_active_arguments() -> None:
     cases = [
         (lambda y: phx.special.elliprc(0.0, y), -np.pi / 4.0),
         (lambda y: phx.special.elliprf(0.0, y, y), -np.pi / 4.0),
@@ -124,7 +126,7 @@ def test_carlson_zero_boundary_derivatives_are_finite_for_active_arguments():
         np.testing.assert_allclose(reverse, expected, rtol=4e-13, atol=2e-15)
 
 
-def test_carlson_rd_rj_retain_representable_values_at_extreme_dynamic_range():
+def test_carlson_rd_rj_retain_representable_values_at_extreme_dynamic_range() -> None:
     rd_arguments = (1.0, 1e300, 1.0)
     rj_arguments = (1.0, 1e300, 1.0, 1.0)
     rd = phx.special.elliprd(*rd_arguments)
@@ -140,13 +142,13 @@ def test_carlson_rd_rj_retain_representable_values_at_extreme_dynamic_range():
     )
 
 
-def test_carlson_rg_equal_arguments_preserve_extreme_scales():
+def test_carlson_rg_equal_arguments_preserve_extreme_scales() -> None:
     arguments = jnp.asarray([1e-300, 1e300])
     actual = phx.special.elliprg(arguments, arguments, arguments)
     np.testing.assert_allclose(actual, np.sqrt(np.asarray(arguments)), rtol=3e-15)
 
 
-def test_carlson_positive_infinity_limits_and_precedence():
+def test_carlson_positive_infinity_limits_and_precedence() -> None:
     infinity = jnp.asarray(jnp.inf)
     assert phx.special.elliprc(infinity, 1.0) == 0.0
     assert phx.special.elliprf(infinity, 1.0, 1.0) == 0.0

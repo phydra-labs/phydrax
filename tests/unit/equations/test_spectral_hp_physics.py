@@ -11,7 +11,7 @@ from phydrax.equations.fem import (
 )
 
 
-def test_wall_evidence():
+def test_wall_evidence() -> None:
     evidence = entropy_stable_wall_evidence(
         jnp.asarray(((1.0, 0.0, 0.0, 2.0),)),
         jnp.zeros((1, 4)),
@@ -21,7 +21,7 @@ def test_wall_evidence():
     assert bool(evidence.passed)
 
 
-def test_derived_entropy_defect_uses_declared_thermodynamic_values():
+def test_derived_entropy_defect_uses_declared_thermodynamic_values() -> None:
     left = jnp.asarray(((1.0, 2.0), (0.5, -0.25)))
     right = jnp.asarray(((2.0, 3.0), (1.5, 0.75)))
     flux = 0.5 * (left + right)

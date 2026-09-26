@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -12,15 +14,15 @@ class _StressOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 2
         self.out_size = 9
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         values = batch.input("features").values
         assert values is not None
@@ -36,11 +38,11 @@ class _StressOperator(phx.nn.operator.AbstractOperatorModel):
         )
         return stress.reshape(stress.shape[:-2] + (9,))
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _task_and_template():
+def _task_and_template() -> Any:
     axis = phx.nn.operator.OperatorAxis("x", jnp.asarray((0.0, 1.0)))
     template = phx.nn.operator.OperatorBatch(
         inputs={
@@ -78,7 +80,7 @@ def _task_and_template():
     return task, template
 
 
-def _closure_inputs():
+def _closure_inputs() -> Any:
     node = phx.closure_data.ClosureAnalysisNode(
         "reynolds_sgs_stress",
         ("resolved",),
@@ -159,6 +161,7 @@ def _closure_inputs():
             phx.closure_data.PartitionAssignment(
                 sample_id=sample.sample_id,
                 group_key=key.group_key("case"),
+                # ty: ignore[invalid-argument-type]
                 split=split,
             )
         )
@@ -185,7 +188,7 @@ def _closure_inputs():
     return tuple(cases), dag, manifest, partition, normalizer
 
 
-def _datasets():
+def _datasets() -> Any:
     task, template = _task_and_template()
     cases, dag, manifest, partition, normalizer = _closure_inputs()
     datasets = phx.closure_data.prepare_closure_operator_datasets(
@@ -200,7 +203,7 @@ def _datasets():
     return task, template, cases, normalizer, datasets
 
 
-def test_closure_partitions_and_provenance_remain_authoritative():
+def test_closure_partitions_and_provenance_remain_authoritative() -> None:
     task, template, cases, _, datasets = _datasets()
 
     assert datasets.train.size == 1
@@ -219,7 +222,7 @@ def test_closure_partitions_and_provenance_remain_authoritative():
     )
 
 
-def test_closure_preparation_rejects_schema_and_partition_mismatches():
+def test_closure_preparation_rejects_schema_and_partition_mismatches() -> None:
     task, template = _task_and_template()
     cases, dag, manifest, partition, normalizer = _closure_inputs()
     wrong = phx.closure_data.ClosureSample(
@@ -256,7 +259,7 @@ def test_closure_preparation_rejects_schema_and_partition_mismatches():
         )
 
 
-def test_trained_operator_binds_through_the_existing_stress_policy():
+def test_trained_operator_binds_through_the_existing_stress_policy() -> None:
     task, template, _, normalizer, datasets = _datasets()
     resolved_filter = phx.equations.ResolvedLESFilter(
         "cell filter",
@@ -321,6 +324,7 @@ def test_trained_operator_binds_through_the_existing_stress_policy():
         _StressOperator(),
         task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+        # ty: ignore[invalid-argument-type]
         **binding,
         artifact_id=artifact_id,
         provenance=provenance,
@@ -356,6 +360,7 @@ def test_trained_operator_binds_through_the_existing_stress_policy():
                 training_evidence=phx.nn.operator.OperatorTrainingEvidence(
                     "task_specific"
                 ),
+                # ty: ignore[invalid-argument-type]
                 **binding,
                 artifact_id=artifact_id,
                 provenance=provenance | {"closure_partition": "other"},

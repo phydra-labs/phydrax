@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_kernel_algebra_preserves_covariance_and_flattens_associative_nodes():
+def test_kernel_algebra_preserves_covariance_and_flattens_associative_nodes() -> None:
     points = jnp.linspace(-1.0, 1.0, 15)[:, None]
     squared_exponential = phx.kernels.SquaredExponentialKernel(length_scale=0.3)
     matern32 = phx.kernels.Matern32Kernel(length_scale=0.5)
@@ -35,7 +35,7 @@ def test_kernel_algebra_preserves_covariance_and_flattens_associative_nodes():
     )
 
 
-def test_scale_and_amplitude_have_distinct_explicit_semantics():
+def test_scale_and_amplitude_have_distinct_explicit_semantics() -> None:
     points = jnp.linspace(0.0, 1.0, 8)[:, None]
     correlation = phx.kernels.Matern52Kernel(length_scale=0.25)
     scaled = phx.kernels.ScaleKernel(correlation, 0.4)
@@ -49,4 +49,5 @@ def test_scale_and_amplitude_have_distinct_explicit_semantics():
     with pytest.raises(TypeError, match="only be added"):
         correlation + 1.0
     with pytest.raises(TypeError):
+        # ty: ignore[unsupported-operator]
         _ = correlation - correlation

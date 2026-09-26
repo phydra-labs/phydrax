@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -15,7 +16,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _benchmark(function, argument, repeats):
+def _benchmark(function: Any, argument: Any, repeats: Any) -> Any:
     compiled = eqx.filter_jit(function)
     start = perf_counter()
     output = jax.block_until_ready(compiled(argument))
@@ -30,7 +31,7 @@ def _benchmark(function, argument, repeats):
     }
 
 
-def run_benchmarks(*, repeats=5):
+def run_benchmarks(*, repeats: Any = 5) -> Any:
     gaussian = phx.solver.damped_thermal_oscillator(0.4, 1.0)
     fock = phx.operators.quantum.BosonicFockSpace((16,))
     state = jnp.zeros((16,), dtype="complex128").at[3].set(1.0)
@@ -58,7 +59,7 @@ def run_benchmarks(*, repeats=5):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--smoke", action="store_true")

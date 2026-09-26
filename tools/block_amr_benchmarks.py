@@ -157,6 +157,7 @@ def _compiled_phase(
 ) -> tuple[Any, dict[str, Any]]:
     jitted = eqx.filter_jit(function)
     executable, compilation = measure_lower_and_compile(
+        # ty: ignore[unresolved-attribute]
         lambda: jitted.lower(*arguments),
         lambda lowered: lowered.compile(),
     )
@@ -344,7 +345,7 @@ def _compiler_phases(
     )
     phases.append(route_phase)
 
-    def fill_operation(level_values):
+    def fill_operation(level_values: Any) -> Any:
         current = _hierarchy_from_values(topology, level_values)
         fill = dynamics.fill_patch(0.0, current)
         return (
@@ -370,7 +371,7 @@ def _compiler_phases(
     phases.append(fill_phase)
     concrete_fill = synchronize(dynamics.fill_patch(0.0, state))
 
-    def finite_volume_operation(level_values, fill_patch):
+    def finite_volume_operation(level_values: Any, fill_patch: Any) -> Any:
         current = _hierarchy_from_values(topology, level_values)
         stage = dynamics.evaluate(0.0, current, fill_patch)
         return stage.residuals, stage.maximum_rate
@@ -412,7 +413,7 @@ def _compiler_phases(
     runtime_state = runtime.initial_state(state)
     advanced = synchronize(runtime.advance(runtime_state, 0.005))
 
-    def reflux_operation(level_values):
+    def reflux_operation(level_values: Any) -> Any:
         updated = tuple(level_values)
         for register in advanced.flux_registers:
             updated = runtime.conservation.reflux(updated, register)
@@ -571,7 +572,7 @@ def _compiler_phases(
         ),
     )
 
-    def solve_operation(target):
+    def solve_operation(target: Any) -> Any:
         result = linalg.solve(operator.linear_system(), target, policy=solve_policy)
         return result.value, result.status, result.diagnostics.residual_norm
 
@@ -623,7 +624,7 @@ def _compiler_phases(
     )
     phases.append(transition_prepare_phase)
 
-    def transition_operation(level_values):
+    def transition_operation(level_values: Any) -> Any:
         source = _hierarchy_from_values(initial.topology, level_values)
         result = transition.apply(source)
         return (
@@ -679,7 +680,7 @@ def _compiler_phases(
     )
     migration = distributed.migration_to(weighted)
 
-    def packed_migration_operation(level_values):
+    def packed_migration_operation(level_values: Any) -> Any:
         source = _hierarchy_from_values(topology, level_values)
         return migration.migrate(distributed.pack(source))
 
@@ -1164,7 +1165,7 @@ def _real_device_phase(
     values = tuple(level.values for level in state.levels)
     reference = synchronize(distributed.serial_fill_patch(state))
 
-    def operation(level_values):
+    def operation(level_values: Any) -> Any:
         current = _hierarchy_from_values(refined.topology, level_values)
         fill = distributed.distributed_fill_patch(current)
         return (

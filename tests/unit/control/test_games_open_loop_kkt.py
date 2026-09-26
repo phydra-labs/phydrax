@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -37,16 +39,16 @@ from phydrax.nonlinear import NonlinearTermination
 
 
 def _path_block(
-    function,
-    constraint_id,
+    function: Any,
+    constraint_id: Any,
     *,
-    owner="one",
-    participants=("one",),
-    scope=GameConstraintScope.PLAYER_LOCAL,
-    equality=False,
-    state_dependent=False,
-    control_dependencies=("one",),
-):
+    owner: Any = "one",
+    participants: Any = ("one",),
+    scope: Any = GameConstraintScope.PLAYER_LOCAL,
+    equality: Any = False,
+    state_dependent: Any = False,
+    control_dependencies: Any = ("one",),
+) -> Any:
     return GameConstraintBlock(
         BoundedPathConstraint(
             function,
@@ -67,17 +69,17 @@ def _path_block(
 
 
 def _trajectory_block(
-    function,
-    constraint_id,
+    function: Any,
+    constraint_id: Any,
     *,
-    site,
-    owner="one",
-    participants=("one",),
-    scope=GameConstraintScope.PLAYER_LOCAL,
-    equality=False,
-    state_dependent=True,
-    control_dependencies=(),
-):
+    site: Any,
+    owner: Any = "one",
+    participants: Any = ("one",),
+    scope: Any = GameConstraintScope.PLAYER_LOCAL,
+    equality: Any = False,
+    state_dependent: Any = True,
+    control_dependencies: Any = (),
+) -> Any:
     return GameConstraintBlock(
         BoundedTrajectoryConstraint(
             function,
@@ -98,23 +100,23 @@ def _trajectory_block(
 
 
 def _problem(
-    partition,
-    constraints,
-    stage_costs,
-    terminal_costs,
+    partition: Any,
+    constraints: Any,
+    stage_costs: Any,
+    terminal_costs: Any,
     *,
-    horizon=1,
-    args=None,
-    initial_state=0.0,
-    problem_id="nonlinear-open-loop-test",
-    nonlinear_dynamics=False,
-):
+    horizon: Any = 1,
+    args: Any = None,
+    initial_state: Any = 0.0,
+    problem_id: Any = "nonlinear-open-loop-test",
+    nonlinear_dynamics: Any = False,
+) -> Any:
     state_layout = phx.dynamics.StateLayout((1,))
     input_layout = phx.dynamics.InputLayout(
         (partition.joint_control_size,), roles="control"
     )
 
-    def transition(context, state, control, callback_args):
+    def transition(context: Any, state: Any, control: Any, callback_args: Any) -> Any:
         del context, callback_args
         increment = jnp.sum(control)
         if nonlinear_dynamics:
@@ -143,20 +145,22 @@ def _problem(
     )
 
 
-def _zero_terminal(time, state, args):
+def _zero_terminal(time: Any, state: Any, args: Any) -> float:
     del time, state, args
     return 0.0
 
 
-def _problem_with_state_layout(state_layout, initial_state, problem_id):
+def _problem_with_state_layout(
+    state_layout: Any, initial_state: Any, problem_id: Any
+) -> Any:
     partition = PlayerControlPartition(("one",), (1,))
     input_layout = phx.dynamics.InputLayout((1,), roles="control")
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, control, args
         return state
 
-    def stage_cost(context, state, control, args):
+    def stage_cost(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * control[0] ** 2
 
@@ -180,7 +184,7 @@ def _problem_with_state_layout(state_layout, initial_state, problem_id):
     )
 
 
-def test_prepare_rejects_nontrivial_quaternion_geometry_before_game_solve():
+def test_prepare_rejects_nontrivial_quaternion_geometry_before_game_solve() -> None:
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
         (7,),
@@ -207,7 +211,7 @@ def test_prepare_rejects_nontrivial_quaternion_geometry_before_game_solve():
     assert "point_size=7, local_size=6, tangent_size=6" in message
 
 
-def test_prepare_rejects_unequal_euclidean_state_spaces_before_game_solve():
+def test_prepare_rejects_unequal_euclidean_state_spaces_before_game_solve() -> None:
     state_layout = phx.dynamics.StateLayout(
         (2,),
         local_space=phx.linalg.ArraySpace((1,), dtype=jnp.float32),
@@ -232,7 +236,7 @@ def test_prepare_rejects_unequal_euclidean_state_spaces_before_game_solve():
     assert "point_size=2, local_size=1, tangent_size=2" in message
 
 
-def test_one_player_active_inequality_has_original_private_kkt_evidence():
+def test_one_player_active_inequality_has_original_private_kkt_evidence() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     block = _path_block(
         lambda time, state, control, args: control[0] - args["limit"],
@@ -240,7 +244,7 @@ def test_one_player_active_inequality_has_original_private_kkt_evidence():
     )
     constraints = OpenLoopGameConstraints(partition, (block,))
 
-    def stage(context, state, control, args):
+    def stage(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state
         return 0.5 * (control[0] - args["target"]) ** 2
 
@@ -269,15 +273,15 @@ def test_one_player_active_inequality_has_original_private_kkt_evidence():
     assert result.constraint_qualification_satisfied
 
 
-def test_two_player_product_game_uses_owned_rows_not_a_summed_objective():
+def test_two_player_product_game_uses_owned_rows_not_a_summed_objective() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     constraints = OpenLoopGameConstraints(partition)
 
-    def left_cost(context, state, control, args):
+    def left_cost(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state
         return 0.5 * (control[0] - args["targets"][0]) ** 2 + 9.0 * control[1]
 
-    def right_cost(context, state, control, args):
+    def right_cost(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state
         return 0.5 * (control[1] - args["targets"][1]) ** 2 - 7.0 * control[0]
 
@@ -299,7 +303,7 @@ def test_two_player_product_game_uses_owned_rows_not_a_summed_objective():
     assert result.multipliers.shape == (0,)
 
 
-def test_opponent_dependent_player_owned_constraint_is_private_gne():
+def test_opponent_dependent_player_owned_constraint_is_private_gne() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     coupled = _path_block(
         lambda time, state, control, args: control[0] + control[1] - 1.0,
@@ -311,11 +315,11 @@ def test_opponent_dependent_player_owned_constraint_is_private_gne():
     )
     constraints = OpenLoopGameConstraints(partition, (coupled,))
 
-    def left_cost(context, state, control, args):
+    def left_cost(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * (control[0] - 2.0) ** 2
 
-    def right_cost(context, state, control, args):
+    def right_cost(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * control[1] ** 2
 
@@ -336,7 +340,7 @@ def test_opponent_dependent_player_owned_constraint_is_private_gne():
     assert result.private_multipliers[1].shape == (0,)
 
 
-def test_shared_blocks_are_structurally_rejected_without_common_multiplier():
+def test_shared_blocks_are_structurally_rejected_without_common_multiplier() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     shared = _trajectory_block(
         lambda trajectory, args: trajectory.final_state[0],
@@ -362,7 +366,7 @@ def test_shared_blocks_are_structurally_rejected_without_common_multiplier():
     "kind",
     ("path-equality", "terminal-equality", "trajectory-inequality"),
 )
-def test_path_terminal_and_whole_trajectory_constraints(kind):
+def test_path_terminal_and_whole_trajectory_constraints(kind: Any) -> None:
     partition = PlayerControlPartition(("one",), (1,))
     if kind == "path-equality":
         block = _path_block(
@@ -387,7 +391,7 @@ def test_path_terminal_and_whole_trajectory_constraints(kind):
         )
     constraints = OpenLoopGameConstraints(partition, (block,))
 
-    def stage(context, state, control, args):
+    def stage(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * (control[0] - 1.0) ** 2
 
@@ -421,15 +425,15 @@ def test_path_terminal_and_whole_trajectory_constraints(kind):
     (("inactive", 0.0, 0.0, False), ("active", 2.0, 1.0, True)),
 )
 def test_inactive_and_active_inequality_multipliers(
-    constraint, target, expected_control, active
-):
+    constraint: Any, target: Any, expected_control: Any, active: Any
+) -> None:
     partition = PlayerControlPartition(("one",), (1,))
     block = _path_block(
         lambda time, state, control, args: control[0] - 1.0,
         f"{constraint}-upper",
     )
 
-    def stage(context, state, control, args):
+    def stage(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state
         return 0.5 * (control[0] - args) ** 2
 
@@ -451,14 +455,14 @@ def test_inactive_and_active_inequality_multipliers(
         np.testing.assert_allclose(result.inequality_multipliers, [0.0], atol=2.0e-6)
 
 
-def test_degenerate_active_constraint_reports_failed_constraint_qualification():
+def test_degenerate_active_constraint_reports_failed_constraint_qualification() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     degenerate = _path_block(
         lambda time, state, control, args: control[0] ** 2,
         "degenerate-feasible-set",
     )
 
-    def stage(context, state, control, args):
+    def stage(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * control[0] ** 2
 
@@ -479,7 +483,7 @@ def test_degenerate_active_constraint_reports_failed_constraint_qualification():
     np.testing.assert_allclose(result.inequality_multipliers, [0.0], atol=1.0e-8)
 
 
-def test_infeasible_private_constraints_return_stable_primal_evidence():
+def test_infeasible_private_constraints_return_stable_primal_evidence() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     constraints = OpenLoopGameConstraints(
         partition,
@@ -511,7 +515,7 @@ def test_infeasible_private_constraints_return_stable_primal_evidence():
     assert np.isfinite(np.asarray(result.feasibility.maximum_violation))
 
 
-def test_nonfinite_constraint_returns_stable_nonfinite_evidence():
+def test_nonfinite_constraint_returns_stable_nonfinite_evidence() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     nonfinite = _path_block(
         lambda time, state, control, args: jnp.asarray(jnp.nan),
@@ -533,10 +537,10 @@ def test_nonfinite_constraint_returns_stable_nonfinite_evidence():
     assert np.isinf(np.asarray(result.feasibility.maximum_violation))
 
 
-def test_nested_root_failure_is_not_promoted_to_stationarity():
+def test_nested_root_failure_is_not_promoted_to_stationarity() -> None:
     partition = PlayerControlPartition(("one",), (1,))
 
-    def quartic(context, state, control, args):
+    def quartic(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.25 * control[0] ** 4
 
@@ -563,14 +567,14 @@ def test_nested_root_failure_is_not_promoted_to_stationarity():
     assert result.original_stationarity_residual > 0.0
 
 
-def test_whole_horizon_ad_differentiates_future_state_cost_through_rollout():
+def test_whole_horizon_ad_differentiates_future_state_cost_through_rollout() -> None:
     partition = PlayerControlPartition(("one",), (1,))
 
-    def stage(context, state, control, args):
+    def stage(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state, args
         return 0.5 * control[0] ** 2
 
-    def terminal(time, state, args):
+    def terminal(time: Any, state: Any, args: Any) -> Any:
         del time
         return 0.5 * (state[0] - args["target"]) ** 2
 
@@ -593,14 +597,14 @@ def test_whole_horizon_ad_differentiates_future_state_cost_through_rollout():
     assert result.original_stationarity_residual < 1.0e-6
 
 
-def test_refresh_and_filtered_jit_preserve_topology_and_change_numeric_solution():
+def test_refresh_and_filtered_jit_preserve_topology_and_change_numeric_solution() -> None:
     partition = PlayerControlPartition(("one",), (1,))
 
-    def stage(context, state, control, args):
+    def stage(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, state
         return 0.5 * (control[0] - args["target"]) ** 2
 
-    def make_problem(target):
+    def make_problem(target: Any) -> Any:
         return _problem(
             partition,
             OpenLoopGameConstraints(partition),
@@ -628,7 +632,7 @@ def test_refresh_and_filtered_jit_preserve_topology_and_change_numeric_solution(
     assert refreshed.numeric_version == prepared.numeric_version + 1
 
 
-def test_result_makes_no_feedback_or_global_equilibrium_claim():
+def test_result_makes_no_feedback_or_global_equilibrium_claim() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     problem = _problem(
         partition,

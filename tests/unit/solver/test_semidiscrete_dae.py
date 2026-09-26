@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,12 +7,13 @@ import pytest
 import phydrax as phx
 
 
-def _spatial(points=8):
+def _spatial(points: Any = 8) -> Any:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(points).materialize(0.0, 1.0)
     return axis, phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
 
 
-def _mixed_problem():
+def _mixed_problem() -> Any:
     coordinate = phx.equations.PDECoordinate(
         "x",
         "space",
@@ -39,7 +42,7 @@ def _mixed_problem():
     )
 
 
-def _compile_mixed(*, points=8):
+def _compile_mixed(*, points: Any = 8) -> Any:
     axis, spatial = _spatial(points)
     compiled = phx.equations.compile_semidiscrete_dae(
         _mixed_problem(),
@@ -52,7 +55,7 @@ def _compile_mixed(*, points=8):
     return axis, spatial, compiled
 
 
-def test_semidiscrete_dae_compiles_aligned_residual_and_honest_structure():
+def test_semidiscrete_dae_compiles_aligned_residual_and_honest_structure() -> None:
     axis, spatial, compiled = _compile_mixed()
     u = jnp.sin(2.0 * jnp.pi * axis.nodes)
     state = compiled.layout.pack({"u": u, "p": u})
@@ -81,7 +84,7 @@ def test_semidiscrete_dae_compiles_aligned_residual_and_honest_structure():
     )
 
 
-def test_semidiscrete_dae_requires_bijective_targets_and_direct_time_rates():
+def test_semidiscrete_dae_requires_bijective_targets_and_direct_time_rates() -> None:
     _, spatial = _spatial()
     problem = _mixed_problem()
 
@@ -120,7 +123,7 @@ def test_semidiscrete_dae_requires_bijective_targets_and_direct_time_rates():
         )
 
 
-def test_explicit_and_implicit_compilers_agree_for_eliminable_heat_equation():
+def test_explicit_and_implicit_compilers_agree_for_eliminable_heat_equation() -> None:
     base = _mixed_problem()
     heat = phx.equations.PDEProblemIR(
         coordinates=base.coordinates,
@@ -142,7 +145,7 @@ def test_explicit_and_implicit_compilers_agree_for_eliminable_heat_equation():
     assert jnp.max(jnp.abs(implicit(0.0, state, rate, None))) < 1e-11
 
 
-def test_compiled_dae_solve_is_jittable_and_parameter_differentiable():
+def test_compiled_dae_solve_is_jittable_and_parameter_differentiable() -> None:
     axis, spatial, compiled = _compile_mixed(points=6)
     initial_u = jnp.sin(2.0 * jnp.pi * axis.nodes)
     initial_state = compiled.layout.pack({"u": initial_u, "p": jnp.zeros_like(initial_u)})
@@ -165,7 +168,7 @@ def test_compiled_dae_solve_is_jittable_and_parameter_differentiable():
         prepared.plan.discretization_bundle_id == compiled.discretization_bundle.bundle_id
     )
 
-    def terminal_amplitude(kappa):
+    def terminal_amplitude(kappa: Any) -> Any:
         solution = phx.solver.solve_dae(prepared, args={"kappa": kappa})
         terminal = compiled.layout.field(solution.states[-1], "u")
         return jnp.vdot(initial_u, terminal) / jnp.vdot(initial_u, initial_u)
@@ -206,7 +209,7 @@ def test_compiled_dae_solve_is_jittable_and_parameter_differentiable():
     )
 
 
-def test_dae_trajectory_adapter_retains_rates_validity_and_provenance():
+def test_dae_trajectory_adapter_retains_rates_validity_and_provenance() -> None:
     axis, _, compiled = _compile_mixed(points=6)
     initial_u = jnp.sin(2.0 * jnp.pi * axis.nodes)
     problem = phx.solver.discretized_dae_problem(
@@ -224,8 +227,11 @@ def test_dae_trajectory_adapter_retains_rates_validity_and_provenance():
         solution
     )
 
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(data.derivatives, solution.state_rates)
+    # ty: ignore[not-subscriptable]
     assert not data.derivative_valid[0]
+    # ty: ignore[not-subscriptable]
     assert jnp.all(data.derivative_valid[1:])
     assert jnp.array_equal(data.sample_valid, solution.valid)
     assert jnp.array_equal(
@@ -236,7 +242,7 @@ def test_dae_trajectory_adapter_retains_rates_validity_and_provenance():
     assert data.source_id.startswith("dae:")
 
 
-def test_compiled_dae_adaptive_plan_preserves_discretization_identity():
+def test_compiled_dae_adaptive_plan_preserves_discretization_identity() -> None:
     axis, _, compiled = _compile_mixed(points=6)
     initial_u = jnp.sin(2.0 * jnp.pi * axis.nodes)
     problem = phx.solver.discretized_dae_problem(

@@ -206,7 +206,10 @@ def _audit_face_coordinate(
     canonical = program.canonical
     constraint_matrix = canonical.constraint_matrix
     # LinearProgram always lowers to a dense canonical constraint matrix.
-    assert not isinstance(constraint_matrix, AbstractSparseLinearOperator)
+    if not (not isinstance(constraint_matrix, AbstractSparseLinearOperator)):
+        raise RuntimeError(
+            "Internal invariant failed: not isinstance(constraint_matrix, AbstractSparseLinearOperator)."
+        )
     cone_dual = canonical.cone.project_dual(result.cone_dual)
     lower_dual = jnp.maximum(result.lower_bound_dual, 0.0)
     upper_dual = jnp.maximum(result.upper_bound_dual, 0.0)

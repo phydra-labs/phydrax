@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _manifest(name, character):
+def _manifest(name: Any, character: Any) -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -29,7 +32,7 @@ def _manifest(name, character):
     )
 
 
-def _photon_table(name, character, energy_grid, values):
+def _photon_table(name: Any, character: Any, energy_grid: Any, values: Any) -> Any:
     provenance = phx.nuclear.NuclearDataProvenance(
         _manifest(name, character),
         f"https://example.invalid/{name}",
@@ -51,7 +54,7 @@ def _photon_table(name, character, energy_grid, values):
     )
 
 
-def test_diagnostic_xray_source_transport_detector_pipeline_and_hit_adapter():
+def test_diagnostic_xray_source_transport_detector_pipeline_and_hit_adapter() -> None:
     spectrum = phx.applications.radiation_transport.AliasSpectrumPlan(
         jnp.asarray((1000.0,)),
         jnp.asarray((1.0,)),

@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax
 
@@ -70,7 +71,7 @@ from phydrax.finance.models._rates import (
 from phydrax.stochastic import PoissonClockRealization
 
 
-def _pricing(layout="rate-layout", measure="Q"):
+def _pricing(layout: Any = "rate-layout", measure: Any = "Q") -> Any:
     return PricingLaw(
         "pricing-law",
         "synthetic reference law",
@@ -82,7 +83,7 @@ def _pricing(layout="rate-layout", measure="Q"):
     )
 
 
-def _schedule(years=4):
+def _schedule(years: Any = 4) -> Any:
     starts = [FinanceDate.from_ymd(2025 + index, 1, 1) for index in range(years)]
     ends = [FinanceDate.from_ymd(2026 + index, 1, 1) for index in range(years)]
     end_ordinals = np.asarray([value.ordinal for value in ends], dtype=np.int32)
@@ -102,7 +103,15 @@ def _schedule(years=4):
     )
 
 
-def _curve(currency, representation, values, *, curve_id, role, method):
+def _curve(
+    currency: Any,
+    representation: Any,
+    values: Any,
+    *,
+    curve_id: Any,
+    role: Any,
+    method: Any,
+) -> Any:
     grid = CurveGrid(jnp.arange(len(values), dtype="float64"))
     policy = InterpolationPolicy(
         method,
@@ -121,7 +130,7 @@ def _curve(currency, representation, values, *, curve_id, role, method):
     return PreparedCurve(definition, jnp.asarray(values, dtype="float64"))
 
 
-def _credit_fixture(years=4, hazard=0.02, spread=0.0):
+def _credit_fixture(years: Any = 4, hazard: Any = 0.02, spread: Any = 0.0) -> Any:
     currency = Currency("USD", 2)
     schedule = _schedule(years)
     survival = _curve(
@@ -180,7 +189,9 @@ def _credit_fixture(years=4, hazard=0.02, spread=0.0):
     return currency, model, discount, recovery, instrument, cds
 
 
-def test_affine_zero_coupon_references_cover_vasicek_hull_white_cir_and_cir_plus_plus():
+def test_affine_zero_coupon_references_cover_vasicek_hull_white_cir_and_cir_plus_plus() -> (
+    None
+):
     law = _pricing()
     vasicek = VasicekModel(
         0.35,
@@ -261,10 +272,11 @@ def test_affine_zero_coupon_references_cover_vasicek_hull_white_cir_and_cir_plus
     )
     physical = PhysicalLaw("physical", "history", "rate-layout", "history-filtration")
     with pytest.raises(TypeError, match="PricingLaw"):
+        # ty: ignore[invalid-argument-type]
         vasicek_zero_coupon_bond(vasicek, physical, rate, 0.0, maturity)
 
 
-def test_hjm_and_lmm_reject_factor_tenor_and_measure_incompatibility():
+def test_hjm_and_lmm_reject_factor_tenor_and_measure_incompatibility() -> None:
     with pytest.raises(ValueError, match="shape"):
         FiniteFactorHJMModel(
             jnp.asarray([0.0, 1.0, 2.0]),
@@ -313,7 +325,7 @@ def test_hjm_and_lmm_reject_factor_tenor_and_measure_incompatibility():
         )
 
 
-def test_constant_hazard_cds_parity_and_defaultable_bond_recovery():
+def test_constant_hazard_cds_parity_and_defaultable_bond_recovery() -> None:
     _, model, discount, recovery, instrument, cds = _credit_fixture()
     law = _pricing("credit-layout", "Q")
     times = np.arange(1.0, 5.0)
@@ -379,7 +391,7 @@ def test_constant_hazard_cds_parity_and_defaultable_bond_recovery():
     np.testing.assert_allclose(event_cashflows.default_settlement_times, [1.0])
 
 
-def test_reduced_form_default_clock_emits_one_recovery_event_per_path():
+def test_reduced_form_default_clock_emits_one_recovery_event_per_path() -> None:
     _, model, _, _, _, _ = _credit_fixture(years=1, hazard=100.0)
     realization = PoissonClockRealization(
         jr.key(7),
@@ -396,7 +408,9 @@ def test_reduced_form_default_clock_emits_one_recovery_event_per_path():
     np.testing.assert_allclose(events.recoveries, 0.4)
 
 
-def test_intensity_credit_requires_explicit_physical_base_instead_of_reusing_q_hazard():
+def test_intensity_credit_requires_explicit_physical_base_instead_of_reusing_q_hazard() -> (
+    None
+):
     _, base, _, _, _, _ = _credit_fixture(years=1, hazard=0.02)
     model = IntensityCreditModel(
         base,
@@ -424,7 +438,7 @@ def test_intensity_credit_requires_explicit_physical_base_instead_of_reusing_q_h
     np.testing.assert_allclose(physical_intensity, 0.06)
 
 
-def test_structural_credit_does_not_equate_physical_and_pricing_default_laws():
+def test_structural_credit_does_not_equate_physical_and_pricing_default_laws() -> None:
     model = StructuralCreditModel(
         100.0,
         90.0,
@@ -453,4 +467,5 @@ def test_structural_credit_does_not_equate_physical_and_pricing_default_laws():
         "issuer-stress", "scenario", "structural-layout", "stress-filtration"
     )
     with pytest.raises(TypeError, match="PhysicalLaw or PricingLaw"):
+        # ty: ignore[invalid-argument-type]
         structural_default_probability(model, stress, 0.01)

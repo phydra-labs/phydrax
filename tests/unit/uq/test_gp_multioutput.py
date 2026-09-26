@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _coregionalization(output_names):
+def _coregionalization(output_names: Any) -> Any:
     return phx.uq.Coregionalization(
         jnp.array([[0.8, 0.0], [-0.3, 0.6]]),
         jnp.array([0.1, 0.2]),
@@ -16,7 +19,7 @@ def _coregionalization(output_names):
     )
 
 
-def test_heterotopic_design_is_exact_subselection_of_dense_icm_covariance():
+def test_heterotopic_design_is_exact_subselection_of_dense_icm_covariance() -> None:
     output_names = ("temperature", "flux")
     points = jnp.linspace(0.0, 1.0, 6)
     mask = jnp.array(
@@ -57,7 +60,7 @@ def test_heterotopic_design_is_exact_subselection_of_dense_icm_covariance():
     assert jnp.all(jnp.isnan(reconstructed[~mask]))
 
 
-def test_lmc_heterotopic_likelihood_supports_observation_noise_and_gradients():
+def test_lmc_heterotopic_likelihood_supports_observation_noise_and_gradients() -> None:
     output_names = ("u", "v")
     points = jnp.linspace(0.0, 1.0, 8)
     observations = jnp.stack(
@@ -83,7 +86,7 @@ def test_lmc_heterotopic_likelihood_supports_observation_noise_and_gradients():
         ),
     )
 
-    def objective(weight):
+    def objective(weight: Any) -> Any:
         first = phx.uq.Coregionalization(
             weight,
             jnp.array([0.1, 0.15]),

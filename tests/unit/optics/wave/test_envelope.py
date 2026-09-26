@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -26,7 +28,7 @@ from phydrax.optics.wave._fields import PlaneFieldSpace
 from phydrax.optics.wave._pulse_time import PulseTimeSpace
 
 
-def _plane(shape=(8, 10), *, periodic=True, half_width=5.0):
+def _plane(shape: Any = (8, 10), *, periodic: Any = True, half_width: Any = 5.0) -> Any:
     specification = FourierAxisSpec if periodic else UniformAxisSpec
     grid = TensorGridPlan(
         tuple(specification(size) for size in shape), axis_names=("u", "v")
@@ -38,7 +40,7 @@ def _plane(shape=(8, 10), *, periodic=True, half_width=5.0):
     )
 
 
-def _time(size=64, *, periodic=True, half_width=jnp.pi):
+def _time(size: Any = 64, *, periodic: Any = True, half_width: Any = jnp.pi) -> Any:
     specification = FourierAxisSpec(size) if periodic else UniformAxisSpec(size)
     grid = TensorGridPlan((specification,), axis_names=("time",)).prepare(
         jnp.asarray([[-half_width], [half_width]])
@@ -46,7 +48,7 @@ def _time(size=64, *, periodic=True, half_width=jnp.pi):
     return PulseTimeSpace(grid, topology="periodic-cell" if periodic else "finite-window")
 
 
-def test_pulse_time_topology_is_explicit_and_field_shapes_are_closed():
+def test_pulse_time_topology_is_explicit_and_field_shapes_are_closed() -> None:
     finite_grid = TensorGridPlan((UniformAxisSpec(9),), axis_names=("time",)).prepare(
         jnp.asarray([[-1.0], [1.0]])
     )
@@ -65,7 +67,7 @@ def test_pulse_time_topology_is_explicit_and_field_shapes_are_closed():
         PulseEnvelopeField(plane, time, jnp.ones((8, 10, 8)), 4.0, 0.0)
 
 
-def test_exact_grid_aligned_bridge_roundtrips_scalar_and_tangential_fields():
+def test_exact_grid_aligned_bridge_roundtrips_scalar_and_tangential_fields() -> None:
     plane = _plane()
     time_space = _time()
     time = time_space.coordinates
@@ -93,6 +95,7 @@ def test_exact_grid_aligned_bridge_roundtrips_scalar_and_tangential_fields():
             polarization=polarization,
         )
         analytic = envelope_to_analytic_field(prepared, field)
+        # ty: ignore[invalid-argument-type]
         recovered = analytic_field_to_envelope(prepared, analytic.field)
 
         expected = values * jnp.exp(-8j * time).reshape(
@@ -106,7 +109,7 @@ def test_exact_grid_aligned_bridge_roundtrips_scalar_and_tangential_fields():
         assert recovered.field.longitudinal_coordinate == -0.4
 
 
-def test_bridge_refuses_finite_time_off_grid_carriers_and_forbidden_bands():
+def test_bridge_refuses_finite_time_off_grid_carriers_and_forbidden_bands() -> None:
     finite = _time(periodic=False)
     with pytest.raises(ValueError, match="periodic-cell"):
         PulseEnvelopeBridgePlan(finite, 8.0)
@@ -143,7 +146,7 @@ def test_bridge_refuses_finite_time_off_grid_carriers_and_forbidden_bands():
         assert result.evidence.rejected_spectral_fraction > 0.99
 
 
-def test_bridge_admits_smooth_gradients_through_complex_field_values():
+def test_bridge_admits_smooth_gradients_through_complex_field_values() -> None:
     plane = _plane(shape=(4, 4))
     time_space = _time(size=32)
     time = time_space.coordinates
@@ -151,7 +154,7 @@ def test_bridge_admits_smooth_gradients_through_complex_field_values():
     prepared = prepare_pulse_envelope_bridge(PulseEnvelopeBridgePlan(time_space, carrier))
     mode = jnp.exp(-1j * time)
 
-    def objective(amplitude):
+    def objective(amplitude: Any) -> Any:
         values = amplitude * jnp.broadcast_to(mode, plane.shape + time_space.shape)
         field = PulseEnvelopeField(plane, time_space, values, carrier, 0.0)
         result = envelope_to_analytic_field(prepared, field)
@@ -162,7 +165,7 @@ def test_bridge_admits_smooth_gradients_through_complex_field_values():
     assert derivative != 0.0
 
 
-def test_gaussian_sampling_resolves_physical_rms_widths_phase_and_jones_state():
+def test_gaussian_sampling_resolves_physical_rms_widths_phase_and_jones_state() -> None:
     plane = _plane(shape=(96, 96), half_width=8.0)
     time_space = _time(size=128, half_width=10.0)
     plan = GaussianPulseEnvelopePlan(
@@ -207,7 +210,7 @@ def test_gaussian_sampling_resolves_physical_rms_widths_phase_and_jones_state():
     assert jnp.allclose(jnp.angle(temporal_peak[0]), 0.4, atol=2e-3)
 
 
-def test_gaussian_sampling_reports_truncated_support_and_spectral_aliasing():
+def test_gaussian_sampling_reports_truncated_support_and_spectral_aliasing() -> None:
     plane = _plane(shape=(20, 20), periodic=False, half_width=1.0)
     time_space = _time(size=20, periodic=False, half_width=1.0)
     plan = GaussianPulseEnvelopePlan(

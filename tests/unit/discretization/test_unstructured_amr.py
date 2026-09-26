@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _quad_grid(nx, ny):
+def _quad_grid(nx: Any, ny: Any) -> Any:
     vertices = np.asarray(
         [(2.0 * i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -29,7 +32,7 @@ def _quad_grid(nx, ny):
     ).prepare()
 
 
-def _hierarchy():
+def _hierarchy() -> Any:
     coarse = _quad_grid(2, 1)
     fine = _quad_grid(4, 2)
     parent = np.asarray((0, 0, 1, 1, 0, 0, 1, 1), dtype=np.int32)
@@ -60,7 +63,7 @@ def _hierarchy():
     )
 
 
-def test_unstructured_amr_selection_transfer_and_composite_integral():
+def test_unstructured_amr_selection_transfer_and_composite_integral() -> None:
     hierarchy = _hierarchy()
     selection = eqx.filter_jit(hierarchy.select)(
         jnp.asarray((2.0, 1.0)), jnp.asarray(0.0)
@@ -87,7 +90,7 @@ def test_unstructured_amr_selection_transfer_and_composite_integral():
     )
 
 
-def test_unstructured_amr_preserves_bounded_volume_fraction_and_reflux_budget():
+def test_unstructured_amr_preserves_bounded_volume_fraction_and_reflux_budget() -> None:
     hierarchy = _hierarchy()
     alpha = jnp.asarray((1.0, 0.2))
     fine_alpha = hierarchy.prolong(alpha)
@@ -107,7 +110,7 @@ def test_unstructured_amr_preserves_bounded_volume_fraction_and_reflux_budget():
     np.testing.assert_allclose(new_integral, old_integral)
 
 
-def test_unstructured_amr_register_rejects_nonfinite_flux_and_negative_step_ids():
+def test_unstructured_amr_register_rejects_nonfinite_flux_and_negative_step_ids() -> None:
     with pytest.raises(Exception, match="must be finite"):
         phx.discretization.UnstructuredAMRFluxRegister(
             jnp.asarray(((jnp.nan, 0.0), (0.0, 0.0)))
@@ -120,7 +123,7 @@ def test_unstructured_amr_register_rejects_nonfinite_flux_and_negative_step_ids(
         )
 
 
-def test_unstructured_amr_ties_are_deterministic_at_fixed_capacity():
+def test_unstructured_amr_ties_are_deterministic_at_fixed_capacity() -> None:
     hierarchy = _hierarchy()
     selection = hierarchy.select(jnp.asarray((1.0, 1.0)), jnp.asarray(0.5))
     np.testing.assert_array_equal(selection.coarse_refined, (True, False))

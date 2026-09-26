@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -21,7 +22,7 @@ def main() -> None:
     step_s = 0.02
     step_count = 1_000
 
-    def step(state, _):
+    def step(state: Any, _: Any) -> Any:
         candidate = runtime.candidate(state, 40.0, step_s)
         return candidate.commit(), jnp.stack(
             (

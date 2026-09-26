@@ -25,6 +25,7 @@ from ..integration import (
     IntervalRule,
 )
 from ..metrix import AbstractStateGeometry
+from ..typing import parse
 from ._differential import DifferentialInterpretation, NoiseStructure
 
 
@@ -597,10 +598,7 @@ class DelayWienerTerm(StrictModule):
         shape = tuple(noise_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("DelayWienerTerm noise dimensions must be positive.")
-        if structure not in ("additive", "commutative", "general"):
-            raise ValueError(
-                "DelayWienerTerm structure must be 'additive', 'commutative', or 'general'."
-            )
+        structure = parse(structure, NoiseStructure, "structure")
         if basis_id is not None and (not isinstance(basis_id, str) or not basis_id):
             raise ValueError("DelayWienerTerm basis_id must be non-empty or None.")
         self.name = name
@@ -995,8 +993,9 @@ class DelayDifferentialProblem(StrictModule):
             and history_derivative is None
         ):
             raise ValueError("history_derivative is required by DerivativeDelay terms.")
-        if interpretation not in ("ito", "stratonovich"):
-            raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
+        interpretation = parse(
+            interpretation, DifferentialInterpretation, "interpretation"
+        )
 
         state = jnp.asarray(history(start, args))
         state_shape = tuple(state.shape)

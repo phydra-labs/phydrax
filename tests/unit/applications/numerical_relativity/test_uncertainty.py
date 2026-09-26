@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -22,8 +25,8 @@ from phydrax.applications.numerical_relativity._uncertainty import (
 )
 
 
-def _component(kind, realization, function):
-    def evaluate(parameters):
+def _component(kind: Any, realization: Any, function: Any) -> Any:
+    def evaluate(parameters: Any) -> Any:
         return FixedBranchModelEvaluation(
             function(parameters),
             jnp.asarray([0], dtype=jnp.int32),
@@ -53,7 +56,7 @@ def _component(kind, realization, function):
     )
 
 
-def _error(realization, scale):
+def _error(realization: Any, scale: Any) -> Any:
     return NumericalErrorRecord(
         jnp.asarray([scale, 2.0 * scale]),
         converged=True,
@@ -65,7 +68,7 @@ def _error(realization, scale):
     )
 
 
-def test_multifidelity_composition_keeps_levels_and_uncertainties_separate():
+def test_multifidelity_composition_keeps_levels_and_uncertainties_separate() -> None:
     exact = _component("exact-baseline", "exact:r1", lambda p: p)
     perturbative = _component("perturbative-correction", "pert:r2", lambda p: 0.1 * p**2)
     rom = _component("rom-correction", "rom:r3", lambda p: 0.2 * jnp.sin(p))
@@ -123,7 +126,7 @@ def test_multifidelity_composition_keeps_levels_and_uncertainties_separate():
     assert float(sensitivity.vjp_pairing_residual) < 1.0e-6
 
 
-def test_unknown_numerical_or_model_error_is_not_silently_zero():
+def test_unknown_numerical_or_model_error_is_not_silently_zero() -> None:
     components = (
         _component("exact-baseline", "exact:r1", lambda p: p),
         _component("perturbative-correction", "pert:r2", lambda p: p * 0.0),
@@ -141,8 +144,8 @@ def test_unknown_numerical_or_model_error_is_not_silently_zero():
     assert jnp.all(jnp.isnan(result.discrepancy_covariance))
 
 
-def test_smooth_grhd_and_nr_adapters_fail_closed_at_shocks_or_topology_changes():
-    def grhd(parameters):
+def test_smooth_grhd_and_nr_adapters_fail_closed_at_shocks_or_topology_changes() -> None:
+    def grhd(parameters: Any) -> Any:
         return FixedBranchModelEvaluation(
             parameters**2,
             jnp.asarray([0]),
@@ -206,7 +209,7 @@ def test_smooth_grhd_and_nr_adapters_fail_closed_at_shocks_or_topology_changes()
     assert jnp.all(jnp.isnan(topology_change.finite_difference))
 
 
-def test_learned_closure_requires_all_evidence_and_only_adds_to_native_physics():
+def test_learned_closure_requires_all_evidence_and_only_adds_to_native_physics() -> None:
     candidate = LearnedClosureCandidate(
         lambda value: 0.1 * value,
         native_model_id="z4c:native",

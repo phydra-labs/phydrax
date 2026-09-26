@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -92,7 +93,7 @@ def evaluate_direct_collocation_regression(
     baseline: tuple[DirectCollocationQualificationRecord, ...],
     current: tuple[DirectCollocationQualificationRecord, ...],
     /,
-):
+) -> Any:
     if not baseline or not current:
         raise ValueError("Regression evaluation requires non-empty record sets.")
     baseline_certified = sum(record.certified for record in baseline) / len(baseline)

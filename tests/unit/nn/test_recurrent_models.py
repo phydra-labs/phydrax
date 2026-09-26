@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,31 +23,33 @@ from phydrax.nn.models import (
 
 
 class _PhysicalVectorAccumulator(AbstractTimeAwareRecurrentCell):
-    def initial_state(self, case_shape, /, *, dtype):
+    def initial_state(self, case_shape: Any, /, *, dtype: Any) -> Any:
         return jnp.zeros(case_shape + (1,), dtype=dtype)
 
-    def step(self, state, inputs, /, *, key=None):
+    def step(self, state: Any, inputs: Any, /, *, key: Any = None) -> Any:
         del key
         next_state = state + inputs
         return next_state, next_state
 
     def step_with_context(
         self,
-        state,
-        inputs,
+        state: Any,
+        inputs: Any,
         /,
         *,
-        time,
-        interval,
-        key=None,
-    ):
+        time: Any,
+        interval: Any,
+        key: Any = None,
+    ) -> Any:
         del key
         next_state = state + inputs * (time + interval)[..., None]
         return next_state, next_state
 
 
 @pytest.mark.parametrize("cell_type", (GRUCell, LSTMCell))
-def test_recurrent_cell_adapters_match_equinox_single_step_equations(cell_type):
+def test_recurrent_cell_adapters_match_equinox_single_step_equations(
+    cell_type: Any,
+) -> None:
     cell = cell_type(3, 5, dtype=jnp.float64, key=jr.key(1))
     inputs = jr.normal(jr.key(2), (3,))
     state = cell.initial_state((), dtype=jnp.float64)
@@ -64,17 +68,18 @@ def test_recurrent_cell_adapters_match_equinox_single_step_equations(cell_type):
     assert jnp.allclose(output, expected_output)
 
 
-def test_rnn_cell_matches_its_declared_elman_equation():
+def test_rnn_cell_matches_its_declared_elman_equation() -> None:
     cell = RNNCell(2, 3, activation="tanh", dtype=jnp.float64, key=jr.key(3))
     inputs = jnp.array([0.2, -0.4])
     state = jnp.array([0.5, 0.1, -0.3])
     next_state, output = cell.step(state, inputs)
+    # ty: ignore[unsupported-operator]
     expected = jnp.tanh(cell.weight_ih @ inputs + cell.weight_hh @ state + cell.bias)
     assert jnp.allclose(next_state, expected)
     assert jnp.array_equal(output, next_state)
 
 
-def test_stacked_recurrent_model_supports_nested_lstm_state_and_unequal_widths():
+def test_stacked_recurrent_model_supports_nested_lstm_state_and_unequal_widths() -> None:
     stack = StackedRecurrentCell(
         (
             LSTMCell(2, 4, key=jr.key(4)),
@@ -95,7 +100,7 @@ def test_stacked_recurrent_model_supports_nested_lstm_state_and_unequal_widths()
     assert result.final_state[1].shape == (2, 3)
 
 
-def test_recurrent_sequence_readout_cannot_reintroduce_values_on_padding():
+def test_recurrent_sequence_readout_cannot_reintroduce_values_on_padding() -> None:
     cell = GRUCell(2, 3, key=jr.key(6))
     biased_readout = eqx.nn.Linear(3, 2, key=jr.key(7))
     model = RecurrentSequenceModel(cell, readout=biased_readout)
@@ -105,7 +110,9 @@ def test_recurrent_sequence_readout_cannot_reintroduce_values_on_padding():
     assert jnp.array_equal(output[2:], jnp.zeros((2, 2)))
 
 
-def test_bidirectional_recurrence_reverses_each_reset_delimited_segment_independently():
+def test_bidirectional_recurrence_reverses_each_reset_delimited_segment_independently() -> (
+    None
+):
     forward = GRUCell(2, 3, dtype=jnp.float64, key=jr.key(8))
     backward = GRUCell(2, 3, dtype=jnp.float64, key=jr.key(9))
     model = BidirectionalRecurrentSequenceModel(forward, backward)
@@ -119,7 +126,7 @@ def test_bidirectional_recurrence_reverses_each_reset_delimited_segment_independ
     assert jnp.allclose(packed, jnp.concatenate((first, second)), atol=1e-10, rtol=1e-10)
 
 
-def test_bidirectional_time_aware_recurrence_matches_explicit_reverse_time():
+def test_bidirectional_time_aware_recurrence_matches_explicit_reverse_time() -> None:
     cell = _PhysicalVectorAccumulator()
     model = BidirectionalRecurrentSequenceModel(cell, cell)
     inputs = jnp.ones((4, 1))
@@ -146,7 +153,9 @@ def test_bidirectional_time_aware_recurrence_matches_explicit_reverse_time():
     )
 
 
-def test_recurrent_models_are_vmappable_differentiable_and_support_final_readout():
+def test_recurrent_models_are_vmappable_differentiable_and_support_final_readout() -> (
+    None
+):
     cell = GRUCell(2, 4, dtype=jnp.float64, key=jr.key(11))
     sequence_model = RecurrentSequenceModel(cell)
     final_model = RecurrentSequenceModel(cell, return_mode="final")
@@ -179,12 +188,14 @@ def test_recurrent_models_are_vmappable_differentiable_and_support_final_readout
         ({"dtype": jnp.complex64}, TypeError, "real floating"),
     ),
 )
-def test_cfc_cell_rejects_invalid_construction(kwargs, exception, message):
+def test_cfc_cell_rejects_invalid_construction(
+    kwargs: Any, exception: Any, message: Any
+) -> None:
     with pytest.raises(exception, match=message):
         CfCCell(2, 3, **kwargs, key=jr.key(13))
 
 
-def test_cfc_cell_matches_full_gated_event_equation():
+def test_cfc_cell_matches_full_gated_event_equation() -> None:
     cell = CfCCell(2, 2, backbone_depth=0, dtype=jnp.float64, key=jr.key(13))
     candidate_weight = jnp.asarray(
         (
@@ -247,7 +258,7 @@ def test_cfc_cell_matches_full_gated_event_equation():
     assert jnp.allclose(regular, physical_unit)
 
 
-def test_cfc_sequence_is_jittable_differentiable_and_respects_packing():
+def test_cfc_sequence_is_jittable_differentiable_and_respects_packing() -> None:
     cell = CfCCell(
         2,
         3,
@@ -294,7 +305,7 @@ def test_cfc_sequence_is_jittable_differentiable_and_respects_packing():
     )
 
 
-def test_cfc_streaming_preserves_the_boundary_interval():
+def test_cfc_streaming_preserves_the_boundary_interval() -> None:
     cell = CfCCell(2, 3, dtype=jnp.float64, key=jr.key(16))
     inputs = jr.normal(jr.key(17), (6, 2), dtype=jnp.float64)
     valid = jnp.ones((6,), dtype="bool")
@@ -323,7 +334,7 @@ def test_cfc_streaming_preserves_the_boundary_interval():
     )
 
 
-def test_stacked_recurrent_cell_forwards_context_to_nested_cfc_cells():
+def test_stacked_recurrent_cell_forwards_context_to_nested_cfc_cells() -> None:
     first_cell = CfCCell(
         1,
         2,

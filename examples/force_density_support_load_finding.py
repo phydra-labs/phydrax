@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -22,14 +25,14 @@ equilibrium = fd.ForceDensityProblem(structure, sign_mode="tension")
 plan = fd.plan_force_density(equilibrium, sample)
 
 
-def decode(design, _):
+def decode(design: Any, _: Any) -> Any:
     force_density, support_height, center_load = design
     prescribed = base_prescribed.at[1].set(support_height)
     loads = base_loads.at[1, 1].set(center_load)
     return fd.ForceDensityInputs(jnp.repeat(force_density, 2), prescribed, loads)
 
 
-def objective(state, design, _):
+def objective(state: Any, design: Any, _: Any) -> Any:
     target = jnp.asarray((0.0, -0.3))
     point = fd.scaled_target_residual(state.positions[1], target, 1.0)
     reaction_balance = state.support_reactions[0, 1] - state.support_reactions[2, 1]

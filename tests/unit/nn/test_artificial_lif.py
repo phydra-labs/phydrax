@@ -1,6 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
 from math import log
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -17,7 +19,7 @@ from phydrax.nn.layers import (
 from phydrax.nn.models import RecurrentSequenceModel
 
 
-def _cell(**kwargs):
+def _cell(**kwargs: Any) -> Any:
     cell = ArtificialLIFCell(
         1, 1, time_constant_ms=1.0, dt_ms=log(2.0), use_bias=False, **kwargs
     )
@@ -29,7 +31,7 @@ def _cell(**kwargs):
 
 
 @pytest.mark.parametrize("reset_mode", ("subtract", "hard"))
-def test_lif_previous_spike_drive_and_single_spike_overflow(reset_mode):
+def test_lif_previous_spike_drive_and_single_spike_overflow(reset_mode: Any) -> None:
     cell = _cell(reset_mode=reset_mode)
     state, spikes = cell.step((jnp.array([0.2]), jnp.array([1.0])), jnp.array([8.0]))
     # Half-life charging: .5*.2 + .5*(8 + .6*1) = 4.4. There is one
@@ -45,7 +47,9 @@ def test_lif_previous_spike_drive_and_single_spike_overflow(reset_mode):
 
 
 @pytest.mark.parametrize("family", ("fast_sigmoid", "triangular"))
-def test_spike_tangent_matches_declared_estimator_not_binary_finite_difference(family):
+def test_spike_tangent_matches_declared_estimator_not_binary_finite_difference(
+    family: Any,
+) -> None:
     width = 0.5
     cell = _cell(surrogate=family, surrogate_width=width)
     charged = jnp.array([-0.5, 0.75, 1.0, 1.25, 2.5])[:, None]
@@ -71,7 +75,9 @@ def test_spike_tangent_matches_declared_estimator_not_binary_finite_difference(f
 
 @pytest.mark.parametrize("reset_mode", ("subtract", "hard"))
 @pytest.mark.parametrize("detach", (False, True))
-def test_detached_reset_blocks_only_reset_spike_tangent(reset_mode, detach):
+def test_detached_reset_blocks_only_reset_spike_tangent(
+    reset_mode: Any, detach: Any
+) -> None:
     cell = _cell(reset_mode=reset_mode, detach_reset=detach, surrogate_width=0.5)
     state = cell.initial_state((), dtype=jnp.float32)
     (next_state, spike), (state_tangent, spike_tangent) = jax.jvp(
@@ -97,10 +103,10 @@ def test_detached_reset_blocks_only_reset_spike_tangent(reset_mode, detach):
 
 
 @pytest.mark.parametrize("detach", (False, True))
-def test_reset_detachment_retains_previous_spike_recurrent_gradient(detach):
+def test_reset_detachment_retains_previous_spike_recurrent_gradient(detach: Any) -> None:
     cell = _cell(reset_mode="hard", detach_reset=detach, surrogate_width=0.5)
 
-    def second_spike(first_input):
+    def second_spike(first_input: Any) -> Any:
         state, _ = cell.step(cell.initial_state((), dtype=jnp.float32), first_input)
         return cell.step(state, jnp.array([1.8]))[1]
 
@@ -114,7 +120,7 @@ def test_reset_detachment_retains_previous_spike_recurrent_gradient(detach):
     np.testing.assert_allclose(tangent, [expected], atol=1e-7)
 
 
-def test_physical_time_streaming_preserves_padding_resets_and_boundary_tangents():
+def test_physical_time_streaming_preserves_padding_resets_and_boundary_tangents() -> None:
     cell = _cell()
     values = jnp.array(
         [
@@ -141,10 +147,10 @@ def test_physical_time_streaming_preserves_padding_resets_and_boundary_tangents(
         ]
     )
 
-    def full(inputs):
+    def full(inputs: Any) -> Any:
         return run_recurrent(cell, RecurrentBatch(inputs, valid, reset=reset, time=time))
 
-    def chunked(inputs):
+    def chunked(inputs: Any) -> Any:
         first = run_recurrent(
             cell,
             RecurrentBatch(
@@ -199,7 +205,7 @@ def test_physical_time_streaming_preserves_padding_resets_and_boundary_tangents(
         )
     )(values)
 
-    def chunk_loss(inputs):
+    def chunk_loss(inputs: Any) -> Any:
         spikes, continuation = chunked(inputs)
         return jnp.sum(spikes) + 0.25 * jnp.sum(continuation.final_state[0])
 
@@ -209,7 +215,7 @@ def test_physical_time_streaming_preserves_padding_resets_and_boundary_tangents(
     )
 
 
-def test_stacked_sequence_model_keeps_physical_intervals():
+def test_stacked_sequence_model_keeps_physical_intervals() -> None:
     cell = _cell()
     stacked = StackedRecurrentCell((cell,))
     batch = RecurrentBatch(

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -5,7 +7,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def _problem(*, mask=None, case_shape=(), step_valid=None):
+def _problem(*, mask: Any = None, case_shape: Any = (), step_valid: Any = None) -> Any:
     if case_shape:
         values = jnp.asarray([[[1.0], [2.0]], [[-1.0], [-1.0]]])
         times = jnp.asarray([[0.5, 1.0], [0.5, 0.5]])
@@ -54,7 +56,7 @@ def _problem(*, mask=None, case_shape=(), step_valid=None):
     )
 
 
-def _input_driven_problem():
+def _input_driven_problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([[0.5, 1.0], [0.5, 1.0]]),
         jnp.zeros((2, 2, 1)),
@@ -76,11 +78,11 @@ def _input_driven_problem():
         input_id="time-varying-input",
     )
 
-    def transition_matrix(t0, t1, context):
+    def transition_matrix(t0: Any, t1: Any, context: Any) -> Any:
         del t0, t1
         return context.transition_end_input.reshape((1, 1))
 
-    def transition_offset(t0, t1, context):
+    def transition_offset(t0: Any, t1: Any, context: Any) -> Any:
         del t0, t1
         return context.args["transition_offset_scale"] * context.transition_start_input
 
@@ -92,11 +94,11 @@ def _input_driven_problem():
         process_id="input-driven-process",
     )
 
-    def observation_matrix(time, context):
+    def observation_matrix(time: Any, context: Any) -> Any:
         del time
         return context.observation_input.reshape((1, 1))
 
-    def observation_offset(time, context):
+    def observation_offset(time: Any, context: Any) -> Any:
         del time
         return context.args["observation_offset_scale"] * context.observation_input
 
@@ -126,7 +128,7 @@ def _input_driven_problem():
     )
 
 
-def test_scalar_kalman_matches_hand_calculation_and_streaming():
+def test_scalar_kalman_matches_hand_calculation_and_streaming() -> None:
     problem = _problem()
     result = phx.uq.kalman_filter(problem)
 
@@ -151,7 +153,7 @@ def test_scalar_kalman_matches_hand_calculation_and_streaming():
     )
 
 
-def test_typed_input_drives_kalman_transition_and_observation_parameters():
+def test_typed_input_drives_kalman_transition_and_observation_parameters() -> None:
     result = phx.uq.kalman_filter(_input_driven_problem())
     expected_end_input = jnp.asarray([[2.0, 4.0], [20.0, 40.0]])
 
@@ -167,11 +169,11 @@ def test_typed_input_drives_kalman_transition_and_observation_parameters():
     assert jnp.allclose(result.innovations[..., 0], -expected_prediction)
 
 
-def test_context_indices_and_input_parameters_survive_jit_vmap_and_scan():
+def test_context_indices_and_input_parameters_survive_jit_vmap_and_scan() -> None:
     problem = _input_driven_problem()
     indices = jnp.asarray([[0, 1], [1, 0], [1, 1], [0, 0]], dtype=jnp.int32)
 
-    def inspect(index):
+    def inspect(index: Any) -> Any:
         context = problem.step_context(index[0], index[1])
         transition = problem.model.transition.parameters(0.0, 1.0, context)
         observation_matrix, observation_offset, _ = problem.model.observation.parameters(
@@ -191,7 +193,7 @@ def test_context_indices_and_input_parameters_survive_jit_vmap_and_scan():
         )
 
     @jax.jit
-    def transformed(index_pairs):
+    def transformed(index_pairs: Any) -> Any:
         vmapped = jax.vmap(inspect)(index_pairs)
         _, scanned = jax.lax.scan(
             lambda carry, index: (carry, inspect(index)),
@@ -216,7 +218,7 @@ def test_context_indices_and_input_parameters_survive_jit_vmap_and_scan():
     assert jnp.allclose(scanned, expected)
 
 
-def test_missing_observation_is_exact_forecast_only_update():
+def test_missing_observation_is_exact_forecast_only_update() -> None:
     problem = _problem(mask=jnp.asarray([[True], [False]]))
     result = phx.uq.kalman_filter(problem)
 
@@ -226,7 +228,7 @@ def test_missing_observation_is_exact_forecast_only_update():
     assert result.incremental_log_likelihood[1] == 0.0
 
 
-def test_rts_terminal_identity_covariance_contraction_and_coherent_paths():
+def test_rts_terminal_identity_covariance_contraction_and_coherent_paths() -> None:
     problem = _problem()
     filtered = phx.uq.kalman_filter(problem)
     smoothed = phx.uq.rts_smoother(filtered)
@@ -244,7 +246,7 @@ def test_rts_terminal_identity_covariance_contraction_and_coherent_paths():
     assert jnp.corrcoef(paths[:, 0, 0], paths[:, 1, 0])[0, 1] > 0.0
 
 
-def test_irregular_padded_cases_preserve_last_valid_state():
+def test_irregular_padded_cases_preserve_last_valid_state() -> None:
     problem = _problem(
         case_shape=(2,),
         step_valid=jnp.asarray([[True, True], [True, False]]),
@@ -259,7 +261,7 @@ def test_irregular_padded_cases_preserve_last_valid_state():
     assert jnp.all(result.successful)
 
 
-def test_kalman_diagnostics_detect_finite_psd_results():
+def test_kalman_diagnostics_detect_finite_psd_results() -> None:
     result = phx.uq.kalman_filter(_problem())
     diagnostics = phx.uq.kalman_innovation_diagnostics(result)
 

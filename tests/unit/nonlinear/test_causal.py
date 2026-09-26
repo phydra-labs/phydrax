@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,19 +15,19 @@ import phydrax as phx
 nl = phx.nonlinear
 
 
-def _transition(parameter, previous, driver):
+def _transition(parameter: Any, previous: Any, driver: Any) -> Any:
     return jnp.tanh(parameter * previous + driver)
 
 
-def _serial(parameter, initial, drivers):
-    def step(state, driver):
+def _serial(parameter: Any, initial: Any, drivers: Any) -> Any:
+    def step(state: Any, driver: Any) -> Any:
         next_state = _transition(parameter, state, driver)
         return next_state, next_state
 
     return jax.lax.scan(step, initial, drivers)[1]
 
 
-def _termination(steps=24):
+def _termination(steps: Any = 24) -> Any:
     return nl.NonlinearTermination(
         absolute_residual=1e-11,
         relative_residual=1e-11,
@@ -40,7 +43,7 @@ def _termination(steps=24):
         nl.CausalLevenbergMarquardt(),
     ),
 )
-def test_causal_solver_matches_serial_recurrence_and_jit(method):
+def test_causal_solver_matches_serial_recurrence_and_jit(method: Any) -> None:
     drivers = jnp.linspace(-0.2, 0.3, 16, dtype=jnp.float64)
     parameter = jnp.asarray(0.7, dtype=jnp.float64)
     initial = jnp.asarray(0.1, dtype=jnp.float64)
@@ -66,7 +69,7 @@ def test_causal_solver_matches_serial_recurrence_and_jit(method):
     assert int(result.diagnostics.iteration_count) <= problem.num_steps
 
 
-def test_hutchinson_quasi_solver_replays_fixed_probes():
+def test_hutchinson_quasi_solver_replays_fixed_probes() -> None:
     drivers = jnp.stack(
         (
             jnp.linspace(-0.1, 0.2, 12),
@@ -75,7 +78,7 @@ def test_hutchinson_quasi_solver_replays_fixed_probes():
         axis=-1,
     )
 
-    def transition(matrix, previous, driver):
+    def transition(matrix: Any, previous: Any, driver: Any) -> Any:
         return jnp.tanh(matrix @ previous + driver)
 
     problem = nl.CausalRecurrenceProblem(
@@ -113,10 +116,10 @@ def test_hutchinson_quasi_solver_replays_fixed_probes():
     )
 
 
-def test_causal_implicit_derivative_matches_serial_reverse_mode():
+def test_causal_implicit_derivative_matches_serial_reverse_mode() -> None:
     drivers = jnp.linspace(-0.2, 0.3, 16, dtype=jnp.float64)
 
-    def causal_objective(parameter, initial, forcing):
+    def causal_objective(parameter: Any, initial: Any, forcing: Any) -> Any:
         problem = nl.CausalRecurrenceProblem(
             _transition,
             initial,
@@ -132,7 +135,7 @@ def test_causal_implicit_derivative_matches_serial_reverse_mode():
         )
         return jnp.sum(jnp.square(result.states))
 
-    def serial_objective(parameter, initial, forcing):
+    def serial_objective(parameter: Any, initial: Any, forcing: Any) -> Any:
         return jnp.sum(jnp.square(_serial(parameter, initial, forcing)))
 
     arguments = (
@@ -148,7 +151,7 @@ def test_causal_implicit_derivative_matches_serial_reverse_mode():
     assert jnp.allclose(causal_gradient[2], serial_gradient[2], atol=1e-10)
 
 
-def test_causal_solver_supports_pytree_states_and_fixed_block_linearization():
+def test_causal_solver_supports_pytree_states_and_fixed_block_linearization() -> None:
     initial = {
         "position": jnp.asarray([0.0, 0.1]),
         "memory": jnp.asarray(0.2),
@@ -157,7 +160,7 @@ def test_causal_solver_supports_pytree_states_and_fixed_block_linearization():
         "forcing": jnp.linspace(-0.1, 0.2, 9),
     }
 
-    def transition(parameters, previous, driver):
+    def transition(parameters: Any, previous: Any, driver: Any) -> Any:
         forcing = driver["forcing"]
         position = jnp.tanh(
             parameters["matrix"] @ previous["position"] + forcing + previous["memory"]
@@ -172,7 +175,7 @@ def test_causal_solver_supports_pytree_states_and_fixed_block_linearization():
         parameters={"matrix": jnp.asarray([[0.3, 0.1], [-0.1, 0.25]])},
     )
 
-    def block_builder(parameters, previous, driver):
+    def block_builder(parameters: Any, previous: Any, driver: Any) -> Any:
         del parameters, previous, driver
         return jnp.zeros((3, 3))
 
@@ -193,10 +196,10 @@ def test_causal_solver_supports_pytree_states_and_fixed_block_linearization():
     assert result.states["memory"].shape == (problem.num_steps,)
 
 
-def test_nonconverged_causal_result_is_observable_and_not_differentiable():
+def test_nonconverged_causal_result_is_observable_and_not_differentiable() -> None:
     drivers = jnp.linspace(-0.2, 0.3, 8)
 
-    def objective(parameter):
+    def objective(parameter: Any) -> Any:
         result = nl.solve_causal_recurrence(
             nl.CausalRecurrenceProblem(
                 _transition,
@@ -234,7 +237,7 @@ def test_nonconverged_causal_result_is_observable_and_not_differentiable():
 
 
 @pytest.mark.parametrize("method", (nl.CausalNewton(), nl.CausalLevenbergMarquardt()))
-def test_causal_recurrence_honors_transition_evaluation_limit(method):
+def test_causal_recurrence_honors_transition_evaluation_limit(method: Any) -> None:
     drivers = jnp.linspace(-0.2, 0.3, 8)
     problem = nl.CausalRecurrenceProblem(
         _transition,
@@ -258,7 +261,7 @@ def test_causal_recurrence_honors_transition_evaluation_limit(method):
     assert int(result.diagnostics.iteration_count) == 0
 
 
-def test_causal_recurrence_rejects_budget_smaller_than_initial_full_evaluation():
+def test_causal_recurrence_rejects_budget_smaller_than_initial_full_evaluation() -> None:
     drivers = jnp.linspace(-0.2, 0.3, 4)
     problem = nl.CausalRecurrenceProblem(
         _transition,

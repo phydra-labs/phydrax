@@ -10,6 +10,7 @@ import json
 import platform
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -111,7 +112,7 @@ def _configuration(smoke: bool) -> CaseConfiguration:
     )
 
 
-def _structured_triangle_mesh(refinement: int):
+def _structured_triangle_mesh(refinement: int) -> Any:
     nodes = np.linspace(0.0, 1.0, refinement + 1)
     xx, yy = np.meshgrid(nodes, nodes, indexing="ij")
     vertices = np.stack((xx, yy), axis=-1).reshape((-1, 2))
@@ -131,14 +132,14 @@ def _structured_triangle_mesh(refinement: int):
     )
 
 
-def _material(configuration: CaseConfiguration):
+def _material(configuration: CaseConfiguration) -> Any:
     return phx.applications.solid_mechanics.NeoHookeanParameters(
         configuration.shear_modulus,
         configuration.lame_lambda,
     )
 
 
-def _total_functional(configuration: CaseConfiguration):
+def _total_functional(configuration: CaseConfiguration) -> Any:
     stored = phx.applications.solid_mechanics.neo_hookean_functional(
         "u",
         _material(configuration),
@@ -147,7 +148,7 @@ def _total_functional(configuration: CaseConfiguration):
     )
     traction = jnp.asarray((configuration.traction, 0.0))
 
-    def traction_work(fields, geometry, context):
+    def traction_work(fields: Any, geometry: Any, context: Any) -> Any:
         del context
         load = jnp.where(
             (geometry.points[..., 0] > 1.0 - 1e-10)[..., None],
@@ -175,7 +176,7 @@ def _total_functional(configuration: CaseConfiguration):
     )
 
 
-def _finite_element_problem(configuration: CaseConfiguration, refinement: int):
+def _finite_element_problem(configuration: CaseConfiguration, refinement: int) -> Any:
     vertices, cells = _structured_triangle_mesh(refinement)
     mesh = phx.discretization.CellMesh.from_triangles(vertices, cells)
     field = phx.discretization.FiniteElementFieldSpec(
@@ -206,7 +207,7 @@ def _finite_element_problem(configuration: CaseConfiguration, refinement: int):
     return vertices, cells, left, discretization, compiled
 
 
-def _cell_kinematics(vertices, cells, displacement, material):
+def _cell_kinematics(vertices: Any, cells: Any, displacement: Any, material: Any) -> Any:
     cell_points = vertices[cells]
     cell_displacement = displacement[cells]
     reference_edges = jnp.stack(
@@ -249,7 +250,7 @@ def _cell_kinematics(vertices, cells, displacement, material):
     return deformation_2d, first_piola, energy, area, centroids
 
 
-def _solve_finite_element(configuration: CaseConfiguration, refinement: int):
+def _solve_finite_element(configuration: CaseConfiguration, refinement: int) -> Any:
     vertices, cells, left, _discretization, compiled = _finite_element_problem(
         configuration, refinement
     )
@@ -294,6 +295,7 @@ def _solve_finite_element(configuration: CaseConfiguration, refinement: int):
             )
         ),
         total_potential=float(potential),
+        # ty: ignore[invalid-argument-type]
         tip_displacement=tuple(float(value) for value in full_state[tip_index]),
         relative_force_balance=float(balance),
     )
@@ -309,7 +311,7 @@ def _solve_finite_element(configuration: CaseConfiguration, refinement: int):
     return evidence, reference
 
 
-def _neural_problem(configuration: CaseConfiguration, seed: int):
+def _neural_problem(configuration: CaseConfiguration, seed: int) -> Any:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.5, 0.5), side=1.0).compile()
     )
@@ -360,7 +362,9 @@ def _neural_problem(configuration: CaseConfiguration, seed: int):
     return domain, solver
 
 
-def _held_out_potential(configuration, domain, displacement, key):
+def _held_out_potential(
+    configuration: Any, domain: Any, displacement: Any, key: Any
+) -> Any:
     interior_key, boundary_key = jr.split(key)
     body_target = phx.integration.over(domain.component())
     boundary_target = phx.integration.over(domain.component({"x": phx.domain.Boundary()}))
@@ -395,23 +399,23 @@ def _held_out_potential(configuration, domain, displacement, key):
     ).loss()
 
 
-def _probe_grid(count: int):
+def _probe_grid(count: int) -> Any:
     axis = jnp.linspace(0.025, 0.975, count)
     xx, yy = jnp.meshgrid(axis, axis, indexing="ij")
     return jnp.stack((xx, yy), axis=-1).reshape((-1, 2))
 
 
-def _evaluate_field(field, points):
+def _evaluate_field(field: Any, points: Any) -> Any:
     return jax.vmap(field.func)(points)
 
 
 def _neural_evidence(
     configuration: CaseConfiguration,
     seed: int,
-    domain,
-    trained,
-    reference,
-):
+    domain: Any,
+    trained: Any,
+    reference: Any,
+) -> Any:
     displacement = trained["u"]
     training_potential = trained.loss()
     held_out_count = 1 if len(configuration.neural_seeds) == 1 else 3
@@ -489,7 +493,7 @@ def _neural_evidence(
     )
 
 
-def _solve_neural(configuration, seed, reference):
+def _solve_neural(configuration: Any, seed: Any, reference: Any) -> Any:
     domain, solver = _neural_problem(configuration, seed)
     trained = solver.solve(
         num_iter=configuration.neural_iterations,
@@ -503,14 +507,14 @@ def _solve_neural(configuration, seed, reference):
     return _neural_evidence(configuration, seed, domain, trained, reference)
 
 
-def _affine_evidence(configuration: CaseConfiguration):
+def _affine_evidence(configuration: CaseConfiguration) -> Any:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Box(center=(0.0, 0.0, 0.0), size=(2.0, 2.0, 2.0)).compile()
     )
     gradient = jnp.asarray([[0.08, 0.02, 0.01], [0.03, -0.04, 0.02], [0.0, 0.01, 0.05]])
 
     @domain.Function("x")
-    def displacement(x):
+    def displacement(x: Any) -> Any:
         return gradient @ x
 
     point = jnp.asarray((0.2, -0.1, 0.3))
@@ -540,7 +544,7 @@ def _affine_evidence(configuration: CaseConfiguration):
     expected_cauchy = expected_piola @ deformation.T / jnp.linalg.det(deformation)
 
     @domain.Function("x")
-    def inverted(x):
+    def inverted(x: Any) -> Any:
         return jnp.asarray((-2.0 * x[0], 0.0, 0.0))
 
     invalid = phx.operators.neo_hookean_reference_energy(
@@ -562,7 +566,7 @@ def _passes(
     neural: tuple[NeuralEvidence, ...],
     affine: AffineEvidence,
     smoke: bool,
-):
+) -> Any:
     gates = {
         "minimum_jacobian": 0.25,
         "clamp_linf": 1e-10,

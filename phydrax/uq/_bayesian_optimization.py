@@ -621,7 +621,8 @@ def _initial_candidate_points(
     if domain.continuous_dimension == 0:
         categorical = domain.categorical
         # Construction rejects domains with neither continuous nor categorical axes.
-        assert categorical is not None
+        if not (categorical is not None):
+            raise RuntimeError("Internal invariant failed: categorical is not None.")
         pool_count = categorical.size
         units = jnp.zeros((pool_count, 0), dtype=domain.continuous_initial.dtype)
         categories = jnp.arange(pool_count, dtype=jnp.int32)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 from jaxtyping import ArrayLike
@@ -15,7 +18,7 @@ def _basis(
     eigenfunctions: ArrayLike | None = None,
     probability_measure: ArrayLike | None = None,
     active_mask: ArrayLike | None = None,
-):
+) -> Any:
     return phx.discretization.SpectralDecomposition(
         jnp.asarray([0.0, 2.0]) if eigenvalues is None else eigenvalues,
         (
@@ -30,7 +33,7 @@ def _basis(
     )
 
 
-def test_discrete_laplacian_eigenbasis_validates_probability_orthonormality():
+def test_discrete_laplacian_eigenbasis_validates_probability_orthonormality() -> None:
     basis = _basis()
 
     assert basis.mode_count == 2
@@ -44,7 +47,7 @@ def test_discrete_laplacian_eigenbasis_validates_probability_orthonormality():
     )
 
 
-def test_discrete_laplacian_eigenbasis_rejects_invalid_geometry():
+def test_discrete_laplacian_eigenbasis_rejects_invalid_geometry() -> None:
     with pytest.raises(ValueError, match="sorted"):
         _basis(eigenvalues=jnp.asarray([2.0, 0.0]))
     with pytest.raises(ValueError, match="materially negative"):
@@ -60,7 +63,7 @@ def test_discrete_laplacian_eigenbasis_rejects_invalid_geometry():
         )
 
 
-def test_probability_measure_tolerance_is_absolute():
+def test_probability_measure_tolerance_is_absolute() -> None:
     measure = jnp.asarray([0.5, 0.499995])
     functions = jnp.ones((2, 1)) / jnp.sqrt(jnp.sum(measure))
     with pytest.raises(ValueError, match="sum to one"):
@@ -73,7 +76,7 @@ def test_probability_measure_tolerance_is_absolute():
         )
 
 
-def test_spectrum_reports_reject_invalid_or_inconsistent_provenance():
+def test_spectrum_reports_reject_invalid_or_inconsistent_provenance() -> None:
     with pytest.raises(ValueError, match="next_eigenvalue"):
         phx.discretization.LaplacianEigenbasisReport(
             method_id="test",
@@ -115,7 +118,7 @@ def test_spectrum_reports_reject_invalid_or_inconsistent_provenance():
         )
 
 
-def test_discrete_spectrum_is_fixed_while_multiplier_parameters_are_trainable():
+def test_discrete_spectrum_is_fixed_while_multiplier_parameters_are_trainable() -> None:
     basis = _basis()
     kernel = phx.kernels.SpectralFeatureKernel(
         basis,

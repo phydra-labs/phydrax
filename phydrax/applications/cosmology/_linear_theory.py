@@ -26,6 +26,7 @@ from ...backends import (
     BackendCapabilities,
 )
 from ...logging import emit
+from ...typing import parse
 from ._closure import (
     CosmologyPhysicalState,
     CosmologyRealizationSignature,
@@ -189,8 +190,7 @@ class CosmologyModelRequest(StrictModule, NonTrainableState):
         ):
             raise ValueError("Transfer fields must be non-empty and unique.")
         gauge_ = str(gauge).strip()
-        if gauge_ not in ("synchronous", "newtonian", "gauge-invariant"):
-            raise ValueError("Unknown linear-theory gauge.")
+        gauge_ = parse(gauge_, TransferGauge, "gauge_")
         power_field_ = str(power_field).strip()
         if power_field_ not in ("cold_baryon", "total_matter"):
             raise ValueError("power_field must be cold_baryon or total_matter.")

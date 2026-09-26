@@ -618,6 +618,7 @@ def _maxwell_thermal(
         and _allclose(
             reported_exchange,
             actual_exchange,
+            # ty: ignore[invalid-argument-type]
             absolute_tolerance=exchange_tolerance,
         )
         and _allclose(

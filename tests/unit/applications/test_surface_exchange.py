@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,20 +20,20 @@ from phydrax.applications.atmosphere._surface import (
 )
 
 
-def _saturation_humidity(thermo, temperature, pressure=1e5):
+def _saturation_humidity(thermo: Any, temperature: Any, pressure: Any = 1e5) -> Any:
     es = thermo.saturation_pressure(temperature)
     epsilon = thermo.dry_gas_constant / thermo.vapor_gas_constant
     return epsilon * es / (pressure - (1 - epsilon) * es)
 
 
-def _air(thermo, temperature, vapor, volume=100.0):
+def _air(thermo: Any, temperature: Any, vapor: Any, volume: Any = 100.0) -> Any:
     density = 1e5 / (thermo.gas_constant(vapor, 0.0, 0.0) * temperature)
     mass = density * volume
     energy = mass * thermo.energy(density, temperature, vapor, 0.0, 0.0)
     return density, mass * (1 - vapor), mass * vapor, energy
 
 
-def test_neutral_bulk_analytic_fluxes_no_gradient_and_no_wind():
+def test_neutral_bulk_analytic_fluxes_no_gradient_and_no_wind() -> None:
     thermo = MoistThermodynamicPlan()
     plan = BulkSurfaceExchangePlan(
         heat_transfer_coefficient=1.5e-3,
@@ -68,7 +71,7 @@ def test_neutral_bulk_analytic_fluxes_no_gradient_and_no_wind():
             )
 
 
-def test_stability_reduces_stable_and_enhances_unstable_ventilation():
+def test_stability_reduces_stable_and_enhances_unstable_ventilation() -> None:
     thermo = MoistThermodynamicPlan()
     neutral = BulkSurfaceExchangePlan(stability="neutral")
     stability = BulkSurfaceExchangePlan()
@@ -84,7 +87,9 @@ def test_stability_reduces_stable_and_enhances_unstable_ventilation():
 @pytest.mark.parametrize(
     "surface_t,air_t,vapor", [(300.0, 295.0, 0.004), (290.0, 300.0, 0.017)]
 )
-def test_evaporation_cools_dew_warms_with_exact_donor_energy(surface_t, air_t, vapor):
+def test_evaporation_cools_dew_warms_with_exact_donor_energy(
+    surface_t: Any, air_t: Any, vapor: Any
+) -> None:
     thermo = MoistThermodynamicPlan(
         latent_vaporization=2.6e6, liquid_heat_capacity=4200.0
     )
@@ -137,7 +142,7 @@ def test_evaporation_cools_dew_warms_with_exact_donor_energy(surface_t, air_t, v
     )
 
 
-def test_water_inventory_changes_heat_capacity_without_duplicate_temperature():
+def test_water_inventory_changes_heat_capacity_without_duplicate_temperature() -> None:
     thermo = MoistThermodynamicPlan()
     plan = WetSlabPlan(thermo, dry_heat_capacity=1e5)
     state = plan.initialize(300.0, jnp.asarray((0.0, 100.0)))
@@ -152,10 +157,11 @@ def test_water_inventory_changes_heat_capacity_without_duplicate_temperature():
         plan.temperature(state, MoistThermodynamicPlan(reference_temperature=274.0))
     with pytest.raises(ValueError, match="liquid"):
         WetSlabPlan(thermo, minimum_temperature=250.0)
+    # ty: ignore[invalid-argument-type]
     assert not plan.admissible(WetSlabState(1.0, -1.0), thermo)
 
 
-def test_batched_exhaustion_rejects_both_inventories_without_capping():
+def test_batched_exhaustion_rejects_both_inventories_without_capping() -> None:
     thermo = MoistThermodynamicPlan()
     plan = WetSlabPlan(thermo)
     slab = plan.initialize(300.0, jnp.asarray((1.0, 0.001)))
@@ -192,7 +198,7 @@ def test_batched_exhaustion_rejects_both_inventories_without_capping():
     )
 
 
-def test_dew_cannot_remove_unavailable_vapor_and_freezing_rejects():
+def test_dew_cannot_remove_unavailable_vapor_and_freezing_rejects() -> None:
     thermo = MoistThermodynamicPlan()
     plan = WetSlabPlan(thermo)
     slab = plan.initialize(thermo.reference_temperature, 1.0)
@@ -220,7 +226,7 @@ def test_dew_cannot_remove_unavailable_vapor_and_freezing_rejects():
         assert result.slab_state.water_mass == slab.water_mass
 
 
-def test_bulk_rejects_boiling_and_nonphysical_ventilation():
+def test_bulk_rejects_boiling_and_nonphysical_ventilation() -> None:
     thermo = MoistThermodynamicPlan()
     plan = BulkSurfaceExchangePlan()
     result = plan.evaluate(
@@ -236,12 +242,12 @@ def test_bulk_rejects_boiling_and_nonphysical_ventilation():
     assert not jnp.any(result.successful)
 
 
-def test_flux_and_slab_response_derivatives_match_finite_differences():
+def test_flux_and_slab_response_derivatives_match_finite_differences() -> None:
     thermo = MoistThermodynamicPlan()
     exchange = BulkSurfaceExchangePlan()
     slab_plan = WetSlabPlan(thermo)
 
-    def observable(parameters):
+    def observable(parameters: Any) -> Any:
         surface_t, vapor, speed, inventory, heat_scale, moisture_scale, capacity_scale = (
             parameters
         )
@@ -295,7 +301,7 @@ def test_flux_and_slab_response_derivatives_match_finite_differences():
     np.testing.assert_allclose(batched[1], observable(parameters.at[0].add(1.0)))
 
 
-def test_nonsmooth_donor_and_calm_branches_do_not_certify_ad():
+def test_nonsmooth_donor_and_calm_branches_do_not_certify_ad() -> None:
     thermo = MoistThermodynamicPlan()
     exchange = BulkSurfaceExchangePlan(stability="neutral")
     vapor = _saturation_humidity(thermo, 300.0)
@@ -315,13 +321,13 @@ def test_nonsmooth_donor_and_calm_branches_do_not_certify_ad():
     ).successful
 
 
-def test_zero_moisture_coefficient_retains_dew_donor_directional_derivative():
+def test_zero_moisture_coefficient_retains_dew_donor_directional_derivative() -> None:
     thermo = MoistThermodynamicPlan()
     exchange = BulkSurfaceExchangePlan(
         moisture_transfer_coefficient=0.0, stability="neutral"
     )
 
-    def rates(coefficient):
+    def rates(coefficient: Any) -> Any:
         plan = eqx.tree_at(
             lambda p: p.moisture_transfer_coefficient, exchange, coefficient
         )

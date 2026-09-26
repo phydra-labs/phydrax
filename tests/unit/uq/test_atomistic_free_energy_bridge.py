@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -6,7 +8,7 @@ import phydrax as phx
 from phydrax.atomistic.sampling import AtomisticMultistateSegmentResult
 
 
-def test_alchemical_cross_evaluation_bridge_preserves_exact_evidence():
+def test_alchemical_cross_evaluation_bridge_preserves_exact_evidence() -> None:
     evaluation = phx.atomistic.AlchemicalReducedPotentialEvaluation(
         values=jnp.asarray([[0.0, 0.1, 0.2, 0.3], [0.4, 0.5, 0.6, 0.7]]),
         energies=jnp.asarray([[0.0, 0.1, 0.2, 0.3], [0.4, 0.5, 0.6, 0.7]]),
@@ -81,7 +83,7 @@ def test_alchemical_cross_evaluation_bridge_preserves_exact_evidence():
         )
 
 
-def _switching_record():
+def _switching_record() -> Any:
     forward_lineage = phx.atomistic.AlchemicalSwitchingLineage(
         jnp.full((4,), 11),
         jnp.zeros((4,), dtype=jnp.int32),
@@ -103,7 +105,9 @@ def _switching_record():
         reverse_coverage=jnp.ones((4,), dtype="bool"),
         forward_lineage=forward_lineage,
         reverse_lineage=reverse_lineage,
+        # ty: ignore[invalid-argument-type]
         forward_final_states=(None,) * 4,
+        # ty: ignore[invalid-argument-type]
         reverse_final_states=(None,) * 4,
         source_state_id="source-state",
         destination_state_id="destination-state",
@@ -129,7 +133,7 @@ def _switching_record():
     )
 
 
-def _switching_dataset(direction):
+def _switching_dataset(direction: Any) -> Any:
     record = _switching_record()
     return phx.uq.reduced_work_dataset_from_alchemical_switching(
         record,
@@ -150,7 +154,7 @@ def _switching_dataset(direction):
     )
 
 
-def test_switching_bridge_builds_forward_and_bidirectional_estimator_inputs():
+def test_switching_bridge_builds_forward_and_bidirectional_estimator_inputs() -> None:
     forward = _switching_dataset("forward")
     paired = _switching_dataset("both")
     reverse = _switching_dataset("reverse")
@@ -174,11 +178,12 @@ def test_switching_bridge_builds_forward_and_bidirectional_estimator_inputs():
     )
 
 
-def test_multistate_segment_bridge_flattens_capacity_then_replica_order():
+def test_multistate_segment_bridge_flattens_capacity_then_replica_order() -> None:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     reduced = jnp.arange(8.0).reshape((2, 2, 2))
     sample_shape = (2, 2)
     result = AtomisticMultistateSegmentResult(
+        # ty: ignore[invalid-argument-type]
         successor_state=None,
         reduced_potentials=reduced,
         coverage=jnp.ones_like(reduced, dtype="bool"),

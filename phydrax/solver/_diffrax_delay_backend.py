@@ -20,6 +20,7 @@ from phydrax._strict import StrictModule
 
 from ..linalg import AbstractRealCoordinateMap
 from ..stochastic._wiener import WienerRealization
+from ..typing import parse
 from ._delay import (
     _distributed_delay_value,
     _invalid_geometry_tangent,
@@ -1285,8 +1286,7 @@ def _validate_whole_delay_controls(
     )
     if not isinstance(dense, bool):
         raise TypeError("dense must be a bool.")
-    if history_mode not in ("full", "rolling"):
-        raise ValueError("history_mode must be 'full' or 'rolling'.")
+    history_mode = parse(history_mode, DelayHistoryMode, "history_mode")
     if max_steps is not None and (
         not isinstance(max_steps, int) or isinstance(max_steps, bool) or max_steps <= 0
     ):
@@ -1703,7 +1703,10 @@ def solve_diffrax_delay(
         dynamic_root_times = jnp.empty((0,), dtype=problem.t0.dtype)
     requested_times = native.ts
     requested_states = native.ys
-    assert requested_times is not None and requested_states is not None
+    if not (requested_times is not None and requested_states is not None):
+        raise RuntimeError(
+            "Internal invariant failed: requested_times is not None and requested_states is not None."
+        )
     native_times = jnp.asarray(requested_times["requested"])
     native_states = state_adapter.unpack_values(requested_states["requested"], 1)
     final_time = jnp.asarray(requested_times["final"])[0]

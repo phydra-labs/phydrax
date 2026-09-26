@@ -15,6 +15,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator
@@ -299,8 +300,7 @@ class ILUPreconditionerBuilder(_AbstractSparseFactorizationBuilder):
             raise ValueError("ILU numeric policies must be finite.")
         if numeric[0] < 0.0 or numeric[1] < 0.0 or numeric[2] <= 0.0:
             raise ValueError("ILU pivot/shift policies are invalid.")
-        if ordering not in ("natural", "reverse-cuthill-mckee"):
-            raise ValueError(f"Unknown sparse ordering {ordering!r}.")
+        ordering = parse(ordering, SparseOrdering, "ordering")
         self.fill_level = fill
         self.ordering = ordering
         self.pivot_tolerance = numeric[0]
@@ -361,8 +361,7 @@ class ILUTPreconditionerBuilder(_AbstractSparseFactorizationBuilder):
             raise ValueError("ILUT numeric policies must be finite.")
         if any(value < 0.0 for value in numeric[:3]) or numeric[3] <= 0.0:
             raise ValueError("ILUT drop, pivot, or replacement policy is invalid.")
-        if ordering not in ("natural", "reverse-cuthill-mckee"):
-            raise ValueError(f"Unknown sparse ordering {ordering!r}.")
+        ordering = parse(ordering, SparseOrdering, "ordering")
         self.fill_level = fill
         self.drop_tolerance = numeric[0]
         self.maximum_fill_per_row = maximum_fill
@@ -428,8 +427,7 @@ class IncompleteCholeskyPreconditionerBuilder(_AbstractSparseFactorizationBuilde
             raise ValueError("IC numeric policies must be finite.")
         if any(value < 0.0 for value in numeric[:3]) or numeric[3] <= 0.0:
             raise ValueError("IC drop, pivot, or replacement policy is invalid.")
-        if ordering not in ("natural", "reverse-cuthill-mckee"):
-            raise ValueError(f"Unknown sparse ordering {ordering!r}.")
+        ordering = parse(ordering, SparseOrdering, "ordering")
         self.fill_level = fill
         self.drop_tolerance = numeric[0]
         self.maximum_fill_per_row = maximum_fill

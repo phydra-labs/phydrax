@@ -170,7 +170,10 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
             )
             if isinstance(prepared.mesh, PreparedUnstructuredParticleInternalMesh):
                 # Unstructured particle meshes always produce internal-mesh metrics.
-                assert isinstance(metrics, ParticleInternalMeshMetrics)
+                if not (isinstance(metrics, ParticleInternalMeshMetrics)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(metrics, ParticleInternalMeshMetrics)."
+                    )
                 boundary_mask = metrics.boundary_faces[None, :] & metrics.active_faces
                 owner_cells = metrics.owner_cells
                 face_weight = jnp.where(

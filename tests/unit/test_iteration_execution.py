@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -30,15 +32,15 @@ from phydrax._iteration import (
 
 
 def _record(
-    ordinal,
-    value,
+    ordinal: Any,
+    value: Any,
     /,
     *,
-    phase=IterationPhase.COMMIT,
-    active=True,
-    committed=True,
-    terminal=False,
-):
+    phase: Any = IterationPhase.COMMIT,
+    active: Any = True,
+    committed: Any = True,
+    terminal: Any = False,
+) -> Any:
     return IterationRecord(
         IterationCoordinates(
             phase,
@@ -90,10 +92,10 @@ def test_stop_rule_only_changes_execution_at_active_safe_boundaries() -> None:
     scope = bind_iteration_scope(plan, capabilities, "unit-driver")
 
     @jax.jit
-    def run(value):
+    def run(value: Any) -> Any:
         state = initialize_iteration(plan, _record(0, value, phase=IterationPhase.START))
 
-        def body(ordinal, carry):
+        def body(ordinal: Any, carry: Any) -> Any:
             active = ~carry.stop_requested
             record = _record(ordinal + 1, value + ordinal + 1, active=active)
             return update_iteration(plan, carry, record)
@@ -123,7 +125,7 @@ def test_observation_is_batched_and_does_not_change_gradients() -> None:
     capabilities = IterationCapabilities(("terminal", "step"))
     scope = bind_iteration_scope(plan, capabilities, "mapped-driver")
 
-    def objective(values):
+    def objective(values: Any) -> Any:
         initial = _record(0, values, phase=IterationPhase.START)
         state = initialize_iteration(plan, initial)
         state = update_iteration(plan, state, _record(1, values * 2.0))
@@ -178,6 +180,7 @@ def test_host_sinks_and_control_have_separate_ordered_semantics() -> None:
     control = CallableIterationHostControl(
         lambda event: event.sequence == 1, "stop-after-two"
     )
+    # ty: ignore[invalid-argument-type]
     session = IterationSession("unit-session", sinks=(sink,), control=control)
     capabilities = IterationCapabilities(("terminal", "step"), host_stop=True)
     scope = bind_iteration_scope(IterationPlan(), capabilities, "host-driver")
@@ -185,7 +188,12 @@ def test_host_sinks_and_control_have_separate_ordered_semantics() -> None:
     assert session.emit(scope, _record(1, 1.0))
     state = session.snapshot()
     resumed = IterationSession(
-        "unit-session", sinks=(sink,), control=control, state=state
+        "unit-session",
+        # ty: ignore[invalid-argument-type]
+        sinks=(sink,),
+        # ty: ignore[invalid-argument-type]
+        control=control,
+        state=state,
     )
     resumed.emit(scope, _record(2, 2.0))
     assert [sequence for sequence, _ in received] == [0, 1, 2]
@@ -194,7 +202,9 @@ def test_host_sinks_and_control_have_separate_ordered_semantics() -> None:
 
 
 def test_host_sink_return_value_cannot_control_execution() -> None:
+    # ty: ignore[invalid-argument-type]
     sink = CallableIterationSink(lambda event: True, "invalid-sink")
+    # ty: ignore[invalid-argument-type]
     session = IterationSession("unit-session", sinks=(sink,))
     scope = bind_iteration_scope(
         IterationPlan(),

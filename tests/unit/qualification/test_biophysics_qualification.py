@@ -21,7 +21,7 @@ from phydrax.qualification._biophysics import (
 )
 
 
-def test_spherical_membrane_capacitance_and_ion_count_use_si_geometry():
+def test_spherical_membrane_capacitance_and_ion_count_use_si_geometry() -> None:
     radius_m = 5.0e-6
     specific_capacitance_f_per_m2 = 1.0e-2
     potential_v = -70.0e-3
@@ -45,7 +45,7 @@ def test_spherical_membrane_capacitance_and_ion_count_use_si_geometry():
     )
 
 
-def test_nernst_sign_valence_and_temperature_match_analytic_reference():
+def test_nernst_sign_valence_and_temperature_match_analytic_reference() -> None:
     inside_mol_per_m3 = 10.0
     outside_mol_per_m3 = 100.0
     temperature_k = 310.0
@@ -73,7 +73,7 @@ def test_nernst_sign_valence_and_temperature_match_analytic_reference():
     np.testing.assert_allclose(extreme, expected_extreme, rtol=2.0e-6)
 
 
-def test_eyring_zero_barrier_and_finite_barrier_match_transition_state_theory():
+def test_eyring_zero_barrier_and_finite_barrier_match_transition_state_theory() -> None:
     temperature_k = 300.0
     zero_barrier = eyring_rate(0.0, temperature_k)
     expected_prefactor = BOLTZMANN_CONSTANT_J_PER_K * temperature_k / PLANCK_CONSTANT_J_S
@@ -88,7 +88,9 @@ def test_eyring_zero_barrier_and_finite_barrier_match_transition_state_theory():
     )
 
 
-def test_antiporter_balance_recovers_voltage_and_equal_stoichiometry_is_singular():
+def test_antiporter_balance_recovers_voltage_and_equal_stoichiometry_is_singular() -> (
+    None
+):
     inferred = antiporter_electrochemical_balance(
         10.0,
         100.0,
@@ -165,7 +167,7 @@ def test_antiporter_balance_recovers_voltage_and_equal_stoichiometry_is_singular
     assert not bool(overflow.successful)
 
 
-def test_brownian_transport_recovery_matches_exact_increment_statistics():
+def test_brownian_transport_recovery_matches_exact_increment_statistics() -> None:
     diffusion_m2_per_s = 3.0
     drift_m_per_s = 2.0
     time_step_s = 0.5
@@ -191,7 +193,7 @@ def test_brownian_transport_recovery_matches_exact_increment_statistics():
     assert bool(result.successful)
 
 
-def test_independent_censored_dwell_qualification_uses_survival_terms():
+def test_independent_censored_dwell_qualification_uses_survival_terms() -> None:
     result = jax.jit(qualify_censored_dwell_times)(
         jnp.asarray([1.0, 2.0, 3.0]),
         jnp.asarray([True, False, True]),

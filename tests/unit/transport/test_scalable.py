@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,13 +15,13 @@ import phydrax.axes as cx
 
 
 def _target(
-    points,
-    weights,
+    points: Any,
+    weights: Any,
     *,
-    normalized=True,
-    provenance="scalable-test",
-    mask=None,
-):
+    normalized: Any = True,
+    provenance: Any = "scalable-test",
+    mask: Any = None,
+) -> Any:
     mask_field = (
         None
         if mask is None
@@ -35,15 +38,15 @@ def _target(
 
 
 def _problem(
-    source_points,
-    target_points,
+    source_points: Any,
+    target_points: Any,
     *,
-    source_weights=None,
-    target_weights=None,
-    source_mask=None,
-    target_mask=None,
-    normalized=True,
-):
+    source_weights: Any = None,
+    target_weights: Any = None,
+    source_mask: Any = None,
+    target_mask: Any = None,
+    normalized: Any = True,
+) -> Any:
     source_points = jnp.asarray(source_points, dtype="float64")
     target_points = jnp.asarray(target_points, dtype="float64")
     if source_weights is None:
@@ -71,12 +74,12 @@ def _problem(
 
 def _solver(
     *,
-    rank=2048,
-    key=jax.random.key(17),
-    probe_tolerance=jnp.inf,
-    max_iterations=300,
-    tolerance=1e-7,
-):
+    rank: Any = 2048,
+    key: Any = jax.random.key(17),
+    probe_tolerance: Any = jnp.inf,
+    max_iterations: Any = 300,
+    tolerance: Any = 1e-7,
+) -> Any:
     features = phx.transport.GaussianPositiveFeatures(
         key,
         rank,
@@ -93,7 +96,7 @@ def _solver(
     )
 
 
-def test_positive_features_are_nonnegative_replayable_and_carry_probe_evidence():
+def test_positive_features_are_nonnegative_replayable_and_carry_probe_evidence() -> None:
     problem = _problem(
         [[-0.3, 0.1], [0.0, -0.2], [0.25, 0.2]],
         [[-0.15, -0.1], [0.1, 0.15], [0.35, -0.05]],
@@ -135,7 +138,9 @@ def test_positive_features_are_nonnegative_replayable_and_carry_probe_evidence()
         jax.block_until_ready(invalid.source_factors)
 
 
-def test_factorized_sinkhorn_matches_dense_plan_marginals_actions_and_objectives():
+def test_factorized_sinkhorn_matches_dense_plan_marginals_actions_and_objectives() -> (
+    None
+):
     problem = _problem(
         [[-0.35], [0.0], [0.3]],
         [[-0.2], [0.12], [0.4]],
@@ -195,7 +200,7 @@ def test_factorized_sinkhorn_matches_dense_plan_marginals_actions_and_objectives
     assert jnp.allclose(plan, exact.dense_plan(), rtol=0.12, atol=0.04)
 
 
-def test_approximation_failure_zero_rows_and_extreme_translation_are_explicit():
+def test_approximation_failure_zero_rows_and_extreme_translation_are_explicit() -> None:
     problem = _problem([[-0.4], [0.0], [0.35]], [[-0.25], [0.2], [0.45]])
     rejected = _solver(rank=2, probe_tolerance=0.0)(problem)
     assert not rejected.converged
@@ -229,12 +234,14 @@ def test_approximation_failure_zero_rows_and_extreme_translation_are_explicit():
     assert translated_result.diagnostics.normalized_marginal_residual < 2e-6
 
 
-def test_factorized_solver_is_jittable_vmappable_differentiable_and_preserves_mass():
+def test_factorized_solver_is_jittable_vmappable_differentiable_and_preserves_mass() -> (
+    None
+):
     target_points = jnp.asarray([[-0.3], [0.15], [0.45]])
     source_points = jnp.asarray([[-0.4], [0.0], [0.35]])
     solver = _solver(rank=1024, tolerance=2e-6)
 
-    def objective(points):
+    def objective(points: Any) -> Any:
         return solver(
             _problem(
                 points,
@@ -285,7 +292,9 @@ def test_factorized_solver_is_jittable_vmappable_differentiable_and_preserves_ma
     )
 
 
-def test_scientific_particle_transform_keeps_approximation_provenance_and_rejects_failure():
+def test_scientific_particle_transform_keeps_approximation_provenance_and_rejects_failure() -> (
+    None
+):
     particles = jnp.asarray(
         [
             [[-0.5], [0.0], [0.6]],
@@ -333,7 +342,7 @@ def test_scientific_particle_transform_keeps_approximation_provenance_and_reject
         jax.block_until_ready(rejected.particles)
 
 
-def test_scalable_balanced_transport_public_catalog_is_complete():
+def test_scalable_balanced_transport_public_catalog_is_complete() -> None:
     expected = {
         "AbstractBalancedTransportPlan",
         "AbstractBalancedTransportSolver",

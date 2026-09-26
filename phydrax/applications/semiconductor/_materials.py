@@ -319,7 +319,8 @@ class SemiconductorMaterial(StrictModule):
         temperature_ = jnp.asarray(temperature)
         band_gap = self.band_gap
         # Intrinsic-density materials always resolve their band gap.
-        assert band_gap is not None
+        if not (band_gap is not None):
+            raise RuntimeError("Internal invariant failed: band_gap is not None.")
         exponent = (
             -band_gap
             / (2 * BOLTZMANN_CONSTANT_SI)

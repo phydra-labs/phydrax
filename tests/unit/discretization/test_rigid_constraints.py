@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,11 +13,13 @@ import pytest
 import phydrax as phx
 
 
-def _quaternion_z(angle):
+def _quaternion_z(angle: Any) -> Any:
     return jnp.asarray([jnp.cos(0.5 * angle), 0.0, 0.0, jnp.sin(0.5 * angle)])
 
 
-def _prepared_bodies(count=3, *, fixed_mask=None, dimension=3):
+def _prepared_bodies(
+    count: Any = 3, *, fixed_mask: Any = None, dimension: Any = 3
+) -> Any:
     ids = jnp.arange(100, 100 + count, dtype=jnp.int64)
     particles = phx.discretization.ParticleSetPlan(
         ids,
@@ -39,7 +44,7 @@ def _prepared_bodies(count=3, *, fixed_mask=None, dimension=3):
     return ids, bodies
 
 
-def _reference(bodies, position):
+def _reference(bodies: Any, position: Any) -> Any:
     position = jnp.asarray(position)
     if bodies.ambient_dimension == 2:
         orientation = jnp.zeros((bodies.capacity, 1))
@@ -55,17 +60,17 @@ def _reference(bodies, position):
     )
 
 
-def _constant_load(force, torque):
+def _constant_load(force: Any, torque: Any) -> Any:
     load = phx.discretization.RigidBodyLoad(jnp.asarray(force), jnp.asarray(torque))
 
-    def evaluate(time, kinematics, args):
+    def evaluate(time: Any, kinematics: Any, args: Any) -> Any:
         del time, kinematics, args
         return load
 
     return evaluate
 
 
-def test_joint_plan_validation_and_static_scope():
+def test_joint_plan_validation_and_static_scope() -> None:
     with pytest.raises(ValueError, match="nonzero"):
         phx.discretization.HingeJointSetPlan(
             jnp.asarray([1]),
@@ -119,7 +124,7 @@ def test_joint_plan_validation_and_static_scope():
         overconstrained.prepare(one_mobile, one_reference)
 
 
-def test_fixed_and_hinge_residuals_are_objective_and_preserve_hinge_spin():
+def test_fixed_and_hinge_residuals_are_objective_and_preserve_hinge_spin() -> None:
     _, bodies = _prepared_bodies(3, fixed_mask=[True, False, False])
     reference = _reference(
         bodies,
@@ -171,7 +176,7 @@ def test_fixed_and_hinge_residuals_are_objective_and_preserve_hinge_spin():
     assert jnp.min(graph.hinge_alignment(axial_state)) > 0.99
 
 
-def test_empty_graph_matches_unconstrained_rigid_kdk():
+def test_empty_graph_matches_unconstrained_rigid_kdk() -> None:
     _, bodies = _prepared_bodies(2, fixed_mask=[False, False])
     reference = _reference(bodies, [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     force = jnp.asarray([[1.0, 0.0, 0.0], [0.0, -2.0, 0.0]])
@@ -218,7 +223,7 @@ def test_empty_graph_matches_unconstrained_rigid_kdk():
     )
 
 
-def test_fixed_joint_projects_pose_and_velocity_globally():
+def test_fixed_joint_projects_pose_and_velocity_globally() -> None:
     _, bodies = _prepared_bodies(2, fixed_mask=[True, False])
     reference = _reference(bodies, [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     graph = phx.discretization.RigidJointGraphPlan(
@@ -255,7 +260,7 @@ def test_fixed_joint_projects_pose_and_velocity_globally():
     assert result.evaluation.diagnostics.quaternion_defect <= 1.0e-12
 
 
-def test_ball_and_hinge_steps_are_jittable_and_certified():
+def test_ball_and_hinge_steps_are_jittable_and_certified() -> None:
     _, bodies = _prepared_bodies(3, fixed_mask=[True, False, False])
     reference = _reference(
         bodies,
@@ -277,7 +282,7 @@ def test_ball_and_hinge_steps_are_jittable_and_certified():
         ),
     )
 
-    def gravity(time, kinematics, args):
+    def gravity(time: Any, kinematics: Any, args: Any) -> Any:
         del time, args
         return phx.discretization.RigidBodyLoad(
             jnp.broadcast_to(jnp.asarray([0.0, -9.81, 0.0]), kinematics.position.shape),
@@ -307,12 +312,12 @@ def test_ball_and_hinge_steps_are_jittable_and_certified():
     assert result.evaluation.diagnostics.velocity_projection_energy_increase < 1.0e-10
 
 
-def test_invalid_step_and_nonfinite_load_roll_back_atomically():
+def test_invalid_step_and_nonfinite_load_roll_back_atomically() -> None:
     _, bodies = _prepared_bodies(2, fixed_mask=[True, False])
     reference = _reference(bodies, [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     graph = phx.discretization.RigidJointGraphPlan()
 
-    def bad_load(time, kinematics, args):
+    def bad_load(time: Any, kinematics: Any, args: Any) -> Any:
         del time, args
         return phx.discretization.RigidBodyLoad(
             jnp.full_like(kinematics.position, jnp.nan),
@@ -369,7 +374,7 @@ def test_invalid_step_and_nonfinite_load_roll_back_atomically():
     )
 
 
-def test_successful_constraint_step_has_implicit_load_derivative():
+def test_successful_constraint_step_has_implicit_load_derivative() -> None:
     _, bodies = _prepared_bodies(2, fixed_mask=[True, False])
     reference = _reference(bodies, [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     graph = phx.discretization.RigidJointGraphPlan(
@@ -381,7 +386,7 @@ def test_successful_constraint_step_has_implicit_load_derivative():
         )
     )
 
-    def parameterized_load(time, kinematics, vertical_force):
+    def parameterized_load(time: Any, kinematics: Any, vertical_force: Any) -> Any:
         del time
         return phx.discretization.RigidBodyLoad(
             jnp.asarray([[0.0, 0.0, 0.0], [0.0, vertical_force, 0.0]]),
@@ -401,7 +406,7 @@ def test_successful_constraint_step_has_implicit_load_derivative():
         reference.angular_velocity,
     )
 
-    def observable(vertical_force):
+    def observable(vertical_force: Any) -> Any:
         result = dynamics.step(
             state,
             jnp.asarray(0.0),
@@ -421,7 +426,7 @@ def test_successful_constraint_step_has_implicit_load_derivative():
     assert jnp.allclose(derivative, finite_difference, rtol=1.0e-5, atol=1.0e-10)
 
 
-def test_redundant_joint_rows_fail_rank_qualification():
+def test_redundant_joint_rows_fail_rank_qualification() -> None:
     _, bodies = _prepared_bodies(3, fixed_mask=[True, False, False])
     reference = _reference(
         bodies,

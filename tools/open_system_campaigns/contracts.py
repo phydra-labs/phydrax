@@ -69,7 +69,7 @@ class SemanticReplayEvidence(StrictModule):
         event_time_tolerance: float,
         disagreement_tolerance: float,
         observable_tolerance: float,
-    ):
+    ) -> None:
         self.independently_replayed = _boolean_scalar(
             independently_replayed, "independently_replayed"
         )
@@ -131,7 +131,7 @@ class CampaignPrecisionBundle(StrictModule):
         /,
         *,
         children: Mapping[str, PrecisionEvidenceEnvelope] | None = None,
-    ):
+    ) -> None:
         request = PrecisionRequest(domain, effective)
         expected_provider = f"phydrax-{domain}"
         if provider != expected_provider:
@@ -163,7 +163,7 @@ class CampaignCapacityEvidence(StrictModule):
         used: int,
         limit: int,
         /,
-    ):
+    ) -> None:
         identifier = str(name)
         if (
             isinstance(used, bool)
@@ -213,7 +213,7 @@ class OpenSystemCampaignRecord(StrictModule):
         artifact_arrays: Mapping[str, ArrayLike],
         work: Mapping[str, int],
         unsupported_claims: Sequence[str] = (),
-    ):
+    ) -> None:
         campaign = str(campaign_id)
         representation = str(representation_id)
         execution = _boolean_scalar(execution_success, "execution_success")
@@ -320,7 +320,7 @@ class _OpenSystemArtifactVerification(StrictModule):
     artifact_sha256: str = eqx.field(static=True)
     reproduced: Array
 
-    def __init__(self, artifact_sha256: str, reproduced: ArrayLike, /):
+    def __init__(self, artifact_sha256: str, reproduced: ArrayLike, /) -> None:
         digest = str(artifact_sha256)
         if len(digest) != 64 or any(
             character not in "0123456789abcdef" for character in digest
@@ -341,7 +341,7 @@ class VerifiedOpenSystemCampaign(StrictModule):
         record: OpenSystemCampaignRecord,
         verification: _OpenSystemArtifactVerification,
         /,
-    ):
+    ) -> None:
         if not isinstance(record, OpenSystemCampaignRecord):
             raise TypeError("record must be an OpenSystemCampaignRecord.")
         if not isinstance(verification, _OpenSystemArtifactVerification):
@@ -370,7 +370,7 @@ class OpenSystemGraduationResult(StrictModule):
         campaigns: Sequence[VerifiedOpenSystemCampaign],
         policies: Sequence[OpenSystemPromotionPolicy],
         /,
-    ):
+    ) -> None:
         campaigns_ = tuple(campaigns)
         policies_ = tuple(policies)
         if len(campaigns_) != len(policies_) or not campaigns_:

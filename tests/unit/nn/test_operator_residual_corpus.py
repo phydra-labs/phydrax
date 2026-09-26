@@ -2,13 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _case(index, *, identities=None, values=None, mask=None):
+def _case(
+    index: Any, *, identities: Any = None, values: Any = None, mask: Any = None
+) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 3),
@@ -52,7 +57,7 @@ def _case(index, *, identities=None, values=None, mask=None):
     )
 
 
-def _corpus(cases, *, binding_id="binding-a", loss_id="loss-a"):
+def _corpus(cases: Any, *, binding_id: Any = "binding-a", loss_id: Any = "loss-a") -> Any:
     return phx.nn.operator.training.prepare_operator_residual_corpus(
         cases,
         binding_id=binding_id,
@@ -63,7 +68,9 @@ def _corpus(cases, *, binding_id="binding-a", loss_id="loss-a"):
     )
 
 
-def test_residual_corpus_is_targetless_provenance_complete_and_content_addressed():
+def test_residual_corpus_is_targetless_provenance_complete_and_content_addressed() -> (
+    None
+):
     cases = (_case(0), _case(1))
 
     first = _corpus(cases)
@@ -78,7 +85,7 @@ def test_residual_corpus_is_targetless_provenance_complete_and_content_addressed
     assert _corpus(cases, loss_id="loss-b").corpus_id != first.corpus_id
 
 
-def test_residual_corpus_rejects_missing_identity_and_nonfinite_active_values():
+def test_residual_corpus_rejects_missing_identity_and_nonfinite_active_values() -> None:
     missing = _case(0, identities={"solver_execution_id": "solve-0"})
     with pytest.raises(ValueError, match="missing.*operator_id"):
         _corpus((missing,))

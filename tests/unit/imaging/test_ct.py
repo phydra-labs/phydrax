@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -10,7 +12,7 @@ from phydrax.imaging._ct import (
 )
 
 
-def _manifest(name="synthetic-ct-source", checksum_digit="0"):
+def _manifest(name: Any = "synthetic-ct-source", checksum_digit: Any = "0") -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -28,7 +30,7 @@ def _manifest(name="synthetic-ct-source", checksum_digit="0"):
     )
 
 
-def _asset(values):
+def _asset(values: Any) -> Any:
     coordinate_contract = phx.SpatialCoordinateContract(
         phx.units.MILLIMETER,
         coordinate_system="cartesian-lps",
@@ -69,7 +71,7 @@ def _asset(values):
     )
 
 
-def _calibration():
+def _calibration() -> Any:
     return HUToMaterialCalibration(
         "synthetic-three-anchor",
         ("air-like", "water-like"),
@@ -82,7 +84,7 @@ def _calibration():
     )
 
 
-def test_hu_calibration_preserves_support_and_material_basis_order():
+def test_hu_calibration_preserves_support_and_material_basis_order() -> None:
     source = _asset((-500.0, 0.0, 500.0))
     calibrated = apply_hu_calibration(source, _calibration())
 
@@ -101,22 +103,25 @@ def test_hu_calibration_preserves_support_and_material_basis_order():
         ((0.5, 0.5), (0.0, 1.0), (0.0, 1.0)),
     )
     np.testing.assert_allclose(
-        calibrated.density.uncertainty.values[:, 0, 0], (9.99, 8.0, 8.0)
+        # ty: ignore[unresolved-attribute]
+        calibrated.density.uncertainty.values[:, 0, 0],
+        (9.99, 8.0, 8.0),
     )
     assert calibrated.material_fractions.uncertainty is None
     assert (
+        # ty: ignore[not-subscriptable]
         calibrated.material_fractions.metadata["material_fraction_uncertainty"]
         == "not-represented-shared-hu-covariance"
     )
     assert len(calibrated.density.references) == 2
 
 
-def test_hu_calibration_refuses_values_outside_closed_support():
+def test_hu_calibration_refuses_values_outside_closed_support() -> None:
     with pytest.raises(ValueError, match="clamping and extrapolation are not permitted"):
         apply_hu_calibration(_asset((-1000.0, 1000.1)), _calibration())
 
 
-def test_hu_material_result_rejects_unrelated_calibration_identity():
+def test_hu_material_result_rejects_unrelated_calibration_identity() -> None:
     calibrated = apply_hu_calibration(_asset((0.0,)), _calibration())
     with pytest.raises(ValueError, match="calibration_id"):
         HUToMaterialResult(

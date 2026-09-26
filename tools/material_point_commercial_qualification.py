@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -32,7 +33,7 @@ NAMES = (
 )
 
 
-def _write(directory, name, metrics, passed):
+def _write(directory: Any, name: Any, metrics: Any, passed: Any) -> Any:
     payload = {
         "maturity": "commercial-qualification-candidate",
         "capability": name,
@@ -47,7 +48,9 @@ def _write(directory, name, metrics, passed):
     return payload
 
 
-def _base(transfer=None, schedule=None, fields=None, assignment=None):
+def _base(
+    transfer: Any = None, schedule: Any = None, fields: Any = None, assignment: Any = None
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(10, periodic=True, endpoint=False)
@@ -98,7 +101,7 @@ def _base(transfer=None, schedule=None, fields=None, assignment=None):
     return compiled, arguments, state
 
 
-def _transfer():
+def _transfer() -> Any:
     metrics = {}
     passed = True
     for transfer in (
@@ -143,7 +146,7 @@ def _transfer():
     return metrics, passed
 
 
-def _kinematics_geomechanics():
+def _kinematics_geomechanics() -> Any:
     base = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
     material = phx.applications.solid_mechanics.GeneralPlaneStressMPMConstitutivePlan(
         base
@@ -196,7 +199,7 @@ def _kinematics_geomechanics():
     )
 
 
-def _coupled():
+def _coupled() -> Any:
     shape = (6, 6)
     boundary = phx.applications.solid_mechanics.MPMCoupledBoundaryPlan(
         pressure_mask=jnp.zeros(shape, dtype="bool").at[0].set(True),
@@ -236,7 +239,7 @@ def _coupled():
     return metrics, metrics["successful"]
 
 
-def _contact_multifield():
+def _contact_multifield() -> Any:
     mass = jnp.asarray([[1.0], [1.5], [2.0]])
     velocity = jnp.asarray([[[0.8, 0.3]], [[0.0, 0.0]], [[-0.6, -0.1]]])
     gradients = jnp.asarray([[[1.0, 0.0]], [[0.0, 1.0]], [[-1.0, -1.0]]])
@@ -289,7 +292,7 @@ def _contact_multifield():
     ), (schedules, schedule_passed)
 
 
-def _implicit_sparse_moving():
+def _implicit_sparse_moving() -> Any:
     compiled, arguments, state = _base()
     implicit = phx.solver.PreparedImplicitMPMDynamics(compiled.dynamics).step_detailed(
         state, 0.001, arguments
@@ -372,7 +375,7 @@ def _implicit_sparse_moving():
     )
 
 
-def _execution_distributed_amr():
+def _execution_distributed_amr() -> Any:
     execution = phx.discretization.MPMExecutionPlan(
         backend="cpu",
         device_mesh="1",
@@ -444,7 +447,7 @@ def _execution_distributed_amr():
     )
 
 
-def _derivative_release():
+def _derivative_release() -> Any:
     branch = phx.discretization.branchwise_gradient(
         lambda value: jnp.sum(value**2),
         jnp.asarray((1.0, 2.0)),
@@ -537,7 +540,7 @@ def _derivative_release():
     ), (release, release["releasable"])
 
 
-def run(directory):
+def run(directory: Any) -> None:
     results = {}
     metrics, passed = _transfer()
     results["transfer"] = _write(directory, "transfer", metrics, passed)
@@ -577,7 +580,7 @@ def run(directory):
         raise SystemExit(1)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Qualify commercial MPM closures.")
     parser.add_argument("--output", type=Path, default=Path("benchmarks"))
     arguments = parser.parse_args()

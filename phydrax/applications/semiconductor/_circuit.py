@@ -297,7 +297,10 @@ def _circuit_jacobian(
     )
     state_space, residual_space = problem.state_space, problem.residual_space
     # The right-preconditioned operating-point problem declares both spaces.
-    assert state_space is not None and residual_space is not None
+    if not (state_space is not None and residual_space is not None):
+        raise RuntimeError(
+            "Internal invariant failed: state_space is not None and residual_space is not None."
+        )
     kcl_derivative = compile_sparse_jacobian(
         lambda state, parameters: problem.evaluate(state, parameters)[0][:node_count],
         initial,
@@ -405,7 +408,8 @@ def semiconductor_circuit_operating_point(
 
     state_space = plan.problem.state_space
     # plan_circuit_operating_point always declares the ArraySpace state space.
-    assert state_space is not None
+    if not (state_space is not None):
+        raise RuntimeError("Internal invariant failed: state_space is not None.")
     transformed = RightPreconditionedSystem(
         plan.problem,
         FunctionRightNonlinearPreconditioner(

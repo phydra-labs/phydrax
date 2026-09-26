@@ -1,21 +1,24 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
+
+from typing import Any
+
 import phydrax as phx
 
 
 class _BoundedLeaves(phx.optim.AbstractBranchAndBoundProblem):
     sibling_bound: float
 
-    def __init__(self, sibling_bound):
+    def __init__(self, sibling_bound: Any) -> None:
         self.sibling_bound = sibling_bound
         self.problem_id = "frontier-certification"
 
-    def root(self):
+    def root(self) -> str:
         return "root"
 
-    def node_id(self, node):
+    def node_id(self, node: Any) -> Any:
         return node
 
-    def evaluate(self, node):
+    def evaluate(self, node: Any) -> Any:
         bound = {
             "root": self.sibling_bound,
             "candidate": 1.0,
@@ -39,12 +42,12 @@ class _BoundedLeaves(phx.optim.AbstractBranchAndBoundProblem):
             terminal=True,
         )
 
-    def branch(self, node, evaluation):
+    def branch(self, node: Any, evaluation: Any) -> Any:
         del node, evaluation
         return ("candidate", "sibling")
 
 
-def test_dominated_frontier_proves_optimality_without_positive_gap_claim():
+def test_dominated_frontier_proves_optimality_without_positive_gap_claim() -> None:
     result = phx.optim.branch_and_bound(_BoundedLeaves(2.0))
     assert result.successful
     assert result.objective == 2.0
@@ -52,7 +55,7 @@ def test_dominated_frontier_proves_optimality_without_positive_gap_claim():
     assert result.absolute_gap == 0.0
 
 
-def test_positive_gap_retains_unresolved_competitor_and_is_not_exact():
+def test_positive_gap_retains_unresolved_competitor_and_is_not_exact() -> None:
     result = phx.optim.branch_and_bound(
         _BoundedLeaves(1.5),
         policy=phx.optim.BranchAndBoundPolicy(absolute_gap=0.5),
@@ -68,16 +71,16 @@ def test_positive_gap_retains_unresolved_competitor_and_is_not_exact():
 class _FailedSibling(phx.optim.AbstractBranchAndBoundProblem):
     problem_id = "failed-sibling"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.problem_id = "failed-sibling"
 
-    def root(self):
+    def root(self) -> str:
         return "root"
 
-    def node_id(self, node):
+    def node_id(self, node: Any) -> Any:
         return node
 
-    def evaluate(self, node):
+    def evaluate(self, node: Any) -> Any:
         if node == "root":
             return phx.optim.BranchNodeEvaluation(
                 lower_bound=phx.optim.BranchBoundEvidence(
@@ -112,7 +115,7 @@ class _FailedSibling(phx.optim.AbstractBranchAndBoundProblem):
             ),
         )
 
-    def branch(self, node, evaluation):
+    def branch(self, node: Any, evaluation: Any) -> Any:
         del node, evaluation
         return ("candidate", "failed")
 
@@ -120,16 +123,16 @@ class _FailedSibling(phx.optim.AbstractBranchAndBoundProblem):
 class _NegativeInfiniteRoot(phx.optim.AbstractBranchAndBoundProblem):
     problem_id = "negative-infinite-root"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.problem_id = "negative-infinite-root"
 
-    def root(self):
+    def root(self) -> str:
         return "root"
 
-    def node_id(self, node):
+    def node_id(self, node: Any) -> Any:
         return node
 
-    def evaluate(self, node):
+    def evaluate(self, node: Any) -> Any:
         return phx.optim.BranchNodeEvaluation(
             lower_bound=phx.optim.BranchBoundEvidence(
                 float("-inf"),
@@ -144,31 +147,33 @@ class _NegativeInfiniteRoot(phx.optim.AbstractBranchAndBoundProblem):
             terminal=True,
         )
 
-    def branch(self, node, evaluation):
+    # ty: ignore[invalid-method-override]
+    def branch(self, node: Any, evaluation: Any) -> None:
         raise AssertionError((node, evaluation))
 
 
 class _InfeasibleRoot(phx.optim.AbstractBranchAndBoundProblem):
     problem_id = "infeasible-root"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.problem_id = "infeasible-root"
 
-    def root(self):
+    def root(self) -> str:
         return "root"
 
-    def node_id(self, node):
+    def node_id(self, node: Any) -> Any:
         return node
 
-    def evaluate(self, node):
+    def evaluate(self, node: Any) -> Any:
         del node
         return phx.optim.BranchNodeEvaluation.proven_infeasible("root-infeasibility")
 
-    def branch(self, node, evaluation):
+    # ty: ignore[invalid-method-override]
+    def branch(self, node: Any, evaluation: Any) -> None:
         raise AssertionError((node, evaluation))
 
 
-def test_failed_node_prevents_global_success_without_discarding_incumbent():
+def test_failed_node_prevents_global_success_without_discarding_incumbent() -> None:
     result = phx.optim.branch_and_bound(_FailedSibling())
 
     assert result.status == phx.optim.BranchAndBoundStatus.EVALUATION_FAILURE
@@ -178,7 +183,7 @@ def test_failed_node_prevents_global_success_without_discarding_incumbent():
     assert not result.successful
 
 
-def test_negative_infinite_bound_is_not_infeasibility():
+def test_negative_infinite_bound_is_not_infeasibility() -> None:
     result = phx.optim.branch_and_bound(_NegativeInfiniteRoot())
 
     assert result.status == phx.optim.BranchAndBoundStatus.OPTIMAL
@@ -186,7 +191,7 @@ def test_negative_infinite_bound_is_not_infeasibility():
     assert result.successful
 
 
-def test_only_certified_infeasible_root_reports_infeasible():
+def test_only_certified_infeasible_root_reports_infeasible() -> None:
     result = phx.optim.branch_and_bound(_InfeasibleRoot())
 
     assert result.status == phx.optim.BranchAndBoundStatus.INFEASIBLE
@@ -199,16 +204,16 @@ class _CountedBinaryTree(phx.optim.AbstractBranchAndBoundProblem):
     problem_id = "counted-binary-tree"
     evaluated: list[str]
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.evaluated = []
 
-    def root(self):
+    def root(self) -> str:
         return "root"
 
-    def node_id(self, node):
+    def node_id(self, node: Any) -> Any:
         return node
 
-    def evaluate(self, node):
+    def evaluate(self, node: Any) -> Any:
         self.evaluated.append(node)
         return phx.optim.BranchNodeEvaluation(
             lower_bound=phx.optim.BranchBoundEvidence(
@@ -219,12 +224,12 @@ class _CountedBinaryTree(phx.optim.AbstractBranchAndBoundProblem):
             terminal=node != "root",
         )
 
-    def branch(self, node, evaluation):
+    def branch(self, node: Any, evaluation: Any) -> Any:
         del node, evaluation
         return ("left", "right")
 
 
-def test_node_budget_prevents_eager_child_evaluations():
+def test_node_budget_prevents_eager_child_evaluations() -> None:
     problem = _CountedBinaryTree()
     result = phx.optim.branch_and_bound(
         problem,

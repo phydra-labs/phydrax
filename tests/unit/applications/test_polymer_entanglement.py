@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import phydrax as phx
 from phydrax.applications.polymer_liquids import entanglement as ent
 
 
-def _snapshot_runtime(*, periodic=False):
+def _snapshot_runtime(*, periodic: Any = False) -> Any:
     particle_ids = [10, 20, 30, 40, 50, 60]
     topology = phx.atomistic.MolecularTopologyPlan(
         bonds=[[10, 20], [20, 30], [40, 50], [50, 60]],
@@ -14,17 +16,24 @@ def _snapshot_runtime(*, periodic=False):
     )
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 10.0) if periodic else None
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         particle_ids,
+        # ty: ignore[invalid-argument-type]
         [0] * 6,
+        # ty: ignore[invalid-argument-type]
         [1.0] * 6,
         phx.atomistic.AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0] * 6,
+        # ty: ignore[invalid-argument-type]
         element_mask=[False] * 6,
+        # ty: ignore[invalid-argument-type]
         molecule_ids=[0, 0, 0, 1, 1, 1],
         topology=topology,
         cell=cell,
     ).prepare()
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.HarmonicBondPotential([1.0], [1.0])]
     ).prepare(system)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(15, box=cell).prepare(
@@ -56,7 +65,9 @@ def _snapshot_runtime(*, periodic=False):
         key=jax.random.key(9),
     )
     layout = phx.atomistic.PolymerChainLayoutPlan(
+        # ty: ignore[invalid-argument-type]
         [[0, 1, 2], [3, 4, 5]],
+        # ty: ignore[invalid-argument-type]
         [[True, True, True], [True, True, True]],
         maximum_frames=8,
     )
@@ -69,7 +80,7 @@ def _snapshot_runtime(*, periodic=False):
     return prepared, state
 
 
-def test_force_primitive_path_preserves_fixed_straight_chains():
+def test_force_primitive_path_preserves_fixed_straight_chains() -> None:
     prepared, state = _snapshot_runtime()
     snapshot, snapshot_evidence = prepared.capture(state)
     ppa = ent.ForcePrimitivePathPlan(
@@ -90,7 +101,7 @@ def test_force_primitive_path_preserves_fixed_straight_chains():
     assert int(result.contact_state.count) == 0
 
 
-def test_entanglement_estimators_retain_named_conventions_and_uncertainty():
+def test_entanglement_estimators_retain_named_conventions_and_uncertainty() -> None:
     result = ent.estimate_entanglement(
         ent.EntanglementEstimatorPlan(
             0.85,
@@ -99,6 +110,7 @@ def test_entanglement_estimators_retain_named_conventions_and_uncertainty():
             minimum_frames=8,
             maximum_relative_standard_error=1.0e-12,
         ),
+        # ty: ignore[invalid-argument-type]
         [2, 2],
         jnp.full((8, 2), 4.0),
         jnp.full((8, 2), 2.0),
@@ -107,12 +119,13 @@ def test_entanglement_estimators_retain_named_conventions_and_uncertainty():
     np.testing.assert_allclose(result.coil_entanglement_length, 2.0)
     np.testing.assert_allclose(result.plateau_modulus, (4.0 / 5.0) * 0.85 / 2.0)
 
+    # ty: ignore[invalid-argument-type]
     multi = ent.multi_length_kink_entanglement([50.0, 100.0, 150.0], [1.0, 2.0, 3.0])
     assert multi.successful
     np.testing.assert_allclose(multi.entanglement_length, 50.0)
 
 
-def test_periodic_snapshot_and_z1plus_interchange_preserve_source_identity():
+def test_periodic_snapshot_and_z1plus_interchange_preserve_source_identity() -> None:
     prepared, state = _snapshot_runtime(periodic=True)
     snapshot, _ = prepared.capture(state)
     periodic = ent.periodic_primitive_path_evidence(snapshot)
@@ -139,7 +152,7 @@ def test_periodic_snapshot_and_z1plus_interchange_preserve_source_identity():
     assert b"ITEM: ATOMS id mol xu yu zu" in artifact.payload
 
 
-def test_periodic_evidence_uses_last_active_bead_for_ragged_chains():
+def test_periodic_evidence_uses_last_active_bead_for_ragged_chains() -> None:
     positions = jnp.asarray(
         [
             [1.0, 1.0, 1.0],

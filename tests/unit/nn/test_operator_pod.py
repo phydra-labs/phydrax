@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _operator_pod_dataset():
+def _operator_pod_dataset() -> Any:
     source_axis = phx.nn.operator.OperatorAxis("sensor", jnp.array([0.0]))
     query_axis = phx.nn.operator.OperatorAxis(
         "x",
@@ -32,7 +35,7 @@ def _operator_pod_dataset():
     return dataset, source_axis, query_axis, targets
 
 
-def _deeponet(branch, basis):
+def _deeponet(branch: Any, basis: Any) -> Any:
     return phx.nn.operator.architectures.DeepONet(
         branch=branch,
         trunk=basis,
@@ -43,7 +46,9 @@ def _deeponet(branch, basis):
     )
 
 
-def test_operator_pod_uses_physical_kernel_preserves_layout_and_reconstructs_centered_data():
+def test_operator_pod_uses_physical_kernel_preserves_layout_and_reconstructs_centered_data() -> (
+    None
+):
     dataset, _source_axis, query_axis, targets = _operator_pod_dataset()
     fitted = phx.nn.operator.training.fit_operator_pod(
         dataset,
@@ -80,7 +85,7 @@ def test_operator_pod_uses_physical_kernel_preserves_layout_and_reconstructs_cen
     )
 
 
-def test_centered_pod_deeponet_adds_fixed_spatial_mean_not_channel_bias():
+def test_centered_pod_deeponet_adds_fixed_spatial_mean_not_channel_bias() -> None:
     dataset, _source_axis, _query_axis, _targets = _operator_pod_dataset()
     fitted = phx.nn.operator.training.fit_pod_basis(dataset, "state", 2, centered=True)
     branch = phx.nn.models.MLP(
@@ -110,7 +115,9 @@ def test_centered_pod_deeponet_adds_fixed_spatial_mean_not_channel_bias():
     assert eqx.filter_jit(centered)(dataset.batch).shape == centered_output.shape
 
 
-def test_legacy_uncentered_pod_basis_remains_shape_compatible_and_has_no_affine_offset():
+def test_legacy_uncentered_pod_basis_remains_shape_compatible_and_has_no_affine_offset() -> (
+    None
+):
     dataset, _source_axis, _query_axis, _targets = _operator_pod_dataset()
     fitted = phx.nn.operator.training.fit_operator_pod(
         dataset, "state", 2, centered=False
@@ -125,7 +132,9 @@ def test_legacy_uncentered_pod_basis_remains_shape_compatible_and_has_no_affine_
     assert jnp.allclose(legacy.evaluate_offset(dataset.batch.query("query")), 0.0)
 
 
-def test_pod_basis_rejects_changed_fixed_query_nodes_weights_and_case_dependent_layout():
+def test_pod_basis_rejects_changed_fixed_query_nodes_weights_and_case_dependent_layout() -> (
+    None
+):
     dataset, _source_axis, query_axis, _targets = _operator_pod_dataset()
     fitted = phx.nn.operator.training.fit_operator_pod(dataset, "state", 2, centered=True)
     changed_nodes = phx.nn.operator.FunctionSamples(
@@ -171,7 +180,7 @@ def test_pod_basis_rejects_changed_fixed_query_nodes_weights_and_case_dependent_
         )
 
 
-def test_centered_pod_deeponet_prediction_and_operator_fit_gradients_are_finite():
+def test_centered_pod_deeponet_prediction_and_operator_fit_gradients_are_finite() -> None:
     dataset, source_axis, query_axis, targets = _operator_pod_dataset()
     fitted = phx.nn.operator.training.fit_operator_pod(dataset, "state", 2, centered=True)
     branch = phx.nn.models.MLP(
@@ -183,7 +192,7 @@ def test_centered_pod_deeponet_prediction_and_operator_fit_gradients_are_finite(
     )
     model = _deeponet(branch, fitted.basis)
 
-    def prediction_loss(source_values):
+    def prediction_loss(source_values: Any) -> Any:
         batch = phx.nn.operator.OperatorBatch(
             inputs={
                 "source": phx.nn.operator.FunctionSamples(
@@ -199,7 +208,7 @@ def test_centered_pod_deeponet_prediction_and_operator_fit_gradients_are_finite(
 
     source_gradient = jax.grad(prediction_loss)(jnp.linspace(-1.0, 1.0, dataset.size))
 
-    def fit_feature_loss(output_values, snapshot_weight):
+    def fit_feature_loss(output_values: Any, snapshot_weight: Any) -> Any:
         replaced_targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
             {"state": output_values}, dataset.batch
         )

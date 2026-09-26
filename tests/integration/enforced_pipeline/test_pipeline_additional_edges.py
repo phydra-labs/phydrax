@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -35,7 +38,7 @@ from phydrax.operators.integral import mean
 from phydrax.operators.linalg import einsum
 
 
-def _line_batch(domain, xs):
+def _line_batch(domain: Any, xs: Any) -> Any:
     structure = SampleLayout((("x",),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -50,7 +53,7 @@ def _line_batch(domain, xs):
     return PointBatch(points=points, structure=structure)
 
 
-def _paired_batch(domain, xs, ts):
+def _paired_batch(domain: Any, xs: Any, ts: Any) -> Any:
     structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -68,13 +71,13 @@ def _paired_batch(domain, xs, ts):
     return PointBatch(points=points, structure=structure)
 
 
-def test_error_missing_anchor_label():
+def test_error_missing_anchor_label() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + t
 
     interior = InteriorAnchors(
@@ -87,13 +90,13 @@ def test_error_missing_anchor_label():
         EnforcementProgram.build(functions={"u": u}, interior=[interior])
 
 
-def test_error_anchor_on_boundary():
+def test_error_anchor_on_boundary() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + t
 
     boundary = domain.component({"x": Boundary()})
@@ -118,13 +121,13 @@ def test_error_anchor_on_boundary():
         )
 
 
-def test_error_anchor_on_initial_time():
+def test_error_anchor_on_initial_time() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + t
 
     initial = domain.component({"t": FixedStart()})
@@ -149,13 +152,13 @@ def test_error_anchor_on_initial_time():
         )
 
 
-def test_error_conflicting_duplicate_anchors():
+def test_error_conflicting_duplicate_anchors() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + t
 
     points = {
@@ -169,11 +172,11 @@ def test_error_conflicting_duplicate_anchors():
         EnforcementProgram.build(functions={"u": u}, interior=[a, b])
 
 
-def test_identity_remainder_toggle_changes_output():
+def test_identity_remainder_toggle_changes_output() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] * 0.0 + 10.0
 
     left = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
@@ -205,14 +208,14 @@ def test_identity_remainder_toggle_changes_output():
     assert out_yes > 1.2
 
 
-def test_enforce_traction_enforces_zero_boundary():
+def test_enforce_traction_enforces_zero_boundary() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([0.0, 0.0])
 
     condition = phx.conditions.solids.Traction(
@@ -267,14 +270,14 @@ def test_enforce_traction_enforces_zero_boundary():
     assert jnp.allclose(out, 0.0, atol=1e-6)
 
 
-def test_enforce_neumann_enforces_zero_normal_derivative():
+def test_enforce_neumann_enforces_zero_normal_derivative() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2
 
     constraint = EnforcementSpec(
@@ -308,14 +311,14 @@ def test_enforce_neumann_enforces_zero_normal_derivative():
     assert jnp.allclose(out, 0.0, atol=1e-3)
 
 
-def test_enforce_robin_enforces_boundary_relation():
+def test_enforce_robin_enforces_boundary_relation() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0]
 
     constraint = EnforcementSpec(
@@ -358,14 +361,14 @@ def test_enforce_robin_enforces_boundary_relation():
     assert jnp.allclose(out, 0.0, atol=1e-3)
 
 
-def test_enforce_sommerfeld_enforces_absorbing_condition():
+def test_enforce_sommerfeld_enforces_absorbing_condition() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
     component = domain.component({"x": Boundary()})
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return t
 
     constraint = EnforcementSpec(
@@ -396,13 +399,13 @@ def test_enforce_sommerfeld_enforces_absorbing_condition():
     assert jnp.allclose(out, 0.0, atol=1e-3)
 
 
-def test_envelope_extremes():
+def test_envelope_extremes() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] * 0.0 + t * 0.0
 
     anchors = {
@@ -445,16 +448,16 @@ def test_envelope_extremes():
     assert out_large > 4.0
 
 
-def test_equivalent_domain_join_arithmetic():
+def test_equivalent_domain_join_arithmetic() -> None:
     dom_a = Interval1d(0.0, 1.0)
     dom_b = Interval1d(0.0, 1.0)
 
     @dom_a.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0]
 
     @dom_b.Function("x")
-    def g(x):
+    def g(x: Any) -> Any:
         return x[0] * 2.0
 
     h = f + g
@@ -464,17 +467,17 @@ def test_equivalent_domain_join_arithmetic():
     assert jnp.allclose(out, jnp.array([0.6, 2.4]), atol=1e-6)
 
 
-def test_join_broadcast_x_t():
+def test_join_broadcast_x_t() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0]
 
     @domain.Function("x", "t")
-    def g(x, t):
+    def g(x: Any, t: Any) -> Any:
         return t
 
     h = f + g
@@ -489,11 +492,11 @@ def test_join_broadcast_x_t():
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_pipeline_points_vs_coord_separable():
+def test_pipeline_points_vs_coord_separable() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2
 
     anchors = {"x": jnp.array([[0.25]], dtype="float64")}
@@ -514,12 +517,12 @@ def test_pipeline_points_vs_coord_separable():
     assert jnp.allclose(out_sep, out_dense, atol=1e-6)
 
 
-def test_gated_pipeline_points_vs_coord_separable():
+def test_gated_pipeline_points_vs_coord_separable() -> None:
     geom = Interval1d(0.0, 1.0)
     boundary = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2
 
     constraint = EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0))
@@ -546,11 +549,11 @@ def test_gated_pipeline_points_vs_coord_separable():
     assert jnp.allclose(out_sep, out_dense, atol=1e-6)
 
 
-def test_operator_stack_with_pipeline():
+def test_operator_stack_with_pipeline() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2
 
     anchors = {"x": jnp.array([[0.25]], dtype="float64")}
@@ -574,11 +577,11 @@ def test_operator_stack_with_pipeline():
     assert jnp.allclose(out, 1.0, atol=0.2)
 
 
-def test_jit_pipeline_determinism():
+def test_jit_pipeline_determinism() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] + 1.0
 
     anchors = {"x": jnp.array([[0.5]], dtype="float64")}
@@ -595,15 +598,15 @@ def test_jit_pipeline_determinism():
     assert jnp.allclose(out1, out2, atol=1e-8)
 
 
-def test_pipeline_passthrough_for_unconstrained_field():
+def test_pipeline_passthrough_for_unconstrained_field() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] * 0.0
 
     @geom.Function("x")
-    def v(x):
+    def v(x: Any) -> Any:
         return x[0] * 2.0
 
     boundary = geom.component({"x": Boundary()})
@@ -623,13 +626,13 @@ def test_pipeline_passthrough_for_unconstrained_field():
     assert jnp.allclose(out_v, expected, atol=1e-6)
 
 
-def test_boundary_constraint_multiple_geometry_labels_error():
+def test_boundary_constraint_multiple_geometry_labels_error() -> None:
     geom = Interval1d(0.0, 1.0)
     momentum = Interval1d(-1.0, 1.0).relabel("p")
     domain = geom @ momentum
 
     @domain.Function("x", "p")
-    def u(x, p):
+    def u(x: Any, p: Any) -> Any:
         return x[0] + p[0]
 
     both = domain.component({"x": Boundary(), "p": Boundary()})
@@ -639,14 +642,14 @@ def test_boundary_constraint_multiple_geometry_labels_error():
         EnforcementProgram.build(functions={"u": u}, specs=[constraint])
 
 
-def test_sensor_tracks_require_xt_domain():
+def test_sensor_tracks_require_xt_domain() -> None:
     geom = Interval1d(0.0, 1.0)
     momentum = Interval1d(-1.0, 1.0).relabel("p")
     time = TimeInterval(0.0, 1.0)
     domain = geom @ momentum @ time
 
     @domain.Function("x", "p", "t")
-    def u(x, p, t):
+    def u(x: Any, p: Any, t: Any) -> Any:
         return x[0] + p[0] + t
 
     interior = InteriorAnchors(
@@ -660,11 +663,11 @@ def test_sensor_tracks_require_xt_domain():
         EnforcementProgram.build(functions={"u": u}, interior=[interior])
 
 
-def test_vector_output_interior_data():
+def test_vector_output_interior_data() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.stack([x[0], x[0] * 2.0], axis=-1)
 
     anchors = {"x": jnp.array([[0.25], [0.75]], dtype="float64")}
@@ -680,19 +683,19 @@ def test_vector_output_interior_data():
     assert jnp.allclose(out, values, atol=1e-4)
 
 
-def test_where_all_weight_all_mean():
+def test_where_all_weight_all_mean() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0]
 
     @geom.Function("x")
-    def mask(x):
+    def mask(x: Any) -> Any:
         return x[0] > 0.5
 
     @geom.Function("x")
-    def weight(x):
+    def weight(x: Any) -> Any:
         return x[0] * 0.0 + 2.0
 
     component = geom.component(where_all=mask, weight_all=weight)
@@ -703,14 +706,14 @@ def test_where_all_weight_all_mean():
     assert jnp.allclose(out, 0.75, atol=1e-6)
 
 
-def test_enforce_traction_cancels_nonzero_affine_boundary_traction():
+def test_enforce_traction_cancels_nonzero_affine_boundary_traction() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0], 0.0])
 
     u_enforced = enforce_traction(
@@ -757,14 +760,14 @@ def test_enforce_traction_cancels_nonzero_affine_boundary_traction():
     assert jnp.allclose(out, 0.0, atol=1e-5)
 
 
-def test_enforce_neumann_cad_ansatz_is_bounded_in_the_interior():
+def test_enforce_neumann_cad_ansatz_is_bounded_in_the_interior() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] * 0.0
 
     u_enforced = enforce_neumann(

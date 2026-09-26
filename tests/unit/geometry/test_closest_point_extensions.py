@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from phydrax.geometry import box_closest_point, radial_closest_point
 
 
-def test_radial_closest_point_carries_physical_exactness_and_signed_coordinate():
+def test_radial_closest_point_carries_physical_exactness_and_signed_coordinate() -> None:
     points = jnp.asarray([[2.0, 0.0], [0.0, 0.5]])
     result = radial_closest_point(
         points,
@@ -17,7 +17,9 @@ def test_radial_closest_point_carries_physical_exactness_and_signed_coordinate()
     assert result.exact_to_physical
 
 
-def test_box_closest_point_marks_face_interior_regular_and_corner_tie_nonregular():
+def test_box_closest_point_marks_face_interior_regular_and_corner_tie_nonregular() -> (
+    None
+):
     result = box_closest_point(
         jnp.asarray([[2.0, 0.0], [2.0, 2.0]]),
         jnp.zeros((2,)),

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -9,7 +12,7 @@ from phydrax.nn.models import ComplexOutputModel, MLP, SeparableMLP
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_complex_output_single_model_vector(scan):
+def test_complex_output_single_model_vector(scan: Any) -> None:
     # Single model with out_size = 2k
     model = MLP(in_size=3, out_size=6, width_size=8, depth=2, scan=scan)
     wrapped = ComplexOutputModel(model)
@@ -25,7 +28,7 @@ def test_complex_output_single_model_vector(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_complex_output_two_models_vector(scan):
+def test_complex_output_two_models_vector(scan: Any) -> None:
     # Two models each with out_size = k
     m_real = MLP(in_size=4, out_size=3, width_size=8, depth=2, scan=scan)
     m_imag = MLP(in_size=4, out_size=3, width_size=8, depth=2, scan=scan)
@@ -42,7 +45,7 @@ def test_complex_output_two_models_vector(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_complex_output_two_models_scalar(scan):
+def test_complex_output_two_models_scalar(scan: Any) -> None:
     # Two models with scalar outputs -> complex scalar
     m_real = MLP(in_size=3, out_size="scalar", width_size=8, depth=2, scan=scan)
     m_imag = MLP(in_size=3, out_size="scalar", width_size=8, depth=2, scan=scan)
@@ -64,7 +67,7 @@ def test_complex_output_two_models_scalar(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_complex_output_single_model_k_scalar(scan):
+def test_complex_output_single_model_k_scalar(scan: Any) -> None:
     # Single model with out_size = 2 (k == 1 -> scalar)
     model = MLP(in_size=3, out_size=2, width_size=8, depth=2, scan=scan)
     wrapped = ComplexOutputModel(model)
@@ -86,7 +89,7 @@ def test_complex_output_single_model_k_scalar(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_complex_output_errors(scan):
+def test_complex_output_errors(scan: Any) -> None:
     # Single model with odd out_size
     bad = MLP(in_size=2, out_size=5, width_size=8, depth=2, scan=scan)
     with pytest.raises(ValueError):
@@ -106,7 +109,7 @@ def test_complex_output_errors(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_complex_output_separable_single_model_tuple(scan):
+def test_complex_output_separable_single_model_tuple(scan: Any) -> None:
     # Separable single model with out_size = 2k
     model = SeparableMLP(in_size=2, out_size=4, width_size=8, depth=2, scan=scan)
     wrapped = ComplexOutputModel(model)
@@ -122,7 +125,7 @@ def test_complex_output_separable_single_model_tuple(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_complex_output_separable_two_models_tuple(scan):
+def test_complex_output_separable_two_models_tuple(scan: Any) -> None:
     # Two separable models with k = 2
     mr = SeparableMLP(in_size=2, out_size=2, width_size=8, depth=2, scan=scan)
     mi = SeparableMLP(in_size=2, out_size=2, width_size=8, depth=2, scan=scan)

@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +17,13 @@ from phydrax.discretization.spectral._distributed import (
 )
 
 
-def _slab(shape=(8, 8, 6), *, state_shape=(), padded_shape=None, devices=None):
+def _slab(
+    shape: Any = (8, 8, 6),
+    *,
+    state_shape: Any = (),
+    padded_shape: Any = None,
+    devices: Any = None,
+) -> Any:
     selected = (jax.devices("cpu")[0],) if devices is None else tuple(devices)
     topology = SpectralMeshTopology(
         (len(selected),),
@@ -31,7 +39,7 @@ def _slab(shape=(8, 8, 6), *, state_shape=(), padded_shape=None, devices=None):
     )
 
 
-def test_one_device_is_real_identity_realization_with_round_trip_and_derivative():
+def test_one_device_is_real_identity_realization_with_round_trip_and_derivative() -> None:
     plan = _slab()
     x = jnp.arange(8)[:, None, None] * (2.0 * jnp.pi / 8.0)
     y = jnp.arange(8)[None, :, None] * (2.0 * jnp.pi / 8.0)
@@ -50,7 +58,7 @@ def test_one_device_is_real_identity_realization_with_round_trip_and_derivative(
     assert plan.report.host_gather is False
 
 
-def test_padding_round_trip_global_reductions_and_autodiff():
+def test_padding_round_trip_global_reductions_and_autodiff() -> None:
     plan = _slab((6, 6, 4), padded_shape=(10, 12, 8))
     key = jax.random.key(8)
     modal = (
@@ -85,7 +93,9 @@ def test_padding_round_trip_global_reductions_and_autodiff():
     np.testing.assert_allclose(gradient, jnp.ones_like(gradient), rtol=2e-5, atol=2e-5)
 
 
-def test_rotational_dealiasing_matches_full_complex_reference_and_projector_adapter():
+def test_rotational_dealiasing_matches_full_complex_reference_and_projector_adapter() -> (
+    None
+):
     plan = _slab((4, 4, 4), state_shape=(3,), padded_shape=(6, 6, 6))
     key = jax.random.key(2)
     velocity = (
@@ -95,7 +105,7 @@ def test_rotational_dealiasing_matches_full_complex_reference_and_projector_adap
 
     class IdentityProjector:
         @staticmethod
-        def project(value):
+        def project(value: Any) -> Any:
             return value
 
     distributed = plan.rotational_nonlinear(velocity, projector=IdentityProjector())
@@ -122,7 +132,7 @@ def test_rotational_dealiasing_matches_full_complex_reference_and_projector_adap
     np.testing.assert_allclose(distributed, reference, rtol=3e-5, atol=3e-5)
 
 
-def test_channel_distribution_keeps_y_replicated_and_zero_mode_atomic():
+def test_channel_distribution_keeps_y_replicated_and_zero_mode_atomic() -> None:
     devices = tuple(jax.devices("cpu"))
     if len(devices) >= 4:
         topology = SpectralMeshTopology(
@@ -156,7 +166,9 @@ def test_channel_distribution_keeps_y_replicated_and_zero_mode_atomic():
     np.testing.assert_array_equal(doubled, 2.0 * state)
 
 
-def test_resource_refusal_topology_mismatch_and_no_host_gather_guardrails(monkeypatch):
+def test_resource_refusal_topology_mismatch_and_no_host_gather_guardrails(
+    monkeypatch: Any,
+) -> None:
     topology = SpectralMeshTopology.one_device()
     with pytest.raises(SpectralResourceError) as caught:
         DistributedSpectralExecutionPlan(topology, (16, 16, 16), maximum_bytes=128)
@@ -179,7 +191,7 @@ def test_resource_refusal_topology_mismatch_and_no_host_gather_guardrails(monkey
     np.testing.assert_allclose(restored, values, rtol=1e-5, atol=1e-5)
 
 
-def test_multi_device_slab_and_pencil_when_process_exposes_forced_cpu_devices():
+def test_multi_device_slab_and_pencil_when_process_exposes_forced_cpu_devices() -> None:
     devices = tuple(jax.devices("cpu"))
     if len(devices) < 2:
         pytest.skip(

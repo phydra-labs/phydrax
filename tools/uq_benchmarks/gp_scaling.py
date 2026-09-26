@@ -66,6 +66,7 @@ def _jit_timings(
     return (
         compile_seconds + first_execution_seconds,
         compile_seconds,
+        # ty: ignore[invalid-argument-type]
         float(steady.median_seconds),
     )
 
@@ -193,18 +194,18 @@ def _case(
         repetitions=repetitions,
     )
 
-    def fixed_exact_objective(parameter):
+    def fixed_exact_objective(parameter: Any) -> Any:
         return exact_factor.log_probability(exact_model.residual(parameter * points))
 
-    def fixed_fitc_objective(parameter):
+    def fixed_fitc_objective(parameter: Any) -> Any:
         return sparse_factor.log_probability(sparse_model.residual(parameter * points))
 
-    def fixed_cagp_objective(parameter):
+    def fixed_cagp_objective(parameter: Any) -> Any:
         return computation_aware_factor.elbo(
             computation_aware_model.residual(parameter * points)
         )
 
-    def inferred_exact_objective(unconstrained):
+    def inferred_exact_objective(unconstrained: Any) -> Any:
         parameter, log_amplitude, log_length_scale, log_noise_scale = unconstrained
         return exact_model.log_marginal_likelihood(
             parameter * points,
@@ -215,7 +216,7 @@ def _case(
             ),
         )
 
-    def inferred_fitc_objective(unconstrained):
+    def inferred_fitc_objective(unconstrained: Any) -> Any:
         parameter, log_amplitude, log_length_scale, log_noise_scale = unconstrained
         return sparse_model.log_marginal_likelihood(
             parameter * points,
@@ -226,7 +227,7 @@ def _case(
             ),
         )
 
-    def inferred_cagp_objective(unconstrained):
+    def inferred_cagp_objective(unconstrained: Any) -> Any:
         parameter, log_amplitude, log_length_scale, log_noise_scale = unconstrained
         return computation_aware_model.elbo(
             parameter * points,
@@ -238,7 +239,7 @@ def _case(
             actions=computation_aware_actions,
         )
 
-    def inferred_cagp_action_objective(values):
+    def inferred_cagp_action_objective(values: Any) -> Any:
         return computation_aware_model.elbo(
             physical_mean,
             state=state,

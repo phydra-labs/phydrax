@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +21,7 @@ from phydrax.meshing._proposals import (
 from tests._ported_models import full_port, in_order, PortedAffine
 
 
-def _source():
+def _source() -> Any:
     mesh = phx.discretization.CellMesh.from_triangles(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.7, 0.3))),
         np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int32),
@@ -29,7 +31,7 @@ def _source():
     return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
 
-def _policy(source, **kwargs):
+def _policy(source: Any, **kwargs: Any) -> Any:
     return MeshProposalSafetyPolicy(
         source,
         minimum_size=0.1,
@@ -39,7 +41,9 @@ def _policy(source, **kwargs):
     )
 
 
-def test_marking_preserves_protected_cell_through_conformity_closure_and_transfers_fields():
+def test_marking_preserves_protected_cell_through_conformity_closure_and_transfers_fields() -> (
+    None
+):
     source = _source()
     proposal = MeshMarkingProposal(
         source, mesh_proposal_scope(source, 2), np.ones(4), proposer_id="estimator"
@@ -58,6 +62,7 @@ def test_marking_preserves_protected_cell_through_conformity_closure_and_transfe
     )
     np.testing.assert_array_equal(result.mesh.coordinates[:5], source.mesh.coordinates)
     assert transaction.transition is not None
+    # ty: ignore[unresolved-attribute]
     interpolated = transaction.transition.vertex_stencil.apply(
         source.mesh.vertex_global_ids, source.mesh.coordinates[:, 0]
     )
@@ -66,11 +71,14 @@ def test_marking_preserves_protected_cell_through_conformity_closure_and_transfe
     assert source.mesh.blocks[0].global_ids.size == 4
 
 
-def test_mark_capacity_uses_priority_then_global_id_and_accounts_for_neighbor_closure():
+def test_mark_capacity_uses_priority_then_global_id_and_accounts_for_neighbor_closure() -> (
+    None
+):
     source = _source()
     proposal = MeshMarkingProposal(
         source,
         mesh_proposal_scope(source, 2),
+        # ty: ignore[invalid-argument-type]
         (2.0, 5.0, 5.0, 1.0),
         proposer_id="estimator",
     )
@@ -87,10 +95,16 @@ def test_mark_capacity_uses_priority_then_global_id_and_accounts_for_neighbor_cl
     )
 
 
-def test_revision_changes_reject_proposal_policy_and_commit_even_with_unchanged_topology():
+def test_revision_changes_reject_proposal_policy_and_commit_even_with_unchanged_topology() -> (
+    None
+):
     source = _source()
     proposal = MeshMarkingProposal(
-        source, mesh_proposal_scope(source, 2), (1, 0, 0, 0), proposer_id="model"
+        source,
+        mesh_proposal_scope(source, 2),
+        # ty: ignore[invalid-argument-type]
+        (1, 0, 0, 0),
+        proposer_id="model",
     )
     policy = _policy(source)
     transaction = prepare_mesh_proposal(source, proposal, policy)
@@ -104,7 +118,11 @@ def test_revision_changes_reject_proposal_policy_and_commit_even_with_unchanged_
     with pytest.raises(ValueError, match="revision"):
         project_mesh_proposal(refreshed, proposal, _policy(refreshed))
     fresh_proposal = MeshMarkingProposal(
-        refreshed, mesh_proposal_scope(refreshed, 2), (1, 0, 0, 0), proposer_id="model"
+        refreshed,
+        mesh_proposal_scope(refreshed, 2),
+        # ty: ignore[invalid-argument-type]
+        (1, 0, 0, 0),
+        proposer_id="model",
     )
     with pytest.raises(ValueError, match="revision"):
         project_mesh_proposal(refreshed, fresh_proposal, policy)
@@ -112,20 +130,28 @@ def test_revision_changes_reject_proposal_policy_and_commit_even_with_unchanged_
         transaction.commit(refreshed)
 
 
-def test_size_projection_clamps_and_grades_in_sorted_global_id_order_then_refines():
+def test_size_projection_clamps_and_grades_in_sorted_global_id_order_then_refines() -> (
+    None
+):
     source = _source()
     scope = mesh_proposal_scope(source, 0)
     proposal = MeshSizeProposal(
-        source, scope, (-5.0, 2.0, 0.2, 50.0, 1.0), proposer_id="model"
+        source,
+        scope,
+        # ty: ignore[invalid-argument-type]
+        (-5.0, 2.0, 0.2, 50.0, 1.0),
+        proposer_id="model",
     )
     transaction = prepare_mesh_proposal(
         source, proposal, _policy(source, maximum_gradation=1.1)
     )
     field = transaction.projection.size_field
+    # ty: ignore[unresolved-attribute]
     sizes = np.asarray(field.values)
     assert np.all(sizes >= 0.1 - 1e-12)
     assert np.all(sizes <= 2.0 + 1e-12)
     order = np.argsort(np.asarray(source.mesh.vertex_global_ids))
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(field.sample_points, source.mesh.coordinates[order])
     inverse = np.argsort(order)
     edges = np.asarray(source.mesh.connectivity.edges)
@@ -136,7 +162,9 @@ def test_size_projection_clamps_and_grades_in_sorted_global_id_order_then_refine
     np.testing.assert_array_equal(proposal.values, (-5.0, 2.0, 0.2, 50.0, 1.0))
 
 
-def test_metric_projection_repairs_indefinite_asymmetric_tensors_with_bounded_gradation():
+def test_metric_projection_repairs_indefinite_asymmetric_tensors_with_bounded_gradation() -> (
+    None
+):
     source = _source()
     raw = np.asarray((((-3.0, 4.0), (0.0, 2.0)),) * 5)
     raw[0] = ((1.0e4, 0.0), (0.0, 4.0))
@@ -146,6 +174,7 @@ def test_metric_projection_repairs_indefinite_asymmetric_tensors_with_bounded_gr
     transaction = prepare_mesh_proposal(
         source, proposal, _policy(source, maximum_anisotropy=2.0, maximum_gradation=1.05)
     )
+    # ty: ignore[unresolved-attribute]
     values = np.asarray(transaction.projection.metric.values)
     eigenvalues = np.linalg.eigvalsh(values)
     np.testing.assert_allclose(values, values.swapaxes(-1, -2), atol=1e-12)
@@ -161,12 +190,15 @@ def test_metric_projection_repairs_indefinite_asymmetric_tensors_with_bounded_gr
     assert transaction.commit(source).mesh.topology_id != source.mesh.topology_id
 
 
-def test_coordinate_targets_and_optimization_respect_scope_protection_and_trust_region():
+def test_coordinate_targets_and_optimization_respect_scope_protection_and_trust_region() -> (
+    None
+):
     source = _source()
     scope = mesh_proposal_scope(source, 0, np.asarray((5, 7)))
     proposal = MeshCoordinateProposal(
         source,
         scope,
+        # ty: ignore[invalid-argument-type]
         ((-2.0, 4.0), (9.0, 9.0)),
         source.coordinate_contract,
         proposer_id="model",
@@ -187,15 +219,21 @@ def test_coordinate_targets_and_optimization_respect_scope_protection_and_trust_
     assert result.mesh.topology_id == source.mesh.topology_id
     assert result.quality.minimum_mean_ratio > 0
     assert (
+        # ty: ignore[unresolved-attribute]
         transaction.optimization.final_objective
+        # ty: ignore[unresolved-attribute]
         < transaction.optimization.initial_objective
     )
 
 
-def test_candidate_that_fails_trusted_safety_audit_cannot_commit_and_rolls_back():
+def test_candidate_that_fails_trusted_safety_audit_cannot_commit_and_rolls_back() -> None:
     source = _source()
     proposal = MeshMarkingProposal(
-        source, mesh_proposal_scope(source, 2), (1, 0, 0, 0), proposer_id="model"
+        source,
+        mesh_proposal_scope(source, 2),
+        # ty: ignore[invalid-argument-type]
+        (1, 0, 0, 0),
+        proposer_id="model",
     )
     policy = _policy(
         source, audit_policy=phx.meshing.CellMeshAuditPolicy(minimum_mean_ratio=0.999)
@@ -209,12 +247,13 @@ def test_candidate_that_fails_trusted_safety_audit_cannot_commit_and_rolls_back(
     assert transaction.commit(source, accept=False) is source
 
 
-def test_nonfinite_unknown_entities_and_coordinate_frame_mismatch_are_rejected():
+def test_nonfinite_unknown_entities_and_coordinate_frame_mismatch_are_rejected() -> None:
     source = _source()
     with pytest.raises(ValueError, match="finite"):
         MeshSizeProposal(
             source,
             mesh_proposal_scope(source, 0),
+            # ty: ignore[invalid-argument-type]
             (1, 1, np.nan, 1, 1),
             proposer_id="model",
         )
@@ -227,13 +266,16 @@ def test_nonfinite_unknown_entities_and_coordinate_frame_mismatch_are_rejected()
         MeshCoordinateProposal(
             source,
             mesh_proposal_scope(source, 0, np.asarray((5,))),
+            # ty: ignore[invalid-argument-type]
             ((0.5, 0.5),),
             other_frame,
             proposer_id="model",
         )
 
 
-def test_exhausted_capacity_produces_explicit_unchanged_source_without_refinement():
+def test_exhausted_capacity_produces_explicit_unchanged_source_without_refinement() -> (
+    None
+):
     source = _source()
     proposal = MeshMarkingProposal(
         source, mesh_proposal_scope(source, 2), np.ones(4), proposer_id="model"
@@ -249,7 +291,7 @@ def test_exhausted_capacity_produces_explicit_unchanged_source_without_refinemen
     assert transaction.commit(source) is source
 
 
-def test_unit_gradation_reaches_beyond_sixty_four_adjacency_hops():
+def test_unit_gradation_reaches_beyond_sixty_four_adjacency_hops() -> None:
     points = np.asarray(
         [(float(column), float(row)) for column in range(72) for row in range(2)]
     )
@@ -277,6 +319,7 @@ def test_unit_gradation_reaches_beyond_sixty_four_adjacency_hops():
         source, proposal, _policy(source, maximum_gradation=1.0)
     )
 
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(projection.size_field.values, 0.1, atol=1e-12)
 
 
@@ -286,13 +329,13 @@ class _AbstractScore(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, weight, bias=0.0):
+    def __init__(self, weight: Any, bias: Any = 0.0) -> None:
         self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.bias = jnp.asarray(bias, dtype=jnp.float64)
         self.in_size = int(self.weight.size)
         self.out_size = "scalar"
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         return self.weight @ x + self.bias
 
 
@@ -300,13 +343,16 @@ class _Score(_AbstractScore):
     pass
 
 
-def test_learned_marking_cannot_bypass_native_projection_or_protection():
+def test_learned_marking_cannot_bypass_native_projection_or_protection() -> None:
     source = _source()
     # One-hot cell features in sorted global-ID order; the model scores the
     # protected cell 10 highest.
     features = np.eye(4)
     proposer = LearnedMeshProposer(
-        _Score((9.0, 1.0, 3.0, 2.0)), kind="marking", proposer_id="learned-marker"
+        # ty: ignore[invalid-argument-type, missing-argument]
+        _Score((9.0, 1.0, 3.0, 2.0)),
+        kind="marking",
+        proposer_id="learned-marker",
     )
     proposal = proposer.propose(source, features)
     policy = _policy(
@@ -322,6 +368,7 @@ def test_learned_marking_cannot_bypass_native_projection_or_protection():
     untrusted = MeshMarkingProposal(
         source,
         mesh_proposal_scope(source, 2),
+        # ty: ignore[invalid-argument-type]
         (9.0, 1.0, 3.0, 2.0),
         proposer_id="learned-marker",
     )
@@ -339,13 +386,16 @@ def test_learned_marking_cannot_bypass_native_projection_or_protection():
     assert contract.authority is phx.ComponentAuthority.DECISION
 
     nonfinite = LearnedMeshProposer(
-        _Score((np.nan, 0.0, 0.0, 0.0)), kind="marking", proposer_id="nan"
+        # ty: ignore[invalid-argument-type, missing-argument]
+        _Score((np.nan, 0.0, 0.0, 0.0)),
+        kind="marking",
+        proposer_id="nan",
     )
     with pytest.raises(ValueError, match="finite"):
         nonfinite.propose(source, features)
 
 
-def test_port_declaring_proposer_binds_declared_feature_and_value_ports():
+def test_port_declaring_proposer_binds_declared_feature_and_value_ports() -> None:
     source = _source()
     owner = phx.ModelPorts(
         inputs=(full_port("cell.indicators", (4,)),),
@@ -374,17 +424,22 @@ def test_port_declaring_proposer_binds_declared_feature_and_value_ports():
         port_mapping=in_order(owner, owner),
     )
     evidence = proposer.component_contract().port_binding
+    # ty: ignore[unresolved-attribute]
     assert evidence.inputs == ((owner.inputs[0].port_id,) * 2,)
+    # ty: ignore[unresolved-attribute]
     assert evidence.unverified == ()
     proposal = proposer.propose(source, np.eye(4))
     np.testing.assert_array_equal(proposal.values, (9.0, 1.0, 3.0, 2.0))
 
 
-def test_learned_size_proposal_is_clamped_by_the_trusted_projection():
+def test_learned_size_proposal_is_clamped_by_the_trusted_projection() -> None:
     source = _source()
     features = np.eye(5)
     proposer = LearnedMeshProposer(
-        _Score((-5.0, 2.0, 0.2, 50.0, 1.0)), kind="size", proposer_id="sizer"
+        # ty: ignore[invalid-argument-type, missing-argument]
+        _Score((-5.0, 2.0, 0.2, 50.0, 1.0)),
+        kind="size",
+        proposer_id="sizer",
     )
     transaction = prepare_mesh_proposal(
         source,
@@ -392,13 +447,15 @@ def test_learned_size_proposal_is_clamped_by_the_trusted_projection():
         _policy(source, maximum_gradation=1.1),
     )
 
+    # ty: ignore[unresolved-attribute]
     sizes = np.asarray(transaction.projection.size_field.values)
     assert np.all(sizes >= 0.1 - 1e-12) and np.all(sizes <= 2.0 + 1e-12)
     with pytest.raises(ValueError, match="spatial_dimension"):
+        # ty: ignore[invalid-argument-type, missing-argument]
         LearnedMeshProposer(_Score((1.0,)), kind="metric", proposer_id="metric")
 
 
-def test_learned_marker_trains_against_dual_weighted_residual_targets():
+def test_learned_marker_trains_against_dual_weighted_residual_targets() -> None:
     source = _source()
     residual = jnp.asarray([[1.0, 0.5], [0.2, 0.1], [2.0, -1.0], [0.0, 0.3]])
     correction = jnp.asarray([[0.5, 0.5], [1.0, 1.0], [0.25, -0.5], [1.0, 0.0]])
@@ -407,17 +464,22 @@ def test_learned_marker_trains_against_dual_weighted_residual_targets():
     ).absolute
     features = jnp.concatenate((residual, correction), axis=1)
     proposer = LearnedMeshProposer(
-        _Score(jnp.zeros(4)), kind="marking", proposer_id="dwr-marker"
+        # ty: ignore[invalid-argument-type, missing-argument]
+        _Score(jnp.zeros(4)),
+        kind="marking",
+        proposer_id="dwr-marker",
     )
     parameters, model_state, fixed = phx.partition_parameters(proposer)
 
-    def loss(parameters):
+    def loss(parameters: Any) -> Any:
         bound = phx.combine_parameters(parameters, model_state, fixed)
         return jnp.mean((bound.evaluate(features) - targets) ** 2)
 
     gradient = jax.grad(loss)(parameters)
     assert {id(leaf) for leaf in jax.tree.leaves(parameters)} == {
+        # ty: ignore[unresolved-attribute]
         id(proposer.model.weight),
+        # ty: ignore[unresolved-attribute]
         id(proposer.model.bias),
     }
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree.leaves(gradient))

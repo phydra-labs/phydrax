@@ -1,4 +1,5 @@
 import dataclasses
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -58,20 +59,20 @@ class Normalized(phx.StrictModule, phx.ParameterOwner):
     weight: jax.Array
     shift: jax.Array = phx.fixed_field()
 
-    def __call__(self, x):
+    def __call__(self, x: Any) -> Any:
         return self.weight * (x - self.shift)
 
 
-def _roles(tree):
+def _roles(tree: Any) -> Any:
     resolution = phx.resolve_array_roles(tree)
     return dict(zip(resolution.paths, resolution.roles, strict=True))
 
 
-def _kinds(tree):
+def _kinds(tree: Any) -> Any:
     return {(path, kind) for path, kind, _ in phx.resolve_array_roles(tree).violations}
 
 
-def test_rule_1_terminal_nodes_freeze_whole_subtrees():
+def test_rule_1_terminal_nodes_freeze_whole_subtrees() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     tree = Owner(
         jnp.ones(2),
@@ -93,7 +94,7 @@ def test_rule_1_terminal_nodes_freeze_whole_subtrees():
     assert not phx.resolve_array_roles(tree).violations
 
 
-def test_rule_2_explicit_field_roles_apply_to_value_subtrees():
+def test_rule_2_explicit_field_roles_apply_to_value_subtrees() -> None:
     tree = Declared(
         parameters={"a": [jnp.ones(2)], "b": (jnp.ones(1), jnp.arange(2))},
         fixed=Owner(jnp.ones(3)),
@@ -110,7 +111,7 @@ def test_rule_2_explicit_field_roles_apply_to_value_subtrees():
     assert roles[".state['count']"] is ArrayRole.MODEL_STATE
 
 
-def test_nearest_explicit_field_role_wins():
+def test_nearest_explicit_field_role_wins() -> None:
     tree = Declared(
         parameters=StateHolder(jnp.zeros(2)),
         fixed=ParameterHolder(jnp.ones(2)),
@@ -123,7 +124,7 @@ def test_nearest_explicit_field_role_wins():
     assert roles[".fixed.value"] is ArrayRole.PARAMETER
 
 
-def test_rule_3_parameter_or_state_field_on_terminal_value_is_a_violation():
+def test_rule_3_parameter_or_state_field_on_terminal_value_is_a_violation() -> None:
     tree = Neutral(
         (
             ParameterHolder(Frozen(jnp.ones(2))),
@@ -139,7 +140,7 @@ def test_rule_3_parameter_or_state_field_on_terminal_value_is_a_violation():
     assert set(_roles(tree).values()) == {ArrayRole.FIXED}
 
 
-def test_rule_4_containers_inherit_and_owners_default_to_parameter():
+def test_rule_4_containers_inherit_and_owners_default_to_parameter() -> None:
     tree = Owner(
         jnp.ones(2),
         {
@@ -157,7 +158,7 @@ def test_rule_4_containers_inherit_and_owners_default_to_parameter():
     assert roles[".child['declared'].data[0]"] is ArrayRole.FIXED
 
 
-def test_rule_5_parameter_owner_below_plain_non_trainable_state_is_a_violation():
+def test_rule_5_parameter_owner_below_plain_non_trainable_state_is_a_violation() -> None:
     tree = {
         "direct": Plain(Owner(jnp.ones(2))),
         "nested": Plain(Plain([Owner(jnp.ones(2))])),
@@ -172,7 +173,7 @@ def test_rule_5_parameter_owner_below_plain_non_trainable_state_is_a_violation()
     assert set(_roles(tree).values()) == {ArrayRole.FIXED}
 
 
-def test_rule_5_explicit_freeze_ends_the_audit():
+def test_rule_5_explicit_freeze_ends_the_audit() -> None:
     tree = Plain(
         (
             Freeze(Owner(jnp.ones(2), Plain(Owner(jnp.ones(1))))),
@@ -186,7 +187,7 @@ def test_rule_5_explicit_freeze_ends_the_audit():
     assert set(resolution.roles) == {ArrayRole.FIXED}
 
 
-def test_rule_6_unmarked_inexact_arrays_are_unclassified():
+def test_rule_6_unmarked_inexact_arrays_are_unclassified() -> None:
     tree = Neutral({"weight": jnp.ones(2), "index": jnp.arange(2), "rate": 0.5})
 
     resolution = phx.resolve_array_roles(tree)
@@ -200,12 +201,12 @@ def test_rule_6_unmarked_inexact_arrays_are_unclassified():
 @pytest.mark.parametrize(
     "field", [phx.parameter_field, phx.fixed_field, phx.model_state_field]
 )
-def test_role_fields_cannot_be_static(field):
+def test_role_fields_cannot_be_static(field: Any) -> None:
     with pytest.raises(TypeError, match="static"):
         field(static=True)
 
 
-def test_resolution_order_matches_jax_leaves_and_equinox_partition():
+def test_resolution_order_matches_jax_leaves_and_equinox_partition() -> None:
     tree = Owner(
         jnp.ones(2),
         (
@@ -232,7 +233,7 @@ def test_resolution_order_matches_jax_leaves_and_equinox_partition():
     ]
 
 
-def test_partition_and_combine_round_trip_all_role_lanes():
+def test_partition_and_combine_round_trip_all_role_lanes() -> None:
     tree = Owner(
         jnp.ones(2),
         (
@@ -254,12 +255,12 @@ def test_partition_and_combine_round_trip_all_role_lanes():
     assert eqx.tree_equal(phx.combine_parameters(parameters, model_state, fixed), tree)
 
 
-def test_partition_rejects_undeclared_trees():
+def test_partition_rejects_undeclared_trees() -> None:
     with pytest.raises(ValueError, match="unclassified|Unclassified"):
         phx.partition_parameters(Neutral(jnp.ones(2)))
 
 
-def test_require_parameter_roles_names_paths_and_remedies():
+def test_require_parameter_roles_names_paths_and_remedies() -> None:
     tree = {
         "raw": Neutral(jnp.ones(2)),
         "silent": Plain(Owner(jnp.ones(2))),
@@ -290,14 +291,14 @@ class _SlottedCoefficients:
     label: str = "coefficients"
 
 
-def _training_callable(coefficients):
-    def loss(x):
+def _training_callable(coefficients: Any) -> Any:
+    def loss(x: Any) -> Any:
         return coefficients.scale * x
 
     return Neutral(loss)
 
 
-def test_training_callable_capturing_slotted_dataclass_array_is_rejected():
+def test_training_callable_capturing_slotted_dataclass_array_is_rejected() -> None:
     tree = _training_callable(_SlottedCoefficients(jnp.ones(2)))
 
     with pytest.raises(ValueError) as error:
@@ -308,7 +309,7 @@ def test_training_callable_capturing_slotted_dataclass_array_is_rejected():
     assert ".value: closure variable 'coefficients' -> attribute 'scale'" in message
 
 
-def test_training_callable_capturing_slotted_dataclass_scalars_is_accepted():
+def test_training_callable_capturing_slotted_dataclass_scalars_is_accepted() -> None:
     tree = _training_callable(_SlottedCoefficients(2.0))
 
     assert phx.require_parameter_roles(tree, context="x").unclassified == ()
@@ -319,19 +320,19 @@ _GLOBAL_TABLE = {"weights": (jnp.array([3.0]),)}
 _GLOBAL_SCALE = 2.0
 
 
-def _reads_global_weights(x):
+def _reads_global_weights(x: Any) -> Any:
     return x * _GLOBAL_WEIGHTS
 
 
-def _reads_global_table(x):
+def _reads_global_table(x: Any) -> Any:
     return x * _GLOBAL_TABLE["weights"][0]
 
 
-def _calls_global_reader(x):
+def _calls_global_reader(x: Any) -> Any:
     return _reads_global_weights(x) + 1.0
 
 
-def _reads_scalar_globals(x):
+def _reads_scalar_globals(x: Any) -> Any:
     return jnp.sin(x) * _GLOBAL_SCALE
 
 
@@ -356,7 +357,7 @@ class _PlanOwner(phx.StrictModule, phx.ParameterOwner):
         (_calls_global_reader, "global '_reads_global_weights' -> global"),
     ],
 )
-def test_plain_function_reading_global_arrays_is_rejected(fn, route):
+def test_plain_function_reading_global_arrays_is_rejected(fn: Any, route: Any) -> None:
     tree = _PlanOwner(jnp.ones(2), _StaticPlan(fn))
 
     with pytest.raises(ValueError) as error:
@@ -365,7 +366,7 @@ def test_plain_function_reading_global_arrays_is_rejected(fn, route):
     assert f".plan.fn: static field -> {route}" in str(error.value)
 
 
-def test_plain_nontrainable_state_does_not_hide_closure_arrays():
+def test_plain_nontrainable_state_does_not_hide_closure_arrays() -> None:
     captured = jnp.ones(2)
     tree = _PlanOwner(jnp.ones(2), _StaticPlan(lambda x: x * captured))
 
@@ -373,20 +374,20 @@ def test_plain_nontrainable_state_does_not_hide_closure_arrays():
         phx.require_parameter_roles(tree, context="unit training")
 
 
-def test_explicit_freeze_authorizes_hidden_provider_state():
+def test_explicit_freeze_authorizes_hidden_provider_state() -> None:
     captured = jnp.ones(2)
     for fn in (_reads_global_weights, lambda x: x * captured):
         tree = _PlanOwner(jnp.ones(2), _ExplicitStaticPlan(fn))
         assert phx.require_parameter_roles(tree, context="x").unclassified == ()
 
 
-def test_plain_function_reading_modules_and_scalar_globals_is_accepted():
+def test_plain_function_reading_modules_and_scalar_globals_is_accepted() -> None:
     tree = _PlanOwner(jnp.ones(2), _StaticPlan(_reads_scalar_globals))
 
     assert phx.require_parameter_roles(tree, context="x").unclassified == ()
 
 
-def _stacked_members():
+def _stacked_members() -> Any:
     members = [
         Normalized(jnp.full(3, 1.0 + index), jnp.full(3, float(index)))
         for index in range(4)
@@ -394,7 +395,7 @@ def _stacked_members():
     return jax.tree_util.tree_map(lambda *leaves: jnp.stack(leaves), *members)
 
 
-def _serial(model, inputs, layout):
+def _serial(model: Any, inputs: Any, layout: Any) -> Any:
     size = layout.lane_size((model, inputs))
     axes = layout.in_axes((model, inputs))
     outputs = []
@@ -408,7 +409,7 @@ def _serial(model, inputs, layout):
     return jnp.stack(outputs)
 
 
-def test_lane_layout_maps_parameters_and_fixed_arrays():
+def test_lane_layout_maps_parameters_and_fixed_arrays() -> None:
     model = _stacked_members()
     inputs = jnp.linspace(0.0, 1.0, 3)
     layout = phx.LaneLayout.from_predicate(
@@ -423,7 +424,7 @@ def test_lane_layout_maps_parameters_and_fixed_arrays():
     assert jnp.allclose(vmapped, _serial(model, inputs, layout))
 
 
-def test_lane_layout_shares_unmapped_parameters():
+def test_lane_layout_shares_unmapped_parameters() -> None:
     model = _stacked_members()
     shared = eqx.tree_at(lambda m: m.weight, model, jnp.full(3, 2.0))
     inputs = jnp.stack([jnp.linspace(0.0, 1.0, 3) + index for index in range(4)])
@@ -436,7 +437,7 @@ def test_lane_layout_shares_unmapped_parameters():
     assert jnp.allclose(vmapped, _serial(shared, inputs, layout))
 
 
-def test_lane_layout_identity_ignores_declaration_order():
+def test_lane_layout_identity_ignores_declaration_order() -> None:
     forward = phx.LaneLayout("item", ("[0].shift", "[1]", "[0].weight"))
     permuted = phx.LaneLayout("item", ("[1]", "[0].weight", "[0].shift"))
 
@@ -445,7 +446,7 @@ def test_lane_layout_identity_ignores_declaration_order():
     assert forward.mapped_paths == ("[0].shift", "[0].weight", "[1]")
 
 
-def test_lane_layout_validates_paths_and_lane_sizes():
+def test_lane_layout_validates_paths_and_lane_sizes() -> None:
     tree = {"a": jnp.ones((3, 2)), "b": jnp.ones((2, 2)), "c": jnp.ones(())}
 
     with pytest.raises(ValueError, match="share one lane size"):
@@ -455,10 +456,11 @@ def test_lane_layout_validates_paths_and_lane_sizes():
     with pytest.raises(ValueError, match="leading lane axis"):
         phx.LaneLayout("case", ("['c']",)).in_axes(tree)
     with pytest.raises(ValueError, match="kind"):
+        # ty: ignore[invalid-argument-type]
         phx.LaneLayout("batch", ("['a']",))
 
 
-def test_parameter_subspace_rejects_fixed_and_terminal_selection():
+def test_parameter_subspace_rejects_fixed_and_terminal_selection() -> None:
     tree = Owner(
         jnp.ones(2),
         (
@@ -479,7 +481,9 @@ def test_parameter_subspace_rejects_fixed_and_terminal_selection():
         ParameterSubspace(tree, eqx.tree_at(lambda t: t.child[0].data, spec, True))
 
 
-def test_parameter_subspace_selection_declares_parameters_and_freezes_complement():
+def test_parameter_subspace_selection_declares_parameters_and_freezes_complement() -> (
+    None
+):
     tree = Neutral(
         {
             "raw": jnp.ones(2),
@@ -500,6 +504,7 @@ def test_parameter_subspace_selection_declares_parameters_and_freezes_complement
     assert jnp.all(moved.value["raw"] == 0.0)
     assert jnp.all(moved.value["other"] == 1.0)
     assert jnp.all(moved.value["owner"].data == 1.0)
+    # ty: ignore[not-subscriptable]
     assert eqx.tree_equal(moved.value["frozen"], tree.value["frozen"])
     everything = ParameterSubspace(tree, eqx.is_inexact_array)
     assert everything.leaf_paths == (

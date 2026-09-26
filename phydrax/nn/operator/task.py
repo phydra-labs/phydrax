@@ -15,6 +15,7 @@ from ..._strict import StrictModule
 from ...equations._ir import PDEExpression, PDEProblemIR
 from ...equations._serialize import pde_ir_from_dict, pde_ir_to_dict
 from ...graph._operator_topology import OperatorTopologySite
+from ...typing import parse
 from ...units import DimensionSignature
 from .capabilities import (
     OperatorGeometryKind,
@@ -153,8 +154,7 @@ class OperatorQuerySpec(StrictModule):
             and topology_site is not None
         ):
             raise ValueError("Topology sites are only valid for topological queries.")
-        if quadrature not in ("unused", "optional", "physical_required"):
-            raise ValueError("Unknown operator query quadrature policy.")
+        quadrature = parse(quadrature, OperatorQuadraturePolicy, "quadrature")
         self.name = resolved_name
         self.geometry_kind = geometry_kind
         self.coordinate_components = components

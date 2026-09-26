@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -41,7 +43,9 @@ def _one_surface(
     coefficient_active = np.asarray(((asphere,),))
     return SequentialOpticsPlan(
         (_frame(z),),
+        # ty: ignore[invalid-argument-type]
         (kind,),
+        # ty: ignore[invalid-argument-type]
         (interaction,),
         np.asarray((curvature,)),
         np.asarray((conic,)),
@@ -67,8 +71,8 @@ def _one_surface(
     ),
 )
 def test_every_surface_kind_hits_its_vertex_connected_branch(
-    kind, curvature, conic, coefficient
-):
+    kind: Any, curvature: Any, conic: Any, coefficient: Any
+) -> None:
     prepared = _one_surface(
         kind,
         curvature=curvature,
@@ -93,7 +97,7 @@ def test_every_surface_kind_hits_its_vertex_connected_branch(
         )
 
 
-def test_sphere_selects_nearest_forward_vertex_branch():
+def test_sphere_selects_nearest_forward_vertex_branch() -> None:
     prepared = _one_surface(
         "sphere", curvature=0.2, z=1.0, aperture=None, maximum_distance=20.0
     ).prepare()
@@ -104,7 +108,7 @@ def test_sphere_selects_nearest_forward_vertex_branch():
     np.testing.assert_allclose(result.rays.geometric_path_lengths, 2.0, atol=1.0e-11)
 
 
-def test_bounded_asphere_solver_selects_nearest_of_two_forward_roots():
+def test_bounded_asphere_solver_selects_nearest_of_two_forward_roots() -> None:
     prepared = _one_surface(
         "even-asphere",
         curvature=0.0,
@@ -132,7 +136,7 @@ def test_bounded_asphere_solver_selects_nearest_of_two_forward_roots():
     assert float(result.rays.origins[0]) < 0.2
 
 
-def test_circular_aperture_boundary_and_clipping_are_explicit():
+def test_circular_aperture_boundary_and_clipping_are_explicit() -> None:
     prepared = _one_surface("plane", aperture=0.5).prepare()
     origins = jnp.asarray(((0.5, 0.0, 0.0), (0.5001, 0.0, 0.0)))
     directions = jnp.broadcast_to(jnp.asarray((0.0, 0.0, 1.0)), origins.shape)
@@ -150,7 +154,7 @@ def test_circular_aperture_boundary_and_clipping_are_explicit():
     assert int(result.traversed_surfaces[1]) == 0
 
 
-def test_plane_hit_failures_have_distinct_statuses():
+def test_plane_hit_failures_have_distinct_statuses() -> None:
     prepared = _one_surface("plane", aperture=None, maximum_distance=0.5).prepare()
     origins = jnp.asarray(
         (
@@ -188,7 +192,7 @@ def test_plane_hit_failures_have_distinct_statuses():
     assert not np.any(np.asarray(result.successful))
 
 
-def test_forward_hit_from_wrong_normal_side_is_rejected():
+def test_forward_hit_from_wrong_normal_side_is_rejected() -> None:
     prepared = _one_surface("plane", aperture=2.0).prepare()
     result = prepared.execute(jnp.asarray((0.0, 0.0, 2.0)), jnp.asarray((0.0, 0.0, -1.0)))
 
@@ -198,7 +202,7 @@ def test_forward_hit_from_wrong_normal_side_is_rejected():
     np.testing.assert_allclose(result.rays.origins, (0.0, 0.0, 2.0))
 
 
-def test_sphere_miss_and_tangency_are_not_root_fallbacks():
+def test_sphere_miss_and_tangency_are_not_root_fallbacks() -> None:
     prepared = _one_surface(
         "sphere", curvature=1.0, z=1.0, aperture=None, maximum_distance=5.0
     ).prepare()
@@ -212,7 +216,7 @@ def test_sphere_miss_and_tangency_are_not_root_fallbacks():
     )
 
 
-def test_conic_tangent_is_detected_without_a_sign_change():
+def test_conic_tangent_is_detected_without_a_sign_change() -> None:
     prepared = _one_surface(
         "conic",
         curvature=1.0,
@@ -228,7 +232,7 @@ def test_conic_tangent_is_detected_without_a_sign_change():
     assert int(result.status) == int(SequentialOpticsStatus.TANGENT_SURFACE)
 
 
-def test_invalid_sag_domain_and_solver_exhaustion_are_distinct():
+def test_invalid_sag_domain_and_solver_exhaustion_are_distinct() -> None:
     invalid_domain = _one_surface(
         "conic", curvature=1.0, conic=0.0, aperture=0.9, maximum_distance=3.0
     ).prepare()
@@ -254,7 +258,7 @@ def test_invalid_sag_domain_and_solver_exhaustion_are_distinct():
     assert int(exhausted_result.status) == int(SequentialOpticsStatus.ROOT_NONCONVERGENCE)
 
 
-def test_transmit_tir_fails_but_declared_reflection_succeeds():
+def test_transmit_tir_fails_but_declared_reflection_succeeds() -> None:
     theta = np.deg2rad(60.0)
     direction = jnp.asarray((np.sin(theta), 0.0, np.cos(theta)))
     transmit = _one_surface(
@@ -280,7 +284,9 @@ def test_transmit_tir_fails_but_declared_reflection_succeeds():
     np.testing.assert_allclose(reflected.rays.refractive_indices, 1.5)
 
 
-def test_multiple_surfaces_accumulate_geometric_and_optical_path_only_on_success():
+def test_multiple_surfaces_accumulate_geometric_and_optical_path_only_on_success() -> (
+    None
+):
     plan = SequentialOpticsPlan(
         (_frame(1.0), _frame(3.0)),
         ("plane", "plane"),
@@ -305,7 +311,7 @@ def test_multiple_surfaces_accumulate_geometric_and_optical_path_only_on_success
     np.testing.assert_allclose(result.rays.refractive_indices, 1.0)
 
 
-def test_fixed_layout_validation_rejects_non_neutral_rows_and_index_crossing():
+def test_fixed_layout_validation_rejects_non_neutral_rows_and_index_crossing() -> None:
     with pytest.raises(ValueError, match="Plane rows"):
         _one_surface("plane", curvature=0.1)
     with pytest.raises(ValueError, match="Sphere rows"):
@@ -316,7 +322,7 @@ def test_fixed_layout_validation_rejects_non_neutral_rows_and_index_crossing():
         _one_surface("conic", curvature=1.0, conic=0.0, aperture=1.1)
 
 
-def test_prepared_work_bounds_are_static_and_exact():
+def test_prepared_work_bounds_are_static_and_exact() -> None:
     plan = SequentialOpticsPlan(
         (_frame(1.0), _frame(2.0), _frame(3.0), _frame(4.0)),
         ("plane", "sphere", "conic", "even-asphere"),
@@ -341,7 +347,7 @@ def test_prepared_work_bounds_are_static_and_exact():
     assert prepared.interaction_tags == (0, 0, 0, 0)
 
 
-def test_mixed_batch_jit_and_vmap_preserve_lane_statuses():
+def test_mixed_batch_jit_and_vmap_preserve_lane_statuses() -> None:
     prepared = _one_surface("plane", aperture=0.75).prepare()
     origins = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)))
     directions = jnp.asarray(((0.0, 0.0, 2.0), (0.0, 0.0, 1.0)))
@@ -357,10 +363,10 @@ def test_mixed_batch_jit_and_vmap_preserve_lane_statuses():
     np.testing.assert_allclose(compiled.rays.directions[0], (0.0, 0.0, 1.0))
 
 
-def test_ordinary_trace_does_not_request_a_jacobian(monkeypatch):
+def test_ordinary_trace_does_not_request_a_jacobian(monkeypatch: Any) -> None:
     prepared = _one_surface("plane").prepare()
 
-    def forbidden(*args, **kwargs):
+    def forbidden(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("ordinary tracing must not form a Jacobian")
 
     monkeypatch.setattr(jax, "jacfwd", forbidden)

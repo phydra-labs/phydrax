@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import numpy as np
 import pytest
@@ -12,13 +15,13 @@ import phydrax as phx
 
 
 @pytest.fixture
-def simple_cube_mesh():
+def simple_cube_mesh() -> Any:
     # Create a simple cube mesh using trimesh
     return trimesh.creation.box(extents=(1.0, 1.0, 1.0))
 
 
 @pytest.fixture
-def geometry_from_cube(simple_cube_mesh):
+def geometry_from_cube(simple_cube_mesh: Any) -> Any:
     # Compile the mesh source and adapt it to the domain algebra.
     return phx.domain.GeometryDomain(
         phx.geometry.mesh_region_from_source(
@@ -28,7 +31,7 @@ def geometry_from_cube(simple_cube_mesh):
     )
 
 
-def test_initialization(geometry_from_cube):
+def test_initialization(geometry_from_cube: Any) -> None:
     assert isinstance(geometry_from_cube, phx.domain.GeometryDomain)
     assert geometry_from_cube.geometry.kind is phx.geometry.GeometryKind.REGION
     assert geometry_from_cube.geometry.has_capability(
@@ -36,7 +39,7 @@ def test_initialization(geometry_from_cube):
     )
 
 
-def test_initialization_rejects_open_surface_mesh():
+def test_initialization_rejects_open_surface_mesh() -> None:
     mesh = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
     mesh.update_faces(np.arange(mesh.faces.shape[0]) != 0)
     mesh.remove_unreferenced_vertices()
@@ -50,7 +53,7 @@ def test_initialization_rejects_open_surface_mesh():
         )
 
 
-def test_initialization_rejects_nonfinite_vertices():
+def test_initialization_rejects_nonfinite_vertices() -> None:
     mesh = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
     vertices = np.asarray(mesh.vertices).copy()
     vertices[0, 0] = np.nan
@@ -62,14 +65,14 @@ def test_initialization_rejects_nonfinite_vertices():
         )
 
 
-def test_volume_property(geometry_from_cube):
+def test_volume_property(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     expected_volume = 1.0  # Cube with side length 1m
     computed_volume = float(geom.volume)
     assert np.isclose(computed_volume, expected_volume, atol=1e-6)
 
 
-def test_boundary_partition_matches_surface_measure(geometry_from_cube):
+def test_boundary_partition_matches_surface_measure(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     partition = phx.geometry.BoundaryAtlasPartition(geom.boundary_atlas)
     assert partition.num_strata == 12
@@ -85,8 +88,8 @@ def test_boundary_partition_matches_surface_measure(geometry_from_cube):
 
 
 def test_surface_chart_lowering_integrates_faces_without_seam_duplication(
-    geometry_from_cube,
-):
+    geometry_from_cube: Any,
+) -> None:
     geom = geometry_from_cube
     component = geom.component({"x": phx.domain.Boundary()})
     target = phx.integration.over(component)
@@ -103,14 +106,14 @@ def test_surface_chart_lowering_integrates_faces_without_seam_duplication(
     assert jnp.allclose(jnp.asarray(x_moment.value.data), 0.0, atol=1e-12)
 
 
-def test_bounds_property(geometry_from_cube):
+def test_bounds_property(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     bounds = np.asarray(geom.bounds, dtype="float64")
     expected_bounds = np.array([[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]])
     assert np.allclose(bounds, expected_bounds, atol=1e-6)
 
 
-def test_contains_method(geometry_from_cube):
+def test_contains_method(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     inside_point = jnp.array([[0.0, 0.0, 0.0]], dtype="float64")
     outside_point = jnp.array([[2.0, 2.0, 2.0]], dtype="float64")
@@ -118,7 +121,7 @@ def test_contains_method(geometry_from_cube):
     assert ~geom._contains(outside_point)[0]
 
 
-def test_adf_batched_matches_vmap(geometry_from_cube):
+def test_adf_batched_matches_vmap(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     key = jax.random.key(0)
     pts = jax.random.uniform(
@@ -133,7 +136,7 @@ def test_adf_batched_matches_vmap(geometry_from_cube):
     assert np.allclose(np.asarray(sdf_batched), np.asarray(sdf_vmap), atol=1e-6)
 
 
-def test_adf_jvp_batched_matches_vmap(geometry_from_cube):
+def test_adf_jvp_batched_matches_vmap(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     key0, key1 = jax.random.split(jax.random.key(1), 2)
     pts = jax.random.uniform(
@@ -150,7 +153,7 @@ def test_adf_jvp_batched_matches_vmap(geometry_from_cube):
     assert np.allclose(np.asarray(tval_batched), np.asarray(tval_vmap), atol=1e-6)
 
 
-def test_compiled_mesh_region_field_has_correct_sign(geometry_from_cube):
+def test_compiled_mesh_region_field_has_correct_sign(geometry_from_cube: Any) -> None:
     points = jnp.asarray([[0.0, 0.0, 0.0], [0.75, 0.0, 0.0], [0.5, 0.0, 0.0]])
     values = jax.jit(lambda value: geometry_from_cube.geometry.boundary_field(value))(
         points
@@ -160,7 +163,7 @@ def test_compiled_mesh_region_field_has_correct_sign(geometry_from_cube):
     assert values[2] == pytest.approx(0.0)
 
 
-def test_on_boundary_method(geometry_from_cube):
+def test_on_boundary_method(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     boundary_point = jnp.array([[0.5, 0.0, 0.0]], dtype="float64")
     interior_point = jnp.array([[0.0, 0.0, 0.0]], dtype="float64")
@@ -168,7 +171,7 @@ def test_on_boundary_method(geometry_from_cube):
     assert ~geom._on_boundary(interior_point)[0]
 
 
-def test_sample_boundary(geometry_from_cube):
+def test_sample_boundary(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     num_points = 100
     sampled_points = geom.sample_boundary(num_points=num_points)
@@ -179,7 +182,7 @@ def test_sample_boundary(geometry_from_cube):
     assert np.allclose(distances, 0.0, atol=1e-7)
 
 
-def test_sample_interior(geometry_from_cube):
+def test_sample_interior(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     num_points = 100
     sampled_points = geom.sample_interior(num_points=num_points)
@@ -189,7 +192,7 @@ def test_sample_interior(geometry_from_cube):
     assert np.all(distances <= 0.0)
 
 
-def test_geometry_from_cad_file(tmp_path):
+def test_geometry_from_cad_file(tmp_path: Any) -> None:
     # Test initialization from a mesh file
     mesh = trimesh.creation.icosphere(radius=1.0)
     mesh_file = tmp_path / "sphere.stl"
@@ -202,7 +205,7 @@ def test_geometry_from_cad_file(tmp_path):
     assert np.isclose(float(geom.volume), mesh.volume, atol=1e-6)
 
 
-def test_boundary_normals(geometry_from_cube):
+def test_boundary_normals(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     boundary_points = jnp.array(
         [
@@ -232,8 +235,8 @@ def test_boundary_normals(geometry_from_cube):
 
 
 def test_boundary_normals_at_nonsmooth_features_are_valid_subgradients(
-    geometry_from_cube,
-):
+    geometry_from_cube: Any,
+) -> None:
     points = jnp.array(
         [
             [0.5, 0.5, 0.0],
@@ -247,18 +250,18 @@ def test_boundary_normals_at_nonsmooth_features_are_valid_subgradients(
     assert np.all(np.sum(normals * np.asarray(points), axis=-1) > 0.0)
 
 
-def test_boundary_normals_no_grad(geometry_from_cube):
+def test_boundary_normals_no_grad(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     point = jnp.array([0.6, 0.0, 0.0], dtype="float64")
 
-    def f(p):
+    def f(p: Any) -> Any:
         return jnp.sum(geom._boundary_normals(p))
 
     grad = jax.grad(f)(point)
     assert np.allclose(np.asarray(grad), 0.0, atol=1e-10)
 
 
-def test_boundary_normals_jittable_batched(geometry_from_cube):
+def test_boundary_normals_jittable_batched(geometry_from_cube: Any) -> None:
     geom = geometry_from_cube
     points = jnp.array(
         [
@@ -275,7 +278,7 @@ def test_boundary_normals_jittable_batched(geometry_from_cube):
     assert np.all(np.isfinite(np.asarray(normals)))
 
 
-def test_sample_interior_separable(geometry_from_cube):
+def test_sample_interior_separable(geometry_from_cube: Any) -> None:
     """Test separable interior sampling through the geometry domain adapter."""
     import jax.random as jr
     import numpy as np
@@ -313,7 +316,7 @@ def test_sample_interior_separable(geometry_from_cube):
     # Test with where condition
     key = jr.key(44)
 
-    def where_condition(point):
+    def where_condition(point: Any) -> Any:
         # Only include points in the positive octant
         return (point[0] > 0) & (point[1] > 0) & (point[2] > 0)
 
@@ -344,7 +347,7 @@ def test_sample_interior_separable(geometry_from_cube):
             assert np.all(point > 0)
 
 
-def test_boundary_factor_is_scale_covariant_with_unit_face_gradient():
+def test_boundary_factor_is_scale_covariant_with_unit_face_gradient() -> None:
     scales = (1e-7, 1.0)
     normalized_points = jnp.array(
         [

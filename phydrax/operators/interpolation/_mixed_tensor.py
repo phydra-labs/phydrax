@@ -134,7 +134,10 @@ class MixedTensorInterpolant(StrictModule):
                     continue
                 lower, upper = axis.domain.lower, axis.domain.upper
                 # Spectral bases require bounded axis domains, which carry both endpoints.
-                assert lower is not None and upper is not None
+                if not (lower is not None and upper is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: lower is not None and upper is not None."
+                    )
                 valid &= jnp.all(
                     (points[..., axis_index] >= lower)
                     & (points[..., axis_index] <= upper)

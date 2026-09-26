@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -11,13 +13,13 @@ import phydrax as phx
 from phydrax.discretization.fem import _spectral_hp_io as spectral_hp_io
 
 
-def _cell_block(cell_type, data):
+def _cell_block(cell_type: Any, data: Any) -> Any:
     return SimpleNamespace(type=cell_type, data=np.asarray(data, dtype=np.int32))
 
 
 def test_mesh_import_preserves_volume_and_facet_groups_with_loss_evidence(
-    monkeypatch, tmp_path
-):
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     cells = (
         _cell_block("triangle", [[0, 1, 2], [0, 2, 3]]),
         _cell_block("line", [[0, 1], [1, 2], [2, 3], [3, 0]]),

@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_lattice_boltzmann_compiler_matches_independent_periodic_trt_step():
+def test_lattice_boltzmann_compiler_matches_independent_periodic_trt_step() -> None:
     shape = (4, 3)
     grid = phx.discretization.TensorGridPlan(
         (

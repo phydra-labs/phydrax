@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -10,7 +13,7 @@ from phydrax.applications import geophysics as geo, porous_media as porous
 from phydrax.uq import ParameterSpace, TemporalDifferencePrior
 
 
-def _geometry():
+def _geometry() -> Any:
     return phx.discretization.UnstructuredFiniteVolumePlan(
         np.asarray(
             ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, -1)),
@@ -20,7 +23,7 @@ def _geometry():
     ).prepare()
 
 
-def test_multiphase_flash_hysteresis_freezing_and_well_controls_are_physical():
+def test_multiphase_flash_hysteresis_freezing_and_well_controls_are_physical() -> None:
     geometry = _geometry()
     plan = porous.MultiphaseConservationPlan(
         geometry, ("liquid", "gas"), ("water", "air")
@@ -50,6 +53,7 @@ def test_multiphase_flash_hysteresis_freezing_and_well_controls_are_physical():
     np.testing.assert_allclose(residual.energy_W, 0.0)
 
     flash = porous.RachfordRiceFlashPlan(("light", "heavy"))
+    # ty: ignore[invalid-argument-type]
     flashed = flash.solve([0.5, 0.5], [2.0, 0.5])
     assert flashed.successful
     assert 0 < flashed.vapor_fraction < 1
@@ -71,29 +75,45 @@ def test_multiphase_flash_hysteresis_freezing_and_well_controls_are_physical():
     assert vapor.saturation_pressure(280.0) > vapor.saturation_pressure(270.0)
 
     well = porous.WellCompletionPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         [1e-12, 2e-12],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0], [1.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1000.0, 1000.0],
+        # ty: ignore[invalid-argument-type]
         [1e5, 1e5],
         2,
     )
     well_result = well.evaluate(
-        [1e5, 1.1e5], [1e-6, 1e-6], porous.WellControl("rate", 1e-8)
+        # ty: ignore[invalid-argument-type]
+        [1e5, 1.1e5],
+        # ty: ignore[invalid-argument-type]
+        [1e-6, 1e-6],
+        porous.WellControl("rate", 1e-8),
     )
     assert well_result.successful
     np.testing.assert_allclose(jnp.sum(well_result.completion_volume_rate_m3_s), 1e-8)
 
 
-def test_surface_flow_biot_fault_and_geodetic_observations_close_balances():
+def test_surface_flow_biot_fault_and_geodetic_observations_close_balances() -> None:
     surface = porous.UnstructuredShallowWaterPlan(
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.0],
+        # ty: ignore[invalid-argument-type]
         [0],
+        # ty: ignore[invalid-argument-type]
         [1],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0],
     )
+    # ty: ignore[invalid-argument-type]
     state = surface.initial_state([0.2, 0.2])
     stepped = surface.step(state, 0.01)
     np.testing.assert_allclose(stepped.state.water_volume_m3, state.water_volume_m3)
@@ -102,16 +122,29 @@ def test_surface_flow_biot_fault_and_geodetic_observations_close_balances():
     displacement = phx.linalg.ArraySpace((1,))
     pressure = phx.linalg.ArraySpace((1,))
     elasticity = phx.linalg.DenseLinearOperator(
-        [[2.0]], source=displacement, target=displacement
+        # ty: ignore[invalid-argument-type]
+        [[2.0]],
+        source=displacement,
+        target=displacement,
     )
     coupling = phx.linalg.DenseLinearOperator(
-        [[1.0]], source=displacement, target=pressure
+        # ty: ignore[invalid-argument-type]
+        [[1.0]],
+        source=displacement,
+        target=pressure,
     )
+    # ty: ignore[invalid-argument-type]
     storage = phx.linalg.DenseLinearOperator([[1.0]], source=pressure, target=pressure)
+    # ty: ignore[invalid-argument-type]
     flow = phx.linalg.DenseLinearOperator([[1.0]], source=pressure, target=pressure)
     biot = geo.MixedBiotPoromechanicsPlan(elasticity, coupling, storage, flow, 0.5)
     biot_result = biot.step(
-        biot.initial_state(), 1.0, mechanical_load=[1.0], fluid_source=[0.2]
+        biot.initial_state(),
+        1.0,
+        # ty: ignore[invalid-argument-type]
+        mechanical_load=[1.0],
+        # ty: ignore[invalid-argument-type]
+        fluid_source=[0.2],
     )
     assert biot_result.successful
     assert biot_result.residual_norm < 1e-8
@@ -119,14 +152,19 @@ def test_surface_flow_biot_fault_and_geodetic_observations_close_balances():
     fault = geo.RateStateFaultLaw(0.6, 0.01, 0.015, 0.01, 1e-6)
     fault_result = fault.step(fault.initialize(), 1e-6, 20e6, 5e6, 1.0)
     assert fault_result.dissipated_power_W_m2 >= 0
+    # ty: ignore[invalid-argument-type]
     contact = geo.CoulombContactLaw(1e9, 1e9, 0.6).evaluate(-1e-3, [2e-3])
     assert contact.active_contact
     assert jnp.abs(contact.shear_traction_Pa[0]) <= 0.6 * contact.normal_traction_Pa
     steady_fault = fault.step(fault.initialize(), 1e-6, 1e6, 0.0, 1e-6)
     cycle = geo.EarthquakeCyclePlan(
+        # ty: ignore[invalid-argument-type]
         [[1e6]],
+        # ty: ignore[invalid-argument-type]
         [0.0],
+        # ty: ignore[invalid-argument-type]
         [1e6],
+        # ty: ignore[invalid-argument-type]
         [1e6],
         fault,
     )
@@ -141,17 +179,23 @@ def test_surface_flow_biot_fault_and_geodetic_observations_close_balances():
     forward = geo.GeodeticDeformationObservationPlan(
         np.eye(3), np.asarray(((1.0, 0.0, 0.0),)), np.zeros((0, 3)), np.zeros((0, 3)), 3
     )
+    # ty: ignore[invalid-argument-type]
     prediction = forward.predict([1.0, 2.0, 3.0])
     np.testing.assert_allclose(prediction.gnss_displacement_m, [[1.0, 2.0, 3.0]])
     np.testing.assert_allclose(prediction.insar_los_displacement_m, [1.0])
 
 
-def test_advanced_chemistry_and_fracture_network_are_conservative():
+def test_advanced_chemistry_and_fracture_network_are_conservative() -> None:
+    # ty: ignore[invalid-argument-type]
     sit = porous.SITActivityModel([1.0, -1.0], [[0.0, 0.01], [0.01, 0.0]])
     pitzer = porous.PitzerInteractionModel(
+        # ty: ignore[invalid-argument-type]
         [1.0, -1.0],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.1], [0.1, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.05], [0.05, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.001], [0.001, 0.0]],
     )
     molality = jnp.asarray((1.0, 1.0))
@@ -162,13 +206,21 @@ def test_advanced_chemistry_and_fracture_network_are_conservative():
     assert porous.HenryGasEquilibrium(1e-5).dissolved_concentration(1e5) == 1.0
 
     network = porous.MixedDimensionalFractureNetworkPlan(
+        # ty: ignore[invalid-argument-type]
         [0.1, 0.1],
+        # ty: ignore[invalid-argument-type]
         [0.05],
+        # ty: ignore[invalid-argument-type]
         [[0, 1]],
+        # ty: ignore[invalid-argument-type]
         [1e-8],
+        # ty: ignore[invalid-argument-type]
         [[0, 0], [1, 0]],
+        # ty: ignore[invalid-argument-type]
         [1e-8, 1e-8],
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         [1e-8, 1e-8],
         2,
         1,
@@ -182,14 +234,23 @@ def test_advanced_chemistry_and_fracture_network_are_conservative():
     result = network.step(
         fracture_state,
         1.0,
+        # ty: ignore[invalid-argument-type]
         [1e5, 0.9e5],
+        # ty: ignore[invalid-argument-type]
         [0.95e5],
+        # ty: ignore[invalid-argument-type]
         [1.1e5, 0.8e5],
+        # ty: ignore[invalid-argument-type]
         [[10.0], [10.0]],
+        # ty: ignore[invalid-argument-type]
         [[10.0]],
+        # ty: ignore[invalid-argument-type]
         [[10.0], [10.0]],
+        # ty: ignore[invalid-argument-type]
         [1e6, 1e6],
+        # ty: ignore[invalid-argument-type]
         [1e6],
+        # ty: ignore[invalid-argument-type]
         [1e6, 1e6],
     )
     assert result.successful
@@ -197,12 +258,14 @@ def test_advanced_chemistry_and_fracture_network_are_conservative():
     np.testing.assert_allclose(result.energy_balance_J, 0.0, atol=1e-8)
 
 
-def test_joint_petrophysical_geological_and_time_lapse_workflows_are_explicit():
+def test_joint_petrophysical_geological_and_time_lapse_workflows_are_explicit() -> None:
     surface = geo.SurfaceConductionConductivity(1.0, 2.0, 2.0, 0.1, 1.0, 0.1)
     assert surface.predict(0.3, 0.8, 0.2).mean > 0
     crim = geo.CRIMPermittivity(4.0, 80.0, 1.0, 0.2)
     assert crim.predict(0.3, 0.8).mean > 1
+    # ty: ignore[invalid-argument-type]
     geology = geo.LevelSetInterfacePlan([[1.0, 0.0], [1.0, 1.0]], smoothing_width=0.1)
+    # ty: ignore[invalid-argument-type]
     fractions = geology.phase_fraction([0.0, 1.0])
     assert jnp.all((fractions > 0) & (fractions < 1))
 
@@ -221,25 +284,37 @@ def test_joint_petrophysical_geological_and_time_lapse_workflows_are_explicit():
     assert joint.posterior().log_density(jnp.asarray((0.5,))) < 0
 
     temporal = geo.TimeLapseParameterization(
-        3, 1, TemporalDifferencePrior([0.0, 1.0, 2.0], 1.0)
+        3,
+        1,
+        # ty: ignore[invalid-argument-type]
+        TemporalDifferencePrior([0.0, 1.0, 2.0], 1.0),
     )
+    # ty: ignore[invalid-argument-type]
     history = temporal.reconstruct([2.0], [[0.5], [-0.2]])
     np.testing.assert_allclose(history[:, 0], [2.0, 2.5, 2.3])
     assert jnp.isfinite(temporal.log_prior(history))
 
 
-def test_planetary_potential_and_radial_thermal_energy_are_finite():
+def test_planetary_potential_and_radial_thermal_energy_are_finite() -> None:
     body = phx.interchange.ReferenceBodyContract("body", 4e14, 6.4e6, 6.4e6, 0.0, 0.0)
     model = geo.RadialBodyModel(
+        # ty: ignore[invalid-argument-type]
         [0.0, 3.2e6, 6.4e6],
+        # ty: ignore[invalid-argument-type]
         [5000.0, 4000.0, 3000.0],
+        # ty: ignore[invalid-argument-type]
         [8000.0, 7000.0, 6000.0],
+        # ty: ignore[invalid-argument-type]
         [4000.0, 3500.0, 3000.0],
+        # ty: ignore[invalid-argument-type]
         [4000.0, 2000.0, 300.0],
+        # ty: ignore[invalid-argument-type]
         [1000.0, 1000.0, 1000.0],
+        # ty: ignore[invalid-argument-type]
         [4.0, 4.0, 4.0],
         body,
     )
+    # ty: ignore[invalid-argument-type]
     potential = geo.PlanetaryPotentialPlan(body).potential([6.4e6, 0.0, 0.0])
     np.testing.assert_allclose(potential, body.gravitational_parameter_m3_s2 / 6.4e6)
     thermal = geo.RadialThermalConductionPlan(model)

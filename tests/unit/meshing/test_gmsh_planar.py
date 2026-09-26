@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from importlib.util import find_spec
+from typing import Any
 
 import numpy as np
 import pytest
@@ -27,7 +29,7 @@ _EMBEDDING = phx.geometry.PlanarEmbedding(
 _COORDINATES = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 
 
-def _rectangle(x0, x1, *, feature_id):
+def _rectangle(x0: Any, x1: Any, *, feature_id: Any) -> Any:
     return phx.geometry.PlanarMeshRegion(
         np.asarray(((x0, 0.0), (x1, 0.0), (x1, 1.0), (x0, 1.0))),
         ((0, 1, 2, 3),),
@@ -35,7 +37,7 @@ def _rectangle(x0, x1, *, feature_id):
     )
 
 
-def _partition(tmp_path, *, hole=False):
+def _partition(tmp_path: Any, *, hole: Any = False) -> Any:
     if hole:
         region = phx.geometry.PlanarMeshRegion(
             np.asarray(
@@ -86,7 +88,9 @@ def _partition(tmp_path, *, hole=False):
     )
 
 
-def _semantic_spec(provider, source, kind, *, embedding=_EMBEDDING):
+def _semantic_spec(
+    provider: Any, source: Any, kind: Any, *, embedding: Any = _EMBEDDING
+) -> Any:
     scope = provider.whole_scope(source, 2)
     regions = tuple(
         phx.meshing.RegionControl(
@@ -123,7 +127,9 @@ def _semantic_spec(provider, source, kind, *, embedding=_EMBEDDING):
 
 
 @pytest.mark.parametrize("kind", ("triangle", "quadrilateral"))
-def test_real_gmsh_planar_regions_interfaces_and_exterior_patches(tmp_path, kind):
+def test_real_gmsh_planar_regions_interfaces_and_exterior_patches(
+    tmp_path: Any, kind: Any
+) -> None:
     source = _partition(tmp_path)
     provider = phx.meshing.GmshProvider()
 
@@ -151,12 +157,15 @@ def test_real_gmsh_planar_regions_interfaces_and_exterior_patches(tmp_path, kind
     assert np.max(coordinates[:, 1]) == pytest.approx(1.0)
 
 
-def test_real_gmsh_planar_hole_has_complete_main_mesh_boundary_patch(tmp_path):
+def test_real_gmsh_planar_hole_has_complete_main_mesh_boundary_patch(
+    tmp_path: Any,
+) -> None:
     source = _partition(tmp_path, hole=True)
     provider = phx.meshing.GmshProvider()
 
     result = provider.plan(source, _semantic_spec(provider, source, "triangle")).execute()
 
+    # ty: ignore[unresolved-attribute]
     boundary_edges = np.asarray(result.mesh.connectivity.boundary_edges, dtype="bool")
     assert np.count_nonzero(boundary_edges) > len(source.model.edge_ids)
     assert len(result.patches) == 1
@@ -167,7 +176,7 @@ def test_real_gmsh_planar_hole_has_complete_main_mesh_boundary_patch(tmp_path):
     assert result.audit.passed
 
 
-def test_real_gmsh_rejects_nodes_outside_declared_embedding_plane(tmp_path):
+def test_real_gmsh_rejects_nodes_outside_declared_embedding_plane(tmp_path: Any) -> None:
     source = _partition(tmp_path)
     provider = phx.meshing.GmshProvider()
     wrong = phx.geometry.PlanarEmbedding(

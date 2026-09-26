@@ -6,5 +6,5 @@ from tools.check_import_boundaries import import_boundary_errors
 _ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_public_import_boundaries_are_canonical():
+def test_public_import_boundaries_are_canonical() -> None:
     assert import_boundary_errors(_ROOT) == ()

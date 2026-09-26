@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -34,7 +35,7 @@ _LIMITS = ResourceLimits(
 )
 
 
-def _write(library, path: Path, format: LayoutFormat) -> bytes:
+def _write(library: Any, path: Path, format: LayoutFormat) -> bytes:
     if format is LayoutFormat.GDSII:
         library.write_gds(path)
     else:
@@ -45,7 +46,7 @@ def _write(library, path: Path, format: LayoutFormat) -> bytes:
 def _policy(
     format: LayoutFormat,
     *,
-    unit=MICROMETER,
+    unit: Any = MICROMETER,
     top_cell: str | None = None,
     path_tolerance: float | None = None,
     waived_loss_paths: tuple[str, ...] = (),
@@ -63,7 +64,7 @@ def _policy(
 
 def test_gdsii_and_oasis_keep_distinct_provenance_for_equal_physical_regions(
     tmp_path: Path,
-):
+) -> None:
     child = gdstk.Cell("CHILD")
     child.add(gdstk.rectangle((0, 0), (2, 1), layer=4, datatype=7))
     top = gdstk.Cell("TOP")
@@ -107,7 +108,9 @@ def test_gdsii_and_oasis_keep_distinct_provenance_for_equal_physical_regions(
     assert np.allclose(minima, ((10, 0), (13, 0)))
 
 
-def test_source_user_units_are_explicitly_converted_to_target_contract(tmp_path: Path):
+def test_source_user_units_are_explicitly_converted_to_target_contract(
+    tmp_path: Path,
+) -> None:
     top = gdstk.Cell("TOP")
     top.add(gdstk.rectangle((0, 0), (1000, 500), layer=1, datatype=2))
     library = gdstk.Library(unit=1e-6, precision=1e-9)
@@ -128,7 +131,7 @@ def test_source_user_units_are_explicitly_converted_to_target_contract(tmp_path:
     assert result.report.coordinate_mapping[0].startswith("source user unit")
 
 
-def test_ambiguous_top_cell_requires_explicit_selection(tmp_path: Path):
+def test_ambiguous_top_cell_requires_explicit_selection(tmp_path: Path) -> None:
     first = gdstk.Cell("FIRST")
     first.add(gdstk.rectangle((0, 0), (1, 1)))
     second = gdstk.Cell("SECOND")
@@ -149,7 +152,9 @@ def test_ambiguous_top_cell_requires_explicit_selection(tmp_path: Path):
     assert len(selected.model.regions) == 1
 
 
-def test_supported_path_requires_tolerance_and_an_explicit_loss_waiver(tmp_path: Path):
+def test_supported_path_requires_tolerance_and_an_explicit_loss_waiver(
+    tmp_path: Path,
+) -> None:
     top = gdstk.Cell("TOP")
     top.add(
         gdstk.FlexPath(
@@ -189,7 +194,9 @@ def test_supported_path_requires_tolerance_and_an_explicit_loss_waiver(tmp_path:
     assert result.model.regions[0].layer == LayoutLayerKey(9, 3)
 
 
-def test_hierarchy_cycles_and_repetition_resource_excess_fail_closed(tmp_path: Path):
+def test_hierarchy_cycles_and_repetition_resource_excess_fail_closed(
+    tmp_path: Path,
+) -> None:
     first = gdstk.Cell("FIRST")
     second = gdstk.Cell("SECOND")
     first.add(gdstk.Reference(second))
@@ -222,10 +229,10 @@ def test_hierarchy_cycles_and_repetition_resource_excess_fail_closed(tmp_path: P
     assert excessive.value.status is AdapterStatus.MALFORMED_SOURCE
 
 
-def test_missing_optional_dependency_is_a_typed_adapter_failure(monkeypatch):
+def test_missing_optional_dependency_is_a_typed_adapter_failure(monkeypatch: Any) -> None:
     import phydrax.interchange._layout as layout_module
 
-    def missing(_name: str):
+    def missing(_name: str) -> None:
         raise ImportError("not installed")
 
     monkeypatch.setattr(layout_module, "import_module", missing)

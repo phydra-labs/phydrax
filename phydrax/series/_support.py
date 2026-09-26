@@ -12,6 +12,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse
 from ._types import CoordinateKind
 
 
@@ -112,8 +113,7 @@ class SeriesSupport(StrictModule):
             or jnp.issubdtype(coordinates_.dtype, jnp.floating)
         ):
             raise TypeError("SeriesSupport coordinates must be real numerical values.")
-        if coordinate_kind not in ("continuous", "discrete"):
-            raise ValueError("coordinate_kind must be 'continuous' or 'discrete'.")
+        coordinate_kind = parse(coordinate_kind, CoordinateKind, "coordinate_kind")
 
         capacity = coordinates_.shape[-1]
         inferred_shape = () if coordinates_.ndim == 1 else tuple(coordinates_.shape[:-1])

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -27,14 +30,14 @@ from phydrax.solver._dark_radiation_packets import DarkRadiationPacketPlan
 from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 
 
-def _units():
+def _units() -> Any:
     return RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1),
         RelativityConvention(metric_signature="mostly_minus"),
     )
 
 
-def _frame(units, *, time, scale_factor, token):
+def _frame(units: Any, *, time: Any, scale_factor: Any, token: Any) -> Any:
     geometry = ADMGridGeometry(
         jnp.asarray(1.0),
         jnp.zeros((3,)),
@@ -62,7 +65,7 @@ def _frame(units, *, time, scale_factor, token):
     )
 
 
-def _source_ledger():
+def _source_ledger() -> Any:
     plan = DarkRadiationLedgerPlan(2, speed_of_light=1.0)
     ledger = plan.empty()
     for packet_id, event_id, position, direction in (
@@ -73,6 +76,7 @@ def _source_ledger():
             packet_id,
             7,
             event_id,
+            # ty: ignore[invalid-argument-type]
             (11, 12),
             jnp.asarray(1.0),
             jnp.asarray(direction),
@@ -89,7 +93,7 @@ def _source_ledger():
     return plan, ledger
 
 
-def test_reaction_packets_material_events_epoch_moments_and_gravity_close():
+def test_reaction_packets_material_events_epoch_moments_and_gravity_close() -> None:
     units = _units()
     frame0 = _frame(units, time=0.0, scale_factor=1.0, token=1)
     frame1 = _frame(units, time=0.25, scale_factor=1.1, token=2)

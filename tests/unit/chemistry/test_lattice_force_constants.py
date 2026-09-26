@@ -11,17 +11,20 @@ from phydrax.discretization import PeriodicCell
 from phydrax.sparse import EdgeRelation
 
 
-def test_ifc2_retains_raw_error_and_enforces_pair_asr_rotation():
+def test_ifc2_retains_raw_error_and_enforces_pair_asr_rotation() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(np.eye(3))
+    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0, 0, 0], [0, 0, 0], source_size=1, target_size=1)
     blocks = np.asarray([-np.eye(3), 2.0 * np.eye(3), -np.eye(3)])
     raw = blocks.copy()
     raw[1, 0, 0] += 1.0e-3
     artifact = normalize_second_order_force_constants(
         relation,
+        # ty: ignore[invalid-argument-type]
         [[-1, 0, 0], [0, 0, 0], [1, 0, 0]],
         raw,
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0]],
         cell,
         second_order_force_constant_unit(
@@ -41,20 +44,28 @@ def test_ifc2_retains_raw_error_and_enforces_pair_asr_rotation():
     np.testing.assert_array_equal(artifact.reverse_indices, [2, 1, 0])
 
 
-def test_primitive_supercell_image_map_resolves_exact_ifc_routes():
+def test_primitive_supercell_image_map_resolves_exact_ifc_routes() -> None:
     cell = PeriodicCell(np.eye(3))
     image_map = PrimitiveSupercellImageMap(
+        # ty: ignore[invalid-argument-type]
         [10],
+        # ty: ignore[invalid-argument-type]
         [100, 101, 102],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [[0, 0, 0], [-1, 0, 0], [1, 0, 0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0]],
         cell,
         primitive_system_id="primitive-chain",
     )
+    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0, 0, 0], [0, 0, 0], source_size=1, target_size=1)
     source, target = image_map.route_supercell_indices(
-        relation, [[-1, 0, 0], [0, 0, 0], [1, 0, 0]]
+        relation,
+        # ty: ignore[invalid-argument-type]
+        [[-1, 0, 0], [0, 0, 0], [1, 0, 0]],
     )
     np.testing.assert_array_equal(source, [1, 0, 2])
     np.testing.assert_array_equal(target, [0, 0, 0])

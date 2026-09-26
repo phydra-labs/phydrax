@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -31,11 +34,13 @@ import phydrax as phx
         ),
     ],
 )
-def test_stationary_pairwise_values_match_closed_forms(kernel, expected):
+def test_stationary_pairwise_values_match_closed_forms(
+    kernel: Any, expected: Any
+) -> None:
     assert jnp.allclose(kernel.pairwise(jnp.asarray([0.1]), jnp.asarray([0.5])), expected)
 
 
-def test_stationary_ard_matrices_are_symmetric_positive_semidefinite():
+def test_stationary_ard_matrices_are_symmetric_positive_semidefinite() -> None:
     coordinate = jnp.linspace(-1.0, 1.0, 13)
     points = jnp.stack((coordinate, coordinate**2), axis=1)
 
@@ -60,12 +65,12 @@ def test_stationary_ard_matrices_are_symmetric_positive_semidefinite():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_matern_origin_derivatives_match_process_regularity_moments():
+def test_matern_origin_derivatives_match_process_regularity_moments() -> None:
     length_scale = 0.4
     matern32 = phx.kernels.Matern32Kernel(length_scale=length_scale)
     matern52 = phx.kernels.Matern52Kernel(length_scale=length_scale)
 
-    def scalar_covariance(kernel, left, right):
+    def scalar_covariance(kernel: Any, left: Any, right: Any) -> Any:
         return kernel.pairwise(jnp.asarray([left]), jnp.asarray([right]))
 
     matern32_cross = jax.grad(
@@ -97,7 +102,7 @@ def test_matern_origin_derivatives_match_process_regularity_moments():
     assert jnp.allclose(matern52_fourth, 25.0 / length_scale**4)
 
 
-def test_real_coordinate_kernel_rejects_complex_inputs_before_casting():
+def test_real_coordinate_kernel_rejects_complex_inputs_before_casting() -> None:
     kernel = phx.kernels.SquaredExponentialKernel()
     with pytest.raises(TypeError, match="real coordinates"):
         kernel.pairwise(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.discretization import ParticleSetPlan, RigidBodySetPlan
@@ -19,7 +22,7 @@ from phydrax.discretization.particle._rigid_joints import (
 )
 
 
-def _planar_bodies():
+def _planar_bodies() -> Any:
     particles = ParticleSetPlan(
         jnp.asarray([10, 11]),
         jnp.ones((2,)),
@@ -40,7 +43,7 @@ def _planar_bodies():
     return bodies, reference
 
 
-def test_planar_ball_joint_uses_native_se2_projection():
+def test_planar_ball_joint_uses_native_se2_projection() -> None:
     bodies, reference = _planar_bodies()
     graph = RigidJointGraphPlan(
         ball=BallJointSetPlan(
@@ -64,7 +67,7 @@ def test_planar_ball_joint_uses_native_se2_projection():
     assert dynamics.joints.row_layout.row_count == 2
 
 
-def test_planar_prismatic_coordinate_and_forbidden_rows_are_objective():
+def test_planar_prismatic_coordinate_and_forbidden_rows_are_objective() -> None:
     bodies, reference = _planar_bodies()
     graph = RigidJointGraphPlan(
         prismatic=PrismaticJointSetPlan(
@@ -99,7 +102,7 @@ def test_planar_prismatic_coordinate_and_forbidden_rows_are_objective():
     assert jnp.max(jnp.abs(forbidden_residuals.prismatic_rotation)) > 0.0
 
 
-def test_planar_distance_joint_has_scaled_nonzero_gradient():
+def test_planar_distance_joint_has_scaled_nonzero_gradient() -> None:
     bodies, reference = _planar_bodies()
     graph = RigidJointGraphPlan(
         distance=DistanceJointSetPlan(

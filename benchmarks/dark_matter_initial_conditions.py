@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Report correlated-mode covariance and wave-phase reconstruction residuals."""
 
+
+from typing import Any
 import hashlib
 import json
 
@@ -29,7 +31,7 @@ from phydrax.stochastic import GaussianCoefficientRealization
 cosmology = phx.applications.cosmology
 
 
-def _space(count=8):
+def _space(count: Any=8) -> Any:
     return phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(count),
@@ -45,7 +47,7 @@ def _space(count=8):
     )
 
 
-def _transfer(space):
+def _transfer(space: Any) -> Any:
     background = cosmology.FLRWBackground(1.0, 1.0)
     matrix = jnp.asarray(((1.0, 0.35), (-0.2, 0.8)))
     values = jnp.broadcast_to(matrix[:, :, None, None], (2, 2, 2, 2))
@@ -105,7 +107,7 @@ def _transfer(space):
     return background, transfer, matrix
 
 
-def run(sample_count=256):
+def run(sample_count: Any=256) -> Any:
     space = _space()
     background, transfer, matrix = _transfer(space)
     mode_ids = PrimordialModeRealization.required_mode_ids(

@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -217,7 +218,9 @@ def test_grouped_workset_preserves_canonical_identity_and_group_assignment() -> 
         (signature, signature),
     ).prepare()
 
-    def evaluate(item_index, semantic_id, item_signature, rng_index, group):
+    def evaluate(
+        item_index: Any, semantic_id: Any, item_signature: Any, rng_index: Any, group: Any
+    ) -> Any:
         return (
             item_index,
             semantic_id,
@@ -244,7 +247,7 @@ def test_process_local_epoch_preserves_global_ids_and_fixed_capacity() -> None:
         for process in range(4)
     )
 
-    def active(batches):
+    def active(batches: Any) -> Any:
         return tuple(
             index
             for batch in batches
@@ -268,12 +271,12 @@ def test_generic_halo_shard_map_matches_forward_and_transpose_references() -> No
         2,
     )
 
-    def action(part, local, global_ids, valid, owned):
+    def action(part: Any, local: Any, global_ids: Any, valid: Any, owned: Any) -> Any:
         del part, global_ids
         halo_total = jnp.sum(jnp.where(valid & ~owned, local, 0))
         return jnp.where(owned, local + halo_total, 0)
 
-    def transpose(part, local, global_ids, valid, owned):
+    def transpose(part: Any, local: Any, global_ids: Any, valid: Any, owned: Any) -> Any:
         del part, global_ids
         owned_total = jnp.sum(jnp.where(owned, local, 0))
         return jnp.where(owned, local, jnp.where(valid, owned_total, 0))
@@ -450,9 +453,11 @@ def test_distributed_checkpoint_rejects_huge_declared_shape_before_device_alloca
 
     with pytest.raises(RepositoryCorruptionError, match="axis-length"):
         restore_global_array_from_checkpoint(
+            # ty: ignore[invalid-argument-type]
             object(),
             manifest,
             "['value']",
+            # ty: ignore[invalid-argument-type]
             None,
         )
 
@@ -485,7 +490,7 @@ def test_distributed_pcg_uses_owned_pairing_and_global_consensus() -> None:
         jnp.asarray([1.0, jnp.nan]),
     ),
 )
-def test_distributed_pairing_requires_positive_finite_owned_weights(weights) -> None:
+def test_distributed_pairing_requires_positive_finite_owned_weights(weights: Any) -> None:
     with pytest.raises(ValueError, match="finite and strictly positive"):
         DistributedPairing(jnp.asarray([True, True]), weights=weights)
 
@@ -507,7 +512,7 @@ def test_distributed_pairing_requires_positive_finite_owned_weights(weights) -> 
     (solve_distributed_gmres, solve_distributed_fgmres, solve_distributed_minres),
 )
 def test_distributed_general_krylov_methods_retain_owned_residual_evidence(
-    solver,
+    solver: Any,
 ) -> None:
     diagonal = jnp.asarray([2.0, 3.0, 4.0, 1.0])
     operator = DistributedLinearOperator(

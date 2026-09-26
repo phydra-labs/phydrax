@@ -39,6 +39,7 @@ from ...linalg import (
     PreparedFactorization,
     RankPolicy,
 )
+from ...typing import parse
 
 
 class GreenFunctionStatus(IntEnum):
@@ -890,8 +891,7 @@ class SelfEnergyExtractionResult(StrictModule):
 
 
 def _statistics(value: str, /) -> ThermalStatistics:
-    if value not in ("fermionic", "bosonic"):
-        raise ValueError("statistics must be 'fermionic' or 'bosonic'.")
+    value = parse(value, ThermalStatistics, "value")
     return value
 
 

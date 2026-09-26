@@ -68,6 +68,7 @@ expected = jnp.outer(line_coefficients, line_coefficients).reshape(solution.shap
 coefficient_error = jnp.max(jnp.abs(solution - expected))
 free_residual = compiled.residual(result.value)
 residual_norm = jnp.sqrt(jnp.real(jnp.vdot(free_residual, free_residual)))
+# ty: ignore[invalid-argument-type]
 right_hand_side_norm = jnp.sqrt(jnp.real(jnp.vdot(right_hand_side, right_hand_side)))
 normalized_residual = residual_norm / jnp.maximum(right_hand_side_norm, 1.0)
 tolerance = 4096.0 * jnp.finfo(solution.dtype).eps

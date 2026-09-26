@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,12 +12,14 @@ import numpy as np
 from phydrax.applications.battery._particle import BatteryParticlePlan
 
 
-def _amounts(prepared, concentration, *, radius=2.0e-6, multiplicity=7.0):
+def _amounts(
+    prepared: Any, concentration: Any, *, radius: Any = 2.0e-6, multiplicity: Any = 7.0
+) -> Any:
     volumes = prepared.shell_measures(jnp.asarray(radius))
     return jnp.asarray(concentration) * multiplicity * volumes
 
 
-def test_center_boundary_surface_reconstruction_and_electrode_scaling():
+def test_center_boundary_surface_reconstruction_and_electrode_scaling() -> None:
     prepared = BatteryParticlePlan(4, particle_id="test").prepare()
     radius = 2.0e-6
     multiplicity = 7.0
@@ -60,7 +65,7 @@ def test_center_boundary_surface_reconstruction_and_electrode_scaling():
     assert bool(result.domain_valid)
 
 
-def test_quadratic_manufactured_solution_has_exact_spherical_diffusion_rate():
+def test_quadratic_manufactured_solution_has_exact_spherical_diffusion_rate() -> None:
     shell_count = 8
     prepared = BatteryParticlePlan(shell_count, particle_id="manufactured").prepare()
     radius = 3.0e-6
@@ -92,7 +97,7 @@ def test_quadratic_manufactured_solution_has_exact_spherical_diffusion_rate():
     np.testing.assert_allclose(result.conservation_residual_mol_s, 0.0, atol=1.0e-20)
 
 
-def test_zero_boundary_flux_relaxes_concentration_without_changing_total_amount():
+def test_zero_boundary_flux_relaxes_concentration_without_changing_total_amount() -> None:
     prepared = BatteryParticlePlan(4, particle_id="relaxation").prepare()
     radius = 2.0e-6
     multiplicity = 5.0
@@ -111,7 +116,7 @@ def test_zero_boundary_flux_relaxes_concentration_without_changing_total_amount(
     assert bool(result.domain_valid)
 
 
-def test_shell_diffusivity_uses_harmonic_face_values_and_surface_cell_property():
+def test_shell_diffusivity_uses_harmonic_face_values_and_surface_cell_property() -> None:
     prepared = BatteryParticlePlan(3, particle_id="variable-diffusivity").prepare()
     radius = 3.0e-6
     multiplicity = 2.0
@@ -151,7 +156,7 @@ def test_shell_diffusivity_uses_harmonic_face_values_and_surface_cell_property()
     assert bool(result.domain_valid)
 
 
-def test_particle_transport_is_jittable_vmappable_and_differentiable():
+def test_particle_transport_is_jittable_vmappable_and_differentiable() -> None:
     prepared = BatteryParticlePlan(3, particle_id="transforms").prepare()
     radius = 2.0e-6
     multiplicity = 4.0
@@ -162,7 +167,7 @@ def test_particle_transport_is_jittable_vmappable_and_differentiable():
         multiplicity=multiplicity,
     )
 
-    def evaluate(state, flux):
+    def evaluate(state: Any, flux: Any) -> Any:
         return prepared.evaluate(
             state,
             particle_radius_m=radius,
@@ -188,7 +193,7 @@ def test_particle_transport_is_jittable_vmappable_and_differentiable():
     assert bool(jnp.all(mapped.domain_valid))
 
 
-def test_particle_domain_rejects_negative_amount_and_nonpositive_diffusivity():
+def test_particle_domain_rejects_negative_amount_and_nonpositive_diffusivity() -> None:
     prepared = BatteryParticlePlan(2, particle_id="domain").prepare()
     amounts = prepared.initial_amounts(1.0e4, 1.0e-6, 3.0)
     negative = amounts.at[0].set(-1.0)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -28,7 +31,7 @@ COMPLEX_RHS = jnp.asarray(
 WEIGHTS = jnp.asarray(0.5 + _RANDOM.random(SIZE))
 
 
-def _operator(matrix, *, space=None, spd=False):
+def _operator(matrix: Any, *, space: Any = None, spd: Any = False) -> Any:
     space_ = la.ArraySpace((SIZE,), dtype=matrix.dtype) if space is None else space
     properties = (
         la.OperatorProperties(
@@ -52,7 +55,7 @@ def _operator(matrix, *, space=None, spd=False):
     )
 
 
-def _policy(method, mode, *, max_steps, relative=0.0):
+def _policy(method: Any, mode: Any, *, max_steps: Any, relative: Any = 0.0) -> Any:
     return la.LinearSolvePolicy(
         method,
         tolerance=la.TolerancePolicy(
@@ -64,17 +67,17 @@ def _policy(method, mode, *, max_steps, relative=0.0):
 
 
 def _solve(
-    matrix,
-    rhs,
-    method,
-    mode,
+    matrix: Any,
+    rhs: Any,
+    method: Any,
+    mode: Any,
     *,
-    max_steps,
-    steps=None,
-    space=None,
-    spd=False,
-    relative=0.0,
-):
+    max_steps: Any,
+    steps: Any = None,
+    space: Any = None,
+    spd: Any = False,
+    relative: Any = 0.0,
+) -> Any:
     problem = la.LinearSystem(_operator(matrix, space=space, spd=spd))
     control = None if steps is None else la.LinearSolveControl(maximum_steps=steps)
     return la.solve(
@@ -94,10 +97,12 @@ def _solve(
         (COMPLEX, COMPLEX_RHS, la.FGMRES(restart=3), False),
     ),
 )
-def test_fixed_trip_and_early_exit_agree_on_every_iterate(matrix, rhs, method, spd):
+def test_fixed_trip_and_early_exit_agree_on_every_iterate(
+    matrix: Any, rhs: Any, method: Any, spd: Any
+) -> None:
     max_steps = 3 * SIZE
 
-    def run(mode):
+    def run(mode: Any) -> Any:
         return jax.jit(
             lambda steps: _solve(
                 matrix,
@@ -127,7 +132,7 @@ def test_fixed_trip_and_early_exit_agree_on_every_iterate(matrix, rhs, method, s
     assert bool(early_result.successful)
 
 
-def test_fixed_trip_status_reports_the_capacity_limit():
+def test_fixed_trip_status_reports_the_capacity_limit() -> None:
     early = _solve(GENERAL, RHS, la.FGMRES(restart=3), "none", max_steps=5)
     fixed = _solve(GENERAL, RHS, la.FGMRES(restart=3), "algorithmic", max_steps=5)
 
@@ -137,7 +142,7 @@ def test_fixed_trip_status_reports_the_capacity_limit():
     assert int(fixed.diagnostics.matvec_count) == int(early.diagnostics.matvec_count)
 
 
-def _central_difference(function, value, step=1.0e-6):
+def _central_difference(function: Any, value: Any, step: Any = 1.0e-6) -> Any:
     return (function(value + step) - function(value - step)) / (2.0 * step)
 
 
@@ -150,12 +155,12 @@ def _central_difference(function, value, step=1.0e-6):
     ),
 )
 def test_reverse_mode_differentiates_the_executed_iteration_across_restarts(
-    matrix, method, spd, max_steps
-):
+    matrix: Any, method: Any, spd: Any, max_steps: Any
+) -> None:
     direction = jnp.linspace(-1.0, 1.0, SIZE)
 
     @jax.jit
-    def loss(scale):
+    def loss(scale: Any) -> Any:
         result = _solve(
             matrix + scale * jnp.diag(direction),
             RHS * (1.0 + scale),
@@ -175,13 +180,13 @@ def test_reverse_mode_differentiates_the_executed_iteration_across_restarts(
     np.testing.assert_allclose(gradient, tangent, rtol=1e-10)
 
 
-def test_complex_pairing_reverse_mode_matches_finite_differences():
+def test_complex_pairing_reverse_mode_matches_finite_differences() -> None:
     space = la.ArraySpace(
         (SIZE,), dtype=jnp.complex128, pairing=la.DiagonalPairing(WEIGHTS)
     )
 
     @jax.jit
-    def loss(scale):
+    def loss(scale: Any) -> Any:
         result = _solve(
             COMPLEX * (1.0 + scale),
             COMPLEX_RHS,

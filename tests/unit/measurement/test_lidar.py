@@ -1,4 +1,5 @@
 from hashlib import sha256
+from typing import Any
 
 import numpy as np
 import pytest
@@ -6,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _manifest():
+def _manifest() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "synthetic-lidar",
         checksum_algorithm="sha256",
@@ -24,7 +25,7 @@ def _manifest():
     )
 
 
-def test_lidar_ranges_cartesianize_without_turning_no_returns_into_points():
+def test_lidar_ranges_cartesianize_without_turning_no_returns_into_points() -> None:
     contract = phx.SpatialCoordinateContract(
         phx.units.METER,
         coordinate_system="cartesian-world",
@@ -66,12 +67,13 @@ def test_lidar_ranges_cartesianize_without_turning_no_returns_into_points():
     np.testing.assert_allclose(
         product.support.points[:2], ((0.0, 0.0, 2.0), (0.0, 3.0, 0.0))
     )
+    # ty: ignore[not-subscriptable]
     assert not product.support.active_mask[2]
     np.testing.assert_allclose(product.support.points[2], (0.0, 0.0, 0.0))
     assert product.references[0].manifest_id == asset.references[0].manifest_id
 
 
-def test_las_provider_preserves_derived_point_attributes(tmp_path):
+def test_las_provider_preserves_derived_point_attributes(tmp_path: Any) -> None:
     laspy = pytest.importorskip("laspy")
     header = laspy.LasHeader(point_format=3, version="1.2")
     data = laspy.LasData(header)

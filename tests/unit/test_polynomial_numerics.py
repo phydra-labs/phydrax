@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -39,7 +41,9 @@ _FAMILIES = ("chebyshev", "legendre", "hermite", "hermite_e", "laguerre")
 
 
 @pytest.mark.parametrize("family", _FAMILIES)
-def test_standard_family_affine_coefficients_are_exact_and_differentiable(family):
+def test_standard_family_affine_coefficients_are_exact_and_differentiable(
+    family: Any,
+) -> None:
     intercept = jnp.asarray(-0.7)
     slope = jnp.asarray(1.3)
     coefficients = standard_affine_coefficients(family, intercept, slope)
@@ -63,7 +67,9 @@ def test_standard_family_affine_coefficients_are_exact_and_differentiable(family
         ("laguerre", lambda x: 1.0 - 2.0 * x + 0.5 * x**2),
     ),
 )
-def test_standard_family_quadratic_mode_matches_classical_definition(family, expected):
+def test_standard_family_quadratic_mode_matches_classical_definition(
+    family: Any, expected: Any
+) -> None:
     point = jnp.asarray(0.37)
     value = standard_series_value(family, jnp.asarray([0.0, 0.0, 1.0]), point)
     assert value == pytest.approx(float(expected(point)), rel=1e-12, abs=1e-12)
@@ -78,8 +84,8 @@ def test_standard_family_quadratic_mode_matches_classical_definition(family, exp
     ),
 )
 def test_legendre_rules_preserve_mass_endpoints_and_declared_moments(
-    kind, count, exact_degree, endpoint_policy
-):
+    kind: Any, count: Any, exact_degree: Any, endpoint_policy: Any
+) -> None:
     rule = legendre_rule_data(count, kind)
 
     assert rule.exact_degree == exact_degree
@@ -99,7 +105,7 @@ def test_legendre_rules_preserve_mass_endpoints_and_declared_moments(
         assert observed == pytest.approx(expected, rel=2e-11, abs=2e-11)
 
 
-def test_legendre_rules_handle_minimum_orders_and_reject_invalid_requests():
+def test_legendre_rules_handle_minimum_orders_and_reject_invalid_requests() -> None:
     gauss = legendre_rule_data(1, "gauss")
     radau = legendre_rule_data(1, "radau")
     lobatto = legendre_rule_data(2, "lobatto")
@@ -115,10 +121,11 @@ def test_legendre_rules_handle_minimum_orders_and_reject_invalid_requests():
     with pytest.raises(ValueError, match="at least two"):
         legendre_rule_data(1, "lobatto")
     with pytest.raises(ValueError, match="kind"):
+        # ty: ignore[invalid-argument-type]
         legendre_rule_data(3, "typo")
 
 
-def test_standard_normal_hermite_rule_preserves_probability_moments():
+def test_standard_normal_hermite_rule_preserves_probability_moments() -> None:
     rule = standard_normal_hermite_rule_data(5)
 
     assert rule.integration_measure == "standard-normal"
@@ -130,7 +137,7 @@ def test_standard_normal_hermite_rule_preserves_probability_moments():
         assert observed == pytest.approx(expected, rel=2e-11, abs=2e-11)
 
 
-def test_high_order_rules_remain_finite_positive_and_symmetric():
+def test_high_order_rules_remain_finite_positive_and_symmetric() -> None:
     legendre = legendre_rule_data(64, "gauss")
     hermite = standard_normal_hermite_rule_data(64)
 
@@ -142,7 +149,7 @@ def test_high_order_rules_remain_finite_positive_and_symmetric():
         assert np.allclose(np.asarray(rule.weights), np.asarray(rule.weights)[::-1])
 
 
-def test_chebyshev_lobatto_data_differentiates_and_interpolates_polynomials():
+def test_chebyshev_lobatto_data_differentiates_and_interpolates_polynomials() -> None:
     data = chebyshev_lobatto_data(17, maximum_derivative_order=2)
     nodes = data.nodes
     values = nodes**8 - 2.0 * nodes**3 + nodes
@@ -165,7 +172,7 @@ def test_chebyshev_lobatto_data_differentiates_and_interpolates_polynomials():
     assert jnp.allclose(interpolated, values, rtol=1e-12, atol=1e-12)
 
 
-def test_chebyshev_lobatto_data_handles_payloads_dtype_and_budgets():
+def test_chebyshev_lobatto_data_handles_payloads_dtype_and_budgets() -> None:
     data = chebyshev_lobatto_data(
         9,
         maximum_derivative_order=1,
@@ -189,7 +196,7 @@ def test_chebyshev_lobatto_data_handles_payloads_dtype_and_budgets():
         data.differentiation_matrix(2)
 
 
-def test_generic_barycentric_differentiation_preserves_irregular_polynomials():
+def test_generic_barycentric_differentiation_preserves_irregular_polynomials() -> None:
     nodes = jnp.asarray([-1.0, -0.4, 0.1, 0.8, 1.3])
     matrix = barycentric_differentiation_matrix(nodes)
     values = nodes**4 - 3.0 * nodes**2 + 2.0
@@ -197,7 +204,7 @@ def test_generic_barycentric_differentiation_preserves_irregular_polynomials():
     assert jnp.allclose(matrix @ values, 4.0 * nodes**3 - 6.0 * nodes, atol=1e-10)
 
 
-def _multiindices(dimension: int, degree: int):
+def _multiindices(dimension: int, degree: int) -> Any:
     return np.asarray(
         [
             exponent
@@ -208,7 +215,7 @@ def _multiindices(dimension: int, degree: int):
     )
 
 
-def _reference_moments(reference: str, exponents: np.ndarray):
+def _reference_moments(reference: str, exponents: np.ndarray) -> Any:
     values = []
     for exponent in exponents:
         total = int(np.sum(exponent))
@@ -226,7 +233,7 @@ def _reference_moments(reference: str, exponents: np.ndarray):
     return np.asarray(values)
 
 
-def _assert_cubature_exact(rule: CubatureRuleData):
+def _assert_cubature_exact(rule: CubatureRuleData) -> None:
     points = np.asarray(rule.points)
     weights = np.asarray(rule.weights)
     exponents = _multiindices(points.shape[1], rule.exact_degree)
@@ -237,17 +244,17 @@ def _assert_cubature_exact(rule: CubatureRuleData):
 
 
 @pytest.mark.parametrize("degree", tuple(TRIANGLE_RULES))
-def test_xiao_gimbutas_triangle_rules_have_certified_total_degree(degree):
+def test_xiao_gimbutas_triangle_rules_have_certified_total_degree(degree: Any) -> None:
     _assert_cubature_exact(xiao_gimbutas_rule_data("triangle", degree))
 
 
 @pytest.mark.parametrize("degree", tuple(TETRAHEDRON_RULES))
-def test_xiao_gimbutas_tetrahedron_rules_have_certified_total_degree(degree):
+def test_xiao_gimbutas_tetrahedron_rules_have_certified_total_degree(degree: Any) -> None:
     _assert_cubature_exact(xiao_gimbutas_rule_data("tetrahedron", degree))
 
 
 @pytest.mark.parametrize("degree", tuple(LEBEDEV_RULES))
-def test_positive_lebedev_rules_have_certified_total_degree(degree):
+def test_positive_lebedev_rules_have_certified_total_degree(degree: Any) -> None:
     _assert_cubature_exact(lebedev_rule_data(degree))
 
 
@@ -256,11 +263,13 @@ def test_positive_lebedev_rules_have_certified_total_degree(degree):
     (periodic_circle_rule_data, radial_disk_rule_data, radial_ball_rule_data),
 )
 @pytest.mark.parametrize("degree", (0, 1, 2, 5, 8))
-def test_procedural_radial_rules_have_certified_total_degree(factory, degree):
+def test_procedural_radial_rules_have_certified_total_degree(
+    factory: Any, degree: Any
+) -> None:
     _assert_cubature_exact(factory(degree))
 
 
-def test_cubature_data_identity_storage_and_validation_are_explicit():
+def test_cubature_data_identity_storage_and_validation_are_explicit() -> None:
     first = radial_disk_rule_data(6)
     second = radial_disk_rule_data(6)
     assert first.rule_id == second.rule_id

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ from phydrax.discretization.spatial._plane_interactions import (
 from phydrax.discretization.spatial._plane_schedule import MortonPlaneSchedulePlan
 
 
-def _schedule():
+def _schedule() -> Any:
     points = jnp.asarray(
         [
             [0.05, 0.05, 0.05],
@@ -34,7 +36,7 @@ def _schedule():
     return plan, plan.build(points)
 
 
-def _coverage(schedule, interactions):
+def _coverage(schedule: Any, interactions: Any) -> Any:
     count = schedule.point_order.sorted_active.size
     coverage = np.zeros((count, count), dtype=np.int32)
     for relation in (interactions.far, interactions.near):

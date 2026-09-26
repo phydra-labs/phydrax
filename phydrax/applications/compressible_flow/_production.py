@@ -525,7 +525,8 @@ class SmoothCompressibleProductionPlan(StrictModule):
             raise ValueError("Prepared DGSEM dynamics do not belong to this plan.")
         compatibility = self.method.compatibility
         # The constructor requires sampled compatibility evidence.
-        assert compatibility is not None
+        if not (compatibility is not None):
+            raise RuntimeError("Internal invariant failed: compatibility is not None.")
         if (
             not isinstance(
                 dynamics.system,
@@ -561,7 +562,8 @@ class SmoothCompressibleProductionPlan(StrictModule):
             raise ValueError("Prepared DGSEM dynamics do not belong to this plan.")
         compatibility = self.method.compatibility
         # The constructor requires sampled compatibility evidence.
-        assert compatibility is not None
+        if not (compatibility is not None):
+            raise RuntimeError("Internal invariant failed: compatibility is not None.")
         if (
             not isinstance(
                 dynamics.system,
@@ -829,7 +831,10 @@ class StructuredFVCompressibleProductionPlan(StrictModule):
             )
         reconstruction = self.method.reconstruction
         # The constructor always installs a HighResolutionReconstructionPlan.
-        assert isinstance(reconstruction, HighResolutionReconstructionPlan)
+        if not (isinstance(reconstruction, HighResolutionReconstructionPlan)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(reconstruction, HighResolutionReconstructionPlan)."
+            )
         return CompressibleQualificationEvidence(
             case.case_id,
             self.route_label,

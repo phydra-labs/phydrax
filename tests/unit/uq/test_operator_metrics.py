@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -9,11 +12,11 @@ import phydrax as phx
 
 
 def _batch(
-    coordinates,
-    weights,
+    coordinates: Any,
+    weights: Any,
     *,
     cases: int = 2,
-    mask=None,
+    mask: Any = None,
 ) -> phx.nn.operator.OperatorBatch:
     nodes = jnp.asarray(coordinates, dtype="float64")
     query_coordinates = jnp.broadcast_to(nodes[None, :, None], (cases, nodes.size, 1))
@@ -38,7 +41,7 @@ def _batch(
     )
 
 
-def _predictive(samples, batch):
+def _predictive(samples: Any, batch: Any) -> Any:
     return phx.uq.operator_predictive_from_samples(
         jnp.asarray(samples, dtype="float64"),
         batch,
@@ -49,7 +52,7 @@ def _predictive(samples, batch):
     )
 
 
-def test_operator_crps_matches_weighted_pointwise_reference():
+def test_operator_crps_matches_weighted_pointwise_reference() -> None:
     batch = _batch(
         [0.0, 0.5, 1.0],
         [0.2, 0.3, 0.5],
@@ -89,7 +92,7 @@ def test_operator_crps_matches_weighted_pointwise_reference():
     assert not jnp.allclose(actual, uniform)
 
 
-def test_operator_energy_score_matches_whole_field_reference():
+def test_operator_energy_score_matches_whole_field_reference() -> None:
     batch = _batch([0.0, 1.0], [0.25, 0.75])
     samples = jnp.asarray(
         [
@@ -123,7 +126,7 @@ def test_operator_energy_score_matches_whole_field_reference():
     assert jnp.allclose(actual, expected)
 
 
-def test_operator_scores_are_invariant_to_equal_weight_point_splitting():
+def test_operator_scores_are_invariant_to_equal_weight_point_splitting() -> None:
     base_batch = _batch([0.0, 1.0], [0.4, 0.6])
     split_batch = _batch([0.0, 1.0, 1.0], [0.4, 0.3, 0.3])
     base_samples = jnp.asarray(
@@ -149,7 +152,7 @@ def test_operator_scores_are_invariant_to_equal_weight_point_splitting():
     )
 
 
-def test_operator_interval_pointwise_and_simultaneous_coverage_differ():
+def test_operator_interval_pointwise_and_simultaneous_coverage_differ() -> None:
     batch = _batch([0.0, 0.5, 1.0], [1.0, 1.0, 1.0])
     spec = phx.nn.operator.OperatorOutputSpec("scalar")
     lower = phx.nn.operator.OperatorPrediction.from_field(
@@ -204,7 +207,7 @@ def test_operator_interval_pointwise_and_simultaneous_coverage_differ():
     assert jnp.allclose(width, 2.0)
 
 
-def test_operator_scores_reject_invalid_predictive_draws():
+def test_operator_scores_reject_invalid_predictive_draws() -> None:
     batch = _batch([0.0, 1.0], [0.5, 0.5])
     samples = jnp.ones((3, 2, 2)).at[1, 0, 0].set(jnp.nan)
     prediction = _predictive(samples, batch)

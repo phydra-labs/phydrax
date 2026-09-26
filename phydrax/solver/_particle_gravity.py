@@ -2067,7 +2067,8 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
     ) -> tuple[Array, Array, Array, Array]:
         real_cutoff = self.real_cutoff
         # __init__ requires real_cutoff for screened_radius execution.
-        assert real_cutoff is not None
+        if not (real_cutoff is not None):
+            raise RuntimeError("Internal invariant failed: real_cutoff is not None.")
         count = position.shape[0]
         capacity = (
             count * count * self.real_offsets.shape[0]

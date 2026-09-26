@@ -22,8 +22,10 @@ form = sm.force_density_equilibrium(
     sm.ForceDensityInputs(jnp.ones((2,)), structure.prescribed_values(positions), loads),
 )
 material = mn.LinearElasticMaterial(100.0, 40.0, 1.0)
+# ty: ignore[invalid-argument-type]
 properties = mn.MemberPropertyMap((material,), (mn.AxialSection(1.0),), (0, 0), (0, 0))
 assembly = mn.MemberNetworkAssembly(
+    # ty: ignore[invalid-argument-type]
     (mn.AxialMemberBlock((0, 1), mn.TensionOnlyCableLaw()),)
 )
 target, definition, inputs, initial = mn.member_network_from_force_density(

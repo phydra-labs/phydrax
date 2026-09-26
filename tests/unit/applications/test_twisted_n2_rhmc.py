@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -26,7 +29,7 @@ from phydrax.sampling import RHMCResourcePolicy
 jax.config.update("jax_enable_x64", True)
 
 
-def _fixture():
+def _fixture() -> Any:
     theory = TwistedN2SYMPlan(
         (1, 1),
         matrix_rank=1,
@@ -57,7 +60,9 @@ def _fixture():
     return prepared, coordinates
 
 
-def test_twisted_phase_quenched_pseudofermion_force_matches_directional_difference():
+def test_twisted_phase_quenched_pseudofermion_force_matches_directional_difference() -> (
+    None
+):
     prepared, coordinates = _fixture()
     refresh = refresh_pseudofermion(
         prepared.pseudofermion, jax.random.key(3), links=coordinates
@@ -84,7 +89,7 @@ def test_twisted_phase_quenched_pseudofermion_force_matches_directional_differen
     assert bool(force.successful)
 
 
-def test_twisted_rhmc_runs_bounded_phase_quenched_transition():
+def test_twisted_rhmc_runs_bounded_phase_quenched_transition() -> None:
     prepared, coordinates = _fixture()
     run = sample_twisted_n2_rhmc(
         prepared,
@@ -100,7 +105,7 @@ def test_twisted_rhmc_runs_bounded_phase_quenched_transition():
     assert "no-continuum" in run.evidence.claim
 
 
-def test_twisted_chain_retains_pfaffian_phase_and_overlap_evidence():
+def test_twisted_chain_retains_pfaffian_phase_and_overlap_evidence() -> None:
     prepared, coordinates = _fixture()
     run = sample_twisted_n2_rhmc(
         prepared,

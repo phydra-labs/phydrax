@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,7 +11,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def test_periodic_fof_unbinding_properties_and_merger_matching():
+def test_periodic_fof_unbinding_properties_and_merger_matching() -> None:
     ids = jnp.arange(6)
     positions = jnp.asarray(
         [
@@ -56,7 +58,7 @@ def test_periodic_fof_unbinding_properties_and_merger_matching():
     np.testing.assert_array_equal(match.descendant_indices, [0, 1])
 
 
-def test_fof_realizations_are_deterministic_and_equivalent():
+def test_fof_realizations_are_deterministic_and_equivalent() -> None:
     ids = jnp.asarray([40, 10, 60, 20, 50, 30])
     positions = jnp.asarray(
         [
@@ -72,7 +74,7 @@ def test_fof_realizations_are_deterministic_and_equivalent():
     masses = jnp.arange(1.0, 7.0)
     active = jnp.ones((6,), dtype="bool")
 
-    def evaluate(realization):
+    def evaluate(realization: Any) -> Any:
         return cosmology.PeriodicFoFFinderPlan(
             (1.0, 1.0, 1.0),
             0.05,
@@ -119,7 +121,7 @@ def test_fof_realizations_are_deterministic_and_equivalent():
     )
 
 
-def test_fof_group_and_link_capacity_fail_closed():
+def test_fof_group_and_link_capacity_fail_closed() -> None:
     ids = jnp.arange(4)
     positions = jnp.asarray(
         [
@@ -166,7 +168,7 @@ def test_fof_group_and_link_capacity_fail_closed():
     assert not bool(link_overflow.successful)
 
 
-def test_non_direct_fof_realizations_are_filter_jittable():
+def test_non_direct_fof_realizations_are_filter_jittable() -> None:
     ids = jnp.arange(4)
     positions = jnp.asarray(
         [
@@ -200,7 +202,7 @@ def test_non_direct_fof_realizations_are_filter_jittable():
         assert int(result.evidence.required_groups) == 2
 
 
-def test_star_formation_and_stochastic_feedback_are_replayable_and_conservative():
+def test_star_formation_and_stochastic_feedback_are_replayable_and_conservative() -> None:
     population_plan = cosmology.CosmologicalPopulationPlan(4, 3)
     population = population_plan.empty()
     star_formation = cosmology.StochasticStarFormationPlan(

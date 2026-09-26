@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def test_fixed_observation_likelihood_matches_manual_gaussian_sum():
+def test_fixed_observation_likelihood_matches_manual_gaussian_sum() -> None:
     target = jnp.asarray([[1.0, -0.5], [0.2, 0.7], [-1.0, 0.4]])
     likelihood = phx.uq.GaussianLikelihood(jnp.asarray([0.2, 0.4]))
     term = phx.uq.FixedObservationLikelihood(
@@ -29,7 +32,7 @@ def test_fixed_observation_likelihood_matches_manual_gaussian_sum():
     )
 
 
-def test_fixed_heteroscedastic_observation_extracts_explicit_parameters():
+def test_fixed_heteroscedastic_observation_extracts_explicit_parameters() -> None:
     target = jnp.asarray([0.0, 1.0, 2.0])
     likelihood = phx.uq.GaussianLocationScaleLikelihood(min_scale=1e-4)
     term = phx.uq.FixedObservationLikelihood(
@@ -51,7 +54,7 @@ def test_fixed_heteroscedastic_observation_extracts_explicit_parameters():
     assert jnp.allclose(term.per_case_log_prob(parameters), expected)
 
 
-def test_fixed_residual_likelihood_is_deterministic_and_normalized_by_scale():
+def test_fixed_residual_likelihood_is_deterministic_and_normalized_by_scale() -> None:
     likelihood = phx.uq.GaussianLikelihood(0.25)
     term = phx.uq.FixedResidualLikelihood(
         lambda coefficient: jnp.asarray(
@@ -71,7 +74,7 @@ def test_fixed_residual_likelihood_is_deterministic_and_normalized_by_scale():
     assert jnp.allclose(first, expected)
 
 
-def test_structured_gp_marginal_term_matches_direct_likelihood_and_gradients():
+def test_structured_gp_marginal_term_matches_direct_likelihood_and_gradients() -> None:
     points = jnp.linspace(0.0, 1.0, 16)
     observations = 0.8 * points + 0.2 * jnp.sin(2.0 * jnp.pi * points)
     discrepancy = phx.uq.ExactGaussianProcessDiscrepancy(
@@ -114,13 +117,14 @@ def test_structured_gp_marginal_term_matches_direct_likelihood_and_gradients():
     malformed = phx.uq.GaussianProcessMarginalLikelihood(
         discrepancy,
         physical_mean,
+        # ty: ignore[invalid-argument-type]
         state=lambda _: {"amplitude": 0.25},
     )
     with pytest.raises(TypeError, match="GaussianProcessLikelihoodState"):
         malformed.log_prob(parameters)
 
 
-def test_computation_aware_gp_elbo_term_matches_direct_bound_and_gradients():
+def test_computation_aware_gp_elbo_term_matches_direct_bound_and_gradients() -> None:
     points = jnp.linspace(0.0, 1.0, 12)
     observations = 0.75 * points + 0.1 * jnp.sin(2.0 * jnp.pi * points)
     discrepancy = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
@@ -177,7 +181,7 @@ def test_computation_aware_gp_elbo_term_matches_direct_bound_and_gradients():
     assert jnp.allclose(fixed_term.log_prob(parameters), expected)
 
 
-def test_computation_aware_gp_elbo_term_rejects_malformed_callbacks():
+def test_computation_aware_gp_elbo_term_rejects_malformed_callbacks() -> None:
     points = jnp.linspace(0.0, 1.0, 6)
     discrepancy = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
         points,
@@ -188,18 +192,21 @@ def test_computation_aware_gp_elbo_term_rejects_malformed_callbacks():
         discrepancy,
         lambda _: jnp.zeros_like(points),
         state=state,
+        # ty: ignore[invalid-argument-type]
         actions=lambda _: jnp.eye(points.size),
     )
     with pytest.raises(TypeError, match="AbstractGaussianProcessActionPolicy"):
         malformed.log_prob({})
 
 
-def test_fixed_supervised_likelihood_preserves_operator_and_ignores_training_weight():
+def test_fixed_supervised_likelihood_preserves_operator_and_ignores_training_weight() -> (
+    None
+):
     rows = jnp.linspace(0.0, 1.0, 6)[:, None]
     domain = phx.domain.DatasetDomain(rows)
 
     @domain.Function("data")
-    def base(row):
+    def base(row: Any) -> Any:
         return row[0]
 
     likelihood = phx.uq.GaussianLikelihood(0.1)
@@ -229,13 +236,13 @@ def test_fixed_supervised_likelihood_preserves_operator_and_ignores_training_wei
     assert jnp.allclose(term.log_prob(jnp.asarray(2.0)), expected.sum())
 
 
-def test_fixed_supervised_likelihood_accepts_classification_sibling():
+def test_fixed_supervised_likelihood_accepts_classification_sibling() -> None:
     logits = jnp.asarray([[2.0, -1.0, 0.2], [-0.5, 1.4, 0.1], [0.0, -0.3, 1.7]])
     targets = jnp.asarray([0, 1, 2], dtype=jnp.int32)
     domain = phx.domain.DatasetDomain(logits)
 
     @domain.Function("data")
-    def field(row):
+    def field(row: Any) -> Any:
         return row
 
     supervised = phx.terms.SupervisedClassificationTerm(
@@ -262,7 +269,7 @@ def test_fixed_supervised_likelihood_accepts_classification_sibling():
     assert jnp.allclose(term.log_prob(None), jnp.sum(expected))
 
 
-def test_composite_terms_construct_problem_without_hidden_reweighting():
+def test_composite_terms_construct_problem_without_hidden_reweighting() -> None:
     likelihood = phx.uq.GaussianLikelihood(0.2)
     observations = phx.uq.FixedObservationLikelihood(
         lambda value: value * jnp.asarray([1.0, 2.0, 3.0]),
@@ -294,7 +301,7 @@ def test_composite_terms_construct_problem_without_hidden_reweighting():
     assert jnp.allclose(mode.position, 0.9995, atol=1e-3)
 
 
-def test_fixed_terms_reject_shape_changes_and_duplicate_labels():
+def test_fixed_terms_reject_shape_changes_and_duplicate_labels() -> None:
     likelihood = phx.uq.GaussianLikelihood(1.0)
     malformed = phx.uq.FixedObservationLikelihood(
         lambda _: jnp.ones((2,)),

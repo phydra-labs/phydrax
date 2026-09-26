@@ -8,7 +8,7 @@ import argparse
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -47,7 +47,7 @@ def _correlated_problem() -> phx.uq.PosteriorProblem:
 def _funnel_problem() -> phx.uq.PosteriorProblem:
     initial = jnp.zeros((7,))
 
-    def log_density(value):
+    def log_density(value: Any) -> Any:
         scale = value[0]
         latent = value[1:]
         variance = jnp.exp(scale)
@@ -94,7 +94,7 @@ def _problem(target: TargetName, seed: int) -> phx.uq.PosteriorProblem:
     return _elliptic_problem(seed)
 
 
-def _maximum_tree_difference(left, right) -> float:
+def _maximum_tree_difference(left: Any, right: Any) -> float:
     differences = jax.tree_util.tree_map(
         lambda x, y: jnp.max(jnp.abs(x - y)),
         left,
@@ -103,7 +103,7 @@ def _maximum_tree_difference(left, right) -> float:
     return max(float(value) for value in jax.tree_util.tree_leaves(differences))
 
 
-def _interleaved_work_quanta(integration_steps, *, chunk_size: int) -> int:
+def _interleaved_work_quanta(integration_steps: Any, *, chunk_size: int) -> int:
     draws = integration_steps.shape[1]
     total = 0
     for start in range(0, draws, chunk_size):

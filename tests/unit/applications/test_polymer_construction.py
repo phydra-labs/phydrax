@@ -1,5 +1,6 @@
 import hashlib
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,7 +14,7 @@ from phydrax.applications import polymer_construction as pc
 from phydrax.artifacts import ArtifactManifest
 
 
-def _source():
+def _source() -> Any:
     return {
         "material_id": "two-chain-network",
         "bead_types": [{"id": "A", "mass": 1.0}],
@@ -52,7 +53,7 @@ def _source():
     }
 
 
-def test_recipe_adapter_and_lowering_preserve_explicit_material_semantics():
+def test_recipe_adapter_and_lowering_preserve_explicit_material_semantics() -> None:
     adapted = pc.polymer_recipe_from_mapping(
         _source(), phx.atomistic.AtomisticUnitSystem.reduced()
     )
@@ -68,7 +69,7 @@ def test_recipe_adapter_and_lowering_preserve_explicit_material_semantics():
     )
 
 
-def test_admitted_recipe_requires_the_exact_trusted_manifest(tmp_path):
+def test_admitted_recipe_requires_the_exact_trusted_manifest(tmp_path: Any) -> None:
     payload = json.dumps(_source()).encode()
     (tmp_path / "recipe.json").write_bytes(payload)
     manifest = ArtifactManifest(
@@ -99,7 +100,7 @@ def test_admitted_recipe_requires_the_exact_trusted_manifest(tmp_path):
     assert result.recipe.material_id == "two-chain-network"
 
 
-def test_nonperiodic_reaction_epoch_is_atomic_and_network_observable():
+def test_nonperiodic_reaction_epoch_is_atomic_and_network_observable() -> None:
     adapted = pc.polymer_recipe_from_mapping(
         _source(), phx.atomistic.AtomisticUnitSystem.reduced()
     )
@@ -135,7 +136,7 @@ def test_nonperiodic_reaction_epoch_is_atomic_and_network_observable():
     np.testing.assert_allclose(repaired_network.conversion, 0.0)
 
 
-def test_periodic_cure_requires_explicit_winding_and_detects_spanning_cycle():
+def test_periodic_cure_requires_explicit_winding_and_detects_spanning_cycle() -> None:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 8.0)
     adapted = pc.polymer_recipe_from_mapping(
         _source(), phx.atomistic.AtomisticUnitSystem.reduced(), cell=cell

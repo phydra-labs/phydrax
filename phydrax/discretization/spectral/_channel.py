@@ -647,7 +647,8 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             )
         factorization = self.factorization
         # Dense-route preparations always carry the block factorization.
-        assert factorization is not None
+        if not (factorization is not None):
+            raise RuntimeError("Internal invariant failed: factorization is not None.")
         interior = self.synthesis[1:-1]
         physical_rhs = ein.contract("ij,kjc->kic", interior, modal_modes, backend="jax")
         batch_rhs = jnp.zeros((modal_modes.shape[0], self.block_size), dtype=value.dtype)

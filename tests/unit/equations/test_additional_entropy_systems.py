@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_ideal_mhd_entropy_and_oblique_reflection_are_finite_and_involutive():
+def test_ideal_mhd_entropy_and_oblique_reflection_are_finite_and_involutive() -> None:
     system = phx.equations.IdealMHDSystem(2)
     primitive = jnp.asarray((1.0, 0.2, -0.1, 0.05, 1.0, 0.3, -0.2, 0.1))
     state = system.primitive_to_conserved(primitive)
@@ -26,7 +26,7 @@ def test_ideal_mhd_entropy_and_oblique_reflection_are_finite_and_involutive():
     )
 
 
-def test_shallow_water_total_energy_is_convex_entropy_pair():
+def test_shallow_water_total_energy_is_convex_entropy_pair() -> None:
     system = phx.equations.ShallowWaterSystem(2)
     state = jnp.asarray((2.0, 0.4, -0.2))
     pair = phx.equations.shallow_water_energy_pair(system)
@@ -36,7 +36,7 @@ def test_shallow_water_total_energy_is_convex_entropy_pair():
     assert jnp.isfinite(pair.entropy_flux(state, 0))
 
 
-def test_mhd_executes_through_nodal_conservation_compiler():
+def test_mhd_executes_through_nodal_conservation_compiler() -> None:
     system = phx.equations.IdealMHDSystem(1)
     mesh = phx.discretization.CellMesh(
         np.asarray(((0.0,), (1.0,))),
@@ -70,6 +70,8 @@ def test_mhd_executes_through_nodal_conservation_compiler():
         system.primitive_to_conserved(
             jnp.asarray((1.0, 0.1, 0.0, 0.0, 1.0, 0.2, 0.0, 0.0))
         ),
+        # ty: ignore[unresolved-attribute]
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-10)

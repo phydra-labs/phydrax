@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +16,7 @@ import phydrax as phx
 SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 
-def _schrodinger_constraint(time, hamiltonian):
+def _schrodinger_constraint(time: Any, hamiltonian: Any) -> Any:
     condition = phx.conditions.Residual(
         "psi",
         time.component(),
@@ -28,17 +31,17 @@ def _schrodinger_constraint(time, hamiltonian):
     )
 
 
-def test_complex_schrodinger_residual_runs_through_functional_solver():
+def test_complex_schrodinger_residual_runs_through_functional_solver() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     omega = 1.7
     hamiltonian = time.Function()(0.5 * omega * SIGMA_Z)
 
     @time.Function("t")
-    def exact_state(t):
+    def exact_state(t: Any) -> Any:
         return jnp.asarray([jnp.exp(-0.5j * omega * t), 0.0j])
 
     @time.Function("t")
-    def perturbed_state(t):
+    def perturbed_state(t: Any) -> Any:
         return jnp.asarray([jnp.exp(-0.3j * omega * t), 0.0j])
 
     constraint = _schrodinger_constraint(time, hamiltonian)
@@ -60,7 +63,7 @@ def test_complex_schrodinger_residual_runs_through_functional_solver():
     assert perturbed_loss > 1e-4
 
 
-def test_mixed_register_program_runs_through_refresh_channel_and_gradient():
+def test_mixed_register_program_runs_through_refresh_channel_and_gradient() -> None:
     quantum = phx.operators.quantum
     layout = quantum.HilbertRegisterLayout(("qubit", "qutrit"), (2, 3))
     identity_channel = jnp.eye(3, dtype=jnp.complex128)[None]
@@ -71,7 +74,7 @@ def test_mixed_register_program_runs_through_refresh_channel_and_gradient():
         jnp.eye(3, dtype=jnp.complex128),
     )
 
-    def program(theta):
+    def program(theta: Any) -> Any:
         half = 0.5 * theta
         rotation = jnp.asarray(
             [
@@ -91,7 +94,7 @@ def test_mixed_register_program_runs_through_refresh_channel_and_gradient():
 
     template = phx.solver.prepare_dense_quantum_program(program(0.0))
 
-    def objective(theta):
+    def objective(theta: Any) -> Any:
         prepared = phx.solver.refresh_dense_quantum_program(template, program(theta))
         result = phx.solver.execute_dense_quantum_program(prepared, initial_density)
         expectation = jnp.real(jnp.trace(result.final_state @ observable))

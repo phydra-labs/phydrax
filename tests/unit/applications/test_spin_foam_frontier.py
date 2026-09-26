@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -22,7 +25,7 @@ from phydrax.applications.spin_network import (
 from phydrax.operators.quantum.lattice import SU2SectorResourcePolicy
 
 
-def _resources():
+def _resources() -> Any:
     return SU2SectorResourcePolicy(
         maximum_product_dimension=10_000,
         maximum_sector_dimension=1_000,
@@ -30,7 +33,7 @@ def _resources():
     )
 
 
-def test_finite_su2_bf_identity_portfolio_is_exact():
+def test_finite_su2_bf_identity_portfolio_is_exact() -> None:
     evidence = assess_su2_bf_identities(3)
     assert bool(evidence.accepted)
     assert float(evidence.maximum_clebsch_orthogonality_residual) < 1e-12
@@ -39,7 +42,7 @@ def test_finite_su2_bf_identity_portfolio_is_exact():
     assert float(evidence.maximum_pentagon_residual) < 1e-12
 
 
-def test_fixed_theta_spin_network_is_gauss_invariant_with_area_spectrum():
+def test_fixed_theta_spin_network_is_gauss_invariant_with_area_spectrum() -> None:
     edges = tuple(SpinNetworkEdge(f"e{index}", "left", "right", 2) for index in range(3))
     plan = SpinNetworkGraphPlan(
         ("left", "right"),
@@ -61,7 +64,7 @@ def test_fixed_theta_spin_network_is_gauss_invariant_with_area_spectrum():
     assert "no-graph-changing" in state.claim
 
 
-def test_eprl_plan_pins_boundary_cutoff_and_all_conventions():
+def test_eprl_plan_pins_boundary_cutoff_and_all_conventions() -> None:
     plan = EPRLVertexPlan(
         (0,) * 10,
         (0,) * 5,
@@ -95,7 +98,7 @@ def test_eprl_plan_pins_boundary_cutoff_and_all_conventions():
         )
 
 
-def test_native_zero_spin_sl2c_booster_matches_exact_integral():
+def test_native_zero_spin_sl2c_booster_matches_exact_integral() -> None:
     evidence = evaluate_zero_spin_b4_booster(
         SL2CBoosterReferencePlan(
             radial_cutoff=20.0,

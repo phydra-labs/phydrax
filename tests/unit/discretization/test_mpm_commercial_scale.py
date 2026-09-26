@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def test_three_field_contact_solves_simultaneously_with_essential_rows():
+def test_three_field_contact_solves_simultaneously_with_essential_rows() -> None:
     mass = jnp.asarray([[1.0], [1.5], [2.0]])
     velocity = jnp.asarray([[[0.8, 0.3]], [[0.0, 0.0]], [[-0.6, -0.1]]])
     gradients = jnp.asarray([[[1.0, 0.0]], [[0.0, 1.0]], [[-1.0, -1.0]]])
@@ -40,7 +42,7 @@ def test_three_field_contact_solves_simultaneously_with_essential_rows():
     assert result.dissipation >= 0.0
 
 
-def test_shared_rigid_actor_reaction_is_global_across_contact_nodes():
+def test_shared_rigid_actor_reaction_is_global_across_contact_nodes() -> None:
     actors = phx.discretization.MPMRigidActorState(
         jnp.asarray((2.0,)),
         jnp.asarray((1.0,)),
@@ -59,7 +61,7 @@ def test_shared_rigid_actor_reaction_is_global_across_contact_nodes():
     assert updated.angular_velocity[0] == 2.0
 
 
-def test_distributed_ownership_migration_reduction_and_global_no_commit():
+def test_distributed_ownership_migration_reduction_and_global_no_commit() -> None:
     owner = jnp.asarray([[0, 0], [1, 1]], dtype=jnp.int32)
     plan = phx.discretization.MPMDistributedPlan(
         (8, 8),
@@ -101,7 +103,7 @@ def test_distributed_ownership_migration_reduction_and_global_no_commit():
     assert int(transaction.commit_generation) == 7
 
 
-def test_distributed_halo_exchange_respects_axis_periodicity():
+def test_distributed_halo_exchange_respects_axis_periodicity() -> None:
     owner = jnp.zeros((2,), dtype=jnp.int32)
     nonperiodic = phx.discretization.MPMDistributedPlan(
         (2,),
@@ -128,7 +130,7 @@ def test_distributed_halo_exchange_respects_axis_periodicity():
     np.testing.assert_allclose(periodic_values, (1.0, 2.0))
 
 
-def _particle_state():
+def _particle_state() -> Any:
     return phx.discretization.MPMParticleState(
         jnp.asarray([[0.2, 0.2], [0.8, 0.8], [0.0, 0.0], [0.0, 0.0]]),
         jnp.asarray([[1.0, 0.0], [-1.0, 0.0], [0.0, 0.0], [0.0, 0.0]]),
@@ -142,7 +144,7 @@ def _particle_state():
     )
 
 
-def test_particle_split_merge_and_capacity_bucket_are_conservative():
+def test_particle_split_merge_and_capacity_bucket_are_conservative() -> None:
     plan = phx.discretization.MPMParticleLifecyclePlan(4)
     lifecycle, valid = plan.initialize(
         jnp.asarray((10, 11, -1, -1)),
@@ -196,7 +198,7 @@ def test_particle_split_merge_and_capacity_bucket_are_conservative():
     assert phx.discretization.MPMCapacityBucketPlan((4, 8, 16)).select(7) == 8
 
 
-def test_page_table_and_ratio_two_amr_are_deterministic():
+def test_page_table_and_ratio_two_amr_are_deterministic() -> None:
     table_plan = phx.discretization.MPMPageTablePlan(16)
     table, inserted = table_plan.insert(
         table_plan.empty(),

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -23,7 +26,7 @@ from phydrax.operators.integral.layer_potential._scalar_trace import (
 )
 
 
-def _metadata(source_id="unit-screen"):
+def _metadata(source_id: Any = "unit-screen") -> Any:
     return SurfaceMetadata(
         source_id=source_id,
         source_revision="r1",
@@ -32,7 +35,7 @@ def _metadata(source_id="unit-screen"):
     )
 
 
-def _square_screen():
+def _square_screen() -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -45,7 +48,7 @@ def _square_screen():
     return SurfaceModel.from_triangles(vertices, faces, _metadata())
 
 
-def _closed_tetrahedron():
+def _closed_tetrahedron() -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -58,7 +61,7 @@ def _closed_tetrahedron():
     return SurfaceModel.from_triangles(vertices, faces, _metadata("unit-closed"))
 
 
-def _junction_surface():
+def _junction_surface() -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -73,7 +76,7 @@ def _junction_surface():
     return SurfaceModel(mesh, _metadata("unit-junction"))
 
 
-def test_finite_open_screen_solve_and_edge_evidence():
+def test_finite_open_screen_solve_and_edge_evidence() -> None:
     prepared = prepare_scalar_screen_single_layer_dp0_3d(_square_screen())
     expected_density = jnp.asarray((0.75, -0.25))
     boundary_values = prepared.forward(expected_density)
@@ -91,7 +94,7 @@ def test_finite_open_screen_solve_and_edge_evidence():
     )
 
 
-def test_dense_forward_transpose_and_adjoint_are_exact_algebraic_actions():
+def test_dense_forward_transpose_and_adjoint_are_exact_algebraic_actions() -> None:
     prepared = prepare_scalar_screen_single_layer_dp0_3d(_square_screen())
     left = jnp.asarray((0.3, -0.7))
     right = jnp.asarray((1.2, 0.4))
@@ -110,7 +113,7 @@ def test_dense_forward_transpose_and_adjoint_are_exact_algebraic_actions():
     )
 
 
-def test_crack_sides_remain_distinct_and_jump_density_route_is_explicit():
+def test_crack_sides_remain_distinct_and_jump_density_route_is_explicit() -> None:
     sides = ScalarCrackSideMetadata3D("rock-minus", "rock-plus")
     prepared = prepare_scalar_screen_single_layer_dp0_3d(
         _square_screen(), crack_sides=sides
@@ -123,7 +126,7 @@ def test_crack_sides_remain_distinct_and_jump_density_route_is_explicit():
     np.testing.assert_array_equal(prepared.crack_jump_density(density), -density)
 
 
-def test_closed_surface_w_calderon_and_junction_misuse_fail_closed():
+def test_closed_surface_w_calderon_and_junction_misuse_fail_closed() -> None:
     closed = _closed_tetrahedron()
     with pytest.raises(ValueError, match="open support"):
         prepare_scalar_screen_single_layer_dp0_3d(closed)

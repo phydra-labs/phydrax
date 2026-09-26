@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import numpy as np
 import pytest
@@ -6,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _limits():
+def _limits() -> Any:
     return phx.interchange.ResourceLimits(
         max_bytes=100_000,
         max_depth=16,
@@ -16,7 +17,7 @@ def _limits():
     )
 
 
-def test_bilby_json_import_is_numeric_bounded_and_event_ready(tmp_path):
+def test_bilby_json_import_is_numeric_bounded_and_event_ready(tmp_path: Any) -> None:
     payload = {
         "label": "event",
         "sampler": "dynesty",
@@ -57,7 +58,7 @@ def test_bilby_json_import_is_numeric_bounded_and_event_ready(tmp_path):
     assert event.posterior.samples["mass"].shape == (3,)
 
 
-def test_bilby_json_import_rejects_executable_posterior_markers(tmp_path):
+def test_bilby_json_import_rejects_executable_posterior_markers(tmp_path: Any) -> None:
     payload = {
         "search_parameter_keys": ["x"],
         "posterior": {
@@ -83,7 +84,9 @@ def test_bilby_json_import_rejects_executable_posterior_markers(tmp_path):
         ("use_ratio", "true", TypeError),
     ),
 )
-def test_bilby_json_import_rejects_ambiguous_metadata(tmp_path, name, value, error):
+def test_bilby_json_import_rejects_ambiguous_metadata(
+    tmp_path: Any, name: Any, value: Any, error: Any
+) -> None:
     payload = {
         "search_parameter_keys": ["x"],
         "posterior": {"x": [1.0]},
@@ -100,7 +103,7 @@ def test_bilby_json_import_rejects_ambiguous_metadata(tmp_path, name, value, err
         )
 
 
-def test_bilby_json_import_rejects_duplicate_object_keys(tmp_path):
+def test_bilby_json_import_rejects_duplicate_object_keys(tmp_path: Any) -> None:
     path = tmp_path / "duplicate.json"
     path.write_text(
         '{"search_parameter_keys":["x"],"search_parameter_keys":["x"],"posterior":{"x":[1.0]}}',

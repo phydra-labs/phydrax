@@ -9,9 +9,11 @@ import pytest
 import phydrax as phx
 
 
-def test_particle_plan_prepares_material_support_without_current_geometry():
+def test_particle_plan_prepares_material_support_without_current_geometry() -> None:
     plan = phx.discretization.ParticleSetPlan(
+        # ty: ignore[invalid-argument-type]
         [7, 11, 19],
+        # ty: ignore[invalid-argument-type]
         [0.2, 0.3, 0.5],
         ambient_dimension=2,
         name="fluid",
@@ -21,9 +23,11 @@ def test_particle_plan_prepares_material_support_without_current_geometry():
     assert particles.capacity == 3
     assert particles.active_count == 3
     assert particles.ambient_dimension == 2
+    # ty: ignore[unresolved-attribute]
     assert particles.support.topology.neighborhoods is None
     assert particles.position_space.representation == "particle_value"
     assert particles.velocity_space.representation == "particle_value"
+    # ty: ignore[unresolved-attribute]
     assert particles.position_space.vector_space.shape == (3, 2)
     assert particles.measures[0].total_mass == pytest.approx(1.0)
     assert particles.numeric_version == "initial"
@@ -31,12 +35,16 @@ def test_particle_plan_prepares_material_support_without_current_geometry():
     assert particles.resource_evidence_id == particles.preparation.report_id
 
 
-def test_particle_padding_is_inert_and_topological():
+def test_particle_padding_is_inert_and_topological() -> None:
+    # ty: ignore[invalid-argument-type]
     subset = phx.discretization.EntitySubset("observed", [True, False, False])
     particles = phx.discretization.ParticleSetPlan(
+        # ty: ignore[invalid-argument-type]
         [5, 9, -1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0, np.nan],
         ambient_dimension=1,
+        # ty: ignore[invalid-argument-type]
         active_mask=[True, True, False],
         subsets=(subset,),
     ).prepare()
@@ -49,31 +57,41 @@ def test_particle_padding_is_inert_and_topological():
 
     with pytest.raises(ValueError, match="cannot include inactive"):
         phx.discretization.ParticleSetPlan(
+            # ty: ignore[invalid-argument-type]
             [5, 9, -1],
+            # ty: ignore[invalid-argument-type]
             [1.0, 2.0, np.nan],
             ambient_dimension=1,
+            # ty: ignore[invalid-argument-type]
             active_mask=[True, True, False],
+            # ty: ignore[invalid-argument-type]
             subsets=(phx.discretization.EntitySubset("invalid", [False, False, True]),),
         )
 
 
-def test_particle_plan_rejects_invalid_structural_data():
+def test_particle_plan_rejects_invalid_structural_data() -> None:
     with pytest.raises(ValueError, match="unique"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.ParticleSetPlan([2, 2], [1.0, 1.0], ambient_dimension=1)
     with pytest.raises(ValueError, match="finite and positive"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.ParticleSetPlan([2, 3], [1.0, 0.0], ambient_dimension=1)
     with pytest.raises(ValueError, match="at least one active"):
         phx.discretization.ParticleSetPlan(
+            # ty: ignore[invalid-argument-type]
             [-1, -1],
+            # ty: ignore[invalid-argument-type]
             [np.nan, np.nan],
             ambient_dimension=1,
+            # ty: ignore[invalid-argument-type]
             active_mask=[False, False],
         )
     with pytest.raises(ValueError, match="ambient_dimension"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.ParticleSetPlan([2], [1.0], ambient_dimension=0)
 
 
-def test_particle_precision_and_execution_policies_are_explicit():
+def test_particle_precision_and_execution_policies_are_explicit() -> None:
     precision = phx.discretization.ParticlePrecisionPolicy(
         geometry_dtype="float32",
         evaluation_dtype="float32",
@@ -97,4 +115,5 @@ def test_particle_precision_and_execution_policies_are_explicit():
     )
     assert cell_execution.realization == "cell_edge_list"
     with pytest.raises(ValueError, match="cell_edge_list"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.ParticleExecutionPolicy(realization="cell_ranges")

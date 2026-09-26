@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -80,8 +81,11 @@ def _response_plan() -> LinearizedCarrierOpticalResponsePlan:
         reference_temperature=300.0,
         differential_refractive_index=-2.0e-27,
         background_internal_loss=1.0e3,
+        # ty: ignore[invalid-argument-type]
         density_range=(0.5e24, 4.0e24),
+        # ty: ignore[invalid-argument-type]
         temperature_range=(290.0, 310.0),
+        # ty: ignore[invalid-argument-type]
         angular_frequency_range=(0.9e15, 1.1e15),
         active_volume=3.0e-16,
         confinement_factor=1.0,
@@ -119,7 +123,7 @@ def _optical_response_case() -> dict[str, object]:
     }
 
 
-def _prepared_laser(step_count: int = 12, *, coupling=None):
+def _prepared_laser(step_count: int = 12, *, coupling: Any = None) -> Any:
     reflection = jnp.sqrt(0.3)
     return TravelingWaveSemiconductorLaserPlan(
         jnp.linspace(0.0, 3.0e-4, 4),
@@ -132,6 +136,7 @@ def _prepared_laser(step_count: int = 12, *, coupling=None):
         recombination_c=0.0,
         left_facet_amplitude_reflection=reflection + 0.0j,
         right_facet_amplitude_reflection=-reflection + 0.0j,
+        # ty: ignore[invalid-argument-type]
         carrier_density_bounds=(0.5e24, 3.0e24),
         step_count=step_count,
         coupling=coupling,
@@ -172,6 +177,7 @@ def _laser_cases() -> dict[str, object]:
         recombination_c=0.0,
         left_facet_amplitude_reflection=jnp.sqrt(0.2),
         right_facet_amplitude_reflection=jnp.sqrt(0.7),
+        # ty: ignore[invalid-argument-type]
         carrier_density_bounds=(0.5e24, 3.0e24),
         step_count=1,
         coupling=jnp.asarray((4.0e3j,)),
@@ -267,22 +273,37 @@ def qualify() -> dict[str, object]:
     optical_response = _optical_response_case()
     laser = _laser_cases()
     accepted = (
+        # ty: ignore[not-subscriptable]
         coupled_mode["no_grating"]["status"] == 0
+        # ty: ignore[not-subscriptable]
         and coupled_mode["no_grating"]["transmission_power_error"] < 1.0e-12
+        # ty: ignore[not-subscriptable]
         and coupled_mode["deep_stop_band"]["status"] == 0
+        # ty: ignore[not-subscriptable]
         and coupled_mode["deep_stop_band"]["reflection_power_error"] < 1.0e-12
         and optical_response["status"] == 0
         and optical_response["field_power_factor_error"] == 0.0
+        # ty: ignore[not-subscriptable]
         and laser["threshold"]["status"] == 0
+        # ty: ignore[not-subscriptable]
         and laser["threshold"]["round_trip_log_power_residual"] < 1.0e-10
+        # ty: ignore[not-subscriptable]
         and laser["deterministic_zero_field"]["status"] == 0
+        # ty: ignore[not-subscriptable]
         and laser["deterministic_zero_field"]["maximum_field_amplitude"] == 0.0
+        # ty: ignore[not-subscriptable]
         and laser["stochastic_replay"]["status"] == 0
+        # ty: ignore[not-subscriptable]
         and laser["stochastic_replay"]["maximum_replay_error"] == 0.0
+        # ty: ignore[not-subscriptable]
         and laser["distributed_grating"]["transient_status"] == 0
+        # ty: ignore[not-subscriptable]
         and laser["distributed_grating"]["maximum_unitarity_error"] < 1.0e-12
+        # ty: ignore[not-subscriptable]
         and laser["distributed_grating"]["threshold_status"] == 0
+        # ty: ignore[not-subscriptable]
         and laser["distributed_grating"]["threshold_modal_residual"] < 1.0e-8
+        # ty: ignore[not-subscriptable]
         and laser["distributed_grating"]["threshold_modal_gap"] > 1.0e-5
     )
     return {

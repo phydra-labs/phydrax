@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _system(dimension=2):
+def _system(dimension: Any = 2) -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A",),
         (phx.equations.ChemicalPhaseKind.GAS,),
@@ -42,12 +45,12 @@ def _system(dimension=2):
 
 def _wall(
     *,
-    tmac=1.0,
-    thermal=1.0,
-    temperature=290.0,
-    heat_flux=None,
-    dimension=2,
-):
+    tmac: Any = 1.0,
+    thermal: Any = 1.0,
+    temperature: Any = 290.0,
+    heat_flux: Any = None,
+    dimension: Any = 2,
+) -> Any:
     coefficients = phx.discretization.MaxwellSmoluchowskiWallCoefficients(
         slip_prefactor=1.0,
         temperature_jump_prefactor=1.0,
@@ -71,8 +74,8 @@ def _wall(
     )
 
 
-def _state_and_gradient(system):
-    def state_at(y):
+def _state_and_gradient(system: Any) -> Any:
+    def state_at(y: Any) -> Any:
         primitive = jnp.asarray((1.0, 2.0 + 4.0 * y, 0.0, 300.0 + 10.0 * y))
         return system.primitive_to_conserved(primitive)
 
@@ -83,7 +86,7 @@ def _state_and_gradient(system):
     return state[None, :], gradient[None, :, :]
 
 
-def test_slip_jump_and_thermal_creep_have_independent_accommodation():
+def test_slip_jump_and_thermal_creep_have_independent_accommodation() -> None:
     system = _system()
     state, gradient = _state_and_gradient(system)
     normal = jnp.asarray((0.0, -1.0))
@@ -108,7 +111,9 @@ def test_slip_jump_and_thermal_creep_have_independent_accommodation():
     np.testing.assert_allclose(lower_thermal.slip_length, baseline.slip_length)
 
 
-def test_prescribed_outward_heat_flux_sets_physical_normal_flux_and_wall_refuses_ale():
+def test_prescribed_outward_heat_flux_sets_physical_normal_flux_and_wall_refuses_ale() -> (
+    None
+):
     system = _system()
     state, gradient = _state_and_gradient(system)
     wall = _wall(heat_flux=2.0)
@@ -126,7 +131,7 @@ def test_prescribed_outward_heat_flux_sets_physical_normal_flux_and_wall_refuses
         wall.ale_exterior_state(system, state, None, 1)
 
 
-def test_rarefied_wall_rejects_unsupported_gas_system():
+def test_rarefied_wall_rejects_unsupported_gas_system() -> None:
     system = phx.equations.CompressibleNavierStokesSystem(
         phx.equations.ConstantTransport(0.1, 0.2), 2
     )
@@ -141,7 +146,7 @@ def test_rarefied_wall_rejects_unsupported_gas_system():
         )
 
 
-def test_structured_viscous_flux_consumes_rarefied_wall_normal_flux():
+def test_structured_viscous_flux_consumes_rarefied_wall_normal_flux() -> None:
     system = _system(dimension=1)
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)

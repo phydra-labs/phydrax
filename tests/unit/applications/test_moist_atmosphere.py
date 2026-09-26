@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -16,14 +19,15 @@ from phydrax.applications.atmosphere._column import (
 from phydrax.applications.atmosphere._moist import MoistThermodynamicPlan
 
 
-def test_atmosphere_fixed_capacity_controls_require_exact_integers():
+def test_atmosphere_fixed_capacity_controls_require_exact_integers() -> None:
     with pytest.raises(TypeError, match="maximum_steps"):
         MoistThermodynamicPlan(maximum_steps=True)
     with pytest.raises(TypeError, match="forcing_cadence"):
+        # ty: ignore[invalid-argument-type]
         MoistColumnPlan(forcing_cadence=1.0)
 
 
-def test_dry_limit_loading_and_both_caloric_constraints():
+def test_dry_limit_loading_and_both_caloric_constraints() -> None:
     thermo = MoistThermodynamicPlan()
     temperature = jnp.asarray((240.0, thermo.reference_temperature, 290.0, 330.0))
     density = jnp.asarray((0.8, 1.0, 1.1, 1.4))
@@ -50,7 +54,7 @@ def test_dry_limit_loading_and_both_caloric_constraints():
 
 
 @pytest.mark.parametrize("phase,temperature", [("liquid", 290.0), ("ice", 250.0)])
-def test_saturation_uses_declared_latent_enthalpy(phase, temperature):
+def test_saturation_uses_declared_latent_enthalpy(phase: Any, temperature: Any) -> None:
     thermo = MoistThermodynamicPlan(latent_vaporization=2.6e6, vapor_cv=1450.0)
     slope = jax.grad(lambda t: jnp.log(thermo.saturation_pressure(t, phase=phase)))(
         temperature
@@ -62,7 +66,7 @@ def test_saturation_uses_declared_latent_enthalpy(phase, temperature):
     )
 
 
-def test_closed_adjustment_conserves_phase_water_energy_and_saturation():
+def test_closed_adjustment_conserves_phase_water_energy_and_saturation() -> None:
     thermo = MoistThermodynamicPlan()
     rho = jnp.asarray((0.9, 1.2, 0.7))
     temperature = jnp.asarray((248.0, 288.0, 315.0))
@@ -98,7 +102,7 @@ def test_closed_adjustment_conserves_phase_water_energy_and_saturation():
     np.testing.assert_allclose(isobaric.density, rho, atol=2e-10)
 
 
-def test_supersaturated_vapor_condenses_and_warms_without_external_energy():
+def test_supersaturated_vapor_condenses_and_warms_without_external_energy() -> None:
     thermo = MoistThermodynamicPlan()
     rho, temperature, qt = 1.1, 270.0, 0.025
     energy = thermo.energy(rho, temperature, qt, 0.0, 0.0)
@@ -127,7 +131,7 @@ def test_supersaturated_vapor_condenses_and_warms_without_external_energy():
     np.testing.assert_allclose(returned.temperature, adjusted.temperature, atol=2e-8)
 
 
-def test_freezing_coexistence_absorbs_latent_energy_without_temperature_jump():
+def test_freezing_coexistence_absorbs_latent_energy_without_temperature_jump() -> None:
     thermo = MoistThermodynamicPlan()
     rho, qt, t = 1.1, 0.025, thermo.reference_temperature
     at_freezing = thermo.equilibrium(rho, t, qt)
@@ -158,15 +162,15 @@ def test_freezing_coexistence_absorbs_latent_energy_without_temperature_jump():
     "temperature,total_water", [(250.0, 0.018), (292.0, 0.028), (305.0, 0.002)]
 )
 def test_branch_regular_implicit_derivatives_match_centered_perturbations(
-    temperature, total_water
-):
+    temperature: Any, total_water: Any
+) -> None:
     thermo = MoistThermodynamicPlan()
     rho = 1.0
     initial = thermo.equilibrium(rho, temperature, total_water)
     energy = thermo.energy(rho, temperature, initial.vapor, initial.liquid, initial.ice)
     args = jnp.asarray((rho, total_water, energy))
 
-    def observable(parameters):
+    def observable(parameters: Any) -> Any:
         result = thermo.adjust(parameters[0], parameters[1], parameters[2])
         return jnp.stack((result.temperature, result.vapor))
 
@@ -188,14 +192,16 @@ def test_branch_regular_implicit_derivatives_match_centered_perturbations(
     np.testing.assert_allclose(derivative, finite_difference, rtol=2e-5, atol=2e-7)
 
 
-def test_out_of_domain_energy_cannot_be_certified():
+def test_out_of_domain_energy_cannot_be_certified() -> None:
     thermo = MoistThermodynamicPlan()
     result = thermo.adjust(1.0, 0.02, 1e8)
     assert not result.successful and not result.derivative_valid
     assert not thermo.adjust(1.0, -0.01, 0.0).successful
 
 
-def test_precipitation_transfers_mass_and_condensate_enthalpy_and_rejects_atomically():
+def test_precipitation_transfers_mass_and_condensate_enthalpy_and_rejects_atomically() -> (
+    None
+):
     thermo = MoistThermodynamicPlan()
     rho, temperature, qt, volume = 1.1, 255.0, 0.03, 120.0
     initial = thermo.equilibrium(rho, temperature, qt)
@@ -221,7 +227,7 @@ def test_precipitation_transfers_mass_and_condensate_enthalpy_and_rejects_atomic
     assert rejected.precipitated_water == 0 and rejected.precipitated_energy == 0
 
 
-def test_radiation_and_vertical_mixing_have_real_opposite_budgets():
+def test_radiation_and_vertical_mixing_have_real_opposite_budgets() -> None:
     mass = jnp.asarray((20.0, 40.0, 60.0))
     quantity = jnp.asarray((2.0, 5.0, 1.0))
     tendency = conservative_vertical_mixing(quantity, mass, 0.01)
@@ -234,7 +240,9 @@ def test_radiation_and_vertical_mixing_have_real_opposite_budgets():
     assert radiation[0] > 0 and radiation[2] < 0
 
 
-def test_isobaric_unsaturated_derivatives_remain_finite_above_saturation_pressure():
+def test_isobaric_unsaturated_derivatives_remain_finite_above_saturation_pressure() -> (
+    None
+):
     thermo = MoistThermodynamicPlan()
     temperature, qt, pressure = 350.0, 0.02, 1000.0
     enthalpy = thermo.enthalpy(temperature, qt, 0.0, 0.0)
@@ -252,7 +260,9 @@ def test_isobaric_unsaturated_derivatives_remain_finite_above_saturation_pressur
     )
 
 
-def test_water_only_mixing_carries_vapor_energy_without_splitting_equal_temperatures():
+def test_water_only_mixing_carries_vapor_energy_without_splitting_equal_temperatures() -> (
+    None
+):
     plan = MoistColumnPlan(mixing_rate=0.01, radiation_temperature=300.0)
     initial = plan.initialize(
         jnp.ones(2), jnp.full(2, 300.0), jnp.asarray((0.002, 0.010)), 100.0
@@ -274,7 +284,9 @@ def test_water_only_mixing_carries_vapor_energy_without_splitting_equal_temperat
     np.testing.assert_allclose(result.state.total_energy, initial.total_energy, atol=2e-8)
 
 
-def test_column_restart_cadence_closed_budgets_and_rejection_no_commit(tmp_path):
+def test_column_restart_cadence_closed_budgets_and_rejection_no_commit(
+    tmp_path: Any,
+) -> None:
     plan = MoistColumnPlan(forcing_cadence=3, mixing_rate=1e-4)
     initial = plan.initialize(
         jnp.asarray((0.8, 1.0, 1.2)),

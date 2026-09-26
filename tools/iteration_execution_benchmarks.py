@@ -10,6 +10,7 @@ import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -23,7 +24,7 @@ from benchmarks._runtime import (
 )
 
 
-def _step(step_index, time, state, step_size, forcing):
+def _step(step_index: Any, time: Any, state: Any, step_size: Any, forcing: Any) -> Any:
     del step_index, time
     candidate = state + step_size * forcing
     return phx.solver.FixedStepResult(
@@ -38,14 +39,14 @@ def _step(step_index, time, state, step_size, forcing):
     )
 
 
-def _operation(iteration):
+def _operation(iteration: Any) -> Any:
     method = phx.solver.CallableFixedStepMethod(_step, "iteration-benchmark-step")
     rollout = phx.solver.FixedStepRolloutPlan(
         retention="final",
         iteration=iteration,
     )
 
-    def run(initial):
+    def run(initial: Any) -> Any:
         problem = phx.solver.FixedStepProblem(
             method,
             initial,
@@ -59,7 +60,7 @@ def _operation(iteration):
     return jax.jit(run)
 
 
-def _case(name, iteration, initial, *, warmup, repeats):
+def _case(name: Any, iteration: Any, initial: Any, *, warmup: Any, repeats: Any) -> Any:
     operation = _operation(iteration)
     compiled, compilation = measure_lower_and_compile(
         lambda: operation.lower(initial),

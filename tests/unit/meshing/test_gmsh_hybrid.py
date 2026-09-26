@@ -1,4 +1,5 @@
 from importlib.util import find_spec
+from typing import Any
 
 import numpy as np
 import pytest
@@ -14,7 +15,9 @@ pytestmark = [
 ]
 
 
-def _split_boxes(first_origin, first_size, second_origin, second_size):
+def _split_boxes(
+    first_origin: Any, first_size: Any, second_origin: Any, second_size: Any
+) -> Any:
     from OCP.BOPAlgo import BOPAlgo_Splitter
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
@@ -30,7 +33,7 @@ def _split_boxes(first_origin, first_size, second_origin, second_size):
     return splitter.Shape()
 
 
-def _source(path, shape):
+def _source(path: Any, shape: Any) -> Any:
     return phx.geometry.persist_occt_shape(
         shape,
         path,
@@ -40,7 +43,7 @@ def _source(path, shape):
     )
 
 
-def _face_indices(source, axis, coordinate):
+def _face_indices(source: Any, axis: Any, coordinate: Any) -> Any:
     points = np.asarray(source.mesh_vertices)
     triangles = points[np.asarray(source.mesh_faces)]
     face_ids = np.asarray(source.triangle_face_ids)
@@ -49,12 +52,12 @@ def _face_indices(source, axis, coordinate):
     )
 
 
-def _scope(provider, source, dimension, indices):
+def _scope(provider: Any, source: Any, dimension: Any, indices: Any) -> Any:
     entities = {2: source.face_ids, 3: source.solid_ids}[dimension]
     return provider.entity_scope(source, tuple(entities[index] for index in indices))
 
 
-def _slab_fixture(path):
+def _slab_fixture(path: Any) -> Any:
     shape = _split_boxes(
         (0.0, 0.0, 0.0),
         (1.0, 1.0, 0.3),
@@ -73,18 +76,18 @@ def _slab_fixture(path):
 
 
 def _hybrid_specification(
-    provider,
-    source,
-    source_face,
-    target_face,
-    swept,
-    core,
-    schedule,
+    provider: Any,
+    source: Any,
+    source_face: Any,
+    target_face: Any,
+    swept: Any,
+    core: Any,
+    schedule: Any,
     *,
-    geometry_order=1,
-    policy=None,
-    patch_face=None,
-):
+    geometry_order: Any = 1,
+    policy: Any = None,
+    patch_face: Any = None,
+) -> Any:
     whole = provider.whole_scope(source, 3)
     swept_scope = _scope(provider, source, 3, (swept,))
     core_scope = _scope(provider, source, 3, (core,))
@@ -149,7 +152,7 @@ def _hybrid_specification(
     return specification, control
 
 
-def _polyhedral_faces(connectivity):
+def _polyhedral_faces(connectivity: Any) -> Any:
     offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
     values = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
     return tuple(
@@ -157,7 +160,9 @@ def _polyhedral_faces(connectivity):
     )
 
 
-def test_real_full_width_prism_slab_meets_tetra_core_on_exact_triangles(tmp_path):
+def test_real_full_width_prism_slab_meets_tetra_core_on_exact_triangles(
+    tmp_path: Any,
+) -> None:
     provider = phx.meshing.GmshProvider()
     source, source_face, target_face, swept, core = _slab_fixture(
         tmp_path / "hybrid-slab.brep"
@@ -252,8 +257,8 @@ def test_real_full_width_prism_slab_meets_tetra_core_on_exact_triangles(tmp_path
 
 
 def test_swept_lateral_face_adjoining_unswept_volume_is_rejected_before_generation(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     provider = phx.meshing.GmshProvider()
     source = _source(
         tmp_path / "invalid-side.brep",
@@ -300,7 +305,10 @@ def test_swept_lateral_face_adjoining_unswept_volume_is_rejected_before_generati
     )
 
 
-def test_schedule_total_mismatch_fails_before_gmsh_mesh_generation(tmp_path, monkeypatch):
+def test_schedule_total_mismatch_fails_before_gmsh_mesh_generation(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    # ty: ignore[unresolved-import]
     import gmsh
 
     provider = phx.meshing.GmshProvider()
@@ -317,7 +325,7 @@ def test_schedule_total_mismatch_fails_before_gmsh_mesh_generation(tmp_path, mon
         phx.meshing.LayerSchedule((0.08, 0.10, 0.11)),
     )
 
-    def unexpected_generation(*args, **kwargs):
+    def unexpected_generation(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("mesh generation must not run for a mismatched schedule")
 
     monkeypatch.setattr(gmsh.model.mesh, "generate", unexpected_generation)
@@ -347,10 +355,10 @@ def test_schedule_total_mismatch_fails_before_gmsh_mesh_generation(tmp_path, mon
     ),
 )
 def test_hybrid_sweep_rejects_high_order_and_transition_cell_claims(
-    tmp_path,
-    geometry_order,
-    policy,
-):
+    tmp_path: Any,
+    geometry_order: Any,
+    policy: Any,
+) -> None:
     provider = phx.meshing.GmshProvider()
     source, source_face, target_face, swept, core = _slab_fixture(
         tmp_path / f"unsupported-{geometry_order}-{len(policy.required)}.brep"

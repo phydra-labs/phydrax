@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,11 +17,19 @@ class OffsetTransform(phx.solver.AbstractAcceptedStepTransform):
     offset: float = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, offset):
+    def __init__(self, offset: Any) -> None:
         self.offset = float(offset)
         self.transform_id = f"transform:offset:{offset}"
 
-    def apply(self, step_index, time, previous_state, candidate_state, args, /):
+    def apply(
+        self,
+        step_index: Any,
+        time: Any,
+        previous_state: Any,
+        candidate_state: Any,
+        args: Any,
+        /,
+    ) -> Any:
         del step_index, time, previous_state, args
         transformed = candidate_state + self.offset
         return phx.solver.AcceptedStepTransformResult(
@@ -33,11 +44,19 @@ class ThresholdAcceptedTransform(phx.solver.AbstractAcceptedStepTransform):
     limit: float = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, limit):
+    def __init__(self, limit: Any) -> None:
         self.limit = float(limit)
         self.transform_id = f"threshold:{self.limit}"
 
-    def apply(self, step_index, time, previous_state, candidate_state, args, /):
+    def apply(
+        self,
+        step_index: Any,
+        time: Any,
+        previous_state: Any,
+        candidate_state: Any,
+        args: Any,
+        /,
+    ) -> Any:
         del step_index, time, previous_state, args
         successful = jnp.max(jnp.abs(candidate_state)) <= self.limit
         return phx.solver.AcceptedStepTransformResult(
@@ -52,11 +71,13 @@ class EvidenceStageTransform(phx.solver.AbstractSSPRKStageTransform):
     failed_stage: int = eqx.field(static=True)
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, failed_stage=0):
+    def __init__(self, failed_stage: Any = 0) -> None:
         self.failed_stage = int(failed_stage)
         self.transform_id = f"stage-evidence:{self.failed_stage}"
 
-    def apply(self, stage_index, time, candidate_state, args, /):
+    def apply(
+        self, stage_index: Any, time: Any, candidate_state: Any, args: Any, /
+    ) -> Any:
         del time, args
         return phx.solver.StageTransformResult(
             candidate_state,
@@ -69,7 +90,9 @@ class EvidenceStageTransform(phx.solver.AbstractSSPRKStageTransform):
 class NonfiniteFailingStageTransform(phx.solver.AbstractSSPRKStageTransform):
     transform_id: str = "stage-transform:nonfinite-failure"
 
-    def apply(self, stage_index, time, candidate_state, args, /):
+    def apply(
+        self, stage_index: Any, time: Any, candidate_state: Any, args: Any, /
+    ) -> Any:
         del time, args
         failed = jnp.asarray(stage_index == 1)
         return phx.solver.StageTransformResult(
@@ -84,19 +107,21 @@ class ExactStepMethod(phx.solver.AbstractFixedStepMethod):
     _required_step_size: float = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, step_size):
+    def __init__(self, step_size: Any) -> None:
         self._required_step_size = float(step_size)
         self.method_id = f"exact-step:{self._required_step_size}"
 
     @property
-    def required_step_size(self):
+    def required_step_size(self) -> Any:
         return self._required_step_size
 
     @property
-    def allows_step_reduction(self):
+    def allows_step_reduction(self) -> bool:
         return False
 
-    def step(self, step_index, time, state, step_size, args, /):
+    def step(
+        self, step_index: Any, time: Any, state: Any, step_size: Any, args: Any, /
+    ) -> Any:
         del step_index, time, args
         candidate = state + step_size
         return phx.solver.FixedStepResult(
@@ -118,7 +143,9 @@ class ExactStepMethod(phx.solver.AbstractFixedStepMethod):
         (phx.solver.SSPRK54FixedStepMethod, 5),
     ),
 )
-def test_ssprk_stage_transform_reports_every_stage(method_type, stage_count):
+def test_ssprk_stage_transform_reports_every_stage(
+    method_type: Any, stage_count: Any
+) -> None:
     method = method_type(
         lambda time, state, args: jnp.zeros_like(state),
         stage_transform=EvidenceStageTransform(),
@@ -136,7 +163,7 @@ def test_ssprk_stage_transform_reports_every_stage(method_type, stage_count):
     assert jnp.allclose(result.accepted_state, jnp.asarray((1.0,)))
 
 
-def test_failed_ssprk_stage_rejects_the_complete_step():
+def test_failed_ssprk_stage_rejects_the_complete_step() -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: -state,
         stage_transform=EvidenceStageTransform(failed_stage=2),
@@ -153,7 +180,7 @@ def test_failed_ssprk_stage_rejects_the_complete_step():
     assert jnp.array_equal(result.accepted_state, state)
 
 
-def test_failed_stage_uses_prior_accepted_state_for_internal_continuation():
+def test_failed_stage_uses_prior_accepted_state_for_internal_continuation() -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: -state,
         stage_transform=NonfiniteFailingStageTransform(),
@@ -171,7 +198,7 @@ def test_failed_stage_uses_prior_accepted_state_for_internal_continuation():
     assert jnp.array_equal(result.accepted_state, state)
 
 
-def test_fixed_step_accepts_required_size_at_execution_dtype():
+def test_fixed_step_accepts_required_size_at_execution_dtype() -> None:
     step_size = float(jnp.asarray(0.1, dtype=jnp.float32))
     problem = phx.solver.FixedStepProblem(
         ExactStepMethod(0.1),
@@ -190,7 +217,7 @@ def test_fixed_step_accepts_required_size_at_execution_dtype():
     )
 
 
-def test_fixed_step_rejects_size_incompatible_with_method_requirement():
+def test_fixed_step_rejects_size_incompatible_with_method_requirement() -> None:
     with pytest.raises(ValueError, match="incompatible with method.required_step_size"):
         phx.solver.FixedStepProblem(
             ExactStepMethod(0.1),
@@ -209,8 +236,8 @@ def test_fixed_step_rejects_size_incompatible_with_method_requirement():
     ),
 )
 def test_exact_step_retry_refuses_incompatible_or_reduced_size(
-    step_size, maximum_retries, message
-):
+    step_size: Any, maximum_retries: Any, message: Any
+) -> None:
     with pytest.raises(ValueError, match=message):
         phx.solver.retry_fixed_step(
             ExactStepMethod(0.1),
@@ -222,7 +249,7 @@ def test_exact_step_retry_refuses_incompatible_or_reduced_size(
         )
 
 
-def test_fixed_step_ssprk_solves_and_saves_requested_stride():
+def test_fixed_step_ssprk_solves_and_saves_requested_stride() -> None:
     method = phx.solver.SSPRK33FixedStepMethod(lambda time, state, args: -state)
     problem = phx.solver.FixedStepProblem(
         method,
@@ -240,7 +267,7 @@ def test_fixed_step_ssprk_solves_and_saves_requested_stride():
     assert jnp.allclose(solution.states[-1, 0], jnp.exp(-0.1), rtol=2e-6)
 
 
-def test_fixed_step_composes_accepted_step_transforms():
+def test_fixed_step_composes_accepted_step_transforms() -> None:
     transform = phx.solver.CompositeAcceptedStepTransform(
         (OffsetTransform(0.1), OffsetTransform(-0.05))
     )
@@ -262,8 +289,8 @@ def test_fixed_step_composes_accepted_step_transforms():
     assert jnp.allclose(solution.states[-1], jnp.asarray([0.15]))
 
 
-def test_fixed_step_saves_and_atomically_freezes_structured_state():
-    def step(step_index, time, state, step_size, args):
+def test_fixed_step_saves_and_atomically_freezes_structured_state() -> None:
+    def step(step_index: Any, time: Any, state: Any, step_size: Any, args: Any) -> Any:
         del time, step_size, args
         candidate = {
             "position": state["position"] + 1.0,
@@ -315,8 +342,8 @@ def test_fixed_step_saves_and_atomically_freezes_structured_state():
     )
 
 
-def _additive_problem(step_count=5, *, control=1.0):
-    def step(step_index, time, state, step_size, args):
+def _additive_problem(step_count: Any = 5, *, control: Any = 1.0) -> Any:
+    def step(step_index: Any, time: Any, state: Any, step_size: Any, args: Any) -> Any:
         del step_index, time, step_size
         candidate = state + args
         successful = jnp.asarray(True)
@@ -341,7 +368,7 @@ def _additive_problem(step_count=5, *, control=1.0):
     )
 
 
-def test_fixed_step_rollout_retention_preserves_exact_endpoints():
+def test_fixed_step_rollout_retention_preserves_exact_endpoints() -> None:
     problem = _additive_problem()
     legacy = phx.solver.solve_fixed_step(problem)
     final = phx.solver.FixedStepRolloutPlan(retention="final").rollout(problem)
@@ -360,8 +387,8 @@ def test_fixed_step_rollout_retention_preserves_exact_endpoints():
     assert jnp.array_equal(trajectory.residuals, legacy.residuals)
 
 
-def test_fixed_step_rollout_observes_fail_closed_endpoint_state():
-    def step(step_index, time, state, step_size, args):
+def test_fixed_step_rollout_observes_fail_closed_endpoint_state() -> None:
+    def step(step_index: Any, time: Any, state: Any, step_size: Any, args: Any) -> Any:
         del time, step_size, args
         candidate = state + 1.0
         successful = step_index < 1
@@ -420,7 +447,9 @@ def test_fixed_step_rollout_observes_fail_closed_endpoint_state():
     ),
 )
 @pytest.mark.parametrize("retention", ("final", "checkpoints", "trajectory"))
-def test_fixed_step_replay_preserves_primal_gradient_and_retention(replay, retention):
+def test_fixed_step_replay_preserves_primal_gradient_and_retention(
+    replay: Any, retention: Any
+) -> None:
     keywords = (
         {"retention": retention, "checkpoint_stride": 2}
         if retention == "checkpoints"
@@ -438,7 +467,7 @@ def test_fixed_step_replay_preserves_primal_gradient_and_retention(replay, reten
         ),
     )
 
-    def objective(control, plan):
+    def objective(control: Any, plan: Any) -> Any:
         result = plan.rollout(_additive_problem(5, control=control))
         return jnp.sum(result.final_state**2), result
 
@@ -476,7 +505,7 @@ def test_fixed_step_replay_preserves_primal_gradient_and_retention(replay, reten
         ),
     ),
 )
-def test_legacy_fixed_step_replay_preserves_save_stride(replay):
+def test_legacy_fixed_step_replay_preserves_save_stride(replay: Any) -> None:
     direct = phx.solver.solve_fixed_step(_additive_problem(5), save_every=2)
     candidate = phx.solver.solve_fixed_step(
         _additive_problem(5),
@@ -489,7 +518,7 @@ def test_legacy_fixed_step_replay_preserves_save_stride(replay):
     assert jnp.array_equal(candidate.valid, direct.valid)
 
 
-def test_branchwise_retry_reduces_step_and_commits_first_success():
+def test_branchwise_retry_reduces_step_and_commits_first_success() -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.full_like(state, 10.0),
         transform=ThresholdAcceptedTransform(6.0),
@@ -509,8 +538,8 @@ def test_branchwise_retry_reduces_step_and_commits_first_success():
     assert jnp.allclose(result.attempted_step_sizes, jnp.asarray((1.0, 0.5, 0.25, 0.125)))
 
 
-def test_branchwise_retry_commits_nested_state_atomically():
-    def step(step_index, time, state, step_size, args):
+def test_branchwise_retry_commits_nested_state_atomically() -> None:
+    def step(step_index: Any, time: Any, state: Any, step_size: Any, args: Any) -> Any:
         del step_index, time, args
         candidate = {
             "velocity": state["velocity"] + step_size,

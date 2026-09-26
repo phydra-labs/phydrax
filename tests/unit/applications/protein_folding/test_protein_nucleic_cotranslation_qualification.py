@@ -2,6 +2,7 @@
 """Protein-nucleic and cotranslation claim-input contracts on explicit fixtures."""
 
 import hashlib
+from typing import Any
 
 import numpy as np
 import pytest
@@ -39,7 +40,9 @@ from phydrax.units import ANGSTROM, derived_unit, JOULE, METER, MILLISECOND, ONE
 _PER_SECOND = derived_unit("test-1/s", ((SECOND, -1),))
 
 
-def _reference(label: str, *, uncertainty=True, training=True, lineage=()):
+def _reference(
+    label: str, *, uncertainty: Any = True, training: Any = True, lineage: Any = ()
+) -> Any:
     payload = label.encode()
     return ReferenceArtifactManifest(
         label,
@@ -58,7 +61,7 @@ def _reference(label: str, *, uncertainty=True, training=True, lineage=()):
     )
 
 
-def _prediction_evidence(prediction):
+def _prediction_evidence(prediction: Any) -> Any:
     records = []
     for stage in (
         "parameter-identifiability",
@@ -98,7 +101,7 @@ def _prediction_evidence(prediction):
     return tuple(records)
 
 
-def _failed_locked_evidence(prediction):
+def _failed_locked_evidence(prediction: Any) -> Any:
     return QualificationEvidence(
         "scientific",
         "failed",
@@ -127,7 +130,7 @@ def _failed_locked_evidence(prediction):
     )
 
 
-def _assert_scope_mismatch(assessment, evidence, metric_id):
+def _assert_scope_mismatch(assessment: Any, evidence: Any, metric_id: Any) -> None:
     criterion = ScientificMetricCriterion(
         metric_id,
         "at_most",
@@ -174,7 +177,9 @@ def _assert_scope_mismatch(assessment, evidence, metric_id):
         )
 
 
-def _model_fit(fit_type, model, campaign, parameter_kind, artifacts):
+def _model_fit(
+    fit_type: Any, model: Any, campaign: Any, parameter_kind: Any, artifacts: Any
+) -> Any:
     parameters = np.asarray([0.25, -0.5])
     parameter_id = canonical_fingerprint(
         {
@@ -234,7 +239,9 @@ def _model_fit(fit_type, model, campaign, parameter_kind, artifacts):
     return fit_type(model, campaign, parameters, artifacts, code, evidence)
 
 
-def _campaign(observations, *, cotranslation=False, fit_sources=None):
+def _campaign(
+    observations: Any, *, cotranslation: Any = False, fit_sources: Any = None
+) -> Any:
     fit_artifacts = (
         (_reference("fit-source"), _reference("selection-source"))
         if fit_sources is None
@@ -304,7 +311,7 @@ def _campaign(observations, *, cotranslation=False, fit_sources=None):
     )
 
 
-def _mechanics_observations():
+def _mechanics_observations() -> Any:
     return protein_nucleic.ProteinNucleicMechanicalObservations(
         ProteinConstruct(("protein",), ("AC",)),
         NucleicAcidConstruct(("dna",), ("AT",), ("DNA",), (False,)),
@@ -313,14 +320,16 @@ def _mechanics_observations():
         ("prep-a", "prep-b"),
         ("buffer-a", "buffer-b"),
         observable_kind="contact-probability",
+        # ty: ignore[invalid-argument-type]
         values=[0.2, 0.8],
+        # ty: ignore[invalid-argument-type]
         standard_errors=[0.1, 0.1],
         unit=ONE,
         source=_reference("complex-mechanics"),
     )
 
 
-def test_complex_mechanics_requires_frozen_heldout_prediction_lineage():
+def test_complex_mechanics_requires_frozen_heldout_prediction_lineage() -> None:
     observations = _mechanics_observations()
     campaign = _campaign(observations)
     fit = _model_fit(
@@ -332,7 +341,9 @@ def test_complex_mechanics_requires_frozen_heldout_prediction_lineage():
     )
     prediction = ProteinNucleicMechanicsPrediction(
         observations,
+        # ty: ignore[invalid-argument-type]
         [0.2, 0.8],
+        # ty: ignore[invalid-argument-type]
         [0.05, 0.05],
         fit,
         unit=ONE,
@@ -367,6 +378,7 @@ def test_complex_mechanics_requires_frozen_heldout_prediction_lineage():
     with pytest.raises(TypeError, match="ProteinNucleicMechanicsPrediction"):
         protein_nucleic.assess_protein_nucleic_mechanics(
             observations,
+            # ty: ignore[invalid-argument-type]
             [0.2, 0.8],
             mapping_reference=None,
             maximum_standardized_rms=1.0,
@@ -379,7 +391,7 @@ def test_complex_mechanics_requires_frozen_heldout_prediction_lineage():
     )
 
 
-def _affinity_inputs(**overrides):
+def _affinity_inputs(**overrides: Any) -> Any:
     arguments = {
         "bound_free_energy": [-8.0],
         "unbound_protein_free_energy": [-2.0],
@@ -457,11 +469,12 @@ def _affinity_inputs(**overrides):
         ("affinity-locked",),
         ("affinity-preparation",),
         fit,
+        # ty: ignore[invalid-argument-type]
         **arguments,
     )
 
 
-def test_affinity_propagates_correction_uncertainty_under_explicit_independence():
+def test_affinity_propagates_correction_uncertainty_under_explicit_independence() -> None:
     inputs = _affinity_inputs()
     assessment = protein_nucleic.assess_protein_nucleic_affinity(
         inputs,
@@ -481,7 +494,7 @@ def test_affinity_propagates_correction_uncertainty_under_explicit_independence(
     )
 
 
-def test_affinity_rejects_reused_or_rights_denied_fit_artifacts():
+def test_affinity_rejects_reused_or_rights_denied_fit_artifacts() -> None:
     denied = _reference("denied", training=False, lineage=("denied-root",))
     with pytest.raises(PermissionError):
         _affinity_inputs(bound_sampling_reference=denied)
@@ -496,7 +509,7 @@ def test_affinity_rejects_reused_or_rights_denied_fit_artifacts():
         )
 
 
-def test_affinity_without_joint_covariance_or_independence_is_inconclusive():
+def test_affinity_without_joint_covariance_or_independence_is_inconclusive() -> None:
     inputs = _affinity_inputs(
         component_covariance=None,
         components_conditionally_independent=False,
@@ -515,23 +528,25 @@ def test_affinity_without_joint_covariance_or_independence_is_inconclusive():
 
 
 def _cotranslation_observations(
-    timing_reference,
+    timing_reference: Any,
     *,
-    time_unit=SECOND,
-    dwell=(1.0, 2.0),
-    dwell_error=(0.1, 0.1),
-    values=(0.5, 1.0 / 65.0),
-):
+    time_unit: Any = SECOND,
+    dwell: Any = (1.0, 2.0),
+    dwell_error: Any = (0.1, 0.1),
+    values: Any = (0.5, 1.0 / 65.0),
+) -> Any:
     return LengthResolvedCotranslationObservations(
         ("length-20", "length-30"),
         ("preparation-a", "preparation-b"),
         ("prep-a", "prep-b"),
         ("buffer-a", "buffer-b"),
         construct_ids=("construct-20", "construct-30"),
+        # ty: ignore[invalid-argument-type]
         nascent_lengths=[20, 30],
         measured_dwell_times=dwell,
         dwell_time_standard_errors=dwell_error,
         values=values,
+        # ty: ignore[invalid-argument-type]
         standard_errors=[0.05, 0.05],
         time_unit=time_unit,
         timing_semantics="measured-dwell-time",
@@ -540,7 +555,9 @@ def _cotranslation_observations(
     )
 
 
-def _cotranslation_prediction(observations, values, errors, unit):
+def _cotranslation_prediction(
+    observations: Any, values: Any, errors: Any, unit: Any
+) -> Any:
     campaign = _campaign(observations, cotranslation=True)
     fit = _model_fit(
         CotranslationModelFit,
@@ -558,7 +575,7 @@ def _cotranslation_prediction(observations, values, errors, unit):
     )
 
 
-def test_protein_fit_records_reject_forged_execution_identity():
+def test_protein_fit_records_reject_forged_execution_identity() -> None:
     mechanics = _mechanics_observations()
     mechanics_campaign = _campaign(mechanics)
     cotranslation = _cotranslation_observations(_reference("forged-timing"))
@@ -606,7 +623,7 @@ def test_protein_fit_records_reject_forged_execution_identity():
             )
 
 
-def test_cotranslation_converts_fret_length_units_and_requires_frozen_lineage():
+def test_cotranslation_converts_fret_length_units_and_requires_frozen_lineage() -> None:
     law = CotranslationObservationLaw(
         "length-resolved-fret",
         _reference("fret-law"),
@@ -648,6 +665,7 @@ def test_cotranslation_converts_fret_length_units_and_requires_frozen_lineage():
         assess_cotranslation_prediction(
             law,
             observations,
+            # ty: ignore[invalid-argument-type]
             [2.0, 4.0],
             maximum_standardized_rms=1.0,
             prediction_evidence=(),
@@ -659,7 +677,7 @@ def test_cotranslation_converts_fret_length_units_and_requires_frozen_lineage():
     )
 
 
-def test_arrest_release_canonicalizes_time_and_propagates_dwell_uncertainty():
+def test_arrest_release_canonicalizes_time_and_propagates_dwell_uncertainty() -> None:
     target = 1.0 - np.exp(-1.0)
     observations = _cotranslation_observations(
         _reference("timing-ms"),

@@ -7,13 +7,14 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 
-def digest(path: Path):
+def digest(path: Path) -> Any:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-id", required=True)
     parser.add_argument("--url", required=True)

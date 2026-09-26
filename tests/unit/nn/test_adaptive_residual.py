@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,17 +12,17 @@ from phydrax.nn.layers import AdaptiveResidual
 class _AffineBranch(eqx.Module):
     scale: jax.Array
 
-    def __call__(self, x, context=0.0, *, key=None):
+    def __call__(self, x: Any, context: Any = 0.0, *, key: Any = None) -> Any:
         del key
         return self.scale * x + context
 
 
 class _RandomBranch(eqx.Module):
-    def __call__(self, x, *, key):
+    def __call__(self, x: Any, *, key: Any) -> Any:
         return x + jr.normal(key, x.shape)
 
 
-def test_adaptive_residual_is_exact_identity_at_initialization():
+def test_adaptive_residual_is_exact_identity_at_initialization() -> None:
     layer = AdaptiveResidual(_AffineBranch(jnp.asarray(2.0)))
     x = jnp.asarray([-1.0, 0.5, 3.0])
 
@@ -31,14 +33,14 @@ def test_adaptive_residual_is_exact_identity_at_initialization():
     assert jnp.allclose(alpha_gradient, x.sum())
 
 
-def test_adaptive_residual_is_exact_branch_at_unit_gate_and_forwards_context():
+def test_adaptive_residual_is_exact_branch_at_unit_gate_and_forwards_context() -> None:
     layer = AdaptiveResidual(_AffineBranch(jnp.asarray(-0.5)), initial_alpha=1.0)
     x = jnp.asarray([1.0, -2.0])
 
     assert jnp.array_equal(layer(x, jnp.asarray(0.25)), -0.5 * x + 0.25)
 
 
-def test_adaptive_residual_channel_gates_broadcast_over_leading_axes():
+def test_adaptive_residual_channel_gates_broadcast_over_leading_axes() -> None:
     layer = AdaptiveResidual(
         lambda x: 3.0 * x,
         channel_size=3,
@@ -50,7 +52,7 @@ def test_adaptive_residual_channel_gates_broadcast_over_leading_axes():
     assert jnp.array_equal(eqx.filter_jit(layer)(x), expected)
 
 
-def test_adaptive_residual_propagates_explicit_random_keys():
+def test_adaptive_residual_propagates_explicit_random_keys() -> None:
     layer = AdaptiveResidual(_RandomBranch(), initial_alpha=1.0)
     x = jnp.zeros(5)
     key = jr.key(4)
@@ -58,7 +60,7 @@ def test_adaptive_residual_propagates_explicit_random_keys():
     assert jnp.array_equal(layer(x, key=key), jr.normal(key, x.shape))
 
 
-def test_adaptive_residual_rejects_shape_changing_branches():
+def test_adaptive_residual_rejects_shape_changing_branches() -> None:
     layer = AdaptiveResidual(lambda x: x[..., :1])
     with pytest.raises(ValueError, match="output shape"):
         layer(jnp.ones((2, 3)))

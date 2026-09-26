@@ -721,7 +721,10 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
         output_parameters = jax.tree.map(self.precision.output, parameters)
         certificate_evidence = certificate.precision_evidence
         # Both certificate branches above attach precision evidence by construction.
-        assert certificate_evidence is not None
+        if not (certificate_evidence is not None):
+            raise RuntimeError(
+                "Internal invariant failed: certificate_evidence is not None."
+            )
         precision_evidence = self.precision.evidence_for(
             parameters,
             model.unflatten(dual_residual),

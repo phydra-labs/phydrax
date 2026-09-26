@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from importlib.metadata import version
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -37,7 +38,7 @@ class ClosureBenchmarkReport:
     cases: tuple[ClosureBenchmarkCase, ...]
 
     @property
-    def passed(self):
+    def passed(self) -> Any:
         return bool(
             self.cases
             and all(case.successful for case in self.cases)
@@ -45,7 +46,7 @@ class ClosureBenchmarkReport:
         )
 
 
-def _time(function, *arguments, repetitions=3):
+def _time(function: Any, *arguments: Any, repetitions: Any = 3) -> Any:
     started = perf_counter()
     first = function(*arguments)
     jax.block_until_ready(first)
@@ -58,7 +59,7 @@ def _time(function, *arguments, repetitions=3):
     return first_ms, 1.0e3 * (perf_counter() - started) / repetitions, value
 
 
-def _fmm_case(count, target_count):
+def _fmm_case(count: Any, target_count: Any) -> Any:
     key = jax.random.key(count)
     position = 1.8 * jax.random.uniform(key, (count, 2)) - 0.9
     strength = jax.random.normal(jax.random.fold_in(key, 1), (count,))
@@ -104,7 +105,7 @@ def _fmm_case(count, target_count):
     )
 
 
-def _remesh_case(count, grid_count):
+def _remesh_case(count: Any, grid_count: Any) -> Any:
     key = jax.random.key(1000 + count)
     capacity = grid_count**2
     position = (
@@ -144,7 +145,7 @@ def _remesh_case(count, grid_count):
     )
 
 
-def run_closure_benchmarks(*, smoke=False):
+def run_closure_benchmarks(*, smoke: Any = False) -> Any:
     count = 8 if smoke else 64
     targets = 4 if smoke else 32
     grid = 8 if smoke else 16
@@ -157,7 +158,7 @@ def run_closure_benchmarks(*, smoke=False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Benchmark completed vortex capabilities."
     )

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -13,30 +16,30 @@ from phydrax._mass import EstimatedMass, ExactMass
 
 class _HyperplaneMap(phx.geometry.BoundaryMap):
     @property
-    def num_charts(self):
+    def num_charts(self) -> int:
         return 1
 
     @property
-    def reference_dimension(self):
+    def reference_dimension(self) -> int:
         return 3
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return 4
 
-    def map(self, chart_indices, reference, /):
+    def map(self, chart_indices: Any, reference: Any, /) -> Any:
         del chart_indices
         return jnp.concatenate(
             (reference, jnp.zeros((*reference.shape[:-1], 1), dtype=reference.dtype)),
             axis=-1,
         )
 
-    def jacobian(self, chart_indices, reference, /):
+    def jacobian(self, chart_indices: Any, reference: Any, /) -> Any:
         del reference
         return jnp.ones(jnp.asarray(chart_indices).shape, dtype=jnp.float64)
 
 
-def test_ball_and_orthotope_are_dimension_generic_with_exact_mass():
+def test_ball_and_orthotope_are_dimension_generic_with_exact_mass() -> None:
     ball = phx.geometry.Ball(jnp.zeros((4,)), 2.0, feature_id="ball4").compile()
     box = phx.geometry.Orthotope(
         jnp.zeros((5,)), jnp.asarray((1.0, 2.0, 3.0, 4.0, 5.0)), feature_id="box5"
@@ -55,7 +58,7 @@ def test_ball_and_orthotope_are_dimension_generic_with_exact_mass():
     assert jnp.all(jnp.isclose(jnp.max(jnp.abs(samples / half_size), axis=-1), 1.0))
 
 
-def test_axis_aligned_ellipsoid_has_truthful_nd_capabilities():
+def test_axis_aligned_ellipsoid_has_truthful_nd_capabilities() -> None:
     geometry = phx.geometry.AxisAlignedEllipsoid(
         jnp.zeros((4,)),
         jnp.asarray((1.0, 2.0, 3.0, 4.0)),
@@ -70,7 +73,7 @@ def test_axis_aligned_ellipsoid_has_truthful_nd_capabilities():
     )
 
 
-def test_estimated_boundary_mass_and_scalar_point_contract_are_explicit():
+def test_estimated_boundary_mass_and_scalar_point_contract_are_explicit() -> None:
     ellipse = phx.geometry.Ellipse((0.0, 0.0), (2.0, 1.0)).compile()
     domain = phx.domain.GeometryDomain(ellipse)
 
@@ -80,7 +83,7 @@ def test_estimated_boundary_mass_and_scalar_point_contract_are_explicit():
         domain.adf(jnp.asarray(0.5))
 
 
-def test_extrusion_and_embedded_simplex_support_arbitrary_ambient_dimension():
+def test_extrusion_and_embedded_simplex_support_arbitrary_ambient_dimension() -> None:
     extrusion = phx.geometry.Extrusion(
         phx.geometry.Ball(jnp.zeros((4,)), 1.0),
         2.0,
@@ -102,7 +105,7 @@ def test_extrusion_and_embedded_simplex_support_arbitrary_ambient_dimension():
     assert jnp.allclose(triangle.evidence.jacobian_measure, 1.0)
 
 
-def test_codimension_one_atlas_frame_and_partition_work_in_four_dimensions():
+def test_codimension_one_atlas_frame_and_partition_work_in_four_dimensions() -> None:
     atlas = phx.geometry.BoundaryAtlas(
         _HyperplaneMap(),
         source_entity_ids=jnp.asarray((0,), dtype=jnp.int32),
@@ -128,7 +131,7 @@ def test_codimension_one_atlas_frame_and_partition_work_in_four_dimensions():
         )
 
 
-def test_planar_wall_and_implicit_curve_cover_higher_and_lower_dimensions():
+def test_planar_wall_and_implicit_curve_cover_higher_and_lower_dimensions() -> None:
     wall = phx.geometry.PlanarWallFramePlan(
         jnp.zeros((4,)),
         jnp.asarray((1.0, 0.0, 0.0, 0.0)),
@@ -181,7 +184,7 @@ def test_planar_wall_and_implicit_curve_cover_higher_and_lower_dimensions():
     assert jnp.isfinite(derivative)
 
 
-def test_implicit_curve_evidence_reports_projection_diagnostics():
+def test_implicit_curve_evidence_reports_projection_diagnostics() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformAxisSpec(19) for _ in range(2)),
         axis_names=("x", "y"),

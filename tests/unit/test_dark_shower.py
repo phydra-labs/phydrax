@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -41,7 +44,7 @@ from phydrax.solver._dark_sector_epoch_runtime import (
 from phydrax.units import COULOMB
 
 
-def _units_and_frame():
+def _units_and_frame() -> Any:
     units = RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1),
         RelativityConvention(metric_signature="mostly_minus"),
@@ -83,7 +86,7 @@ def _units_and_frame():
     return units, frame
 
 
-def _runtime(species_revision_id, frontier_capacity=8):
+def _runtime(species_revision_id: Any, frontier_capacity: Any = 8) -> Any:
     return DarkSectorEpochPlan(
         packet_capacity=1,
         event_capacity=4,
@@ -103,7 +106,7 @@ def _runtime(species_revision_id, frontier_capacity=8):
     )
 
 
-def _shower_plan():
+def _shower_plan() -> Any:
     units, frame = _units_and_frame()
     catalog = ParticleCatalogReference(
         source_id="dark-test",
@@ -148,7 +151,7 @@ def _shower_plan():
     )
 
 
-def _event(plan, particle_capacity=5):
+def _event(plan: Any, particle_capacity: Any = 5) -> Any:
     event_plan = ParticleEventPlan(
         catalog=plan.species.catalog,
         momentum_unit=plan.units.energy_unit,
@@ -203,7 +206,7 @@ def _event(plan, particle_capacity=5):
     )
 
 
-def test_sudakov_running_coupling_and_veto_bound_are_certified():
+def test_sudakov_running_coupling_and_veto_bound_are_certified() -> None:
     plan = _shower_plan()
     channel = plan.channels[0]
     z = jnp.linspace(plan.z_bounds[0], plan.z_bounds[1], 101)
@@ -216,7 +219,7 @@ def test_sudakov_running_coupling_and_veto_bound_are_certified():
     assert 0.0 < no_emission < shorter_interval < 1.0
 
 
-def test_splitting_preserves_ordering_recoil_charge_color_and_four_momentum():
+def test_splitting_preserves_ordering_recoil_charge_color_and_four_momentum() -> None:
     plan = _shower_plan()
     original = _event(plan)
     result = evolve_dark_shower_epoch(
@@ -267,7 +270,7 @@ def test_splitting_preserves_ordering_recoil_charge_color_and_four_momentum():
     assert int(durable.state.work_mask.sum()) == 2
 
 
-def test_split_capacity_is_atomic_and_reports_backpressure():
+def test_split_capacity_is_atomic_and_reports_backpressure() -> None:
     plan = _shower_plan()
     original = _event(plan, particle_capacity=2)
     result = evolve_dark_shower_epoch(

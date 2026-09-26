@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _points():
+def _points() -> Any:
     return jnp.asarray(
         [
             (-1.0, -1.0),
@@ -25,13 +28,13 @@ def _points():
     )
 
 
-def _polynomial(points):
+def _polynomial(points: Any) -> Any:
     x, y = points[:, 0], points[:, 1]
     return x**2 + 2.0 * x * y + 3.0 * y**2 + 4.0 * x - 2.0 * y + 1.0
 
 
 @pytest.mark.parametrize("method", ("rbf-fd", "gmls"))
-def test_meshfree_gradient_and_laplacian_reproduce_quadratics(method) -> None:
+def test_meshfree_gradient_and_laplacian_reproduce_quadratics(method: Any) -> None:
     points = _points()
     plan = phx.discretization.MeshfreeStencilPlan(
         points, stencil_size=9, polynomial_degree=2

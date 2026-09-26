@@ -15,7 +15,9 @@ import pytest
 import phydrax as phx
 
 
-def _so_problem(*, rate=1.0, stochastic=False, interpretation="ito"):
+def _so_problem(
+    *, rate: Any = 1.0, stochastic: Any = False, interpretation: Any = "ito"
+) -> Any:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     generator = jnp.array([[0.0, -1.0], [1.0, 0.0]])
     terms = ()
@@ -41,13 +43,13 @@ def _so_problem(*, rate=1.0, stochastic=False, interpretation="ito"):
     )
 
 
-def _assert_so(values, *, atol=2e-8):
+def _assert_so(values: Any, *, atol: Any = 2e-8) -> None:
     products = jnp.swapaxes(values, -1, -2) @ values
     assert jnp.allclose(products, jnp.eye(values.shape[-1]), atol=atol)
     assert jnp.all(jnp.linalg.det(values) > 0.0)
 
 
-def _spd_problem():
+def _spd_problem() -> Any:
     geometry = phx.metrix.SymmetricPositiveDefiniteStateGeometry(2)
     forcing = jnp.array([[0.1, 0.04], [0.04, -0.05]])
     return phx.solver.DifferentialProblem(
@@ -59,7 +61,7 @@ def _spd_problem():
     )
 
 
-def test_problem_validates_membership_and_rejects_ordinary_solver():
+def test_problem_validates_membership_and_rejects_ordinary_solver() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     with pytest.raises(Exception, match="outside state_geometry"):
         phx.solver.DifferentialProblem(
@@ -110,7 +112,7 @@ def test_problem_validates_membership_and_rejects_ordinary_solver():
     assert isinstance(phx.solver.RKMK(exact_embedded), phx.solver.RKMK)
 
 
-def test_euclidean_geometric_euler_agrees_with_ordinary_euler():
+def test_euclidean_geometric_euler_agrees_with_ordinary_euler() -> None:
     geometry = phx.metrix.EuclideanStateGeometry()
     problem = phx.solver.DifferentialProblem(
         lambda time, state, rate: rate * state,
@@ -150,7 +152,7 @@ def test_euclidean_geometric_euler_agrees_with_ordinary_euler():
         phx.solver.solver_state_geometry(invalid_solver)
 
 
-def test_stormer_verlet_runs_through_the_diffrax_backend():
+def test_stormer_verlet_runs_through_the_diffrax_backend() -> None:
     geometry = phx.metrix.EuclideanStateGeometry(
         geometry_id="state-geometry:canonical-phase"
     )
@@ -183,10 +185,10 @@ def test_stormer_verlet_runs_through_the_diffrax_backend():
     )
 
 
-def test_rkmk_so_dense_output_jit_gradient_and_convergence():
+def test_rkmk_so_dense_output_jit_gradient_and_convergence() -> None:
     times = jnp.asarray([0.0, 0.5, 1.0])
 
-    def terminal(rate, dt):
+    def terminal(rate: Any, dt: Any) -> Any:
         problem = _so_problem(rate=rate)
         solution = phx.solver.solve_diffrax(
             problem,
@@ -213,7 +215,7 @@ def test_rkmk_so_dense_output_jit_gradient_and_convergence():
     second = jnp.array([[0.0, 0.1, -0.4], [-0.1, 0.0, 0.6], [0.4, -0.6, 0.0]])
     field = lambda time, state, args: state @ (first + time * second)
 
-    def noncommuting(dt):
+    def noncommuting(dt: Any) -> Any:
         problem = phx.solver.DifferentialProblem(
             field,
             jnp.eye(3),
@@ -245,7 +247,7 @@ def test_rkmk_so_dense_output_jit_gradient_and_convergence():
     assert coarse_error / fine_error > 8.0
 
 
-def test_commutator_free_requires_shared_trivialization_and_spd_dense_rkmk():
+def test_commutator_free_requires_shared_trivialization_and_spd_dense_rkmk() -> None:
     problem = _so_problem(rate=0.4)
     tableau = phx.solver.CommutatorFreeTableau(
         abscissae=(0.0, 1.0),
@@ -288,16 +290,16 @@ def test_commutator_free_requires_shared_trivialization_and_spd_dense_rkmk():
     assert jnp.all(jnp.linalg.eigvalsh(spd_dense) > 0.0)
 
 
-def test_commutator_free_midpoint_has_second_order_on_noncommuting_so3_flow():
+def test_commutator_free_midpoint_has_second_order_on_noncommuting_so3_flow() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(3)
     first = jnp.array([[0.0, -0.7, 0.2], [0.7, 0.0, -0.3], [-0.2, 0.3, 0.0]])
     second = jnp.array([[0.0, 0.1, -0.4], [-0.1, 0.0, 0.6], [0.4, -0.6, 0.0]])
 
-    def vector_field(time, state, args):
+    def vector_field(time: Any, state: Any, args: Any) -> Any:
         del args
         return state @ (first + time * second)
 
-    def terminal(step_size):
+    def terminal(step_size: Any) -> Any:
         problem = phx.solver.DifferentialProblem(
             vector_field,
             jnp.eye(3),
@@ -332,7 +334,7 @@ def test_commutator_free_midpoint_has_second_order_on_noncommuting_so3_flow():
     assert coarse_error / fine_error > 3.5
 
 
-def test_geometric_event_uses_on_manifold_interpolation():
+def test_geometric_event_uses_on_manifold_interpolation() -> None:
     problem = _so_problem()
     target = 0.4
     event_time = jnp.sqrt(1.0 + 2.0 * target) - 1.0
@@ -362,7 +364,9 @@ def test_geometric_event_uses_on_manifold_interpolation():
         lambda geometry: phx.solver.CommutatorFreeSolver(geometry),
     ),
 )
-def test_quaternion_solver_step_consumes_physical_tangent_space(solver_factory):
+def test_quaternion_solver_step_consumes_physical_tangent_space(
+    solver_factory: Any,
+) -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
     angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
@@ -387,7 +391,7 @@ def test_quaternion_solver_step_consumes_physical_tangent_space(solver_factory):
     assert bool(geometry.contains(actual))
 
 
-def test_quaternion_chart_jvp_vjp_duality_and_inverse_jvp_are_distinct_roles():
+def test_quaternion_chart_jvp_vjp_duality_and_inverse_jvp_are_distinct_roles() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
     local = jnp.asarray([0.3, -0.2, 0.1])
@@ -419,7 +423,7 @@ def test_quaternion_chart_jvp_vjp_duality_and_inverse_jvp_are_distinct_roles():
     )
 
 
-def test_quaternion_solver_rejects_point_storage_as_physical_tangent():
+def test_quaternion_solver_rejects_point_storage_as_physical_tangent() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     solver = phx.solver.GeometricEuler(geometry)
     invalid = dfx.ODETerm(
@@ -438,7 +442,7 @@ def test_quaternion_solver_rejects_point_storage_as_physical_tangent():
         )
 
 
-def test_diffrax_backend_preserves_unequal_quaternion_roles():
+def test_diffrax_backend_preserves_unequal_quaternion_roles() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
     angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
@@ -464,7 +468,7 @@ def test_diffrax_backend_preserves_unequal_quaternion_roles():
     assert jnp.all(jax.vmap(geometry.contains)(solution.states))
 
 
-def test_srkmk_spd_corrector_uses_base_local_retraction():
+def test_srkmk_spd_corrector_uses_base_local_retraction() -> None:
     geometry = phx.metrix.SymmetricPositiveDefiniteStateGeometry(2)
     base = jnp.array([[2.0, 0.35], [0.35, 1.1]])
     constant_field = jnp.array([[0.2, -0.08], [-0.08, 0.12]])
@@ -503,7 +507,7 @@ def test_srkmk_spd_corrector_uses_base_local_retraction():
     assert bool(geometry.contains(actual))
 
 
-def test_srkmk_stratonovich_batch_preserves_so_and_rejects_ito():
+def test_srkmk_stratonovich_batch_preserves_so_and_rejects_ito() -> None:
     stratonovich = _so_problem(
         rate=0.0,
         stochastic=True,

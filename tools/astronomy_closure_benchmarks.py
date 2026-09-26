@@ -2,6 +2,7 @@
 
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -9,14 +10,14 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _timed(function, *args):
+def _timed(function: Any, *args: Any) -> Any:
     start = time.perf_counter()
     result = function(*args)
     jax.block_until_ready(result)
     return result, time.perf_counter() - start
 
 
-def main():
+def main() -> None:
     solver = phx.solver.IAS15Plan(relative_tolerance=1e-9, absolute_tolerance=1e-11)
     integrate = jax.jit(
         lambda position, velocity: (

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -25,7 +28,7 @@ from phydrax.stochastic import StateSpaceProblem
 from phydrax.uq import kalman_filter, rts_smoother
 
 
-def _constant_law(value, support, *, quantity, unit):
+def _constant_law(value: Any, support: Any, *, quantity: Any, unit: Any) -> Any:
     return ConstantPropertyLaw(
         value,
         jnp.asarray(support),
@@ -37,7 +40,9 @@ def _constant_law(value, support, *, quantity, unit):
     )
 
 
-def _tabulated_law(nodes, values, *, quantity, unit, source_mask=None):
+def _tabulated_law(
+    nodes: Any, values: Any, *, quantity: Any, unit: Any, source_mask: Any = None
+) -> Any:
     return TabulatedPropertyLaw(
         jnp.asarray(nodes),
         jnp.asarray(values),
@@ -50,7 +55,7 @@ def _tabulated_law(nodes, values, *, quantity, unit, source_mask=None):
     )
 
 
-def _global_law(intercept, slope, *, quantity, unit):
+def _global_law(intercept: Any, slope: Any, *, quantity: Any, unit: Any) -> Any:
     return GloballyAffineSOCPropertyLaw(
         intercept,
         slope,
@@ -60,7 +65,7 @@ def _global_law(intercept, slope, *, quantity, unit):
     )
 
 
-def _global_laws():
+def _global_laws() -> Any:
     return {
         "open_circuit_voltage": _global_law(
             3.1,
@@ -77,17 +82,17 @@ def _global_laws():
     }
 
 
-def _qualify(plan, parameters, **kwargs):
+def _qualify(plan: Any, parameters: Any, **kwargs: Any) -> Any:
     return plan.prepare(parameters, **_global_laws(), **kwargs)
 
 
 def _parameters(
     *,
-    branches=2,
-    capacity=100.0,
-    ocv=None,
-    entropic=None,
-):
+    branches: Any = 2,
+    capacity: Any = 100.0,
+    ocv: Any = None,
+    entropic: Any = None,
+) -> Any:
     resistances = jnp.asarray((0.2, 0.4)[:branches])
     capacitances = jnp.asarray((5.0, 10.0)[:branches])
     if ocv is None:
@@ -121,11 +126,11 @@ def _parameters(
 
 def _prepared(
     *,
-    branches=2,
-    capacity=100.0,
-    process_covariance=None,
-    temperature_mode="known",
-):
+    branches: Any = 2,
+    capacity: Any = 100.0,
+    process_covariance: Any = None,
+    temperature_mode: Any = "known",
+) -> Any:
     plan = ExactAffineECMEstimationPlan(
         ThermalEquivalentCircuitPlan(branches),
         jnp.asarray((0.2, 0.8)),
@@ -139,7 +144,9 @@ def _prepared(
     )
 
 
-def _truth(prepared, times, currents, temperatures, initial):
+def _truth(
+    prepared: Any, times: Any, currents: Any, temperatures: Any, initial: Any
+) -> Any:
     values = [np.asarray(initial, dtype="float64")]
     resistances = np.asarray(prepared.branch_resistances_ohm)
     capacitances = np.asarray(prepared.branch_capacitances_f)
@@ -171,7 +178,7 @@ def _truth(prepared, times, currents, temperatures, initial):
     return states, voltage
 
 
-def _problem(*, mask=None, process_covariance=None):
+def _problem(*, mask: Any = None, process_covariance: Any = None) -> Any:
     prepared = _prepared(process_covariance=process_covariance)
     times = np.asarray((0.0, 0.4, 1.1, 2.0, 3.2))
     currents = np.asarray((0.8, -0.3, 0.5, 0.0, -0.2))
@@ -198,7 +205,7 @@ def _problem(*, mask=None, process_covariance=None):
     return prepared, problem
 
 
-def _manual_filter(problem):
+def _manual_filter(problem: Any) -> Any:
     prior = problem.model.prior
     observations = problem.observations
     mean = np.asarray(prior.mean)
@@ -267,12 +274,12 @@ def _manual_filter(problem):
 
 
 def _manual_rts(
-    filtered_means,
-    filtered_covariances,
-    predicted_means,
-    predicted_covariances,
-    transitions,
-):
+    filtered_means: Any,
+    filtered_covariances: Any,
+    predicted_means: Any,
+    predicted_covariances: Any,
+    transitions: Any,
+) -> Any:
     means = filtered_means.copy()
     covariances = filtered_covariances.copy()
     gains = np.zeros((means.shape[0] - 1, means.shape[1], means.shape[1]))
@@ -290,7 +297,7 @@ def _manual_rts(
     return means, covariances, gains
 
 
-def test_analytic_exact_transition_observation_and_passive_signs():
+def test_analytic_exact_transition_observation_and_passive_signs() -> None:
     factor = np.asarray(
         (
             (1.0e-3, 0.0),
@@ -358,7 +365,7 @@ def test_analytic_exact_transition_observation_and_passive_signs():
     )
 
 
-def test_filter_and_rts_match_independent_exact_recursions_and_native_results():
+def test_filter_and_rts_match_independent_exact_recursions_and_native_results() -> None:
     _, problem = _problem()
     application = estimate_exact_affine_ecm(
         problem,
@@ -430,7 +437,7 @@ def test_filter_and_rts_match_independent_exact_recursions_and_native_results():
     assert application.innovation_diagnostics.passed
 
 
-def test_missing_voltage_is_a_native_masked_prediction_with_zero_diagnostics():
+def test_missing_voltage_is_a_native_masked_prediction_with_zero_diagnostics() -> None:
     mask = jnp.asarray((True, False, True, False, True))
     _, problem = _problem(mask=mask)
     result = estimate_exact_affine_ecm(
@@ -454,7 +461,7 @@ def test_missing_voltage_is_a_native_masked_prediction_with_zero_diagnostics():
     )
 
 
-def test_soc_support_exit_is_fail_closed_and_retains_native_history():
+def test_soc_support_exit_is_fail_closed_and_retains_native_history() -> None:
     prepared = _prepared(branches=1, capacity=10.0)
     problem = prepared.problem(
         jnp.asarray((0.0, 1.0, 2.0, 3.0)),
@@ -493,7 +500,7 @@ def test_soc_support_exit_is_fail_closed_and_retains_native_history():
         )
 
 
-def test_case_axes_jit_and_vmap_preserve_exact_native_parameterization():
+def test_case_axes_jit_and_vmap_preserve_exact_native_parameterization() -> None:
     prepared = _prepared(branches=1)
     times = jnp.asarray(((0.0, 0.5, 1.0), (0.0, 0.5, 1.0)))
     problem = prepared.problem(
@@ -509,7 +516,7 @@ def test_case_axes_jit_and_vmap_preserve_exact_native_parameterization():
 
     indices = jnp.asarray(((0, 1), (1, 1)), dtype=jnp.int32)
 
-    def inspect(index):
+    def inspect(index: Any) -> Any:
         context = problem.step_context(index[0], index[1])
         transition = problem.model.transition.parameters(0.0, 0.5, context)
         observation, offset, covariance = problem.model.observation.parameters(
@@ -536,7 +543,7 @@ def test_case_axes_jit_and_vmap_preserve_exact_native_parameterization():
     assert bool(jnp.all(compiled.successful))
 
 
-def test_deterministic_identities_and_dynamic_parameter_leaves():
+def test_deterministic_identities_and_dynamic_parameter_leaves() -> None:
     prepared_a, problem_a = _problem()
     prepared_b, problem_b = _problem()
     result_a = estimate_exact_affine_ecm(
@@ -565,7 +572,7 @@ def test_deterministic_identities_and_dynamic_parameter_leaves():
     assert float(changed.series_resistance_ohm) != float(prepared_a.series_resistance_ohm)
 
 
-def test_covariances_are_validated_at_the_qualified_boundary():
+def test_covariances_are_validated_at_the_qualified_boundary() -> None:
     plan = ExactAffineECMEstimationPlan(
         ThermalEquivalentCircuitPlan(1), jnp.asarray((0.2, 0.8))
     )
@@ -609,8 +616,8 @@ def test_covariances_are_validated_at_the_qualified_boundary():
     ),
 )
 def test_general_thermal_hysteretic_fading_and_parameter_routes_are_refused(
-    keyword, message
-):
+    keyword: Any, message: Any
+) -> None:
     with pytest.raises(ValueError, match=message):
         ExactAffineECMEstimationPlan(
             ThermalEquivalentCircuitPlan(1),
@@ -619,7 +626,9 @@ def test_general_thermal_hysteretic_fading_and_parameter_routes_are_refused(
         )
 
 
-def test_finite_nonlinear_and_gapped_laws_cannot_stand_in_for_global_affine_contract():
+def test_finite_nonlinear_and_gapped_laws_cannot_stand_in_for_global_affine_contract() -> (
+    None
+):
     plan = ExactAffineECMEstimationPlan(
         ThermalEquivalentCircuitPlan(1), jnp.asarray((0.2, 0.8))
     )
@@ -687,7 +696,7 @@ def test_finite_nonlinear_and_gapped_laws_cannot_stand_in_for_global_affine_cont
     np.testing.assert_allclose(far_values.values, 3.1 + 1.2 * np.asarray((-100.0, 100.0)))
 
 
-def test_isothermal_route_requires_one_externally_known_temperature():
+def test_isothermal_route_requires_one_externally_known_temperature() -> None:
     isothermal_plan = ExactAffineECMEstimationPlan(
         ThermalEquivalentCircuitPlan(1),
         jnp.asarray((0.2, 0.8)),

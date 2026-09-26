@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -31,7 +34,7 @@ from phydrax.solver._unstructured_stage_runtime import (
 )
 
 
-def _grid(shape, *, periodic=None):
+def _grid(shape: Any, *, periodic: Any = None) -> Any:
     periodic_ = (False,) * len(shape) if periodic is None else periodic
     return phx.discretization.TensorGridPlan(
         tuple(
@@ -42,7 +45,7 @@ def _grid(shape, *, periodic=None):
     ).prepare(jnp.stack((jnp.zeros(len(shape)), jnp.ones(len(shape)))))
 
 
-def _quad_mesh():
+def _quad_mesh() -> Any:
     vertices = np.asarray(
         [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2)],
         dtype="float64",
@@ -53,7 +56,7 @@ def _quad_mesh():
     ).prepare()
 
 
-def _large_quad_mesh():
+def _large_quad_mesh() -> Any:
     vertices = np.asarray([(x, y) for y in range(4) for x in range(4)], dtype="float64")
     quads = np.asarray(
         [
@@ -72,7 +75,7 @@ def _large_quad_mesh():
     ).prepare()
 
 
-def test_mapped_periodic_seam_certifies_translation_and_rejects_nonisometry():
+def test_mapped_periodic_seam_certifies_translation_and_rejects_nonisometry() -> None:
     reference = phx.discretization.FiniteVolumePlan(
         _grid((4, 3), periodic=(True, False)),
         component_names=("density", "momentum_x", "momentum_y", "energy"),
@@ -100,7 +103,7 @@ def test_mapped_periodic_seam_certifies_translation_and_rejects_nonisometry():
         )
 
 
-def test_multiblock_invalid_fallback_rolls_back_every_block_atomically():
+def test_multiblock_invalid_fallback_rolls_back_every_block_atomically() -> None:
     system = phx.equations.ShallowWaterSystem()
     left = phx.discretization.FiniteVolumePlan(
         _grid((2,)), component_names=system.component_names
@@ -137,7 +140,7 @@ def test_multiblock_invalid_fallback_rolls_back_every_block_atomically():
     np.testing.assert_array_equal(result.conservation_defect, jnp.zeros((2,)))
 
 
-def test_moving_degree_one_wlsq_refreshes_stage_geometry_and_remap_has_jvp():
+def test_moving_degree_one_wlsq_refreshes_stage_geometry_and_remap_has_jvp() -> None:
     mesh = _quad_mesh()
     reconstruction = phx.discretization.CellPolynomialReconstructionPlan(
         1, oversampling=0
@@ -182,7 +185,7 @@ def test_moving_degree_one_wlsq_refreshes_stage_geometry_and_remap_has_jvp():
         ).block_until_ready()
 
 
-def test_moving_degree_two_and_weno_accept_only_rigid_translation():
+def test_moving_degree_two_and_weno_accept_only_rigid_translation() -> None:
     mesh = _large_quad_mesh()
     polynomial = phx.discretization.CellPolynomialReconstructionPlan(
         2, oversampling=0
@@ -217,7 +220,7 @@ def test_moving_degree_two_and_weno_accept_only_rigid_translation():
         polynomial.stage_coefficients(state, deformed)[0].block_until_ready()
 
 
-def test_epoch_transition_rejects_incomplete_coverage_before_mutating_registers():
+def test_epoch_transition_rejects_incomplete_coverage_before_mutating_registers() -> None:
     mesh = _quad_mesh()
     offsets = jnp.arange(mesh.cell_count + 1, dtype=jnp.int32)
     indices = jnp.arange(mesh.cell_count, dtype=jnp.int32)
@@ -237,7 +240,7 @@ def test_epoch_transition_rejects_incomplete_coverage_before_mutating_registers(
         )
 
 
-def test_segmented_ssprk_epoch_transfer_and_stage_failure_rollback():
+def test_segmented_ssprk_epoch_transfer_and_stage_failure_rollback() -> None:
     mesh = _quad_mesh()
     offsets = jnp.arange(mesh.cell_count + 1, dtype=jnp.int32)
     indices = jnp.arange(mesh.cell_count, dtype=jnp.int32)
@@ -254,7 +257,9 @@ def test_segmented_ssprk_epoch_transfer_and_stage_failure_rollback():
         "source", "successor", "successor", remap, 1, "event"
     )
 
-    def accept(stage, dynamics, step_start, current, dt, args):
+    def accept(
+        stage: Any, dynamics: Any, step_start: Any, current: Any, dt: Any, args: Any
+    ) -> Any:
         del stage, dynamics, step_start, dt, args
         return UnstructuredSSPRK3EpochStageResult(
             current + 1.0, current + 1.0, jnp.asarray(True)
@@ -269,7 +274,9 @@ def test_segmented_ssprk_epoch_transfer_and_stage_failure_rollback():
     assert accepted.final_dynamics == "successor"
     np.testing.assert_allclose(accepted.content, 3.0)
 
-    def reject_second(stage, dynamics, step_start, current, dt, args):
+    def reject_second(
+        stage: Any, dynamics: Any, step_start: Any, current: Any, dt: Any, args: Any
+    ) -> Any:
         del dynamics, step_start, dt, args
         return UnstructuredSSPRK3EpochStageResult(
             current + 1.0,
@@ -288,7 +295,7 @@ def test_segmented_ssprk_epoch_transfer_and_stage_failure_rollback():
     assert int(failing.failed_stage) == 2
 
 
-def test_normal_entropy_flux_and_content_production_are_pair_bound():
+def test_normal_entropy_flux_and_content_production_are_pair_bound() -> None:
     system = phx.equations.EulerSystem(2)
     pair = ideal_gas_euler_entropy_pair(system)
     central = EntropyConservativeEulerFluxPlan()

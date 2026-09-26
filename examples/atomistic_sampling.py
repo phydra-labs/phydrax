@@ -5,10 +5,14 @@ import phydrax as phx
 
 
 system = phx.atomistic.AtomisticSystemPlan(
+    # ty: ignore[invalid-argument-type]
     [0, 1],
+    # ty: ignore[invalid-argument-type]
     [1, 1],
+    # ty: ignore[invalid-argument-type]
     [1.0, 1.0],
     phx.atomistic.AtomisticUnitSystem.reduced(),
+    # ty: ignore[invalid-argument-type]
     atom_type_ids=[0, 0],
 ).prepare()
 positions = jnp.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
@@ -16,6 +20,7 @@ neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(2).prepare(
     system.particles
 )
 potential = phx.atomistic.AtomisticPotentialProgram(
+    # ty: ignore[invalid-argument-type]
     [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5)]
 ).prepare(system)
 dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -51,7 +56,9 @@ bias = phx.atomistic.sampling.PreparedAtomisticBias(
     phx.atomistic.sampling.AtomisticBiasPlan(
         phx.atomistic.sampling.BiasKind.HARMONIC,
         program,
+        # ty: ignore[invalid-argument-type]
         center=[1.0],
+        # ty: ignore[invalid-argument-type]
         stiffness=[2.0],
     ),
     dynamics,
@@ -61,6 +68,7 @@ bias_evaluation = bias.evaluate(
 )
 replica_plan = phx.atomistic.sampling.AtomisticMultistatePlan(
     thermodynamic,
+    # ty: ignore[invalid-argument-type]
     [0, 1],
     qualification=phx.atomistic.sampling.AtomisticCanonicalSamplingQualification(
         dynamics,
@@ -83,6 +91,7 @@ replicas = replica_plan.initialize(
             key=jax.random.key(1),
         ),
     ),
+    # ty: ignore[invalid-argument-type]
     [0, 1],
     jax.random.key(2),
 )

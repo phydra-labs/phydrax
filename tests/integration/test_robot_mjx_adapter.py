@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -48,7 +51,7 @@ _MODEL = """
 """
 
 
-def _model(*, mass="1", solver="Newton"):
+def _model(*, mass: Any = "1", solver: Any = "Newton") -> Any:
     return mujoco.MjModel.from_xml_string(
         _MODEL.replace('mass="1"', f'mass="{mass}"').replace(
             '<option timestep="0.002"/>',
@@ -57,7 +60,7 @@ def _model(*, mass="1", solver="Newton"):
     )
 
 
-def _reset(adapter, case_shape=()):
+def _reset(adapter: Any, case_shape: Any = ()) -> Any:
     if case_shape:
         keys = jax.random.split(jax.random.key(7), case_shape[0])
     else:
@@ -70,7 +73,7 @@ def _reset(adapter, case_shape=()):
     )
 
 
-def _context(state):
+def _context(state: Any) -> Any:
     return PlantStepContext(
         state.time,
         state.time + jnp.asarray(0.002, dtype=state.time.dtype),
@@ -78,7 +81,7 @@ def _context(state):
     )
 
 
-def test_supported_provider_pair_reports_matching_qualified_release():
+def test_supported_provider_pair_reports_matching_qualified_release() -> None:
     availability = mjx_availability()
 
     assert availability.available
@@ -90,7 +93,7 @@ def test_supported_provider_pair_reports_matching_qualified_release():
     )
 
 
-def test_prepared_plant_keeps_closed_manifest_device_and_dtype():
+def test_prepared_plant_keeps_closed_manifest_device_and_dtype() -> None:
     plant = prepare_mjx_adapter(_model())
     other_device = "gpu" if plant.device != "gpu" else "cpu"
     other_dtype = "float64" if plant.dtype != "float64" else "float32"
@@ -118,10 +121,10 @@ def test_prepared_plant_keeps_closed_manifest_device_and_dtype():
         plant.profile.require((RoboticsOperationRequirement("step", dtype=other_dtype),))
 
 
-def test_unsupported_model_feature_rejects_before_transfer(monkeypatch):
+def test_unsupported_model_feature_rejects_before_transfer(monkeypatch: Any) -> None:
     transfers = []
 
-    def transferred(*args, **kwargs):
+    def transferred(*args: Any, **kwargs: Any) -> None:
         transfers.append((args, kwargs))
         raise AssertionError("unsupported model reached device transfer")
 
@@ -132,7 +135,7 @@ def test_unsupported_model_feature_rejects_before_transfer(monkeypatch):
     assert not transfers
 
 
-def test_reset_step_refresh_and_observe_use_plant_runtime_state():
+def test_reset_step_refresh_and_observe_use_plant_runtime_state() -> None:
     model = _model()
     plant = prepare_mjx_adapter(model)
 
@@ -176,7 +179,7 @@ def test_reset_step_refresh_and_observe_use_plant_runtime_state():
     assert plant.control(refreshed.accepted_state).values.shape == (model.nu,)
 
 
-def test_observation_request_selects_content_not_freshness():
+def test_observation_request_selects_content_not_freshness() -> None:
     model = _model()
     plant = prepare_mjx_adapter(model)
     source = _reset(plant).accepted_state
@@ -189,7 +192,7 @@ def test_observation_request_selects_content_not_freshness():
     assert observation.projection.values.shape == (model.nv,)
 
 
-def test_shared_schema_covers_complete_payload_and_exact_case_axes():
+def test_shared_schema_covers_complete_payload_and_exact_case_axes() -> None:
     plant = prepare_mjx_adapter(_model(), case_ndim=1)
     state = _reset(plant, (2,)).accepted_state
     provider_leaves = jax.tree_util.tree_leaves(state.payload.opaque)
@@ -215,7 +218,7 @@ def test_shared_schema_covers_complete_payload_and_exact_case_axes():
         plant.qpos(malformed)
 
 
-def test_stale_and_wrong_control_projection_are_rejected():
+def test_stale_and_wrong_control_projection_are_rejected() -> None:
     first = prepare_mjx_adapter(_model(mass="1"))
     second = prepare_mjx_adapter(_model(mass="2"))
     first_state = _reset(first).accepted_state
@@ -250,7 +253,7 @@ def test_stale_and_wrong_control_projection_are_rejected():
             first.step(_context(first_state), first_state, wrong_kind, first.parameters)
 
 
-def test_one_nonfinite_case_rolls_back_the_complete_payload_only_for_that_case():
+def test_one_nonfinite_case_rolls_back_the_complete_payload_only_for_that_case() -> None:
     plant = prepare_mjx_adapter(_model(), case_ndim=1)
     source = _reset(plant, (2,)).accepted_state
     command = plant.control(source)
@@ -279,7 +282,7 @@ def test_one_nonfinite_case_rolls_back_the_complete_payload_only_for_that_case()
         assert jnp.array_equal(accepted_leaf[1], source_leaf[1])
 
 
-def test_refresh_rolls_back_only_the_nonfinite_complete_case(monkeypatch):
+def test_refresh_rolls_back_only_the_nonfinite_complete_case(monkeypatch: Any) -> None:
     plant = prepare_mjx_adapter(_model(), case_ndim=1)
     source = _reset(plant, (2,)).accepted_state
     marked_data = source.payload.opaque.replace(
@@ -291,7 +294,7 @@ def test_refresh_rolls_back_only_the_nonfinite_complete_case(monkeypatch):
     source = eqx.tree_at(lambda runtime: runtime.payload, source, marked_payload)
     provider_forward = mjx.forward
 
-    def forward_with_one_bad_case(model, data):
+    def forward_with_one_bad_case(model: Any, data: Any) -> Any:
         forwarded = provider_forward(model, data)
         failed = data.qpos[0] > 0.5
         return forwarded.replace(
@@ -321,7 +324,9 @@ def test_refresh_rolls_back_only_the_nonfinite_complete_case(monkeypatch):
         assert jnp.array_equal(accepted_leaf[1], source_leaf[1])
 
 
-def test_generic_checkpoint_and_replay_digest_without_serializing_provider_objects():
+def test_generic_checkpoint_and_replay_digest_without_serializing_provider_objects() -> (
+    None
+):
     plant = prepare_mjx_adapter(_model())
     source = _reset(plant).accepted_state
     checkpoint = plant.checkpoint(source)

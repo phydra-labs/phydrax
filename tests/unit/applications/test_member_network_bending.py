@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -10,13 +12,13 @@ sm = phx.applications.solid_mechanics
 mn = sm.member_network
 
 
-def _beam_properties(count):
+def _beam_properties(count: Any) -> Any:
     material = mn.LinearElasticMaterial(1000.0, 400.0, 1.0)
     section = mn.BeamSection(1.0, 1.0, 1.0, 0.5, 100.0, 100.0)
     return mn.MemberPropertyMap((material,), (section,), (0,) * count, (0,) * count)
 
 
-def test_corotational_beam_is_objective_under_large_rigid_rotation():
+def test_corotational_beam_is_objective_under_large_rigid_rotation() -> None:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1),), dtype=jnp.int32),
         2,
@@ -31,6 +33,7 @@ def test_corotational_beam_is_objective_under_large_rigid_rotation():
     definition = mn.MemberNetworkDefinition(
         structure, reference, _beam_properties(1), dofs
     )
+    # ty: ignore[invalid-argument-type]
     block = mn.CorotationalFrameBlock((0,))
     rotated = mn.MemberKinematics(
         jnp.asarray(((0.0, 0.0), (0.0, 1.0))),
@@ -43,7 +46,7 @@ def test_corotational_beam_is_objective_under_large_rigid_rotation():
     assert evaluated.bending_moment[0, 0] == pytest.approx(0.0, abs=1.0e-9)
 
 
-def test_corotational_cantilever_matches_small_deflection_limit():
+def test_corotational_cantilever_matches_small_deflection_limit() -> None:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1),), dtype=jnp.int32),
         2,
@@ -59,6 +62,7 @@ def test_corotational_cantilever_matches_small_deflection_limit():
     definition = mn.MemberNetworkDefinition(
         structure, reference, _beam_properties(1), dofs
     )
+    # ty: ignore[invalid-argument-type]
     assembly = mn.MemberNetworkAssembly((mn.CorotationalFrameBlock((0,)),))
     problem = mn.MemberNetworkProblem(definition, assembly)
     initial = mn.MemberKinematics(positions, jnp.zeros((2, 1)))
@@ -79,7 +83,7 @@ def test_corotational_cantilever_matches_small_deflection_limit():
     assert result.state.assembly.bending_moment[0, 0] != 0.0
 
 
-def test_discrete_rod_bending_and_twist_energy_detect_deformation():
+def test_discrete_rod_bending_and_twist_energy_detect_deformation() -> None:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
         3,
@@ -94,6 +98,7 @@ def test_discrete_rod_bending_and_twist_energy_detect_deformation():
     definition = mn.MemberNetworkDefinition(
         structure, reference, _beam_properties(2), dofs
     )
+    # ty: ignore[invalid-argument-type]
     rod = mn.DiscreteRodBlock((0, 1, 2), (0, 1))
     rest = rod.evaluate(definition, mn.MemberKinematics(positions, jnp.zeros((3, 3))))
     bent_positions = positions.at[1, 1].set(0.2)
@@ -105,7 +110,7 @@ def test_discrete_rod_bending_and_twist_energy_detect_deformation():
     assert jnp.any(jnp.abs(bent.bending_moment) > 0.0)
 
 
-def test_hinge_bending_energy_is_zero_at_rest_and_positive_when_folded():
+def test_hinge_bending_energy_is_zero_at_rest_and_positive_when_folded() -> None:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1), (1, 2), (2, 0), (1, 3), (3, 0)), dtype=jnp.int32),
         4,
@@ -127,6 +132,7 @@ def test_hinge_bending_energy_is_zero_at_rest_and_positive_when_folded():
     definition = mn.MemberNetworkDefinition(
         structure, reference, _beam_properties(5), dofs
     )
+    # ty: ignore[invalid-argument-type]
     hinge = mn.HingeBendingBlock(((0, 1, 2, 3),), (10.0,), (0.0,))
     flat = hinge.evaluate(definition, mn.MemberKinematics(positions, jnp.zeros((4, 3))))
     folded = hinge.evaluate(

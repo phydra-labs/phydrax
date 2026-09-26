@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -20,7 +22,7 @@ from phydrax.enforcement._polynomial_representation import (
 from phydrax.linalg import ArraySpace, DenseLinearOperator
 
 
-def _quadratic_support():
+def _quadratic_support() -> Any:
     return SparsePolynomialSupport(
         ("x", "y", "z"),
         ("q",),
@@ -36,7 +38,7 @@ def _quadratic_support():
     )
 
 
-def _so3_action(support):
+def _so3_action(support: Any) -> Any:
     generators = np.asarray(
         (
             ((0, 0, 0), (0, 0, -1), (0, 1, 0)),
@@ -56,7 +58,7 @@ def _so3_action(support):
     )
 
 
-def test_so3_quadratics_split_into_scalar_and_traceless_casimir_blocks():
+def test_so3_quadratics_split_into_scalar_and_traceless_casimir_blocks() -> None:
     support = _quadratic_support()
     action = _so3_action(support)
 
@@ -91,7 +93,7 @@ def test_so3_quadratics_split_into_scalar_and_traceless_casimir_blocks():
     assert np.allclose(np.sum(traceless[diagonal], axis=0), 0.0, atol=1e-5)
 
 
-def test_finite_cyclic_complex_weight_classes_partition_monomials():
+def test_finite_cyclic_complex_weight_classes_partition_monomials() -> None:
     support = SparsePolynomialSupport(
         ("z",),
         ("p",),
@@ -137,7 +139,9 @@ def test_finite_cyclic_complex_weight_classes_partition_monomials():
     assert np.allclose(sum(projectors), np.eye(support.term_count), atol=1e-5)
 
 
-def test_invalid_finite_generators_are_rejected_and_near_relations_are_ambiguous():
+def test_invalid_finite_generators_are_rejected_and_near_relations_are_ambiguous() -> (
+    None
+):
     support = SparsePolynomialSupport(("x",), ("p",), (0,), ((0,),))
     table = np.asarray(((0, 1), (1, 0)), dtype="int64")
 
@@ -172,7 +176,7 @@ def test_invalid_finite_generators_are_rejected_and_near_relations_are_ambiguous
         )
 
 
-def test_weight_and_scaling_actions_lower_to_equivariant_enforcement_maps():
+def test_weight_and_scaling_actions_lower_to_equivariant_enforcement_maps() -> None:
     support = SparsePolynomialSupport(
         ("x",),
         ("p",),
@@ -181,7 +185,9 @@ def test_weight_and_scaling_actions_lower_to_equivariant_enforcement_maps():
     )
     weighted = weighted_polynomial_action(
         support,
+        # ty: ignore[invalid-argument-type]
         (1,),
+        # ty: ignore[invalid-argument-type]
         equation_weights=(2,),
     )
     weighted_basis = extract_equivariant_subspace(
@@ -189,6 +195,7 @@ def test_weight_and_scaling_actions_lower_to_equivariant_enforcement_maps():
         verification_tolerance=1e-5,
         rejection_tolerance=1e-3,
     )
+    # ty: ignore[invalid-argument-type]
     scaling = PolynomialScaling((2.0,), (4.0,))
     scaled = scaling_polynomial_action(support, scaling)
     scaled_basis = extract_equivariant_subspace(
@@ -230,5 +237,6 @@ def test_weight_and_scaling_actions_lower_to_equivariant_enforcement_maps():
         0.0,
         atol=1e-5,
     )
+    # ty: ignore[unresolved-attribute]
     assert lowered.coefficient_space.shape == (1,)
     assert not lowered.certificate.round_trip_exact

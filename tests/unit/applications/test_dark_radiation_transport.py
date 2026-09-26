@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -44,7 +47,7 @@ from phydrax.solver._dark_radiation_packets import DarkRadiationPacketPlan
 from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 
 
-def _setup():
+def _setup() -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1)
     units = RelativisticUnitContract(
         scale, RelativityConvention(metric_signature="mostly_minus")
@@ -110,13 +113,14 @@ def _setup():
     return units, frame, packet_plan
 
 
-def _ledger():
+def _ledger() -> Any:
     plan = DarkRadiationLedgerPlan(2, speed_of_light=1.0)
     empty = plan.empty()
     packet = DarkRadiationPacket(
         101,
         7,
         41,
+        # ty: ignore[invalid-argument-type]
         (11, 12),
         jnp.asarray(1.0),
         jnp.asarray((1.0, 0.0, 0.0)),
@@ -130,7 +134,9 @@ def _ledger():
     return plan, result.accepted_ledger
 
 
-def test_ledger_adapter_creates_distinct_packet_state_with_explicit_frame_and_support():
+def test_ledger_adapter_creates_distinct_packet_state_with_explicit_frame_and_support() -> (
+    None
+):
     _, frame, packet_plan = _setup()
     ledger_plan, ledger = _ledger()
     target = packet_plan.empty(frame, epoch_manifest_id="a" * 64)
@@ -154,7 +160,7 @@ def test_ledger_adapter_creates_distinct_packet_state_with_explicit_frame_and_su
     np.testing.assert_allclose(result.evidence.four_momentum_defect, 0.0, atol=1e-7)
 
 
-def test_packet_moment_receipt_and_stress_energy_are_conservative():
+def test_packet_moment_receipt_and_stress_energy_are_conservative() -> None:
     units, frame, packet_plan = _setup()
     ledger_plan, ledger = _ledger()
     state = (
@@ -207,7 +213,7 @@ def test_packet_moment_receipt_and_stress_energy_are_conservative():
     np.testing.assert_allclose(gravity.projection.stress_covariant[0, 0], 0.5)
 
 
-def test_hierarchy_gravity_requires_explicit_linearization_receipt():
+def test_hierarchy_gravity_requires_explicit_linearization_receipt() -> None:
     units, frame, _ = _setup()
     plan = DarkRadiationBoltzmannHierarchyPlan(
         jnp.asarray((0.2,)),
@@ -254,7 +260,7 @@ def test_hierarchy_gravity_requires_explicit_linearization_receipt():
     )
 
 
-def test_vet_shadow_tensor_couples_to_exact_gravity_snapshot():
+def test_vet_shadow_tensor_couples_to_exact_gravity_snapshot() -> None:
     _, frame, _ = _setup()
     plan = DarkRadiationVETPlan(
         jnp.asarray(
@@ -292,7 +298,9 @@ def test_vet_shadow_tensor_couples_to_exact_gravity_snapshot():
     )
 
 
-def test_distributed_m1_checkpoint_and_profile_products_are_separate(tmp_path):
+def test_distributed_m1_checkpoint_and_profile_products_are_separate(
+    tmp_path: Any,
+) -> None:
     _, frame, _ = _setup()
     state = jnp.asarray(((1.0, 0.0, 0.0, 0.0), (2.0, 0.5, 0.0, 0.0)))
     checkpoint = DarkRadiationM1Checkpoint(

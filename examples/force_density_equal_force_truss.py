@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -25,11 +28,11 @@ equilibrium = fd.ForceDensityProblem(structure, sign_mode="tension")
 plan = fd.plan_force_density(equilibrium, sample)
 
 
-def decode(force_densities, _):
+def decode(force_densities: Any, _: Any) -> Any:
     return fd.ForceDensityInputs(force_densities, sample.prescribed_values, loads)
 
 
-def objective(state, force_densities, _):
+def objective(state: Any, force_densities: Any, _: Any) -> Any:
     uniformity = fd.scaled_uniformity_residual(
         state.axial_forces,
         1.0,

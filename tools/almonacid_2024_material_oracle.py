@@ -22,6 +22,7 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -196,7 +197,14 @@ def samples() -> list[dict]:
     result = []
     identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 
-    def append(label, tissue, dynamic, stretch, rate=0.0, fraction=0.0):
+    def append(
+        label: Any,
+        tissue: Any,
+        dynamic: Any,
+        stretch: Any,
+        rate: Any = 0.0,
+        fraction: Any = 0.0,
+    ) -> None:
         # F=I and |a0|=stretch provide exactly represented branch inputs: the
         # source explicitly accepts non-unit a0. Offsets include neighboring ULPs.
         dt = 0.01
@@ -334,7 +342,7 @@ def main() -> None:
     runtime_hashes = {str(path.resolve()): digest(path) for path in runtime_files}
     commands = []
 
-    def run(command, log):
+    def run(command: Any, log: Any) -> None:
         commands.append(command)
         with (destination / log).open("xb") as stream:
             subprocess.run(

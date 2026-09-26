@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,13 +27,13 @@ from phydrax.discretization.finite_volume._unstructured_vof import (
 
 
 def _grid(
-    nx=2,
-    ny=2,
+    nx: Any = 2,
+    ny: Any = 2,
     *,
-    shift=(0.0, 0.0),
-    angle=0.0,
-    reverse=False,
-):
+    shift: Any = (0.0, 0.0),
+    angle: Any = 0.0,
+    reverse: Any = False,
+) -> Any:
     vertices = np.asarray(
         [(i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -52,7 +55,7 @@ def _grid(
     ).prepare()
 
 
-def _triangular_grid(nx=2, ny=2):
+def _triangular_grid(nx: Any = 2, ny: Any = 2) -> Any:
     vertices = np.asarray(
         [(i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -74,14 +77,14 @@ def _triangular_grid(nx=2, ny=2):
     ).prepare()
 
 
-def _vof(discretization):
+def _vof(discretization: Any) -> Any:
     gradient = phx.discretization.CellPolynomialReconstructionPlan(
         1, oversampling=4
     ).prepare(discretization)
     return phx.discretization.UnstructuredVOFPlan(discretization, gradient)
 
 
-def test_planar_plic_apertures_are_complementary_and_exact_on_static_routes():
+def test_planar_plic_apertures_are_complementary_and_exact_on_static_routes() -> None:
     discretization = _grid()
     vof = _vof(discretization)
     alpha = jnp.full((discretization.cell_count,), 0.5)
@@ -106,7 +109,7 @@ def test_planar_plic_apertures_are_complementary_and_exact_on_static_routes():
     assert jnp.all(jnp.isfinite(apertures.owner_phase_centroids))
 
 
-def test_translation_and_reversed_cell_orientation_preserve_phase_complements():
+def test_translation_and_reversed_cell_orientation_preserve_phase_complements() -> None:
     first = _grid()
     translated = _grid(shift=(3.0, -2.0), reverse=True)
     first_vof = _vof(first)
@@ -132,7 +135,7 @@ def test_translation_and_reversed_cell_orientation_preserve_phase_complements():
     assert first.geometry_id != translated.geometry_id
 
 
-def test_phase_swept_flux_has_exact_sum_and_jit_stage_evaluation():
+def test_phase_swept_flux_has_exact_sum_and_jit_stage_evaluation() -> None:
     discretization = _grid()
     vof = _vof(discretization)
     alpha = jnp.asarray((0.25, 0.5, 0.75, 0.5))
@@ -146,7 +149,7 @@ def test_phase_swept_flux_has_exact_sum_and_jit_stage_evaluation():
     np.testing.assert_allclose(alpha_flux, phase0, atol=2e-12)
 
 
-def test_full_empty_limits_and_invalid_route_or_identity_are_rejected():
+def test_full_empty_limits_and_invalid_route_or_identity_are_rejected() -> None:
     discretization = _grid()
     vof = _vof(discretization)
     metrics = lower_static_unstructured_stage_metrics(discretization)
@@ -179,7 +182,7 @@ def test_full_empty_limits_and_invalid_route_or_identity_are_rejected():
         )
 
 
-def test_stage_plic_binds_geometry_epoch_and_handles_inactive_cells_exactly():
+def test_stage_plic_binds_geometry_epoch_and_handles_inactive_cells_exactly() -> None:
     discretization = _grid()
     vof = _vof(discretization)
     metrics = lower_static_unstructured_stage_metrics(discretization)
@@ -228,7 +231,7 @@ def test_stage_plic_binds_geometry_epoch_and_handles_inactive_cells_exactly():
         )
 
 
-def test_embedded_open_and_cut_routes_use_exact_segment_geometry():
+def test_embedded_open_and_cut_routes_use_exact_segment_geometry() -> None:
     discretization = _grid()
     embedded = phx.discretization.EmbeddedBoundaryPlan(
         discretization,
@@ -261,7 +264,7 @@ def test_embedded_open_and_cut_routes_use_exact_segment_geometry():
     )
 
 
-def test_stage_reconstruction_is_filter_jittable_jacfwd_safe_and_alpha_bound():
+def test_stage_reconstruction_is_filter_jittable_jacfwd_safe_and_alpha_bound() -> None:
     discretization = _grid()
     vof = _vof(discretization)
     first_alpha = jnp.full((discretization.cell_count,), 0.25)
@@ -284,7 +287,7 @@ def test_stage_reconstruction_is_filter_jittable_jacfwd_safe_and_alpha_bound():
     np.testing.assert_array_equal(second.volume_fraction_id, second_alpha)
 
 
-def test_stage_planar_reconstruction_matches_cell_volume_and_exact_half_planes():
+def test_stage_planar_reconstruction_matches_cell_volume_and_exact_half_planes() -> None:
     discretization = _grid()
     vof = _vof(discretization)
     alpha = jnp.full((discretization.cell_count,), 0.5)
@@ -315,7 +318,9 @@ def test_stage_planar_reconstruction_matches_cell_volume_and_exact_half_planes()
 
 
 @pytest.mark.parametrize("factory", (_grid, _triangular_grid))
-def test_stage_reconstruction_supports_fixed_capacity_triangles_and_quads(factory):
+def test_stage_reconstruction_supports_fixed_capacity_triangles_and_quads(
+    factory: Any,
+) -> None:
     discretization = factory()
     vof = _vof(discretization)
     alpha = jnp.linspace(0.15, 0.85, discretization.cell_count)
@@ -336,7 +341,7 @@ def test_stage_reconstruction_supports_fixed_capacity_triangles_and_quads(factor
     assert jnp.all(stage.interface_evidence)
 
 
-def test_stage_reconstruction_is_covariant_under_translation_and_rotation():
+def test_stage_reconstruction_is_covariant_under_translation_and_rotation() -> None:
     base = _grid()
     transformed = _grid(shift=(2.5, -1.75), angle=0.63)
     alpha = 0.2 + 0.6 * base.cell_centers[:, 0]
@@ -364,7 +369,7 @@ def test_stage_reconstruction_is_covariant_under_translation_and_rotation():
     )
 
 
-def test_stage_full_empty_limits_are_exact_for_both_face_sides():
+def test_stage_full_empty_limits_are_exact_for_both_face_sides() -> None:
     discretization = _grid()
     vof = _vof(discretization)
 
@@ -399,7 +404,7 @@ def test_stage_full_empty_limits_are_exact_for_both_face_sides():
     assert not jnp.any(full.interface_active)
 
 
-def test_stage_donor_selection_reverses_on_internal_flux_and_conserves_total():
+def test_stage_donor_selection_reverses_on_internal_flux_and_conserves_total() -> None:
     discretization = _grid()
     vof = _vof(discretization)
     alpha = jnp.asarray((0.2, 0.8, 0.35, 0.65))
@@ -437,7 +442,9 @@ def test_stage_donor_selection_reverses_on_internal_flux_and_conserves_total():
     np.testing.assert_allclose(alpha_flux, phase0, atol=2e-7)
 
 
-def test_stage_reconstruction_rejects_invalid_geometry_rank_alpha_and_stale_routes():
+def test_stage_reconstruction_rejects_invalid_geometry_rank_alpha_and_stale_routes() -> (
+    None
+):
     discretization = _grid()
     vof = _vof(discretization)
     alpha = jnp.full((discretization.cell_count,), 0.5)
@@ -501,7 +508,7 @@ def test_stage_reconstruction_rejects_invalid_geometry_rank_alpha_and_stale_rout
         )
 
 
-def test_stage_embedded_plic_uses_oblique_fluid_polygons_and_open_segments():
+def test_stage_embedded_plic_uses_oblique_fluid_polygons_and_open_segments() -> None:
     discretization = _grid()
     vof = _vof(discretization)
     embedded = phx.discretization.EmbeddedBoundaryPlan(
@@ -512,7 +519,7 @@ def test_stage_embedded_plic_uses_oblique_fluid_polygons_and_open_segments():
     # Inactive (solid) stage cells must carry exactly zero volume fraction.
     alpha = jnp.where(embedded.active_fluid_cells, 0.5, 0.0)
 
-    def reconstruct(value):
+    def reconstruct(value: Any) -> Any:
         return vof.reconstruct_stage(
             value,
             effective_geometry=embedded,
@@ -576,7 +583,7 @@ def test_stage_embedded_plic_uses_oblique_fluid_polygons_and_open_segments():
     np.testing.assert_array_equal(stage.geometry_version, 7)
 
 
-def test_stage_full_fluid_effective_geometry_matches_background_geometry():
+def test_stage_full_fluid_effective_geometry_matches_background_geometry() -> None:
     discretization = _grid()
     vof = _vof(discretization)
     full_fluid = phx.discretization.EmbeddedBoundaryPlan(
@@ -610,7 +617,7 @@ def test_stage_full_fluid_effective_geometry_matches_background_geometry():
     assert effective.effective_geometry_id == full_fluid.metrics_id
 
 
-def test_stage_reconstruction_rejects_stale_effective_embedded_geometry():
+def test_stage_reconstruction_rejects_stale_effective_embedded_geometry() -> None:
     discretization = _grid()
     vof = _vof(discretization)
     translated = _grid(shift=(1.0, 0.0))
@@ -627,7 +634,7 @@ def test_stage_reconstruction_rejects_stale_effective_embedded_geometry():
         )
 
 
-def test_vof_plan_rejects_tetrahedral_geometry_before_gradient_use():
+def test_vof_plan_rejects_tetrahedral_geometry_before_gradient_use() -> None:
     tetrahedral = phx.discretization.UnstructuredFiniteVolumePlan(
         np.asarray(
             (
@@ -641,4 +648,5 @@ def test_vof_plan_rejects_tetrahedral_geometry_before_gradient_use():
     ).prepare()
 
     with pytest.raises(ValueError, match="2-D polygons"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.UnstructuredVOFPlan(tetrahedral, None)

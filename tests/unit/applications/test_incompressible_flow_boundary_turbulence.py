@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +13,7 @@ from phydrax.applications.incompressible_flow._boundary_turbulence import (
 )
 
 
-def test_vector_wall_stress_is_orientation_invariant_and_opposes_slip():
+def test_vector_wall_stress_is_orientation_invariant_and_opposes_slip() -> None:
     prepared = VectorEquilibriumWallStressPlan().prepare(3)
     velocity = jnp.asarray(((0.0, 3.0, 4.0), (0.0, 3.0, 4.0)))
     normals = jnp.asarray(((2.0, 0.0, 0.0), (-5.0, 0.0, 0.0)))
@@ -31,7 +33,7 @@ def test_vector_wall_stress_is_orientation_invariant_and_opposes_slip():
     assert float(rough.wall_shear_magnitude[0]) > float(result.wall_shear_magnitude[0])
 
 
-def test_vector_wall_stress_has_exact_zero_and_viscous_limits():
+def test_vector_wall_stress_has_exact_zero_and_viscous_limits() -> None:
     prepared = VectorEquilibriumWallStressPlan(root_tolerance=1.0e-10).prepare(2)
     normal = jnp.asarray((1.0, 0.0))
     zero = prepared.evaluate(jnp.zeros((2,)), normal, 0.01, 1.2, 1.8e-5)
@@ -52,7 +54,7 @@ def test_vector_wall_stress_has_exact_zero_and_viscous_limits():
     assert bool(laminar.successful)
 
 
-def test_vector_wall_stress_refuses_nonconvergence_and_invalid_support():
+def test_vector_wall_stress_refuses_nonconvergence_and_invalid_support() -> None:
     underresolved = VectorEquilibriumWallStressPlan(
         root_iterations=1,
         bracket_iterations=1,
@@ -82,7 +84,7 @@ def test_vector_wall_stress_refuses_nonconvergence_and_invalid_support():
     assert not bool(unsupported_roughness.successful)
 
 
-def test_vector_wall_stress_jit_preserves_result_and_evidence():
+def test_vector_wall_stress_jit_preserves_result_and_evidence() -> None:
     prepared = VectorEquilibriumWallStressPlan().prepare(3)
     arguments = (
         jnp.asarray(((0.0, 2.0, -1.0), (0.0, -3.0, 0.5))),
@@ -98,7 +100,7 @@ def test_vector_wall_stress_jit_preserves_result_and_evidence():
     np.testing.assert_array_equal(compiled.successful, eager.successful)
 
 
-def _compact_prepared():
+def _compact_prepared() -> Any:
     coordinates = jnp.asarray(((0.0, 0.0), (0.0, 0.2), (0.0, 1.0), (0.0, 1.2)))
     velocity_covariance = jnp.asarray(((0.4, 0.1), (0.1, 0.3)))
     scalar_covariance = jnp.asarray(((0.2,),))
@@ -122,13 +124,13 @@ def _compact_prepared():
     return prepared, target
 
 
-def test_compact_inflow_matches_joint_covariance_and_rejects_non_psd_inputs():
+def test_compact_inflow_matches_joint_covariance_and_rejects_non_psd_inputs() -> None:
     prepared, target = _compact_prepared()
     assert bool(prepared.preparation.covariance_exact)
     assert bool(prepared.preparation.mass_compatible)
     assert not bool(prepared.preparation.divergence_available)
 
-    def draw(state, _):
+    def draw(state: Any, _: Any) -> Any:
         result = prepared.sample(state)
         joint = jnp.concatenate(
             (result.velocity_fluctuation[0], result.scalar_fluctuation[0])
@@ -153,7 +155,7 @@ def test_compact_inflow_matches_joint_covariance_and_rejects_non_psd_inputs():
         plan.prepare(*geometry, jnp.asarray(((1.0, 0.2), (0.1, 1.0))))
 
 
-def test_inflow_prng_lineage_reproducibility_and_restart_are_exact():
+def test_inflow_prng_lineage_reproducibility_and_restart_are_exact() -> None:
     prepared, _ = _compact_prepared()
     with pytest.raises(ValueError, match="typed JAX PRNG key"):
         prepared.initialize(jnp.asarray((0, 1), dtype=jnp.uint32))
@@ -207,7 +209,7 @@ def test_inflow_prng_lineage_reproducibility_and_restart_are_exact():
         prepared.sample(exhausted)
 
 
-def test_spectral_inflow_certifies_surface_divergence_mass_and_jit():
+def test_spectral_inflow_certifies_surface_divergence_mass_and_jit() -> None:
     angles = 0.5 * jnp.pi * jnp.arange(4)
     coordinates = jnp.stack((jnp.zeros_like(angles), angles), axis=-1)
     velocity_covariance = jnp.asarray(((0.7, 0.0), (0.0, 0.0)))

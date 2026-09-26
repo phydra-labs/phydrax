@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _axis(name, size, *, periodic=False):
+def _axis(name: Any, size: Any, *, periodic: Any = False) -> Any:
     return phx.nn.operator.OperatorAxis(
         name,
         jnp.linspace(0.0, 1.0, size, endpoint=not periodic),
@@ -21,14 +24,14 @@ def _axis(name, size, *, periodic=False):
     )
 
 
-def _parameter_count(model):
+def _parameter_count(model: Any) -> Any:
     return sum(
         leaf.size
         for leaf in jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_inexact_array))
     )
 
 
-def _assert_finite_gradient(gradient):
+def _assert_finite_gradient(gradient: Any) -> None:
     leaves = [
         leaf for leaf in jax.tree_util.tree_leaves(gradient) if eqx.is_inexact_array(leaf)
     ]
@@ -36,7 +39,7 @@ def _assert_finite_gradient(gradient):
     assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
 
 
-def test_ifno_shared_iteration_diagnostics_jit_and_query_mask():
+def test_ifno_shared_iteration_diagnostics_jit_and_query_mask() -> None:
     axis = _axis("x", 6, periodic=True)
     values = jnp.stack((jnp.sin(2.0 * jnp.pi * axis.nodes), axis.nodes))
     query_mask = jnp.array(
@@ -87,7 +90,7 @@ def test_ifno_shared_iteration_diagnostics_jit_and_query_mask():
     assert diagnostics.iterations == eager_diagnostics.iterations == 3
 
 
-def test_axial_factorized_fno_has_finite_output_and_input_gradient():
+def test_axial_factorized_fno_has_finite_output_and_input_gradient() -> None:
     x = jnp.linspace(0.0, 1.0, 5, endpoint=False)
     y = jnp.linspace(0.0, 1.0, 4, endpoint=False)
     values = jnp.sin(2.0 * jnp.pi * x[:, None]) * jnp.cos(2.0 * jnp.pi * y[None, :])
@@ -110,7 +113,7 @@ def test_axial_factorized_fno_has_finite_output_and_input_gradient():
     assert jnp.linalg.norm(gradient) > 0.0
 
 
-def _transolver_batch():
+def _transolver_batch() -> Any:
     coordinates = jnp.array([[0.0], [0.25], [0.7], [1.0]])
     values = jnp.array([[1.0, 80.0, -90.0, 70.0], [-0.5, 50.0, 60.0, -70.0]])
     source_mask = jnp.array([[True, False, False, False], [False, False, True, False]])
@@ -140,7 +143,7 @@ def _transolver_batch():
     )
 
 
-def test_transolver_hard_and_overlapping_slices_preserve_measure_and_masks():
+def test_transolver_hard_and_overlapping_slices_preserve_measure_and_masks() -> None:
     batch, source_mask, source_weights, query_mask = _transolver_batch()
     common = dict(
         coord_dim=1,
@@ -153,7 +156,9 @@ def test_transolver_hard_and_overlapping_slices_preserve_measure_and_masks():
         attention_execution="dense",
         key=jr.key(3),
     )
+    # ty: ignore[invalid-argument-type]
     hard = phx.nn.operator.architectures.Transolver(slice_top_k=1, **common)
+    # ty: ignore[invalid-argument-type]
     overlapping = phx.nn.operator.architectures.Transolver(slice_top_k=2, **common)
 
     hard_state = hard.encode_inputs(batch)
@@ -174,7 +179,9 @@ def test_transolver_hard_and_overlapping_slices_preserve_measure_and_masks():
     assert jnp.array_equal(overlapping_output[~query_mask], jnp.zeros((2,)))
 
 
-def _gnot_batch(*, reverse=False, velocity_scale=1.0, forcing_scale=1.0):
+def _gnot_batch(
+    *, reverse: Any = False, velocity_scale: Any = 1.0, forcing_scale: Any = 1.0
+) -> Any:
     velocity = phx.nn.operator.FunctionSamples(
         values=velocity_scale
         * jnp.array(
@@ -212,7 +219,9 @@ def _gnot_batch(*, reverse=False, velocity_scale=1.0, forcing_scale=1.0):
     )
 
 
-def test_gnot_named_source_order_is_deterministic_and_heterogeneous_branches_fuse():
+def test_gnot_named_source_order_is_deterministic_and_heterogeneous_branches_fuse() -> (
+    None
+):
     settings = dict(
         out_channels=2,
         coord_dim=1,
@@ -225,10 +234,14 @@ def test_gnot_named_source_order_is_deterministic_and_heterogeneous_branches_fus
         key=jr.key(4),
     )
     first = phx.nn.operator.architectures.GNOT(
-        in_channels={"velocity": 2, "forcing": "scalar"}, **settings
+        in_channels={"velocity": 2, "forcing": "scalar"},
+        # ty: ignore[invalid-argument-type]
+        **settings,
     )
     reordered = phx.nn.operator.architectures.GNOT(
-        in_channels={"forcing": "scalar", "velocity": 2}, **settings
+        in_channels={"forcing": "scalar", "velocity": 2},
+        # ty: ignore[invalid-argument-type]
+        **settings,
     )
     batch = _gnot_batch()
     reversed_batch = _gnot_batch(reverse=True)
@@ -243,7 +256,7 @@ def test_gnot_named_source_order_is_deterministic_and_heterogeneous_branches_fus
     assert jnp.array_equal(output[~query_mask], jnp.zeros((2, 2)))
 
 
-def _koopman_batch():
+def _koopman_batch() -> Any:
     x = _axis("x", 4)
     time = phx.nn.operator.OperatorAxis("time", jnp.array([0.0, 0.17, 0.61]))
     values = jnp.stack((jnp.sin(jnp.pi * x.nodes), jnp.cos(jnp.pi * x.nodes)))
@@ -265,7 +278,7 @@ def _koopman_batch():
 
 
 @pytest.mark.parametrize("evolution", ("continuous", "discrete"))
-def test_koopman_stability_semigroup_and_irregular_time_queries(evolution):
+def test_koopman_stability_semigroup_and_irregular_time_queries(evolution: Any) -> None:
     model = phx.nn.operator.architectures.KoopmanTemporalOperator(
         spatial_ndim=1,
         latent_size=3,
@@ -299,8 +312,12 @@ def test_koopman_stability_semigroup_and_irregular_time_queries(evolution):
 
 
 def _green_batch(
-    *, forcing_weights=True, boundary_weights=True, forcing_scale=1.0, boundary_scale=1.0
-):
+    *,
+    forcing_weights: Any = True,
+    boundary_weights: Any = True,
+    forcing_scale: Any = 1.0,
+    boundary_scale: Any = 1.0,
+) -> Any:
     forcing = phx.nn.operator.FunctionSamples(
         values=forcing_scale * jnp.array([[1.0, -0.5, 0.25], [-0.2, 0.7, 0.4]]),
         coordinates=jnp.array([[0.1], [0.5], [0.9]]),
@@ -325,7 +342,7 @@ def _green_batch(
     )
 
 
-def test_green_kernel_requires_physical_measures_and_uses_both_branches():
+def test_green_kernel_requires_physical_measures_and_uses_both_branches() -> None:
     model = phx.nn.operator.architectures.GreenKernelOperator(
         coord_dim=1,
         width=4,
@@ -349,7 +366,7 @@ def test_green_kernel_requires_physical_measures_and_uses_both_branches():
     assert jnp.array_equal(output[~query_mask], jnp.zeros((2,)))
 
 
-def _poseidon_batch(values, time):
+def _poseidon_batch(values: Any, time: Any) -> Any:
     axes = (_axis("x", 4), _axis("y", 4))
     query_mask = (
         jnp.ones((2, 4, 4), dtype="bool").at[0, 1, 2].set(False).at[1, 3, 0].set(False)
@@ -368,7 +385,7 @@ def _poseidon_batch(values, time):
     )
 
 
-def test_poseidon_eager_jit_gradient_time_conditioning_and_mask():
+def test_poseidon_eager_jit_gradient_time_conditioning_and_mask() -> None:
     model = phx.nn.operator.architectures.Poseidon(
         image_shape=(4, 4),
         patch_size=(2, 2),
@@ -399,7 +416,7 @@ def test_poseidon_eager_jit_gradient_time_conditioning_and_mask():
     assert jnp.array_equal(eager[~mask], jnp.zeros((2,)))
 
 
-def _dpot_batch(history):
+def _dpot_batch(history: Any) -> Any:
     axes = (_axis("x", 4), _axis("y", 4))
     history_axis = phx.nn.operator.OperatorAxis("history_time", jnp.array([-1.0, 0.0]))
     forecast_axis = phx.nn.operator.OperatorAxis("forecast_time", jnp.array([0.4]))
@@ -436,7 +453,7 @@ def _dpot_batch(history):
     )
 
 
-def test_dpot_eager_jit_gradient_and_corrupt_batch_contract():
+def test_dpot_eager_jit_gradient_and_corrupt_batch_contract() -> None:
     model = phx.nn.operator.architectures.DPOT(
         image_shape=(4, 4),
         history_steps=2,
@@ -472,14 +489,19 @@ def test_dpot_eager_jit_gradient_and_corrupt_batch_contract():
     assert jnp.allclose(compiled, eager, rtol=1e-5, atol=1e-6)
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.linalg.norm(gradient) > 0.0
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(corrupted, expected)
+    # ty: ignore[not-subscriptable]
     assert jnp.array_equal(corrupted[~source_mask], jnp.zeros((2,)))
+    # ty: ignore[not-subscriptable]
     assert not jnp.array_equal(corrupted[source_mask], history[source_mask])
     query_mask = batch.require_single_query().mask_array(case_shape=batch.case_shape)
     assert jnp.array_equal(eager[~query_mask], jnp.zeros((2,)))
 
 
-def _attention(kernel="softmax", execution="dense", *, key=jr.key(12)):
+def _attention(
+    kernel: Any = "softmax", execution: Any = "dense", *, key: Any = jr.key(12)
+) -> Any:
     return phx.nn.layers.MeasureAwareAttention(
         source_channels=4,
         query_channels=3,
@@ -493,7 +515,7 @@ def _attention(kernel="softmax", execution="dense", *, key=jr.key(12)):
     )
 
 
-def test_measure_attention_dense_blockwise_parity_with_measure_and_masks():
+def test_measure_attention_dense_blockwise_parity_with_measure_and_masks() -> None:
     source = jr.normal(jr.key(13), (2, 5, 4))
     query = jr.normal(jr.key(14), (2, 3, 3))
     weights = jnp.array([[0.1, 0.4, 0.2, 0.25, 0.05], [0.3, 0.1, 0.4, 0.1, 0.1]])
@@ -524,7 +546,9 @@ def test_measure_attention_dense_blockwise_parity_with_measure_and_masks():
 
 
 @pytest.mark.parametrize("kernel", ("softmax", "kernel_linear", "galerkin", "identity"))
-def test_measure_attention_kernel_modes_are_finite_and_all_masked_is_zero(kernel):
+def test_measure_attention_kernel_modes_are_finite_and_all_masked_is_zero(
+    kernel: Any,
+) -> None:
     source = jr.normal(jr.key(15), (2, 4, 4))
     query = jr.normal(jr.key(16), (2, 4, 3))
     weights = jnp.array([[0.1, 0.2, 0.3, 0.4], [0.4, 0.3, 0.2, 0.1]])

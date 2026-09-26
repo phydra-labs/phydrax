@@ -201,8 +201,14 @@ def column_closure_dataset(
         target = binding.task.field_by_name[target_name]
         # ColumnClosureBinding validated these roles, so the task field resolved
         # its source name, query name and output specification.
-        assert source.source_name is not None
-        assert target.query_name is not None and target.output_spec is not None
+        if not (source.source_name is not None):
+            raise RuntimeError(
+                "Internal invariant failed: source.source_name is not None."
+            )
+        if not (target.query_name is not None and target.output_spec is not None):
+            raise RuntimeError(
+                "Internal invariant failed: target.query_name is not None and target.output_spec is not None."
+            )
         if source.source_name in inputs:
             raise ValueError("Forcing may not overwrite the column state.")
         inputs[source.source_name] = FunctionSamples(
@@ -232,7 +238,8 @@ def column_closure_dataset(
 
 def _records(dataset: OperatorDataset) -> tuple[OperatorCaseProvenance, ...]:
     # OperatorDataset.__post_init__ resolves omitted provenance to per-case records.
-    assert dataset.provenance is not None
+    if not (dataset.provenance is not None):
+        raise RuntimeError("Internal invariant failed: dataset.provenance is not None.")
     return dataset.provenance
 
 
@@ -572,9 +579,11 @@ def deploy_column_closure(
     for name in binding.state_fields:
         source_name = binding.task.field_by_name[name].source_name
         # Binding validation fixed the source role; predict validated its values.
-        assert source_name is not None
+        if not (source_name is not None):
+            raise RuntimeError("Internal invariant failed: source_name is not None.")
         values = batch.input(source_name).values
-        assert values is not None
+        if not (values is not None):
+            raise RuntimeError("Internal invariant failed: values is not None.")
         states.append(values)
     before = jnp.stack(states, axis=-1)
     delta = jnp.stack(

@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_point_cloud_complexes_are_canonical_face_closed_and_bounded():
+def test_point_cloud_complexes_are_canonical_face_closed_and_bounded() -> None:
     points = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.2]])
     policy = phx.topology.PointCloudComplexPolicy(
         maximum_dimension=2, maximum_simplices=64
@@ -33,7 +33,7 @@ def test_point_cloud_complexes_are_canonical_face_closed_and_bounded():
         )
 
 
-def test_alpha_complex_admits_faces_before_their_delaunay_coface():
+def test_alpha_complex_admits_faces_before_their_delaunay_coface() -> None:
     points = jnp.asarray([[0.0, 0.0], [2.0, 0.0], [0.0, 2.0]])
     result = phx.topology.alpha_complex(
         points,
@@ -60,7 +60,7 @@ def test_alpha_complex_admits_faces_before_their_delaunay_coface():
     assert len(obtuse.simplices) == 2
 
 
-def test_finite_multiparameter_module_does_not_claim_a_barcode():
+def test_finite_multiparameter_module_does_not_claim_a_barcode() -> None:
     field = phx.topology.PrimeField(2)
     module = phx.topology.FinitePersistenceModule(
         jnp.asarray([1, 2, 1]),
@@ -74,7 +74,7 @@ def test_finite_multiparameter_module_does_not_claim_a_barcode():
     assert not result.barcode_claimed
 
 
-def test_finite_persistence_module_rejects_inconsistent_direct_map():
+def test_finite_persistence_module_rejects_inconsistent_direct_map() -> None:
     field = phx.topology.PrimeField(2)
 
     with pytest.raises(ValueError, match="noncommuting path maps"):
@@ -103,7 +103,7 @@ def test_finite_persistence_module_rejects_inconsistent_direct_map():
         )
 
 
-def test_mixed_zigzag_interval_decomposition_reconstructs_dimensions_and_ranks():
+def test_mixed_zigzag_interval_decomposition_reconstructs_dimensions_and_ranks() -> None:
     field = phx.topology.PrimeField(3)
     result = phx.topology.compute_zigzag_intervals(
         (1, 2, 1),
@@ -117,7 +117,7 @@ def test_mixed_zigzag_interval_decomposition_reconstructs_dimensions_and_ranks()
     assert {tuple(value) for value in result.intervals.tolist()} == {(0, 1), (1, 2)}
 
 
-def test_explicit_diagonal_cup_product_and_constant_cellular_sheaf():
+def test_explicit_diagonal_cup_product_and_constant_cellular_sheaf() -> None:
     points = jnp.asarray([[0.0], [1.0]])
     interval = phx.topology.vietoris_rips_complex(
         points,
@@ -176,7 +176,7 @@ def test_explicit_diagonal_cup_product_and_constant_cellular_sheaf():
     assert jnp.array_equal(sheaf.cohomology_dimensions(), jnp.asarray([1, 0]))
 
 
-def test_cellular_sheaf_rejects_incompatible_composed_restrictions():
+def test_cellular_sheaf_rejects_incompatible_composed_restrictions() -> None:
     triangle = phx.topology.vietoris_rips_complex(
         jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
         2.0,
@@ -207,7 +207,7 @@ def test_cellular_sheaf_rejects_incompatible_composed_restrictions():
     assert jnp.array_equal(valid.cohomology_dimensions(), jnp.asarray([1, 0, 0]))
 
 
-def test_cellular_sheaf_rejects_nonzero_assembled_coboundary():
+def test_cellular_sheaf_rejects_nonzero_assembled_coboundary() -> None:
     vertices = phx.discretization.EntitySet("sheaf-vertices", 0, jnp.asarray([0]))
     edges = phx.discretization.EntitySet("sheaf-edges", 1, jnp.asarray([0]))
     faces = phx.discretization.EntitySet("sheaf-faces", 2, jnp.asarray([0]))
@@ -244,7 +244,9 @@ def test_cellular_sheaf_rejects_nonzero_assembled_coboundary():
         )
 
 
-def test_filtered_chain_spectral_page_is_e1_homology_and_flags_extensions_unresolved():
+def test_filtered_chain_spectral_page_is_e1_homology_and_flags_extensions_unresolved() -> (
+    None
+):
     field = phx.topology.PrimeField(2)
     complex = phx.topology.FilteredChainComplex(
         (jnp.asarray([[1], [1]]),),
@@ -258,7 +260,7 @@ def test_filtered_chain_spectral_page_is_e1_homology_and_flags_extensions_unreso
     assert jnp.array_equal(result.page_dimensions[1, 0], jnp.asarray([1, 0]))
 
 
-def test_filtered_chain_spectral_sequence_computes_an_induced_d2():
+def test_filtered_chain_spectral_sequence_computes_an_induced_d2() -> None:
     complex = phx.topology.FilteredChainComplex(
         (jnp.asarray([[1, 0], [1, 1]]),),
         (jnp.asarray([0, 2]), jnp.asarray([2, 2])),
@@ -282,7 +284,7 @@ def test_filtered_chain_spectral_sequence_computes_an_induced_d2():
     assert not bool(truncated.convergence_certified)
 
 
-def test_zero_filtered_differential_is_certified_stable_at_e0():
+def test_zero_filtered_differential_is_certified_stable_at_e0() -> None:
     complex = phx.topology.FilteredChainComplex(
         (jnp.zeros((1, 1), dtype="int64"),),
         (jnp.asarray([0]), jnp.asarray([3])),

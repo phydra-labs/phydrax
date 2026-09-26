@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -27,7 +29,7 @@ from phydrax.enforcement import (
 )
 
 
-def _condition():
+def _condition() -> Any:
     codomain = ArrayCodomain.from_shape((1,), dtype="float64")
     fields = ProductFieldSpec((FieldSpec("u", codomain),))
     return Condition(
@@ -40,7 +42,7 @@ def _condition():
     )
 
 
-def test_refresh_transaction_commits_atomically_and_reuses_fixed_state():
+def test_refresh_transaction_commits_atomically_and_reuses_fixed_state() -> None:
     condition = _condition()
     context = ConditionEvaluationContext(
         condition,
@@ -62,7 +64,7 @@ def test_refresh_transaction_commits_atomically_and_reuses_fixed_state():
     assert repeated.generation == state.generation
 
 
-def test_missing_required_caller_source_fails_without_candidate_values():
+def test_missing_required_caller_source_fails_without_candidate_values() -> None:
     condition = _condition()
     context = ConditionEvaluationContext(condition)
     proposal = propose_refresh(
@@ -75,7 +77,7 @@ def test_missing_required_caller_source_fails_without_candidate_values():
     assert not state.values
 
 
-def test_local_enforcement_step_is_a_changed_transaction():
+def test_local_enforcement_step_is_a_changed_transaction() -> None:
     domain = Interval1d(0.0, 1.0)
     field = domain.Function("x")(lambda x: x[0])
     boundary = domain.component({"x": Boundary()})

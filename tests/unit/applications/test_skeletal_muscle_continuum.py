@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,7 +23,7 @@ from phydrax.applications.skeletal_muscle.continuum import (
 )
 
 
-def _material(activation=0.0, *, material_id="test-gasam"):
+def _material(activation: Any = 0.0, *, material_id: Any = "test-gasam") -> Any:
     architecture = UniformFiberArchitecturePlan("test-longitudinal").prepare(
         jnp.asarray((2.0, 0.0, 0.0))
     )
@@ -32,12 +34,12 @@ def _material(activation=0.0, *, material_id="test-gasam"):
     )
 
 
-def _isochoric_fiber_stretch(stretch):
+def _isochoric_fiber_stretch(stretch: Any) -> Any:
     transverse = stretch**-0.5
     return jnp.diag(jnp.asarray((stretch, transverse, transverse)))
 
 
-def test_material_parameters_are_dynamic_jax_leaves():
+def test_material_parameters_are_dynamic_jax_leaves() -> None:
     parameters = EngelhardtGasam2025Parameters.published_multiload_fit()
     leaves = jax.tree_util.tree_leaves(parameters)
 
@@ -51,7 +53,7 @@ def test_material_parameters_are_dynamic_jax_leaves():
     assert fixed.plan is material.plan
 
 
-def test_uniform_architecture_normalizes_and_is_sign_indifferent():
+def test_uniform_architecture_normalizes_and_is_sign_indifferent() -> None:
     plan = UniformFiberArchitecturePlan("longitudinal")
     positive = plan.prepare(jnp.asarray((4.0, 0.0, 0.0)))
     negative = plan.prepare(jnp.asarray((-4.0, 0.0, 0.0)))
@@ -61,7 +63,7 @@ def test_uniform_architecture_normalizes_and_is_sign_indifferent():
     np.testing.assert_allclose(positive.structural_tensor, negative.structural_tensor)
 
 
-def test_passive_reference_and_source_force_length_limits():
+def test_passive_reference_and_source_force_length_limits() -> None:
     passive = _material(0.0)
     identity = jnp.eye(3)
     response = passive.evaluate(identity, 0.0)
@@ -78,16 +80,16 @@ def test_passive_reference_and_source_force_length_limits():
     np.testing.assert_allclose(terms_optimal[3], 1.0, rtol=2.0e-5)
 
 
-def test_active_energy_derivative_recovers_source_nominal_force_length():
+def test_active_energy_derivative_recovers_source_nominal_force_length() -> None:
     activation = 0.6
     active = _material(activation)
     passive = _material(0.0)
     stretch = jnp.asarray(1.0)
 
-    def active_energy(value):
+    def active_energy(value: Any) -> Any:
         return active.reference_energy_density(_isochoric_fiber_stretch(value))
 
-    def passive_energy(value):
+    def passive_energy(value: Any) -> Any:
         return passive.reference_energy_density(_isochoric_fiber_stretch(value))
 
     active_increment = jax.grad(
@@ -98,7 +100,7 @@ def test_active_energy_derivative_recovers_source_nominal_force_length():
     np.testing.assert_allclose(active_increment, expected, rtol=5.0e-5, atol=5.0e-2)
 
 
-def test_complete_active_potential_is_objective_and_has_consistent_tangent():
+def test_complete_active_potential_is_objective_and_has_consistent_tangent() -> None:
     material = _material(0.8)
     deformation = jnp.asarray(((1.08, 0.06, 0.0), (0.01, 0.97, 0.03), (0.0, 0.02, 0.96)))
     direction = jnp.asarray(((0.02, -0.01, 0.0), (0.01, 0.0, 0.015), (0.0, -0.01, -0.02)))
@@ -135,7 +137,7 @@ def test_complete_active_potential_is_objective_and_has_consistent_tangent():
     np.testing.assert_allclose(stress_jvp, tangent_jvp, rtol=5.0e-5, atol=5.0e-2)
 
 
-def test_invalid_activation_candidate_rolls_back_whole_material_state():
+def test_invalid_activation_candidate_rolls_back_whole_material_state() -> None:
     material = _material(0.25)
     candidate = material.propose_activation(1.25)
     commit = candidate.commit()
@@ -152,7 +154,7 @@ def test_invalid_activation_candidate_rolls_back_whole_material_state():
     assert selected.state.state_id == material.state.state_id
 
 
-def test_material_commit_rejects_a_foreign_prepared_owner_without_mutation():
+def test_material_commit_rejects_a_foreign_prepared_owner_without_mutation() -> None:
     material = _material(0.25)
     foreign = _material(0.5, material_id="foreign-gasam")
     commit = foreign.propose_activation(0.75).commit()
@@ -167,7 +169,7 @@ def test_material_commit_rejects_a_foreign_prepared_owner_without_mutation():
     np.testing.assert_array_equal(material.state.state_id, 0)
 
 
-def test_material_commit_rejects_a_stale_source_state_without_mutation():
+def test_material_commit_rejects_a_stale_source_state_without_mutation() -> None:
     material = _material(0.25)
     first = material.propose_activation(0.5).commit()
     stale = material.propose_activation(0.75).commit()
@@ -184,7 +186,7 @@ def test_material_commit_rejects_a_stale_source_state_without_mutation():
     np.testing.assert_array_equal(advanced.state.state_id, first.state.state_id)
 
 
-def test_material_commit_rejects_a_source_mismatched_sibling_state():
+def test_material_commit_rejects_a_source_mismatched_sibling_state() -> None:
     material = _material(0.25)
     left = material.with_commit(material.propose_activation(0.5).commit())
     right = material.with_commit(material.propose_activation(0.75).commit())
@@ -198,7 +200,7 @@ def test_material_commit_rejects_a_source_mismatched_sibling_state():
     np.testing.assert_array_equal(right.state.state_id, 1)
 
 
-def test_qualification_reports_local_not_global_active_stability():
+def test_qualification_reports_local_not_global_active_stability() -> None:
     material = _material(0.65)
     deformation = _isochoric_fiber_stretch(1.0)
     rate = jnp.asarray(((0.01, 0.002, 0.0), (0.0, -0.005, 0.0), (0.0, 0.0, -0.005)))
@@ -210,7 +212,7 @@ def test_qualification_reports_local_not_global_active_stability():
     assert "polyconvex" in evidence.passive_polyconvexity_source
 
 
-def test_affine_mesh_energy_and_power_are_capacity_mask_invariant():
+def test_affine_mesh_energy_and_power_are_capacity_mask_invariant() -> None:
     material = _material(0.5)
     volumes = jnp.asarray(
         (

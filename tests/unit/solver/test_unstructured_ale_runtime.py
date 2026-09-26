@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,7 +23,7 @@ from phydrax.discretization.finite_volume import (
 )
 
 
-def _grid_plan(system, nx=2, ny=2):
+def _grid_plan(system: Any, nx: Any = 2, ny: Any = 2) -> Any:
     vertices = np.asarray(
         [(i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -43,15 +46,15 @@ def _grid_plan(system, nx=2, ny=2):
 
 def _prepared_runtime(
     *,
-    motion=None,
-    mapping_id="test-motion",
-    consistency_policy=None,
-    wall_velocity_provider=None,
-    step_policy=None,
-    source=None,
-    boundary_values=None,
-    interface_solver=None,
-):
+    motion: Any = None,
+    mapping_id: Any = "test-motion",
+    consistency_policy: Any = None,
+    wall_velocity_provider: Any = None,
+    step_policy: Any = None,
+    source: Any = None,
+    boundary_values: Any = None,
+    interface_solver: Any = None,
+) -> Any:
     system = phx.equations.EulerSystem(2)
     plan = _grid_plan(system)
     discretization = plan.prepare()
@@ -107,6 +110,7 @@ def _prepared_runtime(
         coupling=coupling,
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         step_policy,
@@ -114,7 +118,9 @@ def _prepared_runtime(
     return plan, discretization, system, runtime
 
 
-def _uniform_conserved(system, discretization, velocity=(0.0, 0.0)):
+def _uniform_conserved(
+    system: Any, discretization: Any, velocity: Any = (0.0, 0.0)
+) -> Any:
     primitive = jnp.broadcast_to(
         jnp.asarray((1.0, velocity[0], velocity[1], 1.0)),
         discretization.state_shape,
@@ -122,12 +128,12 @@ def _uniform_conserved(system, discretization, velocity=(0.0, 0.0)):
     return system.primitive_to_conserved(primitive)
 
 
-def _stationary(time, vertices, args):
+def _stationary(time: Any, vertices: Any, args: Any) -> Any:
     del time, args
     return vertices
 
 
-def _interior_linear_deformation(time, vertices, args):
+def _interior_linear_deformation(time: Any, vertices: Any, args: Any) -> Any:
     del args
     return vertices.at[4, 0].add(0.15 * time)
 
@@ -139,7 +145,7 @@ _DIRECT_COUPLED_SSPRK_ERROR = (
 )
 
 
-def _with_prepared_coupling_marker(dynamics, component):
+def _with_prepared_coupling_marker(dynamics: Any, component: Any) -> Any:
     coupling = eqx.tree_at(
         lambda value: getattr(value, component),
         dynamics.coupling,
@@ -164,8 +170,8 @@ def _with_prepared_coupling_marker(dynamics, component):
     ),
 )
 def test_direct_ssprk_rejects_every_prepared_unstructured_coupling_category(
-    component,
-):
+    component: Any,
+) -> None:
     _, _, _, runtime = _prepared_runtime(mapping_id=f"direct-reject:{component}")
     coupled = _with_prepared_coupling_marker(runtime.dynamics, component)
 
@@ -175,7 +181,7 @@ def test_direct_ssprk_rejects_every_prepared_unstructured_coupling_category(
     assert str(error.value) == _DIRECT_COUPLED_SSPRK_ERROR
 
 
-def test_direct_ssprk_rejects_prepared_topology_events():
+def test_direct_ssprk_rejects_prepared_topology_events() -> None:
     _, discretization, _, runtime = _prepared_runtime(mapping_id="direct-reject:events")
     event_coupling = phx.discretization.UnstructuredFiniteVolumeCouplingPlan(
         topology_event_capacity=1,
@@ -193,7 +199,7 @@ def test_direct_ssprk_rejects_prepared_topology_events():
     assert str(error.value) == _DIRECT_COUPLED_SSPRK_ERROR
 
 
-def test_direct_ssprk_matches_canonically_uncoupled_unstructured_runtime():
+def test_direct_ssprk_matches_canonically_uncoupled_unstructured_runtime() -> None:
     _, discretization, system, runtime = _prepared_runtime(
         mapping_id="direct-uncoupled-parity"
     )
@@ -228,7 +234,7 @@ def test_direct_ssprk_matches_canonically_uncoupled_unstructured_runtime():
     )
 
 
-def test_moving_initialize_state_rejects_nonzero_time():
+def test_moving_initialize_state_rejects_nonzero_time() -> None:
     _, discretization, system, runtime = _prepared_runtime(
         motion=_stationary,
         mapping_id="initialize-nonzero-time",
@@ -242,8 +248,8 @@ def test_moving_initialize_state_rejects_nonzero_time():
         )
 
 
-def test_moving_initialize_state_rejects_nonidentity_t0_motion():
-    def displaced_at_t0(time, vertices, args):
+def test_moving_initialize_state_rejects_nonidentity_t0_motion() -> None:
+    def displaced_at_t0(time: Any, vertices: Any, args: Any) -> Any:
         del time, args
         return vertices.at[4, 0].add(0.05)
 
@@ -260,7 +266,7 @@ def test_moving_initialize_state_rejects_nonidentity_t0_motion():
         )
 
 
-def test_moving_initialize_state_accepts_identity_t0_with_base_volumes():
+def test_moving_initialize_state_accepts_identity_t0_with_base_volumes() -> None:
     _, discretization, system, runtime = _prepared_runtime(
         motion=_stationary,
         mapping_id="initialize-identity-t0",
@@ -278,7 +284,7 @@ def test_moving_initialize_state_accepts_identity_t0_with_base_volumes():
     )
 
 
-def test_stationary_ale_and_static_runtime_publish_one_compatible_ledger():
+def test_stationary_ale_and_static_runtime_publish_one_compatible_ledger() -> None:
     _, static_discretization, system, static_runtime = _prepared_runtime(
         mapping_id="static"
     )
@@ -331,7 +337,7 @@ def test_stationary_ale_and_static_runtime_publish_one_compatible_ledger():
     assert "flux_" + "integrals" not in vars(moving_result.ale)
 
 
-def test_moving_unstructured_refuses_stationary_only_flux_before_execution():
+def test_moving_unstructured_refuses_stationary_only_flux_before_execution() -> None:
     stationary_only = phx.discretization.EntropyStableEulerFluxPlan()
     _, _, _, static_runtime = _prepared_runtime(
         mapping_id="static-entropy-stable",
@@ -361,7 +367,7 @@ def test_moving_unstructured_refuses_stationary_only_flux_before_execution():
         ),
     ),
 )
-def test_moving_unstructured_accepts_ale_capable_fluxes(interface_solver):
+def test_moving_unstructured_accepts_ale_capable_fluxes(interface_solver: Any) -> None:
     _, _, _, runtime = _prepared_runtime(
         motion=_interior_linear_deformation,
         mapping_id=f"moving-{type(interface_solver).__name__}",
@@ -382,8 +388,8 @@ def test_moving_unstructured_accepts_ale_capable_fluxes(interface_solver):
     ),
 )
 def test_moving_unstructured_ale_flux_preserves_deforming_free_stream(
-    interface_solver,
-):
+    interface_solver: Any,
+) -> None:
     _, discretization, system, runtime = _prepared_runtime(
         motion=_interior_linear_deformation,
         mapping_id=f"free-stream-{type(interface_solver).__name__}",
@@ -399,7 +405,9 @@ def test_moving_unstructured_ale_flux_preserves_deforming_free_stream(
     )
 
 
-def test_deforming_free_stream_preserves_every_stage_and_exact_content_volume_gcl():
+def test_deforming_free_stream_preserves_every_stage_and_exact_content_volume_gcl() -> (
+    None
+):
     _, discretization, system, runtime = _prepared_runtime(
         motion=_interior_linear_deformation,
         mapping_id="interior-linear-deformation",
@@ -494,14 +502,14 @@ def test_deforming_free_stream_preserves_every_stage_and_exact_content_volume_gc
     )
 
 
-def test_translating_moving_wall_has_zero_mass_flux_and_uses_relative_cfl():
+def test_translating_moving_wall_has_zero_mass_flux_and_uses_relative_cfl() -> None:
     velocity = jnp.asarray((0.23, -0.11))
 
-    def translation(time, vertices, args):
+    def translation(time: Any, vertices: Any, args: Any) -> Any:
         del args
         return vertices + time * velocity
 
-    def wall_velocity(time, points, normal, args):
+    def wall_velocity(time: Any, points: Any, normal: Any, args: Any) -> Any:
         del time, normal, args
         return jnp.broadcast_to(velocity, points.shape)
 
@@ -554,12 +562,12 @@ def test_translating_moving_wall_has_zero_mass_flux_and_uses_relative_cfl():
 
 
 def test_ale_boundary_dispatch_passes_exact_patch_quadrature_contexts(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     probe_system = phx.equations.EulerSystem(2)
     probe_discretization = _grid_plan(probe_system).prepare()
 
-    def stationary_wall_velocity(time, points, normal, args):
+    def stationary_wall_velocity(time: Any, points: Any, normal: Any, args: Any) -> Any:
         del time, normal, args
         return jnp.zeros_like(points)
 
@@ -589,12 +597,12 @@ def test_ale_boundary_dispatch_passes_exact_patch_quadrature_contexts(
     original_make_context = phx.discretization.MovingSlipWallBoundary.make_context
     original_static_context = unstructured_dynamics.ALEBoundaryContext
 
-    def capture_moving_context(self, *args, **kwargs):
+    def capture_moving_context(self: Any, *args: Any, **kwargs: Any) -> Any:
         context = original_make_context(self, *args, **kwargs)
         observed.append(("moving", context))
         return context
 
-    def capture_static_context(**kwargs):
+    def capture_static_context(**kwargs: Any) -> Any:
         context = original_static_context(**kwargs)
         observed.append(("static", context))
         return context
@@ -664,10 +672,10 @@ def test_ale_boundary_dispatch_passes_exact_patch_quadrature_contexts(
         )
 
 
-def test_stage_source_is_integrated_against_each_target_geometry_volume_once():
+def test_stage_source_is_integrated_against_each_target_geometry_volume_once() -> None:
     source_vector = jnp.asarray((0.0, 0.0, 0.0, 0.7))
 
-    def source(time, state, coordinates, args):
+    def source(time: Any, state: Any, coordinates: Any, args: Any) -> Any:
         del time, coordinates, args
         return jnp.broadcast_to(source_vector, state.shape)
 
@@ -717,7 +725,7 @@ def test_stage_source_is_integrated_against_each_target_geometry_volume_once():
     )
 
 
-def test_geometry_evidence_uses_its_order_aware_factor_for_a_successful_retry():
+def test_geometry_evidence_uses_its_order_aware_factor_for_a_successful_retry() -> None:
     consistency = phx.discretization.finite_volume.ALEGeometryConsistencyPolicy(
         absolute_tolerance=3.0e-3,
         relative_tolerance=0.0,
@@ -725,7 +733,7 @@ def test_geometry_evidence_uses_its_order_aware_factor_for_a_successful_retry():
         minimum_reduction_factor=0.1,
     )
 
-    def nonlinear_deformation(time, vertices, args):
+    def nonlinear_deformation(time: Any, vertices: Any, args: Any) -> Any:
         del args
         return vertices.at[4, 0].add(0.8 * time**2)
 
@@ -752,7 +760,7 @@ def test_geometry_evidence_uses_its_order_aware_factor_for_a_successful_retry():
     assert bool(result.ale.geometry.passed)
 
 
-def test_all_rejected_retries_publish_one_final_attempt_evidence_envelope():
+def test_all_rejected_retries_publish_one_final_attempt_evidence_envelope() -> None:
     strict = phx.discretization.finite_volume.ALEGeometryConsistencyPolicy(
         absolute_tolerance=1.0e-16,
         relative_tolerance=1.0e-16,
@@ -760,7 +768,7 @@ def test_all_rejected_retries_publish_one_final_attempt_evidence_envelope():
         minimum_reduction_factor=0.1,
     )
 
-    def nonlinear_deformation(time, vertices, args):
+    def nonlinear_deformation(time: Any, vertices: Any, args: Any) -> Any:
         del args
         return vertices.at[4, 0].add(0.8 * time**2)
 
@@ -872,7 +880,7 @@ def test_all_rejected_retries_publish_one_final_attempt_evidence_envelope():
     )
 
 
-def test_stage_rate_positivity_blends_high_and_fallback_against_target_volumes():
+def test_stage_rate_positivity_blends_high_and_fallback_against_target_volumes() -> None:
     system = phx.equations.EulerSystem(1)
     primitive = jnp.asarray(((1.0, 0.0, 1.0), (1.0, 0.0, 1.0)))
     content = system.primitive_to_conserved(primitive)
@@ -905,10 +913,15 @@ def test_stage_rate_positivity_blends_high_and_fallback_against_target_volumes()
         correction_level=jnp.asarray((2, 0), dtype=jnp.int32),
         accepted=False,
         differentiability_policy_id="positivity-test-policy",
+        # ty: ignore[invalid-argument-type]
         **kwargs,
     )
     fallback = phx.discretization.ConservationStageLedger(
-        (fallback_block,), jnp.zeros_like(content), jnp.ones(2, dtype="bool"), **kwargs
+        (fallback_block,),
+        jnp.zeros_like(content),
+        jnp.ones(2, dtype="bool"),
+        # ty: ignore[invalid-argument-type]
+        **kwargs,
     )
 
     limited = phx.discretization.FluxPositivityPlan().limit_stage_rate_ledgers(
@@ -958,7 +971,7 @@ def test_stage_rate_positivity_blends_high_and_fallback_against_target_volumes()
     assert limited.ledger.differentiability_policy_id == high.differentiability_policy_id
 
 
-def test_mixed_polygon_geometry_closure_is_exact_under_jit():
+def test_mixed_polygon_geometry_closure_is_exact_under_jit() -> None:
     plan = phx.discretization.UnstructuredFiniteVolumePlan(
         np.asarray(
             (
@@ -999,7 +1012,9 @@ def test_mixed_polygon_geometry_closure_is_exact_under_jit():
     np.testing.assert_array_equal(compiled[5], jnp.zeros((2, 2)))
 
 
-def test_ale_advance_is_jittable_differentiable_and_checkpoint_versions_are_ready():
+def test_ale_advance_is_jittable_differentiable_and_checkpoint_versions_are_ready() -> (
+    None
+):
     _, discretization, system, runtime = _prepared_runtime(
         motion=_stationary,
         mapping_id="jit-grad-checkpoint",
@@ -1025,7 +1040,7 @@ def test_ale_advance_is_jittable_differentiable_and_checkpoint_versions_are_read
     assert tuple(result.accepted_flux_integrals.stage_geometry_versions) == (0, 1, 2)
     assert int(result.accepted_flux_integrals.end_geometry_version) == 3
 
-    def objective(speed):
+    def objective(speed: Any) -> Any:
         primitive = jnp.broadcast_to(
             jnp.stack((1.0, speed, jnp.asarray(0.0), jnp.asarray(1.0))),
             discretization.state_shape,

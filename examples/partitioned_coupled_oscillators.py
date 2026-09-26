@@ -4,6 +4,8 @@
 
 """Differentiable fixed-window partitioning of two coupled scalar oscillators."""
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -26,7 +28,7 @@ capabilities = cpl.CouplingSubsystemCapabilities(
 )
 
 
-def advance_a(window, state, inputs, forcing):
+def advance_a(window: Any, state: Any, inputs: Any, forcing: Any) -> Any:
     del forcing
     candidate = state + window.size * (-state + 0.5 * inputs[0])
     return cpl.CouplingSubsystemResult(
@@ -34,7 +36,7 @@ def advance_a(window, state, inputs, forcing):
     )
 
 
-def advance_b(window, state, inputs, forcing):
+def advance_b(window: Any, state: Any, inputs: Any, forcing: Any) -> Any:
     candidate = state + window.size * (-state + 0.5 * inputs[0] + forcing)
     return cpl.CouplingSubsystemResult(
         candidate, (candidate,), successful=True, status=0, work=1
@@ -85,7 +87,7 @@ prepared = cpl.prepare_coupling(
 )
 
 
-def final_a(forcing):
+def final_a(forcing: Any) -> Any:
     result = cpl.advance_coupling_window(prepared, prepared.reference_state, 1.0, forcing)
     return result.accepted_state.participant_states[0][0]
 

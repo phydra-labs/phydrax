@@ -145,7 +145,10 @@ def _pad_operator(
 def _scipy_matrix(operator: SparseCoordinateOperator, /) -> sp.csr_matrix:
     relation = operator.relation
     # _pad_operator builds every transfer operator over an EdgeRelation.
-    assert isinstance(relation, EdgeRelation)
+    if not (isinstance(relation, EdgeRelation)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(relation, EdgeRelation)."
+        )
     valid = np.asarray(relation.valid, dtype=np.bool_)
     source = np.asarray(relation.source_indices)[valid]
     target = np.asarray(relation.target_indices)[valid]

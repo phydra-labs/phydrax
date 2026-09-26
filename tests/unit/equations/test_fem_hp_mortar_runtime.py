@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from types import SimpleNamespace
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -16,7 +18,7 @@ from phydrax.equations.fem._executor import execute_finite_element_mortar_flux
 from phydrax.equations.fem._worksets import CompiledWorkset, WorksetSignature
 
 
-def _mortar_and_metric():
+def _mortar_and_metric() -> Any:
     left_nodes = np.linspace(-1.0, 1.0, 4)
     right_nodes = np.linspace(-1.0, 1.0, 2)
     quadrature, weights = np.polynomial.legendre.leggauss(6)
@@ -49,7 +51,7 @@ def _mortar_and_metric():
     return mortar, metric
 
 
-def test_asymmetric_workset_accepts_independent_side_widths_and_mortar_data():
+def test_asymmetric_workset_accepts_independent_side_widths_and_mortar_data() -> None:
     mortar, metric = _mortar_and_metric()
     signature = WorksetSignature(
         "interior_facet",
@@ -82,19 +84,22 @@ def test_asymmetric_workset_accepts_independent_side_widths_and_mortar_data():
 
     assert dict(workset.gathers)["u"].shape == (1, 4)
     assert dict(workset.neighbor_gathers)["u"].shape == (1, 2)
+    # ty: ignore[unresolved-attribute]
     assert workset.mortar_metric.opposite_normal_error == 0.0
 
 
-def test_mortar_flux_is_conservative_and_preserves_jvp_vjp_transposes():
+def test_mortar_flux_is_conservative_and_preserves_jvp_vjp_transposes() -> None:
     mortar, metric = _mortar_and_metric()
     workset = SimpleNamespace(mortar=mortar, mortar_metric=metric)
 
-    def action(left, right):
+    def action(left: Any, right: Any) -> Any:
         return execute_finite_element_mortar_flux(
+            # ty: ignore[invalid-argument-type]
             workset,
             left,
             right,
             lambda plus, minus, points, weights, normal, context: 0.5 * (plus + minus),
+            # ty: ignore[invalid-argument-type]
             None,
         )
 

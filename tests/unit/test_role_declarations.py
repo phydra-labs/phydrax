@@ -14,6 +14,7 @@ import inspect
 import pkgutil
 import sys
 import typing
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -206,6 +207,7 @@ def _dynamic_fields(cls: type, /) -> list[tuple[dataclasses.Field, typing.Any]]:
     hints = _hints(cls)
     return [
         (field, hints.get(field.name))
+        # ty: ignore[invalid-argument-type]
         for field in dataclasses.fields(cls)
         if not field.metadata.get("static", False)
     ]
@@ -387,7 +389,7 @@ def test_default_constructible_slot_implementations_classify_every_array() -> No
     assert not violations, "\n".join(violations)
 
 
-def _module_function(x):
+def _module_function(x: Any) -> Any:
     return jnp.tanh(x)
 
 
@@ -396,11 +398,11 @@ class _Holder(phx.StrictModule, phx.ParameterOwner):
     function: typing.Any
     static_function: typing.Any = eqx.field(static=True, default=_module_function)
 
-    def __call__(self, x):
+    def __call__(self, x: Any) -> Any:
         return self.function(self.weight * x)
 
 
-def _captures(value):
+def _captures(value: Any) -> Any:
     return lambda x: x * value
 
 
@@ -415,7 +417,7 @@ def _captures(value):
     ],
     ids=["module-function", "lambda", "python-float", "integer-array", "component"],
 )
-def test_declared_callable_categories_are_admitted(function) -> None:
+def test_declared_callable_categories_are_admitted(function: Any) -> None:
     phx.require_parameter_roles(_Holder(jnp.ones(3), function), context="probe")
 
 
@@ -455,7 +457,7 @@ def test_visible_terminal_providers_are_not_searched() -> None:
     ids=["closure", "default", "partial", "captured-model", "static-field"],
 )
 def test_training_preflight_rejects_hidden_inexact_state_with_its_path(
-    holder, route
+    holder: Any, route: Any
 ) -> None:
     with pytest.raises(ValueError, match="training entry") as error:
         phx.require_parameter_roles(holder, context="training entry")
@@ -481,7 +483,9 @@ class _NodeDim(phx.typing.Dim):
         (phx.typing.Size[_NodeDim], False),
     ],
 )
-def test_contract_forms_are_classified_by_their_dtype_rule(annotation, admits) -> None:
+def test_contract_forms_are_classified_by_their_dtype_rule(
+    annotation: Any, admits: Any
+) -> None:
     assert _admits_inexact_array(annotation) is admits
 
 

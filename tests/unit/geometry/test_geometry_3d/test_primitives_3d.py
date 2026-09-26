@@ -7,7 +7,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_sphere():
+def test_sphere() -> None:
     radius = 1.0
     sphere = phx.domain.GeometryDomain(
         phx.geometry.Sphere(center=(0.0, 0.0, 0.0), radius=radius).compile()
@@ -17,7 +17,7 @@ def test_sphere():
     assert np.isclose(computed_volume, expected_volume, rtol=0.05)
 
 
-def test_ellipsoid():
+def test_ellipsoid() -> None:
     radii = (1.0, 2.0, 3.0)
     ellipsoid = phx.domain.GeometryDomain(
         phx.geometry.Ellipsoid(center=(0.0, 0.0, 0.0), radii=radii).compile()
@@ -27,7 +27,7 @@ def test_ellipsoid():
     assert np.isclose(computed_volume, expected_volume, rtol=0.05)
 
 
-def test_cuboid():
+def test_cuboid() -> None:
     dimensions = (1.0, 2.0, 3.0)
     cuboid = phx.domain.GeometryDomain(
         phx.geometry.Box((0.0, 0.0, 0.0), dimensions).compile()
@@ -37,7 +37,7 @@ def test_cuboid():
     assert np.isclose(computed_volume, expected_volume, rtol=0.05)
 
 
-def test_cube():
+def test_cube() -> None:
     side = 2.0
     cube = phx.domain.GeometryDomain(
         phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=side).compile()
@@ -47,7 +47,7 @@ def test_cube():
     assert np.isclose(computed_volume, expected_volume, rtol=0.05)
 
 
-def test_cylinder():
+def test_cylinder() -> None:
     radius = 1.0
     height = 2.0
     cylinder = phx.domain.GeometryDomain(
@@ -58,7 +58,7 @@ def test_cylinder():
     assert np.isclose(computed_volume, expected_volume, rtol=0.05)
 
 
-def test_cone():
+def test_cone() -> None:
     radius0 = 1.0
     height = 3.0
     cone = phx.domain.GeometryDomain(
@@ -73,7 +73,7 @@ def test_cone():
     assert np.isclose(computed_volume, expected_volume, rtol=0.05)
 
 
-def test_truncated_cone():
+def test_truncated_cone() -> None:
     radius0 = 2.0
     radius1 = 1.0
     height = 3.0
@@ -92,7 +92,7 @@ def test_truncated_cone():
     assert np.isclose(computed_volume, expected_volume, rtol=0.05)
 
 
-def test_torus():
+def test_torus() -> None:
     inner_radius = 1.0
     outer_radius = 2.0
     torus = phx.domain.GeometryDomain(
@@ -119,7 +119,7 @@ def test_torus():
     assert np.isclose(computed_volume, expected_volume, rtol=0.1)
 
 
-def test_wedge():
+def test_wedge() -> None:
     x0 = (0.0, 0.0, 0.0)
     extends = (2.0, 2.0, 2.0)
     top_extent = 1.0
@@ -131,7 +131,7 @@ def test_wedge():
     assert np.isclose(computed_volume, expected_volume, rtol=0.05)
 
 
-def test_boundary_normals_sphere():
+def test_boundary_normals_sphere() -> None:
     s = phx.domain.GeometryDomain(
         phx.geometry.Sphere(center=(0.0, 0.0, 0.0), radius=1.0).compile()
     )

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -28,12 +31,12 @@ _KEY1 = jr.key(1)
         ({"rank": 1, "scaling": "invalid"}, ValueError),
     ],
 )
-def test_low_rank_spec_rejects_invalid_coordinates(kwargs, error):
+def test_low_rank_spec_rejects_invalid_coordinates(kwargs: Any, error: Any) -> None:
     with pytest.raises(error):
         phx.nn.parameters.LowRankSpec(**kwargs)
 
 
-def _linear(*, key=_KEY0, rwf=False, weight_transform=None):
+def _linear(*, key: Any = _KEY0, rwf: Any = False, weight_transform: Any = None) -> Any:
     return phx.nn.layers.Linear(
         in_size=3,
         out_size=2,
@@ -43,7 +46,7 @@ def _linear(*, key=_KEY0, rwf=False, weight_transform=None):
     )
 
 
-def _adapt(model, *, rank=2, scaling="rank", key=_KEY1):
+def _adapt(model: Any, *, rank: Any = 2, scaling: Any = "rank", key: Any = _KEY1) -> Any:
     paths = phx.nn.parameters.low_rank_sites(model)
     specs = {
         path: phx.nn.parameters.LowRankSpec(
@@ -56,7 +59,7 @@ def _adapt(model, *, rank=2, scaling="rank", key=_KEY1):
     return phx.nn.parameters.adapt_low_rank(model, specs, key=key)
 
 
-def test_low_rank_linear_preserves_initial_function_and_factorizes_batches():
+def test_low_rank_linear_preserves_initial_function_and_factorizes_batches() -> None:
     base = _linear()
     adapted, report = _adapt(base)
     assert isinstance(adapted.weight, LowRankUpdate)
@@ -86,7 +89,7 @@ def test_low_rank_linear_preserves_initial_function_and_factorizes_batches():
     assert jnp.array_equal(base.weight, changed.weight.base)
 
 
-def test_low_rank_gradients_stop_base_and_reach_both_nonzero_factors():
+def test_low_rank_gradients_stop_base_and_reach_both_nonzero_factors() -> None:
     adapted, _ = _adapt(_linear())
     update = adapted.weight
     changed_update = LowRankUpdate.from_factors(
@@ -105,7 +108,7 @@ def test_low_rank_gradients_stop_base_and_reach_both_nonzero_factors():
     assert jnp.any(gradients.weight.right != 0.0)
 
 
-def test_rank_stabilized_scaling_and_rwf_compose_without_materializing():
+def test_rank_stabilized_scaling_and_rwf_compose_without_materializing() -> None:
     base = _linear(rwf=True)
     adapted, report = _adapt(base, scaling="sqrt_rank")
     assert report.sites[0].scaling == "sqrt_rank"
@@ -132,7 +135,7 @@ def test_rank_stabilized_scaling_and_rwf_compose_without_materializing():
     assert jnp.allclose(changed(inputs), merged(inputs), rtol=1e-12, atol=1e-12)
 
 
-def test_low_rank_paths_keys_and_subspace_are_deterministic():
+def test_low_rank_paths_keys_and_subspace_are_deterministic() -> None:
     model = phx.nn.models.MLP(
         in_size=3,
         out_size=2,
@@ -176,7 +179,7 @@ def test_low_rank_paths_keys_and_subspace_are_deterministic():
         subspace.validate_root(moved)
 
 
-def test_low_rank_scan_cache_safely_falls_back_after_model_surgery():
+def test_low_rank_scan_cache_safely_falls_back_after_model_surgery() -> None:
     scanned = phx.nn.models.MLP(
         in_size=3,
         out_size=2,
@@ -204,7 +207,7 @@ def test_low_rank_scan_cache_safely_falls_back_after_model_surgery():
     )
 
 
-def test_low_rank_adaptation_rejects_unsupported_or_ambiguous_sites():
+def test_low_rank_adaptation_rejects_unsupported_or_ambiguous_sites() -> None:
     with pytest.raises(ValueError, match="weight transform"):
         phx.nn.parameters.adapt_low_rank(
             _linear(
@@ -233,7 +236,7 @@ def test_low_rank_adaptation_rejects_unsupported_or_ambiguous_sites():
         )
 
 
-def test_mlp_kfac_metadata_rejects_adapter_until_merged():
+def test_mlp_kfac_metadata_rejects_adapter_until_merged() -> None:
     model = phx.nn.models.MLP(
         in_size=2,
         out_size=1,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def test_flow_matching_widens_before_the_event_reduction():
+def test_flow_matching_widens_before_the_event_reduction() -> None:
     precision = phx.metrix.GeometryPrecisionPolicy(
         coordinate_dtype="float32",
         compute_dtype="float32",
@@ -35,7 +38,7 @@ def test_flow_matching_widens_before_the_event_reduction():
     assert dict(precision.evidence_for(state).observed)["accumulation"] == "float64"
 
 
-def test_newton_mixed_precision_preserves_state_and_certifies_in_float64():
+def test_newton_mixed_precision_preserves_state_and_certifies_in_float64() -> None:
     space = phx.linalg.ArraySpace((2,), dtype=jnp.float32)
     problem = phx.nonlinear.NonlinearSystemProblem(
         lambda state, _: state**2 - 2.0,
@@ -70,7 +73,7 @@ def test_newton_mixed_precision_preserves_state_and_certifies_in_float64():
     assert jnp.allclose(result.state, jnp.sqrt(2.0), rtol=1e-5)
 
 
-def test_ssprk_precision_survives_diffrax_time_promotion_and_dense_output():
+def test_ssprk_precision_survives_diffrax_time_promotion_and_dense_output() -> None:
     precision = phx.solver.TemporalPrecisionPolicy(
         state_dtype="float32",
         stage_dtype="float32",
@@ -121,7 +124,7 @@ def test_ssprk_precision_survives_diffrax_time_promotion_and_dense_output():
         )
 
 
-def test_geometry_results_retain_precision_evidence_and_output_dtype():
+def test_geometry_results_retain_precision_evidence_and_output_dtype() -> None:
     precision = phx.metrix.GeometryPrecisionPolicy(
         coordinate_dtype="float32",
         compute_dtype="float64",
@@ -165,7 +168,7 @@ def test_geometry_results_retain_precision_evidence_and_output_dtype():
     assert dict(mean.precision_evidence.observed)["accumulation"] == "float64"
 
 
-def test_cochain_and_information_geometry_use_explicit_precision_policies():
+def test_cochain_and_information_geometry_use_explicit_precision_policies() -> None:
     precision = phx.metrix.GeometryPrecisionPolicy(
         coordinate_dtype="float32",
         compute_dtype="float64",
@@ -199,7 +202,9 @@ def test_cochain_and_information_geometry_use_explicit_precision_policies():
     assert jnp.allclose(gradient, jnp.asarray([4.0], dtype=jnp.float32))
 
 
-def test_finite_volume_precision_controls_runtime_reductions_and_restart(tmp_path):
+def test_finite_volume_precision_controls_runtime_reductions_and_restart(
+    tmp_path: Any,
+) -> None:
     precision = phx.discretization.FiniteVolumePrecisionPolicy(
         "float32",
         reconstruction_dtype="float32",
@@ -234,6 +239,7 @@ def test_finite_volume_precision_controls_runtime_reductions_and_restart(tmp_pat
         precision=precision,
     )
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         compiled.dynamics,
         phx.discretization.FluxPositivityPlan(),
     )
@@ -265,17 +271,19 @@ def test_finite_volume_precision_controls_runtime_reductions_and_restart(tmp_pat
 
     assert advanced.runtime_state.cell_average().dtype == jnp.float32
     assert advanced.accepted_flux_integrals.blocks[0].flux_integral.dtype == jnp.float64
+    # ty: ignore[unresolved-attribute]
     assert diagnostics.conservation_defect.dtype == jnp.float64
     assert advanced.precision_evidence.evidence_id == precision.evidence().evidence_id
     assert dict(advanced.precision_evidence.observed)["accumulation"] == "float64"
     assert dict(advanced.precision_evidence.children)["reconstruction"].domain == (
         "finite-volume-reconstruction"
     )
+    # ty: ignore[unresolved-attribute]
     assert restored.runtime_state.cell_average().dtype == jnp.float32
     assert restored.precision_evidence.evidence_id == precision.evidence().evidence_id
 
 
-def test_hermitian_and_metric_measure_precision_are_explicit():
+def test_hermitian_and_metric_measure_precision_are_explicit() -> None:
     hermitian_precision = phx.linalg.HermitianPrecisionPolicy(
         compute_dtype="float64",
         factorization_dtype="float64",
@@ -321,7 +329,7 @@ def test_hermitian_and_metric_measure_precision_are_explicit():
     assert dict(normalization.precision_evidence.observed)["accumulation"] == "float64"
 
 
-def test_optimization_models_certificates_and_sensitivities_retain_precision():
+def test_optimization_models_certificates_and_sensitivities_retain_precision() -> None:
     precision = phx.nonlinear.NonlinearPrecisionPolicy(
         state_dtype="float32",
         residual_dtype="float32",
@@ -386,6 +394,7 @@ def test_optimization_models_certificates_and_sensitivities_retain_precision():
         "certificate",
         "interpolation-model",
     }
+    # ty: ignore[unresolved-attribute]
     assert result.optimality_certificate.precision_evidence is not None
     assert sensitivity.linear_plan_id
     assert sensitivity.precision_evidence is not None
@@ -393,7 +402,7 @@ def test_optimization_models_certificates_and_sensitivities_retain_precision():
     assert kkt.precision_evidence is not None
 
 
-def test_open_system_hierarchy_and_memory_archive_nested_precision():
+def test_open_system_hierarchy_and_memory_archive_nested_precision() -> None:
     geometry = phx.metrix.GeometryPrecisionPolicy(
         coordinate_dtype="complex64",
         compute_dtype="complex64",
@@ -481,7 +490,7 @@ def test_open_system_hierarchy_and_memory_archive_nested_precision():
     assert len(memory.approximation.precision_policy_ids) == 4
 
 
-def test_quantum_trajectory_ensemble_uses_widened_reductions():
+def test_quantum_trajectory_ensemble_uses_widened_reductions() -> None:
     geometry = phx.metrix.GeometryPrecisionPolicy(
         coordinate_dtype="complex64",
         compute_dtype="complex64",
@@ -527,7 +536,7 @@ def test_quantum_trajectory_ensemble_uses_widened_reductions():
     )
 
 
-def test_tensor_network_factorization_precedes_storage_cast():
+def test_tensor_network_factorization_precedes_storage_cast() -> None:
     precision = phx.tensor_network.TensorNetworkPrecisionPolicy(
         storage_dtype="complex64",
         contraction_dtype="complex64",

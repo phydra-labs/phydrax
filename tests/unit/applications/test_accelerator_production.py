@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _bunch():
+def _bunch() -> Any:
     accelerator = phx.applications.accelerator
     convention = accelerator.AcceleratorConvention()
     return accelerator.AcceleratorBunch(
@@ -24,7 +27,7 @@ def _bunch():
     )
 
 
-def test_drift_updates_coordinates_and_preserves_particles():
+def test_drift_updates_coordinates_and_preserves_particles() -> None:
     accelerator = phx.applications.accelerator
     bunch = _bunch()
     plan = accelerator.BeamlinePlan(
@@ -44,7 +47,7 @@ def test_drift_updates_coordinates_and_preserves_particles():
     )
 
 
-def test_aperture_records_first_loss_without_dropping_identity():
+def test_aperture_records_first_loss_without_dropping_identity() -> None:
     accelerator = phx.applications.accelerator
     bunch = _bunch()
     plan = accelerator.BeamlinePlan(
@@ -61,7 +64,7 @@ def test_aperture_records_first_loss_without_dropping_identity():
     assert jnp.array_equal(result.bunch.particle_ids, bunch.particle_ids)
 
 
-def test_space_charge_residual_failure_rolls_back_bunch():
+def test_space_charge_residual_failure_rolls_back_bunch() -> None:
     accelerator = phx.applications.accelerator
     bunch = _bunch()
     plan = accelerator.SpaceChargeKickPlan(

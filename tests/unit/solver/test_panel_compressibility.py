@@ -4,7 +4,7 @@ import pytest
 import phydrax as phx
 
 
-def test_subsonic_panel_pressure_corrections_match_declared_relations():
+def test_subsonic_panel_pressure_corrections_match_declared_relations() -> None:
     pressure = np.asarray((0.2, -0.4))
     prandtl_glauert = phx.solver.PanelCompressibilityPolicy("prandtl-glauert", 0.8)
     karman_tsien = phx.solver.PanelCompressibilityPolicy("karman-tsien", 0.8)
@@ -22,7 +22,7 @@ def test_subsonic_panel_pressure_corrections_match_declared_relations():
     )
 
 
-def test_panel_compressibility_rejects_sonic_and_supersonic_postprocessing():
+def test_panel_compressibility_rejects_sonic_and_supersonic_postprocessing() -> None:
     with pytest.raises(ValueError, match="strictly subsonic"):
         phx.solver.PanelCompressibilityPolicy("prandtl-glauert", 1.0)
     with pytest.raises(ValueError, match="strictly subsonic"):

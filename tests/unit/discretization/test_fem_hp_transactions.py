@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -14,7 +17,7 @@ from phydrax.discretization.fem._hp import (
 )
 
 
-def _topology(degrees):
+def _topology(degrees: Any) -> Any:
     active = np.asarray((True, True, True, True, False, False))
     return FiniteElementHPTopology(
         "quadrilateral",
@@ -26,7 +29,7 @@ def _topology(degrees):
     )
 
 
-def test_hp_degree_buckets_are_fixed_capacity_and_deterministic():
+def test_hp_degree_buckets_are_fixed_capacity_and_deterministic() -> None:
     topology = _topology(((2, 1), (1, 1), (2, 1), (3, 2), (0, 0), (0, 0)))
     first = finite_element_hp_workset_plan(topology)
     second = finite_element_hp_workset_plan(topology)
@@ -58,7 +61,7 @@ def test_hp_degree_buckets_are_fixed_capacity_and_deterministic():
     assert finite_element_hp_workset_plan(hex_topology).dimension == 3
 
 
-def test_p_transfer_roles_remain_distinct():
+def test_p_transfer_roles_remain_distinct() -> None:
     accepted = _topology(((2, 1), (1, 1), (2, 1), (3, 2), (0, 0), (0, 0)))
     candidate = _topology(((3, 2), (1, 1), (2, 2), (3, 2), (0, 0), (0, 0)))
     primal = np.asarray((((1.0, 0.0), (0.0, 1.0), (0.5, 0.5)),))
@@ -97,7 +100,7 @@ def test_p_transfer_roles_remain_distinct():
     )
 
 
-def test_refinement_and_coarsening_lineage_have_fixed_quad_child_capacity():
+def test_refinement_and_coarsening_lineage_have_fixed_quad_child_capacity() -> None:
     coarse = FiniteElementHPTopology(
         "quadrilateral",
         "coarse-quad-mesh",

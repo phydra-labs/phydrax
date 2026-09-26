@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -21,7 +24,7 @@ from phydrax.solver import FunctionalSolver
 from phydrax.terms import ResidualPenalty
 
 
-def _trainable_interval_solver(policy):
+def _trainable_interval_solver(policy: Any) -> Any:
     domain = Interval1d(0.0, 1.0)
     structure = SampleLayout((("x",),))
     model = MLP(
@@ -42,7 +45,7 @@ def _trainable_interval_solver(policy):
     return FunctionalSolver(functions={"u": u}, terms=(term,))
 
 
-def test_solver_initializes_and_uses_adaptive_population():
+def test_solver_initializes_and_uses_adaptive_population() -> None:
     solver = _trainable_interval_solver(R3(refresh_every=1, sampler="uniform"))
     assert len(solver.collocation) == 1
     assert solver.collocation[0] is not None
@@ -50,7 +53,7 @@ def test_solver_initializes_and_uses_adaptive_population():
     assert jnp.isfinite(loss)
 
 
-def test_solver_returns_updated_collocation_state_after_training():
+def test_solver_returns_updated_collocation_state_after_training() -> None:
     solver = _trainable_interval_solver(
         PeriodicCollocation(refresh_every=1, sampler="uniform")
     )
@@ -74,7 +77,7 @@ def test_solver_returns_updated_collocation_state_after_training():
     )
 
 
-def test_solver_logs_adaptive_population_diagnostics(phydrax_events):
+def test_solver_logs_adaptive_population_diagnostics(phydrax_events: Any) -> None:
     solver = _trainable_interval_solver(
         PeriodicCollocation(refresh_every=1, sampler="uniform")
     )
@@ -96,7 +99,7 @@ def test_solver_logs_adaptive_population_diagnostics(phydrax_events):
         )
 
 
-def test_solver_records_controlled_collocation_evaluation_budgets():
+def test_solver_records_controlled_collocation_evaluation_budgets() -> None:
     solver = _trainable_interval_solver(
         controlled_collocation(
             PeriodicCollocation(refresh_every=1, sampler="uniform"),
@@ -121,7 +124,7 @@ def test_solver_records_controlled_collocation_evaluation_budgets():
     assert not bool(population.proposal_pending)
 
 
-def test_solver_profiles_device_synchronized_adaptive_refresh_boundary():
+def test_solver_profiles_device_synchronized_adaptive_refresh_boundary() -> None:
     solver = _trainable_interval_solver(R3(refresh_every=1, sampler="uniform"))
     trained = solver.solve(
         num_iter=2,

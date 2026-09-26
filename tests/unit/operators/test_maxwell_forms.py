@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,17 +13,18 @@ import pytest
 import phydrax as phx
 
 
-def _spacetime():
+def _spacetime() -> Any:
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle([-2.0] * 4, [2.0] * 4, label="x")
     chart = phx.metrix.CoordinateChart("maxwell", ("t", "x", "y", "z"))
     return domain, chart, phx.metrix.minkowski_metric(chart)
 
 
-def test_plane_wave_potential_satisfies_both_vacuum_maxwell_form_residuals():
+def test_plane_wave_potential_satisfies_both_vacuum_maxwell_form_residuals() -> None:
     domain, chart, metric = _spacetime()
 
     @domain.Function("x")
-    def potential_coefficients(x):
+    def potential_coefficients(x: Any) -> Any:
         return jnp.array([0.0, 0.0, jnp.sin(1.7 * (x[0] - x[1])), 0.0])
 
     potential = phx.operators.domain_differential_form(
@@ -48,16 +52,16 @@ def test_plane_wave_potential_satisfies_both_vacuum_maxwell_form_residuals():
     )
 
 
-def test_electric_and_magnetic_form_sources_use_declared_maxwell_signs():
+def test_electric_and_magnetic_form_sources_use_declared_maxwell_signs() -> None:
     domain, chart, metric = _spacetime()
     charge_density = 1.7
 
     @domain.Function("x")
-    def electrostatic_potential(x):
+    def electrostatic_potential(x: Any) -> Any:
         return jnp.array([0.5 * charge_density * x[1] ** 2, 0.0, 0.0, 0.0])
 
     @domain.Function("x")
-    def electric_current_coefficients(x):
+    def electric_current_coefficients(x: Any) -> Any:
         del x
         return jnp.array([charge_density, 0.0, 0.0, 0.0])
 
@@ -82,11 +86,11 @@ def test_electric_and_magnetic_form_sources_use_declared_maxwell_signs():
     )
 
     @domain.Function("x")
-    def magnetic_field_strength_coefficients(x):
+    def magnetic_field_strength_coefficients(x: Any) -> Any:
         return jnp.array([0.0, 0.0, 0.0, x[3], 0.0, 0.0])
 
     @domain.Function("x")
-    def magnetic_current_coefficients(x):
+    def magnetic_current_coefficients(x: Any) -> Any:
         del x
         return jnp.array([0.0, 0.0, 0.0, 1.0])
 
@@ -127,17 +131,17 @@ def test_electric_and_magnetic_form_sources_use_declared_maxwell_signs():
     )
 
 
-def test_maxwell_form_residuals_compose_into_standard_solver_conditions():
+def test_maxwell_form_residuals_compose_into_standard_solver_conditions() -> None:
     domain, chart, metric = _spacetime()
     component = domain.component()
 
     @domain.Function("x")
-    def field_strength_coefficients(x):
+    def field_strength_coefficients(x: Any) -> Any:
         phase = 1.3 * (x[0] - x[1])
         amplitude = 1.3 * jnp.cos(phase)
         return jnp.array([0.0, amplitude, 0.0, -amplitude, 0.0, 0.0])
 
-    def maxwell(coefficients):
+    def maxwell(coefficients: Any) -> Any:
         field_strength = phx.operators.domain_differential_form(
             coefficients,
             chart=chart,
@@ -173,11 +177,11 @@ def test_maxwell_form_residuals_compose_into_standard_solver_conditions():
     assert jnp.allclose(eqx.filter_jit(solver.loss)(), 0.0, atol=1e-10)
 
 
-def test_maxwell_form_residuals_reject_wrong_degrees_and_metric_family():
+def test_maxwell_form_residuals_reject_wrong_degrees_and_metric_family() -> None:
     domain, chart, metric = _spacetime()
 
     @domain.Function("x")
-    def covector_coefficients(x):
+    def covector_coefficients(x: Any) -> Any:
         return x
 
     covector = phx.operators.domain_differential_form(
@@ -193,5 +197,6 @@ def test_maxwell_form_residuals_reject_wrong_degrees_and_metric_family():
     with pytest.raises(TypeError, match="LorentzianMetric"):
         phx.operators.domain_maxwell_residuals(
             phx.operators.domain_exterior_derivative(covector),
+            # ty: ignore[invalid-argument-type]
             riemannian,
         )

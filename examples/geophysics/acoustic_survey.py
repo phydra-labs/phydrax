@@ -1,5 +1,7 @@
 """Checkpoint-replayed two-dimensional line-source acoustic survey."""
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,9 @@ def main() -> None:
     grid = phx.applications.geophysics.AcousticGrid((25, 25), (5.0, 5.0))
     acquisition = phx.applications.geophysics.SeismicAcquisition(
         grid,
+        # ty: ignore[invalid-argument-type]
         ((60.0, 60.0),),
+        # ty: ignore[invalid-argument-type]
         ((80.0, 60.0), (60.0, 80.0)),
     )
     plan = phx.applications.geophysics.ConstantDensityAcousticPlan(
@@ -28,7 +32,7 @@ def main() -> None:
         1.0e-3 * phx.applications.geophysics.ricker_wavelet(times, 25.0, delay=0.025)
     )[:, None]
 
-    def prediction(speed):
+    def prediction(speed: Any) -> Any:
         return plan.simulate(
             speed,
             acquisition,

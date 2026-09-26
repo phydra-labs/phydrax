@@ -9,7 +9,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_map_to_laplace_pipeline_recovers_nonlinear_transformed_inverse_problem():
+def test_map_to_laplace_pipeline_recovers_nonlinear_transformed_inverse_problem() -> None:
     x = jnp.linspace(0.0, 2.0, 30)
     observation_scale = 0.03
     true_amplitude = 1.7

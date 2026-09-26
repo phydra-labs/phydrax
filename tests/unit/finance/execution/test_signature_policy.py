@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -15,7 +18,7 @@ from phydrax.finance.execution._signature_policy import (
 )
 
 
-def _training_sample():
+def _training_sample() -> Any:
     return SignaturePolicySampleSet(
         jnp.asarray([0.0, 1.0, 2.0]),
         jnp.asarray([[[0.0], [1.0], [99.0]]]),
@@ -27,7 +30,7 @@ def _training_sample():
     )
 
 
-def _policy():
+def _policy() -> Any:
     spec = CausalSignaturePolicySpec(
         history_dimension=1,
         action_size=1,
@@ -48,7 +51,7 @@ def _policy():
     )
 
 
-def test_signature_action_is_invariant_to_future_padding_but_uses_past_marks():
+def test_signature_action_is_invariant_to_future_padding_but_uses_past_marks() -> None:
     policy = _policy()
     times = jnp.asarray([0.0, 1.0, 2.0])
     reference = jnp.asarray([[0.0], [1.0], [100.0]])
@@ -62,7 +65,7 @@ def test_signature_action_is_invariant_to_future_padding_but_uses_past_marks():
     assert policy.action(times, reference, jnp.asarray(2))[0] == 1.0
 
 
-def test_holdout_paths_and_independence_labels_must_be_disjoint_from_training():
+def test_holdout_paths_and_independence_labels_must_be_disjoint_from_training() -> None:
     policy = _policy()
     holdout = SignaturePolicySampleSet(
         jnp.asarray([0.0, 1.0, 2.0]),

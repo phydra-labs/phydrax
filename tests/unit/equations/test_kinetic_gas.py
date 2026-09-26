@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import itertools
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _quadrature():
+def _quadrature() -> Any:
     velocities = np.asarray(
         tuple(itertools.product((-2.0, -1.0, 0.0, 1.0, 2.0), repeat=3))
     )
@@ -21,13 +23,13 @@ def _quadrature():
     )
 
 
-def _equilibrium(quadrature):
+def _equilibrium(quadrature: Any) -> Any:
     multipliers = jnp.asarray((-2.0, 0.1, -0.05, 0.02, -0.8))
     population = jnp.exp(quadrature.moment_features @ multipliers)
     return population, quadrature.moments(population)
 
 
-def test_positive_discrete_maxwellian_recovers_all_five_moments():
+def test_positive_discrete_maxwellian_recovers_all_five_moments() -> None:
     quadrature = _quadrature()
     expected, target = _equilibrium(quadrature)
     solved = phx.equations.PositiveDiscreteMaxwellianPlan(quadrature).solve(target)
@@ -38,7 +40,7 @@ def test_positive_discrete_maxwellian_recovers_all_five_moments():
     np.testing.assert_allclose(solved.population, expected, rtol=1.0e-8)
 
 
-def test_bgk_upwind_wall_and_breakdown_preserve_physical_semantics():
+def test_bgk_upwind_wall_and_breakdown_preserve_physical_semantics() -> None:
     quadrature = _quadrature()
     equilibrium, _ = _equilibrium(quadrature)
     population = equilibrium * (
@@ -73,7 +75,7 @@ def test_bgk_upwind_wall_and_breakdown_preserve_physical_semantics():
     assert bool(breakdown.header.globally_eligible)
 
 
-def test_shakhov_and_synthetic_correction_have_explicit_evidence():
+def test_shakhov_and_synthetic_correction_have_explicit_evidence() -> None:
     quadrature = _quadrature()
     equilibrium, moments = _equilibrium(quadrature)
     shakhov = phx.equations.ShakhovCollisionPlan(

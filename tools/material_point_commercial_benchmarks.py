@@ -9,15 +9,18 @@ import json
 import tempfile
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
+
+# ty: ignore[unresolved-import]
 from material_point_commercial_qualification import _base
 
 import phydrax as phx
 
 
-def _time(function, *arguments, repetitions=3):
+def _time(function: Any, *arguments: Any, repetitions: Any = 3) -> Any:
     compiled = jax.jit(function)
     started = perf_counter()
     result = compiled(*arguments)
@@ -31,7 +34,7 @@ def _time(function, *arguments, repetitions=3):
     return first, steady
 
 
-def run(output):
+def run(output: Any) -> None:
     cases = {}
     for transfer in (
         phx.discretization.PICTransferPlan(),
@@ -155,10 +158,13 @@ def run(output):
         source_commit="working-tree",
         toolchain=f"jax-{jax.__version__}",
         hardware=str(jax.devices()[0]),
+        # ty: ignore[invalid-argument-type]
         cold_compile_seconds=compile_p95,
         peak_memory_bytes=int(resources["step_workspace_bytes"])
         + int(resources["state_bytes"]),
+        # ty: ignore[unsupported-operator]
         routes_per_second=apic_case["routes"] / apic_case["steady_seconds"],
+        # ty: ignore[invalid-argument-type]
         step_seconds_p95=steady_p95,
         gradient_seconds_p95=0.0,
         checkpoint_bytes_per_second=size / checkpoint_seconds,
@@ -192,7 +198,7 @@ def run(output):
         raise SystemExit(1)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark commercial MPM closures.")
     parser.add_argument(
         "--output",

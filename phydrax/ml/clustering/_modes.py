@@ -19,6 +19,7 @@ from ..._differentiation import (
     GradientLevel,
     SurfaceDerivative,
 )
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -71,8 +72,7 @@ class MeanShift(AbstractRecipe):
         )
         if center_capacity <= 0 or max_iterations <= 0:
             raise ValueError("center_capacity and max_iterations must be positive.")
-        if initialization not in ("random", "first", "k-means++"):
-            raise ValueError("unsupported mean-shift initialization.")
+        initialization = parse(initialization, ClusterInitialization, "initialization")
         self.center_capacity = int(center_capacity)
         self.bandwidth = positive_scalar(bandwidth, "bandwidth")
         self.merge_tolerance = positive_scalar(

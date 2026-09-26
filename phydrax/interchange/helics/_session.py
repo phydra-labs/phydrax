@@ -247,7 +247,8 @@ class HelicsValueSession:
         self._require_mode("advancing")
         requested_time = self._requested_time
         # The advancing mode is entered only after a time request is recorded.
-        assert requested_time is not None
+        if not (requested_time is not None):
+            raise RuntimeError("Internal invariant failed: requested_time is not None.")
         result = self._worker.call("time_complete")
         self.time = result["time"]
         self.mode = "terminated" if result["terminated"] else "executing"

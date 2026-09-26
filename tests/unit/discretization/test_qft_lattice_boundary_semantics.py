@@ -13,7 +13,7 @@ from phydrax.discretization._lattice_boundary import (
 )
 
 
-def test_boundary_phase_shift_applies_each_oriented_crossing():
+def test_boundary_phase_shift_applies_each_oriented_crossing() -> None:
     topology = TensorTopology(("x",), (4,), periodic=(True,))
     boundary = LatticeBoundaryPhasePlan(
         topology, jnp.asarray([-1.0 + 0.0j]), maximum_displacement=5
@@ -36,7 +36,7 @@ def test_boundary_phase_shift_applies_each_oriented_crossing():
     assert jnp.allclose(compiled(values), boundary.forward(values, 0))
 
 
-def test_open_boundary_shift_masks_wrapped_values():
+def test_open_boundary_shift_masks_wrapped_values() -> None:
     topology = TensorTopology(("x",), (3,), periodic=(False,))
     boundary = LatticeBoundaryPhasePlan(topology, jnp.ones((1,)))
 
@@ -45,7 +45,7 @@ def test_open_boundary_shift_masks_wrapped_values():
     )
 
 
-def test_checkerboard_parity_split_merge_and_periodic_certification():
+def test_checkerboard_parity_split_merge_and_periodic_certification() -> None:
     topology = TensorTopology(("x", "y"), (4, 2), periodic=(True, True))
     layout = CheckerboardEntityLayout(topology)
     field = jnp.arange(16).reshape((4, 2, 2))

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -7,7 +9,7 @@ from phydrax.solver._functional_run import partition_functional_parameters
 from phydrax.solver._functional_surrogate import prepare_functional_update
 
 
-def test_empirical_ntk_matches_linear_analytic_kernel_and_actions():
+def test_empirical_ntk_matches_linear_analytic_kernel_and_actions() -> None:
     design = jnp.asarray([[1.0, 2.0], [-1.0, 0.5], [0.25, -2.0]])
     parameters = jnp.asarray([0.3, -0.7])
     prepared = phx.nn.neural_tangent.prepare_empirical_ntk(
@@ -26,10 +28,11 @@ def test_empirical_ntk_matches_linear_analytic_kernel_and_actions():
     assert jnp.allclose(prepared.jvp(tangent), design @ tangent)
     assert jnp.allclose(prepared.vjp(cotangent), design.T @ cotangent)
     assert jnp.allclose(prepared.kernel.mv(cotangent), expected @ cotangent)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(prepared.parameter_gram.mv(tangent), design.T @ design @ tangent)
 
 
-def test_dense_ntk_diagnostics_report_rank_and_spectrum():
+def test_dense_ntk_diagnostics_report_rank_and_spectrum() -> None:
     design = jnp.asarray([[1.0, 0.0], [0.0, 2.0], [1.0, 0.0]])
     prepared = phx.nn.neural_tangent.prepare_empirical_ntk(
         lambda value: design @ value,
@@ -52,7 +55,7 @@ def test_dense_ntk_diagnostics_report_rank_and_spectrum():
     assert bool(diagnostics.finite)
 
 
-def test_matrix_free_ntk_diagnostics_match_diagonal_kernel_moments():
+def test_matrix_free_ntk_diagnostics_match_diagonal_kernel_moments() -> None:
     design = jnp.diag(jnp.asarray([1.0, 2.0, 3.0]))
     prepared = phx.nn.neural_tangent.prepare_empirical_ntk(
         lambda value: design @ value,
@@ -76,7 +79,7 @@ def test_matrix_free_ntk_diagnostics_match_diagonal_kernel_moments():
     assert bool(diagnostics.finite)
 
 
-def test_cross_ntk_matches_rectangular_jacobian_product():
+def test_cross_ntk_matches_rectangular_jacobian_product() -> None:
     first = jnp.asarray([[1.0, 2.0], [0.5, -1.0]])
     second = jnp.asarray([[3.0, 0.25]])
     point = jnp.asarray([0.2, -0.4])
@@ -95,7 +98,7 @@ def test_cross_ntk_matches_rectangular_jacobian_product():
     )
 
 
-def _functional_solver():
+def _functional_solver() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(jnp.asarray([1.0, -1.0]))
     component = domain.component()
@@ -115,7 +118,7 @@ def _functional_solver():
     return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
-def test_functional_ntk_exposes_measure_weighted_blocks():
+def test_functional_ntk_exposes_measure_weighted_blocks() -> None:
     prepared = phx.solver.prepare_functional_ntk(_functional_solver(), key=jr.key(1))
     full = materialize(
         prepared.kernel,
@@ -130,7 +133,7 @@ def test_functional_ntk_exposes_measure_weighted_blocks():
     assert prepared.layout.logical_blocks == ((0, "a"), (0, "b"))
 
 
-def test_functional_ntk_keeps_physical_and_surrogate_views_distinct():
+def test_functional_ntk_keeps_physical_and_surrogate_views_distinct() -> None:
     solver = _functional_solver()
     params, non_trainable = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -23,12 +25,12 @@ from phydrax.solver._relativistic_primitive import GRHDC2PPolicy
 from phydrax.units import KILOGRAM
 
 
-def _system():
+def _system() -> Any:
     scale = RelativityScaleContract.geometric(KILOGRAM)
     return ValenciaGRHDSystem(GammaLawEOS(scale, 5.0 / 3.0))
 
 
-def _periodic_runtime(cells=16, *, reconstruction=None):
+def _periodic_runtime(cells: Any = 16, *, reconstruction: Any = None) -> Any:
     system = _system()
     grid = TensorGridPlan(
         (UniformCellAxisSpec(cells, periodic=True),), axis_names=("x",)
@@ -63,7 +65,7 @@ def _periodic_runtime(cells=16, *, reconstruction=None):
     return runtime, geometry
 
 
-def _stages(runtime, geometry, step):
+def _stages(runtime: Any, geometry: Any, step: Any) -> Any:
     return (
         lower_valencia_stage_geometry(runtime.discretization, geometry, 0.0),
         lower_valencia_stage_geometry(runtime.discretization, geometry, step),
@@ -71,7 +73,7 @@ def _stages(runtime, geometry, step):
     )
 
 
-def test_fixed_grid_uniform_state_is_preserved_with_closed_conservation_ledger():
+def test_fixed_grid_uniform_state_is_preserved_with_closed_conservation_ledger() -> None:
     runtime, geometry = _periodic_runtime()
     stages = _stages(runtime, geometry, 1.0e-3)
     primitive = jnp.broadcast_to(
@@ -106,7 +108,7 @@ def test_fixed_grid_uniform_state_is_preserved_with_closed_conservation_ledger()
     )
 
 
-def test_fixed_grid_smooth_and_shock_paths_are_finite_and_conservative():
+def test_fixed_grid_smooth_and_shock_paths_are_finite_and_conservative() -> None:
     runtime, geometry = _periodic_runtime(32)
     step = 2.0e-4
     stages = _stages(runtime, geometry, step)
@@ -150,7 +152,7 @@ def test_fixed_grid_smooth_and_shock_paths_are_finite_and_conservative():
     assert float(jnp.max(jnp.abs(shock_result.accepted.conserved - shock))) > 0.0
 
 
-def test_invalid_high_order_face_uses_explicit_first_order_fallback_mask():
+def test_invalid_high_order_face_uses_explicit_first_order_fallback_mask() -> None:
     runtime, geometry = _periodic_runtime(
         8, reconstruction=MUSCLReconstruction(UnlimitedLimiter())
     )
@@ -174,7 +176,9 @@ def test_invalid_high_order_face_uses_explicit_first_order_fallback_mask():
     assert bool(jnp.all(jnp.isfinite(evaluation.face_fluxes[0])))
 
 
-def test_metric_aware_reflection_uses_spatial_unit_normal_and_reports_incoming_modes():
+def test_metric_aware_reflection_uses_spatial_unit_normal_and_reports_incoming_modes() -> (
+    None
+):
     system = _system()
     metric = jnp.diag(jnp.asarray((4.0, 1.0, 1.0), dtype=jnp.float64))
     inverse = jnp.diag(jnp.asarray((0.25, 1.0, 1.0), dtype=jnp.float64))
@@ -222,7 +226,7 @@ def test_metric_aware_reflection_uses_spatial_unit_normal_and_reports_incoming_m
     assert trace.incoming_characteristic_count.shape == ()
 
 
-def test_stage_kernel_is_fixed_shape_under_jit_for_coupled_interleaving():
+def test_stage_kernel_is_fixed_shape_under_jit_for_coupled_interleaving() -> None:
     runtime, geometry = _periodic_runtime(8)
     stage = lower_valencia_stage_geometry(runtime.discretization, geometry, 0.0)
     primitive = jnp.broadcast_to(jnp.asarray((1.0, 0.2, 0.1, 0.0, 0.0)), (8, 5))

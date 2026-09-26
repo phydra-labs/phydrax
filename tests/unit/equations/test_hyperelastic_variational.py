@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,20 +14,22 @@ import pytest
 import phydrax as phx
 
 
-def _parameters():
+def _parameters() -> Any:
     return phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(
         3.0, 11.0
     )
 
 
-def _embedded(deformation):
+def _embedded(deformation: Any) -> Any:
     if deformation.shape[-2:] == (3, 3):
         return deformation
     return jnp.eye(3, dtype=deformation.dtype).at[:2, :2].set(deformation)
 
 
 @pytest.mark.parametrize("dimension", [2, 3])
-def test_neo_hookean_form_density_and_ad_residual_match_constitutive_model(dimension):
+def test_neo_hookean_form_density_and_ad_residual_match_constitutive_model(
+    dimension: Any,
+) -> None:
     parameters = _parameters()
     form = phx.applications.solid_mechanics.neo_hookean_form("u", parameters)
     action = form.actions[0]
@@ -38,7 +42,7 @@ def test_neo_hookean_form_density_and_ad_residual_match_constitutive_model(dimen
     )
     points = jnp.zeros((1, 1, dimension))
 
-    def total_energy(gradient):
+    def total_energy(gradient: Any) -> Any:
         return jnp.sum(
             action.term.density(
                 {"u": phx.variational.LocalFieldJet(gradient=gradient[None, None])},
@@ -67,7 +71,7 @@ def test_neo_hookean_form_density_and_ad_residual_match_constitutive_model(dimen
     np.testing.assert_allclose(actual_tangent, expected_tangent, rtol=3e-11, atol=3e-11)
 
 
-def test_neo_hookean_form_compiles_vector_plane_strain_identity_residual():
+def test_neo_hookean_form_compiles_vector_plane_strain_identity_residual() -> None:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     cells = jnp.asarray([[0, 1, 3], [1, 2, 3]], dtype=jnp.int32)
     mesh = phx.discretization.CellMesh.from_triangles(vertices, cells)
@@ -85,13 +89,14 @@ def test_neo_hookean_form_compiles_vector_plane_strain_identity_residual():
         np.testing.assert_allclose(leaf, 0.0, atol=2e-12)
 
 
-def test_neo_hookean_form_rejects_incompatible_component_dimension():
+def test_neo_hookean_form_rejects_incompatible_component_dimension() -> None:
     form = phx.applications.solid_mechanics.neo_hookean_form("u", _parameters())
     action = form.actions[0]
     gradients = jnp.zeros((1, 1, 2, 3))
     points = jnp.zeros((1, 1, 2))
 
     with pytest.raises(ValueError, match="square matrix"):
+        # ty: ignore[unresolved-attribute]
         action.term.density(
             {"u": phx.variational.LocalFieldJet(gradient=gradients)},
             phx.variational.LocalGeometry(points),

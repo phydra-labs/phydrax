@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 cpl = phx.solver.coupling
 
 
-def _capabilities(*, differentiable=True, waveform=False):
+def _capabilities(*, differentiable: Any = True, waveform: Any = False) -> Any:
     return cpl.CouplingSubsystemCapabilities(
         jit=True,
         differentiable=differentiable,
@@ -23,20 +26,22 @@ def _capabilities(*, differentiable=True, waveform=False):
     )
 
 
-def _linear_graph(*, fail_b=False, parameterized=False, count_state=False):
+def _linear_graph(
+    *, fail_b: Any = False, parameterized: Any = False, count_state: Any = False
+) -> Any:
     space = phx.linalg.ArraySpace((1,), dtype=jnp.float64, space_id="coupled-scalar")
     a_input = cpl.CouplingPort("a-input", "input", space, reference_scale=1.0)
     a_output = cpl.CouplingPort("a-output", "output", space, reference_scale=1.0)
     b_input = cpl.CouplingPort("b-input", "input", space, reference_scale=1.0)
     b_output = cpl.CouplingPort("b-output", "output", space, reference_scale=1.0)
 
-    def advance_a(window, state, inputs, args):
+    def advance_a(window: Any, state: Any, inputs: Any, args: Any) -> Any:
         del window, args
         value = 0.5 * inputs[0]
         candidate = state + 1.0 if count_state else value
         return cpl.CouplingSubsystemResult(candidate, (value,), successful=True, status=0)
 
-    def advance_b(window, state, inputs, args):
+    def advance_b(window: Any, state: Any, inputs: Any, args: Any) -> Any:
         forcing = args if parameterized else jnp.asarray(1.0, dtype=inputs[0].dtype)
         value = 0.5 * (inputs[0] + forcing)
         candidate = state + 1.0 if count_state else value
@@ -76,7 +81,7 @@ def _linear_graph(*, fail_b=False, parameterized=False, count_state=False):
     return graph, states, values
 
 
-def _implicit_policy(*, maximum_steps=40, absolute=1e-10):
+def _implicit_policy(*, maximum_steps: Any = 40, absolute: Any = 1e-10) -> Any:
     return cpl.ImplicitCouplingPolicy(
         phx.nonlinear.FixedPointIteration(
             acceleration=phx.nonlinear.AndersonAcceleration(history=4)
@@ -94,7 +99,7 @@ def _implicit_policy(*, maximum_steps=40, absolute=1e-10):
     )
 
 
-def test_graph_identity_is_declaration_order_invariant_and_compiles_one_scc():
+def test_graph_identity_is_declaration_order_invariant_and_compiles_one_scc() -> None:
     graph, states, values = _linear_graph()
     reordered = cpl.CouplingGraph(
         tuple(reversed(graph.subsystems)),
@@ -115,7 +120,7 @@ def test_graph_identity_is_declaration_order_invariant_and_compiles_one_scc():
     assert prepared.report.resources.interface_size == 2
 
 
-def test_graph_rejects_mismatched_direct_spaces_and_missing_driver():
+def test_graph_rejects_mismatched_direct_spaces_and_missing_driver() -> None:
     first = phx.linalg.ArraySpace((1,), space_id="first")
     second = phx.linalg.ArraySpace((1,), space_id="second")
     output = cpl.CouplingPort("output", "output", first, reference_scale=1.0)
@@ -149,7 +154,7 @@ def test_graph_rejects_mismatched_direct_spaces_and_missing_driver():
         )
 
 
-def test_explicit_jacobi_completes_without_claiming_convergence():
+def test_explicit_jacobi_completes_without_claiming_convergence() -> None:
     graph, states, values = _linear_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -172,7 +177,7 @@ def test_explicit_jacobi_completes_without_claiming_convergence():
     )
 
 
-def test_explicit_gauss_seidel_order_changes_the_single_sweep():
+def test_explicit_gauss_seidel_order_changes_the_single_sweep() -> None:
     graph, states, values = _linear_graph()
     policy = cpl.ExplicitCouplingPolicy(
         cpl.CouplingSweep("gauss-seidel", subsystem_order=("b", "a"))
@@ -186,7 +191,7 @@ def test_explicit_gauss_seidel_order_changes_the_single_sweep():
     assert jnp.allclose(result.accepted_state.exchange_values[1], 0.5)
 
 
-def test_implicit_anderson_certifies_the_physical_interface_root_under_jit():
+def test_implicit_anderson_certifies_the_physical_interface_root_under_jit() -> None:
     graph, states, values = _linear_graph()
     prepared = cpl.prepare_coupling(graph, states, values, policy=_implicit_policy())
 
@@ -204,7 +209,7 @@ def test_implicit_anderson_certifies_the_physical_interface_root_under_jit():
     assert jnp.all(result.diagnostics.exchange_certified)
 
 
-def test_iteration_exhaustion_keeps_the_window_checkpoint():
+def test_iteration_exhaustion_keeps_the_window_checkpoint() -> None:
     graph, states, values = _linear_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -223,7 +228,7 @@ def test_iteration_exhaustion_keeps_the_window_checkpoint():
     assert not jnp.allclose(result.candidate_state.exchange_values[1], 0.0)
 
 
-def test_participant_failure_rolls_back_the_entire_window_and_rollout_stops():
+def test_participant_failure_rolls_back_the_entire_window_and_rollout_stops() -> None:
     graph, states, values = _linear_graph(fail_b=True)
     problem = cpl.CouplingProblem(
         graph,
@@ -248,7 +253,7 @@ def test_participant_failure_rolls_back_the_entire_window_and_rollout_stops():
     assert jnp.all(solution.participant_evaluations[2] == 0)
 
 
-def test_final_physical_certification_can_reject_a_loose_nonlinear_success():
+def test_final_physical_certification_can_reject_a_loose_nonlinear_success() -> None:
     graph, states, values = _linear_graph()
     policy = cpl.ImplicitCouplingPolicy(
         phx.nonlinear.FixedPointIteration(),
@@ -272,7 +277,9 @@ def test_final_physical_certification_can_reject_a_loose_nonlinear_success():
     assert float(result.accepted_state.time) == pytest.approx(0.0)
 
 
-def test_implicit_iterations_replay_the_window_checkpoint_instead_of_chaining_state():
+def test_implicit_iterations_replay_the_window_checkpoint_instead_of_chaining_state() -> (
+    None
+):
     graph, states, values = _linear_graph(count_state=True)
     prepared = cpl.prepare_coupling(graph, states, values, policy=_implicit_policy())
 
@@ -285,7 +292,7 @@ def test_implicit_iterations_replay_the_window_checkpoint_instead_of_chaining_st
     assert int(result.diagnostics.participant_evaluations[0]) > 1
 
 
-def test_numeric_refresh_preserves_plan_identity_and_increments_version():
+def test_numeric_refresh_preserves_plan_identity_and_increments_version() -> None:
     graph, states, values = _linear_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -308,7 +315,7 @@ def test_numeric_refresh_preserves_plan_identity_and_increments_version():
     assert jnp.allclose(result.accepted_state.exchange_values[1], 1.0)
 
 
-def _field_space(name):
+def _field_space(name: Any) -> Any:
     topology = phx.discretization.TensorTopology(("x",), (3,))
     support = phx.discretization.DiscreteSupport(topology, 1, f"{name}-support")
     layout = phx.discretization.TensorDofLayout(("x",), (3,))
@@ -322,7 +329,7 @@ def _field_space(name):
     )
 
 
-def test_forward_and_paired_adjoint_field_exchanges_preserve_virtual_work():
+def test_forward_and_paired_adjoint_field_exchanges_preserve_virtual_work() -> None:
     source_space = _field_space("source")
     target_space = _field_space("target")
     matrix = jnp.asarray([[1.0, 0.0, 0.0], [0.25, 0.5, 0.25], [0.0, 0.0, 1.0]])

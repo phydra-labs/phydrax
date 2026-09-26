@@ -200,7 +200,10 @@ class SpectralModalTransferPlan(StrictModule, NonTrainableState):
             return self._prepare_lattice()
         # The constructor admits only same-family pairs, so a tensor source has a
         # tensor target.
-        assert isinstance(target, TensorSpectralDiscretization)
+        if not (isinstance(target, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(target, TensorSpectralDiscretization)."
+            )
         matrices: list[Array | None] = []
         actions: list[str] = []
         trace_residual = 0.0

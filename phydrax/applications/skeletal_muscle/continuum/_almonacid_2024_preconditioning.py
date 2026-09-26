@@ -1009,8 +1009,14 @@ class _Almonacid2024PreconditionerBuilder(AbstractPreconditionerBuilder):
             blocks[1][1],
         )
         # almonacid_2024_setup_operator fills all four blocks, the scalar one local.
-        assert isinstance(scalar_block, LocalBlockDiagonalLinearOperator)
-        assert mechanical is not None and lower is not None and upper is not None
+        if not (isinstance(scalar_block, LocalBlockDiagonalLinearOperator)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(scalar_block, LocalBlockDiagonalLinearOperator)."
+            )
+        if not (mechanical is not None and lower is not None and (upper is not None)):
+            raise RuntimeError(
+                "Internal invariant failed: mechanical is not None and lower is not None and (upper is not None)."
+            )
         if self.mechanical_solver == "condensed-jax-cpu" and source.dynamic:
             mechanical_inverse = sparse_inverse
         elif source.dynamic:

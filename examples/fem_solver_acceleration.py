@@ -49,7 +49,9 @@ flow_state, flow_diagnostics = flow.pressure_correction_step(
 )
 
 if (
+    # ty: ignore[unresolved-attribute]
     not bool(history_evidence.accepted)
+    # ty: ignore[unresolved-attribute]
     or history_evidence.proposal_residual_norm > 1.0e-12
     or not jnp.allclose(history_solve.value, jnp.asarray([2.0, 6.0]))
     or tensor_defect > 1.0e-12
@@ -59,7 +61,9 @@ if (
 
 print(
     {
+        # ty: ignore[unresolved-attribute]
         "history_guess_accepted": bool(history_evidence.accepted),
+        # ty: ignore[unresolved-attribute]
         "history_proposal_residual": float(history_evidence.proposal_residual_norm),
         "history_solution": history_solve.value.tolist(),
         "collocated_tensor_defect": float(tensor_defect),

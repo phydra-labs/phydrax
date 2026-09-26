@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -80,14 +83,14 @@ _BLOCK_WEIGHT = jnp.array([1.0, 1.2, 0.9, 1.1])
     ],
 )
 def test_each_smooth_clustering_family_honors_declared_fit_gradients(
-    recipe, features, weights, point
-):
-    def feature_loss(values):
+    recipe: Any, features: Any, weights: Any, point: Any
+) -> None:
+    def feature_loss(values: Any) -> Any:
         return recipe.fit_batch(MLBatch(values, sample_weight=weights)).as_trainable()(
             point
         )[0]
 
-    def weight_loss(value):
+    def weight_loss(value: Any) -> Any:
         return recipe.fit_batch(MLBatch(features, sample_weight=value)).as_trainable()(
             point
         )[0]
@@ -152,8 +155,8 @@ def test_each_smooth_clustering_family_honors_declared_fit_gradients(
     ],
 )
 def test_each_smooth_clustering_family_honors_declared_hyperparameter_gradient(
-    factory, features, weights, point
-):
+    factory: Any, features: Any, weights: Any, point: Any
+) -> None:
     gradient = jax.grad(
         lambda temperature: (
             factory(temperature)
@@ -165,14 +168,14 @@ def test_each_smooth_clustering_family_honors_declared_hyperparameter_gradient(
     assert jnp.isfinite(gradient)
 
 
-def test_density_soft_membership_has_declared_parameter_gradient():
+def test_density_soft_membership_has_declared_parameter_gradient() -> None:
     core_points = jnp.array([[0.0], [0.2], [3.0], [3.2]])
     core_labels = jnp.array([0, 0, 1, 1])
     core_active = jnp.ones(4, dtype="bool")
     cluster_active = jnp.ones(2, dtype="bool")
     point = jnp.array([0.1])
 
-    def loss(points):
+    def loss(points: Any) -> Any:
         model = DensityClusterModel(
             points,
             core_labels,

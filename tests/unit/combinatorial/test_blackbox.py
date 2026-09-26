@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,14 +13,14 @@ import pytest
 import phydrax as phx
 
 
-def _catalog():
+def _catalog() -> Any:
     return phx.combinatorial.ExplicitDecisionSpace(
         jnp.asarray([0, 1, 2], dtype=jnp.int32),
         jnp.asarray([[0.0], [1.0], [2.0]]),
     )
 
 
-def test_blackbox_pullback_matches_explicit_loss_interpolation_formula():
+def test_blackbox_pullback_matches_explicit_loss_interpolation_formula() -> None:
     space = _catalog()
     method = phx.combinatorial.ExhaustiveLinearOracle()
     policy = phx.combinatorial.BlackboxInterpolation(1.0)
@@ -39,12 +42,12 @@ def test_blackbox_pullback_matches_explicit_loss_interpolation_formula():
     np.testing.assert_allclose(pullback.feature_change_norm, 2.0)
 
 
-def test_blackbox_custom_vjp_matches_explicit_pullback_under_jit():
+def test_blackbox_custom_vjp_matches_explicit_pullback_under_jit() -> None:
     space = _catalog()
     method = phx.combinatorial.ExhaustiveLinearOracle()
     policy = phx.combinatorial.BlackboxInterpolation(1.0)
 
-    def loss(cost):
+    def loss(cost: Any) -> Any:
         problem = phx.combinatorial.LinearCombinatorialProblem(space, cost)
         features = phx.combinatorial.blackbox_solution(
             problem,
@@ -68,7 +71,7 @@ def test_blackbox_custom_vjp_matches_explicit_pullback_under_jit():
         jax.jvp(loss, (jnp.asarray([1.0]),), (jnp.asarray([1.0]),))
 
 
-def test_blackbox_zero_gradient_and_batched_cardinality_pullback():
+def test_blackbox_zero_gradient_and_batched_cardinality_pullback() -> None:
     catalog = _catalog()
     method = phx.combinatorial.ExhaustiveLinearOracle()
     unchanged = phx.combinatorial.estimate_blackbox_pullback(
@@ -98,7 +101,7 @@ def test_blackbox_zero_gradient_and_batched_cardinality_pullback():
     np.testing.assert_allclose(jnp.sum(pullback.gradient, axis=-1), jnp.zeros((2,)))
 
 
-def test_blackbox_policy_rejects_nonpositive_or_nonscalar_lambda():
+def test_blackbox_policy_rejects_nonpositive_or_nonscalar_lambda() -> None:
     with pytest.raises(ValueError, match="finite and positive"):
         phx.combinatorial.BlackboxInterpolation(0.0)
     with pytest.raises(ValueError, match="scalar"):

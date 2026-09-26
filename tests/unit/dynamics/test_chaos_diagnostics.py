@@ -2,13 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _scalar_data(values, *, source_id, case_axes=(), case_axis_roles=()):
+def _scalar_data(
+    values: Any, *, source_id: Any, case_axes: Any = (), case_axis_roles: Any = ()
+) -> Any:
     values = jnp.asarray(values)
     case_shape = values.shape[:-1]
     coordinates = jnp.broadcast_to(
@@ -24,7 +29,7 @@ def _scalar_data(values, *, source_id, case_axes=(), case_axis_roles=()):
     )
 
 
-def test_finite_size_growth_recovers_finite_amplitude_linear_rate():
+def test_finite_size_growth_recovers_finite_amplitude_linear_rate() -> None:
     matrix = jnp.diag(jnp.asarray([2.0, 0.5]))
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: matrix @ state,
@@ -55,7 +60,7 @@ def test_finite_size_growth_recovers_finite_amplitude_linear_rate():
     )
 
 
-def test_recurrence_rqa_preserves_theiler_mask_and_line_statistics():
+def test_recurrence_rqa_preserves_theiler_mask_and_line_statistics() -> None:
     periodic = np.tile(np.arange(8, dtype="float64"), 25)
     data = _scalar_data(periodic, source_id="periodic-rqa")
 
@@ -75,7 +80,7 @@ def test_recurrence_rqa_preserves_theiler_mask_and_line_statistics():
     assert int(jnp.sum(result.diagonal_length_histogram)) > 0
 
 
-def test_rqa_with_no_recurrences_is_not_successful_with_nan_metrics():
+def test_rqa_with_no_recurrences_is_not_successful_with_nan_metrics() -> None:
     data = _scalar_data(
         jnp.asarray([0.0, 1.0, 3.0, 7.0]),
         source_id="no-recurrence-rqa",
@@ -93,7 +98,7 @@ def test_rqa_with_no_recurrences_is_not_successful_with_nan_metrics():
     assert jnp.isnan(result.determinism)
 
 
-def test_zero_one_test_separates_periodic_and_logistic_observables():
+def test_zero_one_test_separates_periodic_and_logistic_observables() -> None:
     count = 1400
     periodic = np.sin(2.0 * np.pi * np.arange(count) / 37.0)
     logistic = np.empty((count,))
@@ -122,7 +127,7 @@ def test_zero_one_test_separates_periodic_and_logistic_observables():
     assert bool(jnp.all(result.used_sample_mask[:, :100] == 0))
 
 
-def test_correlation_dimension_records_fit_window_and_theiler_pairs():
+def test_correlation_dimension_records_fit_window_and_theiler_pairs() -> None:
     rng = np.random.default_rng(9)
     values = rng.uniform(0.0, 1.0, 1200)
     data = _scalar_data(values, source_id="uniform-line-dimension")
@@ -142,7 +147,7 @@ def test_correlation_dimension_records_fit_window_and_theiler_pairs():
     assert int(result.eligible_pair_count) > 500_000
 
 
-def test_correlation_dimension_rejects_degenerate_fit_diagnostics():
+def test_correlation_dimension_rejects_degenerate_fit_diagnostics() -> None:
     data = _scalar_data(
         jnp.asarray([0.0, 1.0, 3.0]),
         source_id="degenerate-correlation-fit",
@@ -159,7 +164,7 @@ def test_correlation_dimension_rejects_degenerate_fit_diagnostics():
     assert int(result.status) == phx.dynamics.analysis.CHAOS_DIAGNOSTIC_FIT_FAILED
 
 
-def test_surrogate_protocol_and_uncertainty_summary_preserve_rng_and_sources():
+def test_surrogate_protocol_and_uncertainty_summary_preserve_rng_and_sources() -> None:
     time = jnp.arange(512, dtype="float64")
     series = jnp.sin(2.0 * jnp.pi * time / 32.0)
     significance = phx.dynamics.analysis.surrogate_significance(

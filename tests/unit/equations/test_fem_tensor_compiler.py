@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -46,7 +49,7 @@ from phydrax.integration._rules import (
 )
 
 
-def _prepared(cell, order):
+def _prepared(cell: Any, order: Any) -> Any:
     family = ReferenceNodalFamily(cell, order)
     axis_rule = GaussLobattoLegendreRule(order + 1)
     if cell == "quadrilateral":
@@ -73,7 +76,7 @@ def _prepared(cell, order):
     return family, reference
 
 
-def _affine_metric(cell, reference):
+def _affine_metric(cell: Any, reference: Any) -> Any:
     coordinate_element = phx.discretization.lagrange_element(cell, 1)
     basis, gradients = coordinate_element.tabulate(reference.volume_rule.points)
     coordinates = coordinate_element.reference_nodes[None]
@@ -85,7 +88,7 @@ def _affine_metric(cell, reference):
     )
 
 
-def test_quad_and_hex_dense_factorized_mass_diffusion_jvp_vjp_agree():
+def test_quad_and_hex_dense_factorized_mass_diffusion_jvp_vjp_agree() -> None:
     for cell, order in (("quadrilateral", 3), ("hexahedron", 2)):
         family, reference = _prepared(cell, order)
         metric = _affine_metric(cell, reference)
@@ -129,7 +132,7 @@ def test_quad_and_hex_dense_factorized_mass_diffusion_jvp_vjp_agree():
             )
 
 
-def test_prepared_quad_and_hex_trace_lift_are_exact_adjoints_for_permutations():
+def test_prepared_quad_and_hex_trace_lift_are_exact_adjoints_for_permutations() -> None:
     for cell, order in (("quadrilateral", 4), ("hexahedron", 2)):
         _, reference = _prepared(cell, order)
         for facet in reference.facets:
@@ -145,7 +148,7 @@ def test_prepared_quad_and_hex_trace_lift_are_exact_adjoints_for_permutations():
             )
 
 
-def test_curved_facet_metric_uses_pointwise_normals_and_weights():
+def test_curved_facet_metric_uses_pointwise_normals_and_weights() -> None:
     _, reference = _prepared("quadrilateral", 3)
     facet = reference.facets[1]
     coordinate_family = ReferenceNodalFamily("quadrilateral", 2)
@@ -162,7 +165,7 @@ def test_curved_facet_metric_uses_pointwise_normals_and_weights():
     assert jnp.allclose(jnp.linalg.norm(facet_metric.normal, axis=-1), 1.0)
 
 
-def _single_tensor_discretization(cell, order):
+def _single_tensor_discretization(cell: Any, order: Any) -> Any:
     if cell == "quadrilateral":
         coordinates = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
         vertices = ((0, 1, 2, 3),)
@@ -197,11 +200,11 @@ def _single_tensor_discretization(cell, order):
     ).prepare()
 
 
-def _single_quad_discretization():
+def _single_quad_discretization() -> Any:
     return _single_tensor_discretization("quadrilateral", 2)
 
 
-def test_high_order_quadrilateral_dirichlet_constraint_routes_boundary_dofs():
+def test_high_order_quadrilateral_dirichlet_constraint_routes_boundary_dofs() -> None:
     discretization = _single_tensor_discretization("quadrilateral", 3)
     constraint = phx.discretization.dirichlet_constraint(discretization, "u")
     points = np.asarray(discretization.dof_maps[0].dof_coordinates)
@@ -216,7 +219,7 @@ def test_high_order_quadrilateral_dirichlet_constraint_routes_boundary_dofs():
     assert constraint.free_dofs.shape == (4,)
 
 
-def test_high_order_quad_and_hex_boundary_loads_use_tensor_trace_lifts():
+def test_high_order_quad_and_hex_boundary_loads_use_tensor_trace_lifts() -> None:
     for cell, order, expected_measure in (
         ("quadrilateral", 3, 4.0),
         ("hexahedron", 2, 6.0),
@@ -240,7 +243,7 @@ def test_high_order_quad_and_hex_boundary_loads_use_tensor_trace_lifts():
         assert jnp.allclose(jnp.sum(load), expected_measure, atol=2.0e-12)
 
 
-def test_exact_and_lumped_mass_integrate_high_order_tensor_polynomials():
+def test_exact_and_lumped_mass_integrate_high_order_tensor_polynomials() -> None:
     discretization = _single_tensor_discretization("quadrilateral", 4)
     form = FiniteElementForm(
         "mass-carrier",
@@ -269,7 +272,9 @@ def test_exact_and_lumped_mass_integrate_high_order_tensor_polynomials():
         )
 
 
-def test_compiler_keys_bind_reference_layout_and_semantics_not_coefficient_values():
+def test_compiler_keys_bind_reference_layout_and_semantics_not_coefficient_values() -> (
+    None
+):
     discretization = _single_quad_discretization()
     field_space_id = discretization.field_spaces[0].field_space_id
     rule = ReferenceQuadrilateralRule(GaussLobattoLegendreRule(3))
@@ -326,7 +331,7 @@ def test_compiler_keys_bind_reference_layout_and_semantics_not_coefficient_value
     assert tables[0].bindings[0].ir_semantics_id == programs[0].ir.actions[0].action_id
 
 
-def test_mass_policy_identities_distinguish_exact_collocated_and_lumped():
+def test_mass_policy_identities_distinguish_exact_collocated_and_lumped() -> None:
     policies = tuple(
         FiniteElementMassPolicy(kind)
         for kind in ("exact", "collocated_diagonal", "lumped")
@@ -339,11 +344,13 @@ def test_mass_policy_identities_distinguish_exact_collocated_and_lumped():
     assert len({policy.policy_id for policy in policies}) == 3
 
 
-def test_pairwise_volume_flux_lowers_to_collocated_authoritative_action():
+def test_pairwise_volume_flux_lowers_to_collocated_authoritative_action() -> None:
     discretization = _single_quad_discretization()
     rule = ReferenceQuadrilateralRule(GaussLobattoLegendreRule(3))
 
-    def central_flux(left, right, left_points, right_points, context):
+    def central_flux(
+        left: Any, right: Any, left_points: Any, right_points: Any, context: Any
+    ) -> Any:
         value = 0.5 * (left + right)
         return jnp.broadcast_to(value[..., None], value.shape + (2,))
 
@@ -369,7 +376,7 @@ def test_pairwise_volume_flux_lowers_to_collocated_authoritative_action():
     assert table.bindings[0].local_kernel == "collocated"
 
 
-def test_tensor_interior_facet_reads_multiple_fields_and_writes_one():
+def test_tensor_interior_facet_reads_multiple_fields_and_writes_one() -> None:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0),
@@ -399,7 +406,9 @@ def test_tensor_interior_facet_reads_multiple_fields_and_writes_one():
         ),
     ).prepare()
 
-    def flux(plus, minus, points, weights, normal, context):
+    def flux(
+        plus: Any, minus: Any, points: Any, weights: Any, normal: Any, context: Any
+    ) -> Any:
         del points, weights, normal, context
         value = (plus[0] - minus[0]) + jnp.sum(plus[1] - minus[1], axis=-1)
         return value, -value
@@ -430,7 +439,7 @@ def test_tensor_interior_facet_reads_multiple_fields_and_writes_one():
     assert jnp.array_equal(residual[1], jnp.zeros_like(residual[1]))
 
 
-def test_tensor_interior_facet_resolves_neighbor_across_mesh_blocks():
+def test_tensor_interior_facet_resolves_neighbor_across_mesh_blocks() -> None:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0),
@@ -464,7 +473,9 @@ def test_tensor_interior_facet_resolves_neighbor_across_mesh_blocks():
         phx.discretization.FiniteElementFieldSpec("u", element),
     ).prepare()
 
-    def flux(plus, minus, points, weights, normal, context):
+    def flux(
+        plus: Any, minus: Any, points: Any, weights: Any, normal: Any, context: Any
+    ) -> Any:
         del points, weights, normal, context
         jump = plus[0] - minus[0]
         return jump, -jump
@@ -509,7 +520,7 @@ def test_tensor_interior_facet_resolves_neighbor_across_mesh_blocks():
     assert jnp.allclose(jnp.sum(residual), 0.0, atol=2.0e-12)
 
 
-def test_cross_block_facets_without_prepared_references_use_legacy_validation():
+def test_cross_block_facets_without_prepared_references_use_legacy_validation() -> None:
     coordinates = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     mesh = phx.discretization.CellMesh(
         coordinates,
@@ -537,7 +548,9 @@ def test_cross_block_facets_without_prepared_references_use_legacy_validation():
         ),
     ).prepare()
 
-    def flux(plus, minus, points, weights, normal, context):
+    def flux(
+        plus: Any, minus: Any, points: Any, weights: Any, normal: Any, context: Any
+    ) -> Any:
         del points, weights, normal, context
         value = (plus[0] - minus[0]) + jnp.sum(plus[1] - minus[1], axis=-1)
         return value, -value
@@ -561,7 +574,9 @@ def test_cross_block_facets_without_prepared_references_use_legacy_validation():
         compiled.residual(compiled.state_space.zeros())
 
 
-def _matrix_free_residual(discretization, action, local_kernel, state):
+def _matrix_free_residual(
+    discretization: Any, action: Any, local_kernel: Any, state: Any
+) -> Any:
     compiled = phx.equations.compile_finite_element_problem(
         FiniteElementForm(action.action_id, "u", (action,)),
         discretization,
@@ -573,11 +588,13 @@ def _matrix_free_residual(discretization, action, local_kernel, state):
     return compiled.full_residual(state, None)
 
 
-def test_collocated_pairwise_central_flux_executes_strong_divergence():
+def test_collocated_pairwise_central_flux_executes_strong_divergence() -> None:
     discretization = _single_quad_discretization()
     rule = ReferenceQuadrilateralRule(GaussLobattoLegendreRule(3))
 
-    def central_flux(left, right, left_points, right_points, context):
+    def central_flux(
+        left: Any, right: Any, left_points: Any, right_points: Any, context: Any
+    ) -> Any:
         value = 0.5 * (left + right)
         return jnp.broadcast_to(value[..., None], value.shape + (2,))
 
@@ -595,7 +612,7 @@ def test_collocated_pairwise_central_flux_executes_strong_divergence():
     assert jnp.allclose(jnp.sum(residual), 3.0, atol=2.0e-12)
 
 
-def test_sum_factorized_tensor_diffusion_matches_dense_kernel():
+def test_sum_factorized_tensor_diffusion_matches_dense_kernel() -> None:
     discretization = _single_tensor_discretization("quadrilateral", 3)
     tensor = jnp.asarray(((2.0, 0.3), (0.3, 1.0)))
     rule = ReferenceQuadrilateralRule(GaussLobattoLegendreRule(5))

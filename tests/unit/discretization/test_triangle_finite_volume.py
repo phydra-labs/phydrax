@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -13,7 +15,7 @@ import pytest
 import phydrax as phx
 
 
-def _triangulated_grid(nx=3, ny=3):
+def _triangulated_grid(nx: Any = 3, ny: Any = 3) -> Any:
     x = np.linspace(0.0, 1.0, nx + 1)
     y = np.linspace(0.0, 1.0, ny + 1)
     vertices = np.asarray([(xi, yi) for yi in y for xi in x])
@@ -29,7 +31,7 @@ def _triangulated_grid(nx=3, ny=3):
     return vertices, np.asarray(triangles, dtype=np.int32)
 
 
-def _scalar_system():
+def _scalar_system() -> Any:
     velocity = jnp.asarray([0.7, -0.2])
     return phx.equations.ScalarConservationSystem(
         2,
@@ -41,7 +43,7 @@ def _scalar_system():
     )
 
 
-def _boundaries(discretization):
+def _boundaries(discretization: Any) -> Any:
     return phx.discretization.TriangleFiniteVolumeBoundarySet(
         discretization.boundary_patch_names,
         {
@@ -51,7 +53,7 @@ def _boundaries(discretization):
     )
 
 
-def test_triangle_geometry_has_oriented_closed_control_volumes():
+def test_triangle_geometry_has_oriented_closed_control_volumes() -> None:
     vertices, triangles = _triangulated_grid(2, 2)
     discretization = phx.discretization.TriangleFiniteVolumePlan(
         vertices, triangles
@@ -69,7 +71,7 @@ def test_triangle_geometry_has_oriented_closed_control_volumes():
     assert jnp.all(jnp.sum(owner_vector * discretization.area_vectors, axis=-1) > 0.0)
 
 
-def test_triangle_first_order_residual_preserves_constant_and_global_balance():
+def test_triangle_first_order_residual_preserves_constant_and_global_balance() -> None:
     vertices, triangles = _triangulated_grid(3, 3)
     discretization = phx.discretization.TriangleFiniteVolumePlan(
         vertices, triangles
@@ -89,11 +91,12 @@ def test_triangle_first_order_residual_preserves_constant_and_global_balance():
     residual, diagnostics = compiled.residual_with_diagnostics(jnp.asarray(0.0), state)
 
     np.testing.assert_allclose(residual, 0.0, atol=1e-12)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(diagnostics.conservation_defect, 0.0, atol=1e-12)
     assert compiled.stable_step(state) > 0.0
 
 
-def test_triangle_hllc_euler_constant_state_and_ssprk_step():
+def test_triangle_hllc_euler_constant_state_and_ssprk_step() -> None:
     vertices, triangles = _triangulated_grid(2, 2)
     system = phx.equations.EulerSystem(2)
     discretization = phx.discretization.TriangleFiniteVolumePlan(
@@ -112,6 +115,7 @@ def test_triangle_hllc_euler_constant_state_and_ssprk_step():
         (discretization.cell_count, 4),
     )
     state = system.primitive_to_conserved(primitive)
+    # ty: ignore[invalid-argument-type]
     result = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(compiled.dynamics).advance(
         0.0, state, 0.001
     )
@@ -120,7 +124,7 @@ def test_triangle_hllc_euler_constant_state_and_ssprk_step():
     assert jnp.all(system.admissible(result.state))
 
 
-def test_triangle_wlsq_is_affine_exact_and_muscl_preserves_face_values():
+def test_triangle_wlsq_is_affine_exact_and_muscl_preserves_face_values() -> None:
     vertices, triangles = _triangulated_grid(4, 4)
     discretization = phx.discretization.TriangleFiniteVolumePlan(
         vertices, triangles
@@ -150,7 +154,7 @@ def test_triangle_wlsq_is_affine_exact_and_muscl_preserves_face_values():
     np.testing.assert_allclose(right[interior], exact[interior], rtol=1e-11, atol=1e-11)
 
 
-def test_triangle_mesh_archive_roundtrip(tmp_path):
+def test_triangle_mesh_archive_roundtrip(tmp_path: Any) -> None:
     vertices, triangles = _triangulated_grid(2, 2)
     plan = phx.discretization.TriangleFiniteVolumePlan(vertices, triangles)
     path = tmp_path / "triangle-fv.mesh"
@@ -162,7 +166,7 @@ def test_triangle_mesh_archive_roundtrip(tmp_path):
     np.testing.assert_array_equal(restored.triangles, plan.triangles)
 
 
-def test_triangle_geometry_is_differentiable_at_fixed_topology():
+def test_triangle_geometry_is_differentiable_at_fixed_topology() -> None:
     vertices, triangles = _triangulated_grid(2, 2)
     plan = phx.discretization.TriangleFiniteVolumePlan(vertices, triangles)
     prepared = plan.prepare()
@@ -170,7 +174,7 @@ def test_triangle_geometry_is_differentiable_at_fixed_topology():
     owner = prepared.owner_cells
     owner_sign = prepared.owner_signs
 
-    def total_area(scale):
+    def total_area(scale: Any) -> Any:
         scaled = jnp.asarray(vertices).at[:, 0].multiply(scale)
         area, *_ = phx.discretization.evaluate_triangle_fv_geometry(
             scaled, triangles, connectivity, owner, owner_sign
@@ -182,7 +186,7 @@ def test_triangle_geometry_is_differentiable_at_fixed_topology():
     np.testing.assert_allclose(tangent, 1.0, rtol=1e-12)
 
 
-def test_triangle_plan_rejects_duplicate_and_orientation_inconsistent_cells():
+def test_triangle_plan_rejects_duplicate_and_orientation_inconsistent_cells() -> None:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.5, 0.5]])
     with pytest.raises(ValueError, match="duplicate"):
         phx.discretization.TriangleFiniteVolumePlan(
@@ -194,7 +198,7 @@ def test_triangle_plan_rejects_duplicate_and_orientation_inconsistent_cells():
         ).prepare()
 
 
-def test_triangle_compiler_threads_precision_and_rejects_unsupported_fields():
+def test_triangle_compiler_threads_precision_and_rejects_unsupported_fields() -> None:
     vertices, triangles = _triangulated_grid(2, 2)
     discretization = phx.discretization.TriangleFiniteVolumePlan(
         vertices, triangles
@@ -217,6 +221,7 @@ def test_triangle_compiler_threads_precision_and_rejects_unsupported_fields():
     residual, diagnostics = compiled.residual_with_diagnostics(jnp.asarray(0.0), state)
 
     assert residual.dtype == jnp.float32
+    # ty: ignore[unresolved-attribute]
     assert dict(diagnostics.precision_evidence.observed)["compute"] == "float32"
     with pytest.raises(ValueError, match="capacity"):
         phx.equations.compile_conservation_problem(
@@ -234,7 +239,7 @@ def test_triangle_compiler_threads_precision_and_rejects_unsupported_fields():
         )
 
 
-def test_triangle_boundaries_reject_axis_only_and_direct_flux_policies():
+def test_triangle_boundaries_reject_axis_only_and_direct_flux_policies() -> None:
     vertices, triangles = _triangulated_grid(1, 1)
     discretization = phx.discretization.TriangleFiniteVolumePlan(
         vertices, triangles
@@ -246,7 +251,9 @@ def test_triangle_boundaries_reject_axis_only_and_direct_flux_policies():
             {patch: phx.discretization.ReflectiveBoundary()},
         )
 
-    def normal_flux(time, interior, coordinates, normal, args):
+    def normal_flux(
+        time: Any, interior: Any, coordinates: Any, normal: Any, args: Any
+    ) -> Any:
         del time, coordinates, normal, args
         return jnp.zeros_like(interior)
 
@@ -261,13 +268,14 @@ def test_triangle_boundaries_reject_axis_only_and_direct_flux_policies():
         )
 
 
-def test_triangle_slip_wall_reflects_oblique_normal_velocity():
+def test_triangle_slip_wall_reflects_oblique_normal_velocity() -> None:
     system = phx.equations.EulerSystem(2)
     primitive = jnp.asarray([[1.0, 1.0, 0.0, 1.0]])
     state = system.primitive_to_conserved(primitive)
     normal = jnp.asarray([[2.0**-0.5, 2.0**-0.5]])
     reflected = phx.discretization.SlipWallBoundary().exterior_state(
         system,
+        # ty: ignore[invalid-argument-type]
         0.0,
         state,
         jnp.zeros((1, 2)),
@@ -284,7 +292,7 @@ def test_triangle_slip_wall_reflects_oblique_normal_velocity():
     )
 
 
-def test_euler_normal_hllc_is_rotation_covariant():
+def test_euler_normal_hllc_is_rotation_covariant() -> None:
     system = phx.equations.EulerSystem(2)
     solver = phx.discretization.HLLCFluxPlan()
     left_primitive = jnp.asarray([[1.0, 0.4, -0.1, 1.0]])
@@ -301,7 +309,7 @@ def test_euler_normal_hllc_is_rotation_covariant():
     normal = jnp.asarray([[0.6, 0.8]])
     rotated_normal = normal @ rotation.T
 
-    def rotate_state(state):
+    def rotate_state(state: Any) -> Any:
         primitive = system.conserved_to_primitive(state)
         velocity = primitive[..., 1:-1] @ rotation.T
         return system.primitive_to_conserved(
@@ -332,7 +340,7 @@ def test_euler_normal_hllc_is_rotation_covariant():
     )
 
 
-def test_triangle_compiler_rejects_hllc_for_scalar_system():
+def test_triangle_compiler_rejects_hllc_for_scalar_system() -> None:
     vertices, triangles = _triangulated_grid(2, 2)
     discretization = phx.discretization.TriangleFiniteVolumePlan(
         vertices, triangles
@@ -351,7 +359,7 @@ def test_triangle_compiler_rejects_hllc_for_scalar_system():
         phx.equations.compile_conservation_problem(problem, discretization, method)
 
 
-def test_triangle_compiler_rejects_muscl_from_different_geometry():
+def test_triangle_compiler_rejects_muscl_from_different_geometry() -> None:
     vertices, triangles = _triangulated_grid(3, 3)
     first = phx.discretization.TriangleFiniteVolumePlan(vertices, triangles).prepare()
     shifted = np.asarray(vertices).copy()
@@ -374,7 +382,7 @@ def test_triangle_compiler_rejects_muscl_from_different_geometry():
         phx.equations.compile_conservation_problem(problem, second, method)
 
 
-def test_triangle_wlsq_is_affine_exact_on_skew_distorted_mesh():
+def test_triangle_wlsq_is_affine_exact_on_skew_distorted_mesh() -> None:
     vertices, triangles = _triangulated_grid(5, 4)
     distorted = np.asarray(vertices).copy()
     interior = (
@@ -406,7 +414,7 @@ def test_triangle_wlsq_is_affine_exact_on_skew_distorted_mesh():
     assert wlsq.report.maximum_condition_number < 1e6
 
 
-def test_triangle_muscl_reports_distorted_mesh_residual_order_and_conservation():
+def test_triangle_muscl_reports_distorted_mesh_residual_order_and_conservation() -> None:
     errors = []
     conservation_defects = []
     velocity = jnp.asarray([0.8, -0.35])
@@ -453,7 +461,7 @@ def test_triangle_muscl_reports_distorted_mesh_residual_order_and_conservation()
         )
         triangle_points = jnp.asarray(distorted)[jnp.asarray(triangles)]
 
-        def average_square(coordinate):
+        def average_square(coordinate: Any) -> Any:
             pair_sum = (
                 coordinate[:, 0] * coordinate[:, 1]
                 + coordinate[:, 0] * coordinate[:, 2]
@@ -481,6 +489,7 @@ def test_triangle_muscl_reports_distorted_mesh_residual_order_and_conservation()
         residual, diagnostics = compiled.residual_with_diagnostics(
             jnp.asarray(0.0), state
         )
+        # ty: ignore[not-iterable]
         flux, _ = compiled.face_fluxes(jnp.asarray(0.0), state)
         balance_terms = np.asarray(discretization.cell_volumes[:, None] * residual)
         integrated = np.asarray(flux * discretization.face_measures[:, None])
@@ -492,6 +501,7 @@ def test_triangle_muscl_reports_distorted_mesh_residual_order_and_conservation()
         expected_defect = math.fsum(
             balance_terms[:, 0].tolist() + boundary_terms[:, 0].tolist()
         )
+        # ty: ignore[unresolved-attribute]
         assert float(diagnostics.conservation_defect[0]) == expected_defect
         boundary_edges = np.asarray(discretization.connectivity.boundary_edges)
         cell_edges = np.asarray(discretization.connectivity.cell_edges)
@@ -504,6 +514,7 @@ def test_triangle_muscl_reports_distorted_mesh_residual_order_and_conservation()
             )
         )
         conservation_defects.append(
+            # ty: ignore[unresolved-attribute]
             float(jnp.max(jnp.abs(diagnostics.conservation_defect)))
         )
 
@@ -512,7 +523,7 @@ def test_triangle_muscl_reports_distorted_mesh_residual_order_and_conservation()
     assert max(conservation_defects) < 2e-11
 
 
-def test_triangle_k_exact_reconstructs_true_quadratic_cell_averages():
+def test_triangle_k_exact_reconstructs_true_quadratic_cell_averages() -> None:
     vertices, triangles = _triangulated_grid(5, 5)
     distorted = np.asarray(vertices).copy()
     interior = (
@@ -559,7 +570,7 @@ def test_triangle_k_exact_reconstructs_true_quadratic_cell_averages():
     )
 
 
-def test_triangle_quadratic_conditioning_is_scale_invariant():
+def test_triangle_quadratic_conditioning_is_scale_invariant() -> None:
     vertices, triangles = _triangulated_grid(4, 4)
     conditions = []
     for scale in (1e-6, 1.0, 1e6):
@@ -577,7 +588,7 @@ def test_triangle_quadratic_conditioning_is_scale_invariant():
     )
 
 
-def test_triangle_k_exact_cubic_residual_converges_second_order():
+def test_triangle_k_exact_cubic_residual_converges_second_order() -> None:
     errors = []
     velocity = jnp.asarray([0.8, -0.35])
     for width in (8, 16, 32):
@@ -625,7 +636,7 @@ def test_triangle_k_exact_cubic_residual_converges_second_order():
         )
         points = jnp.asarray(distorted)[jnp.asarray(triangles)]
 
-        def average_cube(coordinate):
+        def average_cube(coordinate: Any) -> Any:
             ordered = sum(
                 coordinate[:, i] ** 2 * coordinate[:, j]
                 for i in range(3)
@@ -671,7 +682,7 @@ def test_triangle_k_exact_cubic_residual_converges_second_order():
     assert orders[-1] > 1.75, (errors, orders)
 
 
-def test_triangle_k_exact_uses_shared_positivity_retry_runtime():
+def test_triangle_k_exact_uses_shared_positivity_retry_runtime() -> None:
     vertices, triangles = _triangulated_grid(4, 4)
     system = phx.equations.EulerSystem(2)
     discretization = phx.discretization.TriangleFiniteVolumePlan(
@@ -696,6 +707,7 @@ def test_triangle_k_exact_uses_shared_positivity_retry_runtime():
         problem, discretization, method
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
     )
@@ -749,7 +761,7 @@ def test_triangle_k_exact_uses_shared_positivity_retry_runtime():
     )
 
 
-def test_triangle_quadratic_moments_are_stable_under_large_translation():
+def test_triangle_quadratic_moments_are_stable_under_large_translation() -> None:
     vertices, triangles = _triangulated_grid(4, 4)
     reference = phx.discretization.evaluate_triangle_second_moments(vertices, triangles)
     translated = phx.discretization.evaluate_triangle_second_moments(
@@ -759,7 +771,7 @@ def test_triangle_quadratic_moments_are_stable_under_large_translation():
     np.testing.assert_allclose(translated, reference, rtol=2e-6, atol=2e-9)
 
 
-def _channel_triangle_plan(width=6):
+def _channel_triangle_plan(width: Any = 6) -> Any:
     vertices, triangles = _triangulated_grid(width, width)
     edge_counts = {}
     for triangle in triangles:
@@ -797,7 +809,7 @@ def _channel_triangle_plan(width=6):
     )
 
 
-def test_triangle_viscous_flux_recovers_affine_couette_stress():
+def test_triangle_viscous_flux_recovers_affine_couette_stress() -> None:
     discretization = _channel_triangle_plan().prepare()
     system = phx.equations.CompressibleNavierStokesSystem(
         phx.equations.ConstantTransport(0.2, 0.1), 2
@@ -832,6 +844,7 @@ def test_triangle_viscous_flux_recovers_affine_couette_stress():
         axis=-1,
     )
     state = system.primitive_to_conserved(primitive)
+    # ty: ignore[invalid-argument-type]
     flux = viscous.face_fluxes(system, 0.0, state, discretization, boundaries)
     owner_centers = centers[discretization.owner_cells]
     neighbor_centers = centers[jnp.maximum(discretization.neighbor_cells, 0)]
@@ -873,7 +886,7 @@ def test_triangle_viscous_flux_recovers_affine_couette_stress():
     assert compiled.stable_step(state) > 0.0
 
 
-def test_triangle_thermal_wall_requires_viscous_closure_and_sets_heat_flux():
+def test_triangle_thermal_wall_requires_viscous_closure_and_sets_heat_flux() -> None:
     discretization = _channel_triangle_plan(4).prepare()
     system = phx.equations.CompressibleNavierStokesSystem(
         phx.equations.ConstantTransport(0.1, 0.3), 2
@@ -906,6 +919,7 @@ def test_triangle_thermal_wall_requires_viscous_closure_and_sets_heat_flux():
         (discretization.cell_count, 4),
     )
     state = system.primitive_to_conserved(primitive)
+    # ty: ignore[invalid-argument-type]
     flux = viscous.face_fluxes(system, 0.0, state, discretization, boundaries)
     boundary_faces = discretization.neighbor_cells < 0
     assert jnp.max(jnp.abs(flux[boundary_faces, -1])) > 0.0
@@ -926,7 +940,7 @@ def test_triangle_thermal_wall_requires_viscous_closure_and_sets_heat_flux():
     assert jnp.all(jnp.isfinite(compiled(jnp.asarray(0.0), state)))
 
 
-def test_triangle_reconstruction_precision_is_explicit_float32():
+def test_triangle_reconstruction_precision_is_explicit_float32() -> None:
     vertices, triangles = _triangulated_grid(4, 4)
     system = phx.equations.EulerSystem(2)
     discretization = phx.discretization.TriangleFiniteVolumePlan(
@@ -979,6 +993,7 @@ def test_triangle_reconstruction_precision_is_explicit_float32():
         precision=phx.discretization.FiniteVolumePrecisionPolicy("float32"),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
     )
@@ -1025,7 +1040,7 @@ def test_triangle_reconstruction_precision_is_explicit_float32():
     assert viscous_flux_jit.dtype == jnp.float32
 
 
-def test_finite_volume_geometry_protocols_do_not_force_tensor_connectivity():
+def test_finite_volume_geometry_protocols_do_not_force_tensor_connectivity() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),

@@ -1,4 +1,5 @@
 from importlib.util import find_spec
+from typing import Any
 
 import numpy as np
 import pytest
@@ -10,7 +11,7 @@ from phydrax.meshing.providers._mmg import MmgOptions, MmgProvider
 pytestmark = pytest.mark.meshing_mmg
 
 
-def _metric(provider, source, matrices):
+def _metric(provider: Any, source: Any, matrices: Any) -> Any:
     return phx.meshing.MeshMetricField(
         provider.vertex_scope(source),
         matrices,
@@ -21,7 +22,9 @@ def _metric(provider, source, matrices):
 
 
 @pytest.mark.parametrize("kind", ("planar", "surface", "volume"))
-def test_native_mmg_routes_preserve_domain_measure_without_inventing_ids(kind):
+def test_native_mmg_routes_preserve_domain_measure_without_inventing_ids(
+    kind: Any,
+) -> None:
     if find_spec("mmg3d") is None:
         pytest.skip("optional pymmg binary wheel is not installed")
     provider = MmgProvider(MmgOptions(hausdorff_distance=0.005))
@@ -86,7 +89,9 @@ def test_native_mmg_routes_preserve_domain_measure_without_inventing_ids(kind):
     assert result.adapter_reports[0].losses
 
 
-def test_mmg_metric_conversion_binds_sorted_global_ids_and_rotated_anisotropy(tmp_path):
+def test_mmg_metric_conversion_binds_sorted_global_ids_and_rotated_anisotropy(
+    tmp_path: Any,
+) -> None:
     if find_spec("mmg2d") is None:
         pytest.skip("optional pymmg binary wheel is not installed")
     provider = MmgProvider()
@@ -102,6 +107,7 @@ def test_mmg_metric_conversion_binds_sorted_global_ids_and_rotated_anisotropy(tm
         source, metric, phx.SpatialCoordinateContract(phx.units.METER)
     )
     points = np.asarray(result.mesh.coordinates)
+    # ty: ignore[unresolved-attribute]
     edges = np.asarray(result.mesh.connectivity.edges)
     displacement = points[edges[:, 1]] - points[edges[:, 0]]
     normalized_lengths = np.sqrt(
@@ -125,7 +131,7 @@ def test_mmg_metric_conversion_binds_sorted_global_ids_and_rotated_anisotropy(tm
     np.testing.assert_array_equal(rows[:, 2], rows[:, 0])
 
 
-def test_mmg_refuses_a_metric_from_another_numeric_mesh_revision():
+def test_mmg_refuses_a_metric_from_another_numeric_mesh_revision() -> None:
     provider = MmgProvider()
     source = phx.discretization.CellMesh.from_triangles(
         np.array(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),

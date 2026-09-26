@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,11 +12,12 @@ import pytest
 import phydrax as phx
 
 
-def test_domain_signed_and_horizontal_operators_preserve_labeled_semantics():
+def test_domain_signed_and_horizontal_operators_preserve_labeled_semantics() -> None:
+    # ty: ignore[invalid-argument-type]
     spacetime = phx.domain.HyperRectangle([-2.0] * 4, [2.0] * 4, label="x")
 
     @spacetime.Function("x")
-    def field(x):
+    def field(x: Any) -> Any:
         return -(x[0] ** 2) + jnp.sum(x[1:] ** 2)
 
     chart = phx.metrix.CoordinateChart("spacetime", ("t", "x", "y", "z"))
@@ -34,10 +38,11 @@ def test_domain_signed_and_horizontal_operators_preserve_labeled_semantics():
         phx.metrix.CoordinateChart("heisenberg", ("x", "y", "z")),
         2,
     )
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle([-1.0] * 3, [1.0] * 3, label="q")
 
     @domain.Function("q")
-    def radial(q):
+    def radial(q: Any) -> Any:
         return q[0] ** 2 + q[1] ** 2
 
     horizontal_point = jnp.array([0.2, 0.3, -0.1])
@@ -51,12 +56,13 @@ def test_domain_signed_and_horizontal_operators_preserve_labeled_semantics():
     )
 
 
-def test_domain_differential_forms_share_continuous_exterior_calculus():
+def test_domain_differential_forms_share_continuous_exterior_calculus() -> None:
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle([-1.0, -1.0], [1.0, 1.0], label="x")
     chart = phx.metrix.CoordinateChart("plane", ("x", "y"))
 
     @domain.Function("x")
-    def scalar(x):
+    def scalar(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     form = phx.operators.domain_differential_form(
@@ -91,17 +97,18 @@ def test_domain_differential_forms_share_continuous_exterior_calculus():
         phx.operators.domain_codifferential(form, mismatched_metric)
 
 
-def test_domain_signed_codifferential_matches_pointwise_form_calculus():
+def test_domain_signed_codifferential_matches_pointwise_form_calculus() -> None:
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle([-1.0] * 4, [1.0] * 4, label="x")
     chart = phx.metrix.CoordinateChart("minkowski_forms", ("t", "x", "y", "z"))
     metric = phx.metrix.minkowski_metric(chart)
 
     @domain.Function("x")
-    def scalar(x):
+    def scalar(x: Any) -> Any:
         return -(x[0] ** 2) + jnp.sum(x[1:] ** 2)
 
     @domain.Function("x")
-    def covector_coefficients(x):
+    def covector_coefficients(x: Any) -> Any:
         return x
 
     scalar_form = phx.operators.domain_differential_form(
@@ -130,21 +137,23 @@ def test_domain_signed_codifferential_matches_pointwise_form_calculus():
     )
 
 
-def test_declared_poisson_structure_drives_domain_bracket_and_flow():
+def test_declared_poisson_structure_drives_domain_bracket_and_flow() -> None:
+    # ty: ignore[invalid-argument-type]
     q_space = phx.domain.HyperRectangle([-2.0], [2.0], label="q")
+    # ty: ignore[invalid-argument-type]
     p_space = phx.domain.HyperRectangle([-2.0], [2.0], label="p")
     phase = phx.domain.ProductDomain(q_space, p_space)
 
     @phase.Function("q", "p")
-    def hamiltonian(q, p):
+    def hamiltonian(q: Any, p: Any) -> Any:
         return 0.5 * (q[0] ** 2 + p[0] ** 2)
 
     @phase.Function("q")
-    def configuration(q):
+    def configuration(q: Any) -> Any:
         return q[0]
 
     @phase.Function("p")
-    def momentum(p):
+    def momentum(p: Any) -> Any:
         return p[0]
 
     chart = phx.metrix.CoordinateChart("phase", ("q", "p"))

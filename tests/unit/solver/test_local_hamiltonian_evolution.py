@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -14,13 +17,15 @@ s = phx.solver
 q = phx.operators.quantum
 
 
-def _paulis():
+def _paulis() -> Any:
     x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
     return x, z
 
 
-def test_single_term_local_evolution_matches_direct_exponential_and_saves_states():
+def test_single_term_local_evolution_matches_direct_exponential_and_saves_states() -> (
+    None
+):
     _, z = _paulis()
     layout = q.HilbertRegisterLayout(("q",), (2,))
     hamiltonian = s.LocalHamiltonian(
@@ -47,7 +52,7 @@ def test_single_term_local_evolution_matches_direct_exponential_and_saves_states
     assert jnp.allclose(result.saved_states[1], expected)
 
 
-def test_second_order_product_formula_has_expected_global_convergence():
+def test_second_order_product_formula_has_expected_global_convergence() -> None:
     x, z = _paulis()
     layout = q.HilbertRegisterLayout(("q",), (2,))
     hamiltonian = s.LocalHamiltonian(
@@ -60,7 +65,7 @@ def test_second_order_product_formula_has_expected_global_convergence():
     initial = jnp.asarray([1.0, 0.0], dtype=jnp.complex128)
     expected = jsp.linalg.expm(-0.7j * (x + z)) @ initial
 
-    def error(interval_count):
+    def error(interval_count: Any) -> Any:
         grid = jnp.linspace(0.0, 0.7, interval_count + 1)
         schedule = s.FixedGridLocalHamiltonian(
             hamiltonian,
@@ -80,7 +85,7 @@ def test_second_order_product_formula_has_expected_global_convergence():
     assert coarse / fine < 4.3
 
 
-def test_local_hamiltonian_materialization_and_heterogeneous_batch_evolution():
+def test_local_hamiltonian_materialization_and_heterogeneous_batch_evolution() -> None:
     x, _ = _paulis()
     number = jnp.diag(jnp.arange(3.0)).astype(jnp.complex128)
     layout = q.HilbertRegisterLayout(("q", "r"), (2, 3))
@@ -101,11 +106,11 @@ def test_local_hamiltonian_materialization_and_heterogeneous_batch_evolution():
     assert jnp.allclose(result.final_state, jsp.linalg.expm(-0.1j * dense).T)
 
 
-def test_local_hamiltonian_refresh_preserves_structure_and_gradients():
+def test_local_hamiltonian_refresh_preserves_structure_and_gradients() -> None:
     x, _ = _paulis()
     layout = q.HilbertRegisterLayout(("q",), (2,))
 
-    def schedule(amplitude):
+    def schedule(amplitude: Any) -> Any:
         hamiltonian = s.LocalHamiltonian(
             layout,
             (s.LocalHamiltonianTerm(amplitude * x, ("q",), term_id="drive"),),
@@ -142,13 +147,13 @@ def test_local_hamiltonian_refresh_preserves_structure_and_gradients():
     )
 
 
-def test_reversible_product_formula_matches_algorithmic_reverse_mode():
+def test_reversible_product_formula_matches_algorithmic_reverse_mode() -> None:
     x, z = _paulis()
     layout = q.HilbertRegisterLayout(("q",), (2,))
     grid = jnp.linspace(0.0, 0.8, 9)
     initial = jnp.asarray([1.0, 0.0], dtype=jnp.complex128)
 
-    def schedule(generator_scale, coefficient):
+    def schedule(generator_scale: Any, coefficient: Any) -> Any:
         hamiltonian = s.LocalHamiltonian(
             layout,
             (
@@ -181,7 +186,7 @@ def test_reversible_product_formula_matches_algorithmic_reverse_mode():
         ),
     )
 
-    def loss(prepared, generator_scale, coefficient):
+    def loss(prepared: Any, generator_scale: Any, coefficient: Any) -> Any:
         result = s.solve_local_hamiltonian_evolution(
             s.refresh_local_hamiltonian_evolution(
                 prepared,
@@ -212,7 +217,7 @@ def test_reversible_product_formula_matches_algorithmic_reverse_mode():
     assert jnp.allclose(reversible_gradient[1], automatic_gradient[1], atol=1e-9)
 
 
-def test_local_hamiltonian_lowers_exactly_to_heterogeneous_noncontiguous_mpo():
+def test_local_hamiltonian_lowers_exactly_to_heterogeneous_noncontiguous_mpo() -> None:
     x, z = _paulis()
     number = jnp.diag(jnp.arange(3.0)).astype(jnp.complex128)
     layout = q.HilbertRegisterLayout(("a", "r", "b"), (2, 3, 2))
@@ -253,7 +258,7 @@ def test_local_hamiltonian_lowers_exactly_to_heterogeneous_noncontiguous_mpo():
         s.lower_local_hamiltonian_to_mpo(unfactored)
 
 
-def test_local_hamiltonian_rejects_invalid_structure_and_reports_bad_invariants():
+def test_local_hamiltonian_rejects_invalid_structure_and_reports_bad_invariants() -> None:
     x, _ = _paulis()
     layout = q.HilbertRegisterLayout(("q",), (2,))
     with pytest.raises(ValueError, match="unique"):

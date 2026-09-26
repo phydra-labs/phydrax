@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def test_direct_collocation_decision_uses_six_pose_coordinates():
+def test_direct_collocation_decision_uses_six_pose_coordinates() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
@@ -48,7 +50,7 @@ def test_direct_collocation_decision_uses_six_pose_coordinates():
     )
 
 
-def test_direct_collocation_pose_defect_uses_exact_six_dimensional_tangent():
+def test_direct_collocation_pose_defect_uses_exact_six_dimensional_tangent() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
@@ -101,7 +103,7 @@ def test_direct_collocation_pose_defect_uses_exact_six_dimensional_tangent():
     assert jnp.allclose(values.initial, 0.0)
 
 
-def _mesh(nodes=(0.0, 0.25, 1.0), *, identity="direct-mesh"):
+def _mesh(nodes: Any = (0.0, 0.25, 1.0), *, identity: Any = "direct-mesh") -> Any:
     return phx.discretization.TemporalMesh(
         jnp.asarray(nodes),
         role="collocation",
@@ -109,7 +111,7 @@ def _mesh(nodes=(0.0, 0.25, 1.0), *, identity="direct-mesh"):
     )
 
 
-def _integrator_problem(*, running_cost=None, trajectory_cost=None):
+def _integrator_problem(*, running_cost: Any = None, trajectory_cost: Any = None) -> Any:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: control,
         state_layout=phx.dynamics.StateLayout((1,)),
@@ -132,7 +134,9 @@ def _integrator_problem(*, running_cost=None, trajectory_cost=None):
     )
 
 
-def _plan(method, *, variable_duration=False, hessian="limited-memory"):
+def _plan(
+    method: Any, *, variable_duration: Any = False, hessian: Any = "limited-memory"
+) -> Any:
     return phx.control.DirectCollocationPlan(
         _mesh(),
         method=method,
@@ -146,7 +150,7 @@ def _plan(method, *, variable_duration=False, hessian="limited-memory"):
     )
 
 
-def test_backward_euler_transcription_uses_nonuniform_physical_widths():
+def test_backward_euler_transcription_uses_nonuniform_physical_widths() -> None:
     problem = _integrator_problem()
     plan = _plan(phx.solver.ThetaMethod(1.0, endpoint=True))
     states = jnp.asarray(((0.0,), (0.5,), (2.0,)))
@@ -165,6 +169,7 @@ def test_backward_euler_transcription_uses_nonuniform_physical_widths():
     assert jnp.allclose(values.dynamics[:, 0], jnp.asarray((1.0, -1.0)))
     assert compilation.constraint_layout.dynamics_slice == (0, 2)
     assert compilation.constraint_layout.initial_slice == (2, 3)
+    # ty: ignore[unresolved-attribute]
     assert bool(compilation.jacobian_verification.passed)
 
     control_start, control_stop = compilation.decision_layout.control_slice
@@ -174,7 +179,7 @@ def test_backward_euler_transcription_uses_nonuniform_physical_widths():
     assert set(range(control_start, control_stop)) <= jacobian_columns
 
 
-def test_midpoint_objective_gradient_matches_its_discretized_scalar():
+def test_midpoint_objective_gradient_matches_its_discretized_scalar() -> None:
     running = lambda time, state, control, args: state[0] ** 2
     problem = _integrator_problem(running_cost=running)
     plan = _plan(phx.solver.ThetaMethod(0.5, endpoint=False))
@@ -204,7 +209,7 @@ def test_midpoint_objective_gradient_matches_its_discretized_scalar():
     assert jnp.allclose(state_gradient, expected)
 
 
-def test_variable_duration_rescales_time_and_state_rate():
+def test_variable_duration_rescales_time_and_state_rate() -> None:
     problem = _integrator_problem()
     plan = _plan(
         phx.solver.ThetaMethod(0.5, endpoint=False),
@@ -224,10 +229,11 @@ def test_variable_duration_rescales_time_and_state_rate():
     assert jnp.allclose(values.times, jnp.asarray((0.0, 0.5, 2.0)))
     assert jnp.allclose(values.stage_times, jnp.asarray((0.25, 1.25)))
     assert jnp.allclose(values.state_rates[:, 0], jnp.asarray((1.0, 1.0)))
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(values.decision.duration, 2.0)
 
 
-def test_input_aware_dae_and_shared_parameters_compile_as_one_sparse_nlp():
+def test_input_aware_dae_and_shared_parameters_compile_as_one_sparse_nlp() -> None:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, control, context: jnp.asarray(
             (
@@ -269,7 +275,7 @@ def test_input_aware_dae_and_shared_parameters_compile_as_one_sparse_nlp():
     assert affected_rows.size == 4
 
 
-def test_sparse_jacobian_action_matches_direct_jvp():
+def test_sparse_jacobian_action_matches_direct_jvp() -> None:
     problem = _integrator_problem(
         trajectory_cost=lambda trajectory, args: 0.1 * jnp.sum(trajectory.states**2)
     )
@@ -295,4 +301,5 @@ def test_sparse_jacobian_action_matches_direct_jvp():
         (direction,),
     )[1]
     assert jnp.allclose(operator_value, direct_value)
+    # ty: ignore[unresolved-attribute]
     assert bool(compilation.hessian_verification.passed)

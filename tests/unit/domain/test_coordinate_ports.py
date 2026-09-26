@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -17,7 +20,7 @@ def _square(label: str) -> GeometryDomain:
     )
 
 
-def test_domain_ports_follow_label_order_with_label_scoped_components():
+def test_domain_ports_follow_label_order_with_label_scoped_components() -> None:
     x_port, t_port = (_square("x") @ TimeInterval(0.0, 1.0)).value_ports()
 
     assert x_port.semantic_id == "x"
@@ -39,7 +42,7 @@ def test_domain_ports_follow_label_order_with_label_scoped_components():
     assert t_port.axis_keys == ()
 
 
-def test_equal_coordinate_schemas_under_different_labels_have_distinct_ports():
+def test_equal_coordinate_schemas_under_different_labels_have_distinct_ports() -> None:
     (x_port,) = _square("x").value_ports()
     (y_port,) = _square("y").value_ports()
     (relabeled,) = _square("x").relabel("y").value_ports()
@@ -50,7 +53,7 @@ def test_equal_coordinate_schemas_under_different_labels_have_distinct_ports():
     assert relabeled.port_id == y_port.port_id
 
 
-def test_coordinate_ports_depend_on_declaration_not_support_values():
+def test_coordinate_ports_depend_on_declaration_not_support_values() -> None:
     (first,) = ScalarInterval(0.0, 1.0, label="s").value_ports()
     (second,) = ScalarInterval(-3.0, 5.0, label="s").value_ports()
 
@@ -58,14 +61,14 @@ def test_coordinate_ports_depend_on_declaration_not_support_values():
     assert first.port_id == second.port_id
 
 
-def test_structured_coordinates_have_no_dense_port():
+def test_structured_coordinates_have_no_dense_port() -> None:
     domain = DatasetDomain({"u": jnp.zeros((4, 2))}, label="data")
 
     with pytest.raises(ValueError, match="'data'"):
         domain.value_ports()
 
 
-def _fitted_on(*ports):
+def _fitted_on(*ports: Any) -> Any:
     width = sum(len(port.component_ids) for port in ports)
     features = jnp.linspace(0.0, 1.0, 8 * width).reshape(8, width)
     return phx.ml.fit(
@@ -76,11 +79,11 @@ def _fitted_on(*ports):
     )
 
 
-def _identity(*ports):
+def _identity(*ports: Any) -> Any:
     return phx.PortMapping(inputs=[(port.port_id, port.port_id) for port in ports])
 
 
-def test_model_with_ports_binds_only_through_an_explicit_mapping_in_deps_order():
+def test_model_with_ports_binds_only_through_an_explicit_mapping_in_deps_order() -> None:
     domain = _square("x") @ TimeInterval(0.0, 1.0)
     x_port, t_port = domain.value_ports()
     fitted = _fitted_on(x_port, t_port)
@@ -103,16 +106,21 @@ def test_model_with_ports_binds_only_through_an_explicit_mapping_in_deps_order()
 
     field = domain.Model("x", "t", port_mapping=_identity(x_port, t_port))(fitted.model)
     evidence = field.port_binding
+    # ty: ignore[unresolved-attribute]
     assert evidence.inputs == (
         (x_port.port_id, x_port.port_id),
         (t_port.port_id, t_port.port_id),
     )
+    # ty: ignore[unresolved-attribute]
     assert evidence.outputs == tuple(
         (port.port_id, port.port_id) for port in fitted.model_ports().outputs
     )
     # Domains declare no units, so dimensions are recorded as unverified.
+    # ty: ignore[unresolved-attribute]
     assert not evidence.dimensions_verified
+    # ty: ignore[unresolved-attribute]
     assert ("input", x_port.port_id, "dimensions") in evidence.unverified
+    # ty: ignore[unresolved-attribute]
     assert ("input", x_port.port_id, "axes") not in evidence.unverified
 
     batch = domain.component().sample(
@@ -127,7 +135,7 @@ def test_model_with_ports_binds_only_through_an_explicit_mapping_in_deps_order()
     assert (field + 1.0).port_binding is None
 
 
-def test_model_ports_must_match_the_mapped_domain_port():
+def test_model_ports_must_match_the_mapped_domain_port() -> None:
     domain = _square("x") @ _square("y")
     x_port, y_port = domain.value_ports()
     fitted = _fitted_on(x_port)
@@ -137,7 +145,7 @@ def test_model_ports_must_match_the_mapped_domain_port():
         domain.Model("y", port_mapping=crossed)(fitted.model)
 
 
-def test_models_without_ports_take_no_mapping():
+def test_models_without_ports_take_no_mapping() -> None:
     domain = _square("x")
     (x_port,) = domain.value_ports()
     network = phx.nn.models.MLP(

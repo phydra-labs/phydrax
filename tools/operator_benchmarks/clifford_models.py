@@ -37,7 +37,7 @@ class PeriodicCliffordLaplacian(eqx.Module, NonTrainableState):
         /,
         *,
         periods: Sequence[float] | None = None,
-    ):
+    ) -> None:
         shape = tuple(grid_shape)
         if not shape or any(value <= 1 for value in shape):
             raise ValueError(
@@ -82,6 +82,7 @@ class PeriodicCliffordLaplacian(eqx.Module, NonTrainableState):
             square = frequency.reshape(shape) ** 2
             multiplier = square if multiplier is None else multiplier + square
         transformed = jnp.fft.fftn(array, axes=axes)
+        # ty: ignore[unsupported-operator]
         return jnp.fft.ifftn(-multiplier * transformed, axes=axes).real.astype(
             array.dtype
         )
@@ -111,7 +112,7 @@ class DifferentialCliffordOperatorBlock(eqx.Module, ParameterOwner):
         latent_channels: int = 2,
         residual_scale: float = 0.05,
         key: Array = jr.key(0),
-    ):
+    ) -> None:
         if not isinstance(representation, CliffordGradeRepresentation):
             raise TypeError("representation must be CliffordGradeRepresentation.")
         if not isinstance(context_operator, PeriodicCliffordLaplacian):

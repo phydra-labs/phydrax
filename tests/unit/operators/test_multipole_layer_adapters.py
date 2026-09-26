@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,7 +15,7 @@ DENSITY = jnp.asarray([0.8, -0.4, 0.3, 1.1])
 WEIGHTS = jnp.asarray([0.7, 1.2, 0.8, 0.9])
 
 
-def _prepared():
+def _prepared() -> Any:
     return phx.operators.LaplaceMultipolePlan3D(
         SOURCES,
         [-1.0, -1.0, -1.0],
@@ -24,7 +26,7 @@ def _prepared():
     ).prepare()
 
 
-def test_weighted_single_and_double_layer_adapters_match_direct_kernels():
+def test_weighted_single_and_double_layer_adapters_match_direct_kernels() -> None:
     prepared = _prepared()
     strengths = DENSITY * WEIGHTS
     single = phx.operators.evaluate_laplace_layer_multipole_3d(
@@ -53,7 +55,7 @@ def test_weighted_single_and_double_layer_adapters_match_direct_kernels():
     np.testing.assert_allclose(double.values, expected_double, rtol=3.5e-2, atol=1e-3)
 
 
-def test_qbx_adapter_translates_far_locals_to_requested_centers():
+def test_qbx_adapter_translates_far_locals_to_requested_centers() -> None:
     prepared = _prepared()
     raw = prepared.far_local(SOURCES, DENSITY * WEIGHTS, TARGETS)
     shifted = phx.operators.prepare_laplace_qbx_far_local_3d(
@@ -75,7 +77,7 @@ def test_qbx_adapter_translates_far_locals_to_requested_centers():
     assert int(shifted.l2l_count) == int(raw.l2l_count) + TARGETS.shape[0]
 
 
-def test_layer_and_qbx_adapters_accept_plane_far_execution():
+def test_layer_and_qbx_adapters_accept_plane_far_execution() -> None:
     prepared = phx.operators.LaplaceMultipolePlan3D(
         SOURCES,
         [-1.0, -1.0, -1.0],

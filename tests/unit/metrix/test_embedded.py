@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,10 +8,10 @@ import pytest
 import phydrax as phx
 
 
-def _sphere(radius=1.0):
+def _sphere(radius: Any = 1.0) -> Any:
     chart = phx.metrix.CoordinateChart("sphere", ("theta", "phi"))
 
-    def embedding(q):
+    def embedding(q: Any) -> Any:
         theta, phi = q
         return radius * jnp.array(
             [
@@ -27,7 +29,7 @@ def _sphere(radius=1.0):
     )
 
 
-def test_plane_embedding_has_identity_metric_and_zero_extrinsic_curvature():
+def test_plane_embedding_has_identity_metric_and_zero_extrinsic_curvature() -> None:
     chart = phx.metrix.CoordinateChart("plane", ("u", "v"))
     embedded = phx.metrix.EmbeddedChart(
         chart,
@@ -50,7 +52,7 @@ def test_plane_embedding_has_identity_metric_and_zero_extrinsic_curvature():
     assert jnp.allclose(phx.metrix.scalar_curvature(metric, points), 0.0)
 
 
-def test_sphere_induced_and_extrinsic_geometry_agree():
+def test_sphere_induced_and_extrinsic_geometry_agree() -> None:
     radius = 2.0
     embedded = _sphere(radius)
     point = jnp.array([1.1, 0.4])
@@ -80,11 +82,11 @@ def test_sphere_induced_and_extrinsic_geometry_agree():
     assert jnp.allclose(jax.jit(embedded.tangent_projector)(point), tangent)
 
 
-def test_cylinder_intrinsic_flatness_and_principal_curvatures():
+def test_cylinder_intrinsic_flatness_and_principal_curvatures() -> None:
     radius = 1.7
     chart = phx.metrix.CoordinateChart("cylinder", ("theta", "z"))
 
-    def embedding(q):
+    def embedding(q: Any) -> Any:
         return jnp.array([radius * jnp.cos(q[0]), radius * jnp.sin(q[0]), q[1]])
 
     embedded = phx.metrix.EmbeddedChart(chart, embedding, 3)
@@ -105,7 +107,7 @@ def test_cylinder_intrinsic_flatness_and_principal_curvatures():
     assert jnp.allclose(jnp.linalg.eigvals(shape), jnp.array([-1.0 / radius, 0.0]))
 
 
-def test_normal_projector_helper_is_batched_and_rejects_zero_normals():
+def test_normal_projector_helper_is_batched_and_rejects_zero_normals() -> None:
     normals = jnp.array([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
     projector = phx.metrix.tangent_projector_from_normal(normals)
 

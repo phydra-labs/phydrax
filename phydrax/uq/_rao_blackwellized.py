@@ -27,7 +27,7 @@ from ..stochastic._state_space import (
     StateSpaceStepContext,
 )
 from ..stochastic._state_space_input import AbstractStateSpaceInput
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._conditional_moments import _condition_affine_gaussian_diagonal
 from ._covariance import (
     _factor_and_solve_covariance_system,
@@ -348,10 +348,8 @@ def _configuration(
     count = int(num_particles)
     if count < 1:
         raise ValueError("num_particles must be positive.")
-    if method not in ("systematic", "stratified", "multinomial", "residual"):
-        raise ValueError("Unknown resampling_method.")
-    if policy not in ("ess", "always", "never"):
-        raise ValueError("Unknown resampling_policy.")
+    method = parse(method, ResamplingMethod, "method")
+    policy = parse(policy, ResamplingPolicy, "policy")
     level = float(threshold)
     if not np.isfinite(level) or not 0.0 < level <= 1.0:
         raise ValueError("resampling_threshold must lie in (0, 1].")

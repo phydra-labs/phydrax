@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -31,7 +34,9 @@ from phydrax.statistical_dynamics._plan import (
 )
 
 
-def _coupled_plan(*, closure="ce2", interaction_model="ql", time_step=0.01):
+def _coupled_plan(
+    *, closure: Any = "ce2", interaction_model: Any = "ql", time_step: Any = 0.01
+) -> Any:
     layout = SecondCumulantLayout(2, [0])
     quadratic = jnp.zeros((2, 2, 2))
     quadratic = quadratic.at[0, 1, 1].set(1.0)
@@ -54,7 +59,7 @@ def _coupled_plan(*, closure="ce2", interaction_model="ql", time_step=0.01):
     return layout, plan.prepare()
 
 
-def test_analytical_ou_lyapunov_covariance_uses_native_matrix_equation():
+def test_analytical_ou_lyapunov_covariance_uses_native_matrix_equation() -> None:
     forcing = ForcingCovariance(jnp.diag(jnp.asarray([2.0, 8.0])))
     result = solve_stationary_covariance(
         jnp.diag(jnp.asarray([-1.0, -2.0])),
@@ -66,7 +71,7 @@ def test_analytical_ou_lyapunov_covariance_uses_native_matrix_equation():
     np.testing.assert_allclose(result.residual, 0.0, atol=1e-12)
 
 
-def test_ce2_and_gce2_equal_the_corresponding_symmetric_ensemble_moments():
+def test_ce2_and_gce2_equal_the_corresponding_symmetric_ensemble_moments() -> None:
     mean = jnp.asarray([0.3])
     covariance = jnp.asarray([[0.7]])
     members = jnp.asarray(
@@ -95,7 +100,7 @@ def test_ce2_and_gce2_equal_the_corresponding_symmetric_ensemble_moments():
         )
 
 
-def test_generic_second_cumulant_rejects_eddy_eddy_to_eddy_dynamics():
+def test_generic_second_cumulant_rejects_eddy_eddy_to_eddy_dynamics() -> None:
     layout = SecondCumulantLayout(2, [0])
     quadratic = jnp.zeros((2, 2, 2)).at[1, 1, 1].set(1.0)
     dynamics = QuadraticDynamics(jnp.zeros(2), jnp.zeros((2, 2)), quadratic)
@@ -110,7 +115,7 @@ def test_generic_second_cumulant_rejects_eddy_eddy_to_eddy_dynamics():
         )
 
 
-def test_psd_hermitian_and_rank_gates_are_fail_closed_without_repair():
+def test_psd_hermitian_and_rank_gates_are_fail_closed_without_repair() -> None:
     layout, _ = _coupled_plan()
     wrong_layout = DenseCumulantState(
         jnp.zeros(1), jnp.eye(1), layout_id="another-layout"
@@ -139,7 +144,7 @@ def test_psd_hermitian_and_rank_gates_are_fail_closed_without_repair():
         factorize_cumulant(layout, full, RankAdaptationPolicy(0, 2))
 
 
-def test_cumulant_gates_reject_nonfinite_tolerances():
+def test_cumulant_gates_reject_nonfinite_tolerances() -> None:
     layout, _ = _coupled_plan()
     state = DenseCumulantState(
         jnp.zeros(1),
@@ -162,7 +167,7 @@ def test_cumulant_gates_reject_nonfinite_tolerances():
             )
 
 
-def test_dense_and_factor_paths_match_before_explicit_rank_adaptation():
+def test_dense_and_factor_paths_match_before_explicit_rank_adaptation() -> None:
     layout, prepared = _coupled_plan()
     dense = DenseCumulantState(
         jnp.asarray([0.2]), jnp.asarray([[0.5]]), layout_id=layout.layout_id
@@ -190,7 +195,7 @@ def test_dense_and_factor_paths_match_before_explicit_rank_adaptation():
     )
 
 
-def test_factor_execution_records_explicit_rank_growth():
+def test_factor_execution_records_explicit_rank_growth() -> None:
     layout = SecondCumulantLayout(3, [0])
     dynamics = QuadraticDynamics(
         jnp.zeros(3),
@@ -221,7 +226,7 @@ def test_factor_execution_records_explicit_rank_growth():
     assert int(result.rank_event.new_rank) == 2
 
 
-def test_continuation_restart_and_distributed_topology_relation():
+def test_continuation_restart_and_distributed_topology_relation() -> None:
     layout, prepared = _coupled_plan()
     initial = DenseCumulantState(
         jnp.zeros(1), jnp.asarray([[0.1]]), layout_id=layout.layout_id
@@ -260,7 +265,7 @@ def test_continuation_restart_and_distributed_topology_relation():
         DistributedCovarianceLayout(100, 1, maximum_local_bytes=100)
 
 
-def test_zero_step_execution_validates_initial_state_and_checkpoint_identity():
+def test_zero_step_execution_validates_initial_state_and_checkpoint_identity() -> None:
     layout, prepared = _coupled_plan()
     invalid = DenseCumulantState(
         jnp.zeros(1),

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -91,7 +92,7 @@ _STRAND_CRITERION_IDS = (
 )
 
 
-def _campaign():
+def _campaign() -> Any:
     cases = tuple(
         ScientificCase(
             case_id,
@@ -124,7 +125,15 @@ def _campaign():
     )
 
 
-def _trace(case_id, family, preparation, plate, intensity, *, saturated=None):
+def _trace(
+    case_id: Any,
+    family: Any,
+    preparation: Any,
+    plate: Any,
+    intensity: Any,
+    *,
+    saturated: Any = None,
+) -> Any:
     values = np.asarray(intensity, dtype="float64")
     mask = (
         np.zeros(values.shape, dtype="bool")
@@ -150,11 +159,12 @@ def _trace(case_id, family, preparation, plate, intensity, *, saturated=None):
     )
 
 
-def _observation(campaign, *, covariance=None):
+def _observation(campaign: Any, *, covariance: Any = None) -> Any:
     calibration = ReporterCalibration(
         "reporter-1",
         1e8,
         10.0,
+        # ty: ignore[invalid-argument-type]
         (0.5,),
         covariance,
         ("calibration-case",),
@@ -170,7 +180,7 @@ def _observation(campaign, *, covariance=None):
     )
 
 
-def _fit_traces():
+def _fit_traces() -> Any:
     return (
         _trace(
             "calibration-case",
@@ -189,7 +199,9 @@ def _fit_traces():
     )
 
 
-def _fit_artifact(prepared, selection, campaign, *, with_uncertainty=True):
+def _fit_artifact(
+    prepared: Any, selection: Any, campaign: Any, *, with_uncertainty: Any = True
+) -> Any:
     problem = prepared.posterior_problem()
     if with_uncertainty:
         result = fit_laplace(
@@ -210,12 +222,12 @@ def _fit_artifact(prepared, selection, campaign, *, with_uncertainty=True):
 
 
 def _effective(
-    campaign,
-    observation,
+    campaign: Any,
+    observation: Any,
     *,
-    with_uncertainty=True,
-    trace_requested_use=_SOURCE_USE,
-):
+    with_uncertainty: Any = True,
+    trace_requested_use: Any = _SOURCE_USE,
+) -> Any:
     calibration, selection = _fit_traces()
     plan = SecondaryKineticParameterPlan(
         ("rate_constant_per_molar_second",),
@@ -253,7 +265,7 @@ def _effective(
     )
 
 
-def _prepared_ctmc():
+def _prepared_ctmc() -> Any:
     content = json.dumps(
         {
             "profile": "pair_loop",
@@ -313,7 +325,9 @@ def _prepared_ctmc():
     )
 
 
-def _mechanistic(campaign, observation, *, state_capacity, with_uncertainty=True):
+def _mechanistic(
+    campaign: Any, observation: Any, *, state_capacity: Any, with_uncertainty: Any = True
+) -> Any:
     calibration, selection = _fit_traces()
     prepared = _prepared_ctmc()
     target = prepared.joined_target(("invader", "substrate"))
@@ -368,13 +382,13 @@ def _mechanistic(campaign, observation, *, state_capacity, with_uncertainty=True
     )
 
 
-def _cohort(campaign, locked, cohort_id):
+def _cohort(campaign: Any, locked: Any, cohort_id: Any) -> Any:
     return StrandDisplacementCohort(
         (*_fit_traces(), locked), campaign, (_SOURCE_ID,), cohort_id
     )
 
 
-def _profile(campaign, *, mechanistic):
+def _profile(campaign: Any, *, mechanistic: Any) -> Any:
     criteria = [_RAW_TRACE_CRITERION]
     stages = [
         "source-admission",
@@ -400,7 +414,7 @@ def _profile(campaign, *, mechanistic):
     )
 
 
-def _stage(campaign, criterion, *, model=None):
+def _stage(campaign: Any, criterion: Any, *, model: Any = None) -> Any:
     subject_ids = (
         (campaign.campaign_id,)
         if model is None
@@ -430,7 +444,7 @@ def _stage(campaign, criterion, *, model=None):
     )
 
 
-def test_native_fit_rejects_trace_admission_without_training_rights():
+def test_native_fit_rejects_trace_admission_without_training_rights() -> None:
     campaign = _campaign()
     observation = _observation(campaign)
     calibration, selection = _fit_traces()
@@ -468,13 +482,16 @@ def test_native_fit_rejects_trace_admission_without_training_rights():
         )
 
 
-def test_reporter_calibration_isolated_and_full_trace_prediction_is_condition_bounded():
+def test_reporter_calibration_isolated_and_full_trace_prediction_is_condition_bounded() -> (
+    None
+):
     campaign = _campaign()
     with pytest.raises(ValueError, match="calibration-role"):
         ReporterCalibration(
             "reporter-1",
             1e8,
             10.0,
+            # ty: ignore[invalid-argument-type]
             (),
             None,
             ("locked-case",),
@@ -492,6 +509,7 @@ def test_reporter_calibration_isolated_and_full_trace_prediction_is_condition_bo
     assert prediction.predictions[0].mean_intensity.shape == trace.time_seconds.shape
     assert trace_log_probability(trace, prediction.predictions[0]).shape == ()
     with pytest.raises(TypeError, match="StrandDisplacementModelFit"):
+        # ty: ignore[invalid-argument-type]
         EffectiveDisplacementRateModel(1e6)
 
     outside = FluorescenceTimeTrace(
@@ -515,7 +533,9 @@ def test_reporter_calibration_isolated_and_full_trace_prediction_is_condition_bo
         predict_locked_fluorescence(effective, observation, (outside,))
 
 
-def test_trace_likelihood_uses_calibration_induced_time_correlation_and_censoring_rules():
+def test_trace_likelihood_uses_calibration_induced_time_correlation_and_censoring_rules() -> (
+    None
+):
     campaign = _campaign()
     trace = _trace(
         "locked-case", "family-locked", "prep-locked", "plate-locked", (10.0, 11.0, 12.0)
@@ -585,7 +605,9 @@ def test_trace_likelihood_uses_calibration_induced_time_correlation_and_censorin
     assert jnp.isfinite(trace_log_probability(censored, independent_prediction))
 
 
-def test_qualification_returns_inconclusive_for_declared_ctmc_capacity_without_leakage():
+def test_qualification_returns_inconclusive_for_declared_ctmc_capacity_without_leakage() -> (
+    None
+):
     campaign = _campaign()
     locked = _trace(
         "locked-case", "family-locked", "prep-locked", "plate-locked", (10, 12, 14)
@@ -662,7 +684,9 @@ def test_qualification_returns_inconclusive_for_declared_ctmc_capacity_without_l
         )
 
 
-def test_unknown_reporter_covariance_and_missing_injection_are_kinetic_ineligible():
+def test_unknown_reporter_covariance_and_missing_injection_are_kinetic_ineligible() -> (
+    None
+):
     campaign = _campaign()
     locked = _trace(
         "locked-case", "family-locked", "prep-locked", "plate-locked", (10, 12, 14)
@@ -762,7 +786,7 @@ def test_unknown_reporter_covariance_and_missing_injection_are_kinetic_ineligibl
     assert "injection-reference-unknown" in no_reference.effective.metric_gaps
 
 
-def test_unequal_mass_action_is_finite_and_censored_likelihood_jits():
+def test_unequal_mass_action_is_finite_and_censored_likelihood_jits() -> None:
     campaign = _campaign()
     trace = FluorescenceTimeTrace(
         "locked-case",
@@ -794,12 +818,13 @@ def test_unequal_mass_action_is_finite_and_censored_likelihood_jits():
     assert jnp.isfinite(jax.jit(lambda: trace_log_probability(trace, predicted))())
 
 
-def test_reporter_observation_refuses_calibration_from_another_campaign():
+def test_reporter_observation_refuses_calibration_from_another_campaign() -> None:
     campaign = _campaign()
     calibration = ReporterCalibration(
         "reporter-1",
         1e8,
         10.0,
+        # ty: ignore[invalid-argument-type]
         (0.5,),
         jnp.diag(jnp.asarray([0.25, 1e10, 0.01])),
         ("calibration-case",),

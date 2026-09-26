@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _tree_paths(*, num_steps=3, repeats=32):
+def _tree_paths(*, num_steps: Any = 3, repeats: Any = 32) -> Any:
     branches = 2**num_steps
     indices = jnp.repeat(jnp.arange(branches, dtype=jnp.int32), repeats)
     bits = (indices[:, None] >> jnp.arange(num_steps, dtype=jnp.int32)) & 1
@@ -26,7 +28,7 @@ def _tree_paths(*, num_steps=3, repeats=32):
     )
 
 
-def _deterministic_paths(num_paths=64):
+def _deterministic_paths(num_paths: Any = 64) -> Any:
     return phx.stochastic.BSDEPathBatch(
         jnp.asarray([0.0, 0.5, 1.0]),
         jnp.zeros((num_paths, 3, 1)),
@@ -39,15 +41,15 @@ def _deterministic_paths(num_paths=64):
     )
 
 
-def test_reflected_solver_uses_nonanticipative_path_features_and_lower_obstacle():
+def test_reflected_solver_uses_nonanticipative_path_features_and_lower_obstacle() -> None:
     repeats = 32
     paths = _tree_paths(repeats=repeats)
 
-    def path_features(times, history, args):
+    def path_features(times: Any, history: Any, args: Any) -> Any:
         del times, args
         return jnp.asarray([history[-1, 0], jnp.max(history[:, 0])])
 
-    def lower_obstacle(time, times, history, args):
+    def lower_obstacle(time: Any, times: Any, history: Any, args: Any) -> Any:
         del times, args
         return jnp.asarray([(1.0 - time) * jnp.max(history[:, 0])])
 
@@ -101,7 +103,7 @@ def test_reflected_solver_uses_nonanticipative_path_features_and_lower_obstacle(
     assert diagnostics.lower_complementarity_error == 0.0
 
 
-def test_doubly_reflected_implicit_scheme_projects_inside_picard_iteration():
+def test_doubly_reflected_implicit_scheme_projects_inside_picard_iteration() -> None:
     paths = _deterministic_paths()
     problem = phx.stochastic.ReflectedPathDependentBSDEProblem(
         lambda key: paths,
@@ -141,7 +143,7 @@ def test_doubly_reflected_implicit_scheme_projects_inside_picard_iteration():
     assert phx.solver.reflected_path_dependent_bsde_diagnostics(result).passed
 
 
-def test_reflected_solver_never_projects_incompatible_terminal_data():
+def test_reflected_solver_never_projects_incompatible_terminal_data() -> None:
     paths = _deterministic_paths()
     problem = phx.stochastic.ReflectedPathDependentBSDEProblem(
         lambda key: paths,

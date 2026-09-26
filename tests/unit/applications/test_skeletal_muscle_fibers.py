@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -13,7 +16,7 @@ from phydrax.applications.skeletal_muscle.fibers import (
 from phydrax.applications.skeletal_muscle.fibers._bundle import _FiberBundleDrift
 
 
-def _schedule():
+def _schedule() -> Any:
     mask = jnp.zeros((1, 2, 5), dtype="bool").at[0, 0, 0].set(True)
     return PrescribedFiberStimulusSchedule(
         jnp.asarray([0.0]),
@@ -23,7 +26,7 @@ def _schedule():
     )
 
 
-def _runtime(diffusivity=(0.1, 0.1)):
+def _runtime(diffusivity: Any = (0.1, 0.1)) -> Any:
     return SkeletalFiberBundlePlan(
         ("fiber-a", "fiber-b"),
         5,
@@ -34,7 +37,7 @@ def _runtime(diffusivity=(0.1, 0.1)):
     ).prepare()
 
 
-def test_prescribed_stimulus_support_is_left_closed_right_open():
+def test_prescribed_stimulus_support_is_left_closed_right_open() -> None:
     schedule = _schedule()
     at_start = schedule.current(0.0)
     before_end = schedule.current(0.049999)
@@ -47,7 +50,7 @@ def test_prescribed_stimulus_support_is_left_closed_right_open():
     np.testing.assert_allclose(schedule.event_boundaries_ms(), [0.0, 0.05])
 
 
-def test_uniform_membrane_field_has_zero_no_flux_diffusion_increment():
+def test_uniform_membrane_field_has_zero_no_flux_diffusion_increment() -> None:
     diffusive = _runtime((0.2, 0.3))
     nondiffusive = _runtime((0.0, 0.0))
     state = diffusive.initialize().values.at[..., 0].set(-70.0)
@@ -60,7 +63,7 @@ def test_uniform_membrane_field_has_zero_no_flux_diffusion_increment():
     np.testing.assert_allclose(diffusive_rate, local_rate, rtol=2.0e-12, atol=2.0e-12)
 
 
-def test_event_aligned_stimulated_step_advances_complete_bundle():
+def test_event_aligned_stimulated_step_advances_complete_bundle() -> None:
     runtime = _runtime()
     source = runtime.initialize()
     candidate = runtime.candidate(source, 0.05)
@@ -75,7 +78,7 @@ def test_event_aligned_stimulated_step_advances_complete_bundle():
     assert candidate.output.force_bearing_crossbridge_uM.shape == (2, 5)
 
 
-def test_crossing_stimulus_event_rolls_back_whole_bundle():
+def test_crossing_stimulus_event_rolls_back_whole_bundle() -> None:
     runtime = _runtime()
     source = runtime.initialize()
     candidate = runtime.candidate(source, 0.1)

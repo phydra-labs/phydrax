@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 import json
 import os
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -34,7 +36,7 @@ from phydrax.solver._runtime_lifecycle import (
 )
 
 
-def _manifest(method):
+def _manifest(method: Any) -> Any:
     return phx.solver.ProductionCaseManifest(
         problem_id="constant-growth",
         method_id=method.method_id,
@@ -45,7 +47,7 @@ def _manifest(method):
     )
 
 
-def test_production_resource_forecast_rejects_invalid_multipliers():
+def test_production_resource_forecast_rejects_invalid_multipliers() -> None:
     mesh = phx.discretization.CellMesh.from_triangles(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
@@ -83,7 +85,7 @@ def test_production_resource_forecast_rejects_invalid_multipliers():
         )
 
 
-def test_production_run_checkpoints_observes_triggers_and_resumes(tmp_path):
+def test_production_run_checkpoints_observes_triggers_and_resumes(tmp_path: Any) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -151,7 +153,9 @@ def test_production_run_checkpoints_observes_triggers_and_resumes(tmp_path):
     )
 
 
-def test_production_iteration_session_stops_and_restores_exact_cursor(tmp_path):
+def test_production_iteration_session_stops_and_restores_exact_cursor(
+    tmp_path: Any,
+) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -172,7 +176,7 @@ def test_production_iteration_session_stops_and_restores_exact_cursor(tmp_path):
     )
     events = []
 
-    def phase(event):
+    def phase(event: Any) -> Any:
         return int(event.record.coordinates.phase)
 
     session = phx.execution.IterationSession(
@@ -228,8 +232,8 @@ def test_production_iteration_session_stops_and_restores_exact_cursor(tmp_path):
 
 
 def test_production_device_resident_execution_preserves_state_and_default(
-    tmp_path, monkeypatch
-):
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -246,17 +250,20 @@ def test_production_device_resident_execution_preserves_state_and_default(
         method,
         phx.solver.RobustRetryPolicy(maximum_retries=0),
         device_resident=True,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     default_plan = phx.solver.ProductionRunPlan(
         method,
         phx.solver.RobustRetryPolicy(maximum_retries=0),
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     explicit_default_plan = phx.solver.ProductionRunPlan(
         method,
         phx.solver.RobustRetryPolicy(maximum_retries=0),
         device_resident=False,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     assert explicit_default_plan.plan_id == default_plan.plan_id
@@ -295,7 +302,15 @@ def test_production_device_resident_execution_preserves_state_and_default(
 class _AlwaysReject(phx.solver.AbstractAcceptedStepTransform):
     transform_id: str = "always-reject"
 
-    def apply(self, step_index, time, previous_state, candidate_state, args, /):
+    def apply(
+        self,
+        step_index: Any,
+        time: Any,
+        previous_state: Any,
+        candidate_state: Any,
+        args: Any,
+        /,
+    ) -> Any:
         del step_index, time, previous_state, args
         return phx.solver.AcceptedStepTransformResult(
             candidate_state,
@@ -305,7 +320,7 @@ class _AlwaysReject(phx.solver.AbstractAcceptedStepTransform):
         )
 
 
-def test_production_run_writes_terminal_failure_manifest(tmp_path):
+def test_production_run_writes_terminal_failure_manifest(tmp_path: Any) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state),
         transform=_AlwaysReject(),
@@ -336,7 +351,7 @@ def test_production_run_writes_terminal_failure_manifest(tmp_path):
     assert terminal["failure_id"] == result.failure.failure_id
 
 
-def test_vector_moment_triggers_require_explicit_components(tmp_path):
+def test_vector_moment_triggers_require_explicit_components(tmp_path: Any) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -398,7 +413,7 @@ def test_vector_moment_triggers_require_explicit_components(tmp_path):
     assert result.state.trigger_states[0].fire_count == 1
 
 
-def test_output_failure_never_checkpoints_advanced_cursor(tmp_path):
+def test_output_failure_never_checkpoints_advanced_cursor(tmp_path: Any) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -409,7 +424,7 @@ def test_output_failure_never_checkpoints_advanced_cursor(tmp_path):
         phx.solver.CheckpointGenerationPolicy(1),
     )
 
-    def fail_writer(event_id, snapshot):
+    def fail_writer(event_id: Any, snapshot: Any) -> None:
         del event_id, snapshot
         raise RuntimeError("writer failed")
 
@@ -450,7 +465,7 @@ def test_output_failure_never_checkpoints_advanced_cursor(tmp_path):
     assert result.failure.last_checkpoint_id == result.state.last_checkpoint_id
 
 
-def _repository_policy(provider_id="production-posix"):
+def _repository_policy(provider_id: Any = "production-posix") -> Any:
     profile = HPCFilesystemProfile(
         provider_id,
         "test-filesystem",
@@ -468,18 +483,18 @@ def _repository_policy(provider_id="production-posix"):
 
 
 def _artifact_bindings(
-    root,
-    method,
+    root: Any,
+    method: Any,
     /,
     *,
-    topology_id="repository-topology",
-    geometry_layout_id="repository-layout",
-    artifact_id="production-checkpoint",
-    repository_policy=None,
-    prepared_configuration_id="prepared-configuration",
-    failure_injector=None,
-    maximum_output_backlog_bytes=8 * 1024 * 1024,
-):
+    topology_id: Any = "repository-topology",
+    geometry_layout_id: Any = "repository-layout",
+    artifact_id: Any = "production-checkpoint",
+    repository_policy: Any = None,
+    prepared_configuration_id: Any = "prepared-configuration",
+    failure_injector: Any = None,
+    maximum_output_backlog_bytes: Any = 8 * 1024 * 1024,
+) -> Any:
     repository_policy = (
         _repository_policy() if repository_policy is None else repository_policy
     )
@@ -536,7 +551,9 @@ def _artifact_bindings(
     return repository, manifest, store, resolved, checkpoint_policy, repository_policy
 
 
-def _repository_plan(method, *, end_time=0.2, output_schedule=None):
+def _repository_plan(
+    method: Any, *, end_time: Any = 0.2, output_schedule: Any = None
+) -> Any:
     return phx.solver.ProductionRunPlan(
         method,
         phx.solver.RobustRetryPolicy(maximum_retries=0),
@@ -549,7 +566,9 @@ def _repository_plan(method, *, end_time=0.2, output_schedule=None):
     )
 
 
-def test_artifact_repository_checkpoint_outbox_resume_and_cache_rebuild(tmp_path):
+def test_artifact_repository_checkpoint_outbox_resume_and_cache_rebuild(
+    tmp_path: Any,
+) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -627,8 +646,8 @@ def test_artifact_repository_checkpoint_outbox_resume_and_cache_rebuild(tmp_path
     "failure_point", ("before_manifest", "after_manifest", "before_pointer")
 )
 def test_artifact_repository_crash_never_exposes_partial_checkpoint(
-    tmp_path, failure_point
-):
+    tmp_path: Any, failure_point: Any
+) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -643,7 +662,7 @@ def test_artifact_repository_crash_never_exposes_partial_checkpoint(
     committed_state, _ = prepared.step(initial)
     stable_manifest_id = repository.get_manifest(store.artifact_id).manifest_id
 
-    def fail(point):
+    def fail(point: Any) -> None:
         if point == failure_point:
             raise RuntimeError(f"crash at {point}")
 
@@ -670,7 +689,9 @@ def test_artifact_repository_crash_never_exposes_partial_checkpoint(
     )
 
 
-def test_artifact_repository_admitted_topology_restart_and_rejections(tmp_path):
+def test_artifact_repository_admitted_topology_restart_and_rejections(
+    tmp_path: Any,
+) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -723,7 +744,9 @@ def test_artifact_repository_admitted_topology_restart_and_rejections(tmp_path):
         repository_policy=repository_policy,
     )
 
-    def aggregate(source_arrays, source_specification, template, encoding):
+    def aggregate(
+        source_arrays: Any, source_specification: Any, template: Any, encoding: Any
+    ) -> Any:
         del encoding
         source_leaf = np.asarray(source_arrays[source_specification["arrays"][0]])
         return jnp.asarray((source_leaf.sum(),), dtype=jnp.asarray(template).dtype)
@@ -774,7 +797,9 @@ def test_artifact_repository_admitted_topology_restart_and_rejections(tmp_path):
         rejected_runtime.resume(rejected_runtime.initial_state(jnp.asarray((0.0,))))
 
 
-def test_configuration_migration_commits_lineage_and_rollback_selects_parent(tmp_path):
+def test_configuration_migration_commits_lineage_and_rollback_selects_parent(
+    tmp_path: Any,
+) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -801,7 +826,9 @@ def test_configuration_migration_commits_lineage_and_rollback_selects_parent(tmp
     assert parent["lineage"] == [artifact.report.input_digest]
 
 
-def test_runtime_configuration_migration_requires_lineage_and_commits_child(tmp_path):
+def test_runtime_configuration_migration_requires_lineage_and_commits_child(
+    tmp_path: Any,
+) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -870,7 +897,9 @@ def test_runtime_configuration_migration_requires_lineage_and_commits_child(tmp_
     assert dict(child.metadata)["phase"] == "restart-lineage"
 
 
-def test_checkpoint_commit_receipt_defeats_forged_last_checkpoint_id(tmp_path):
+def test_checkpoint_commit_receipt_defeats_forged_last_checkpoint_id(
+    tmp_path: Any,
+) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -941,7 +970,7 @@ def test_checkpoint_commit_receipt_defeats_forged_last_checkpoint_id(tmp_path):
         store.verify_commit(receipt)
 
 
-def test_repository_generation_is_independent_of_accepted_step(tmp_path):
+def test_repository_generation_is_independent_of_accepted_step(tmp_path: Any) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -967,7 +996,9 @@ def test_repository_generation_is_independent_of_accepted_step(tmp_path):
     assert repeated.accepted_step == 0
 
 
-def test_durable_checkpoint_store_rejects_symlink_root_and_fifo_pointer(tmp_path):
+def test_durable_checkpoint_store_rejects_symlink_root_and_fifo_pointer(
+    tmp_path: Any,
+) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -993,7 +1024,7 @@ def test_durable_checkpoint_store_rejects_symlink_root_and_fifo_pointer(tmp_path
         store.latest(jnp.asarray((0.0,)))
 
 
-def test_durable_checkpoint_generation_read_never_follows_symlink(tmp_path):
+def test_durable_checkpoint_generation_read_never_follows_symlink(tmp_path: Any) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -1025,7 +1056,9 @@ def test_durable_checkpoint_generation_read_never_follows_symlink(tmp_path):
         prepared.resume(state)
 
 
-def test_repository_aggregate_limits_precede_chunk_reads(tmp_path, monkeypatch):
+def test_repository_aggregate_limits_precede_chunk_reads(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )
@@ -1107,7 +1140,7 @@ def test_repository_aggregate_limits_precede_chunk_reads(tmp_path, monkeypatch):
         store._read_payloads(aggregate)
 
 
-def test_publisher_exception_detail_is_not_durable_or_public(tmp_path):
+def test_publisher_exception_detail_is_not_durable_or_public(tmp_path: Any) -> None:
     secret = "https://user:credential@example.invalid/private/checkpoint"
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
@@ -1149,8 +1182,8 @@ def test_publisher_exception_detail_is_not_durable_or_public(tmp_path):
 
 
 def test_first_repository_output_failure_commits_bounded_terminal_transaction(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         lambda time, state, args: jnp.ones_like(state)
     )

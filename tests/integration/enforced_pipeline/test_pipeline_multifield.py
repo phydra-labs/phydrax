@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -12,7 +15,7 @@ from phydrax.domain import Boundary, Interval1d, PointBatch, SampleLayout
 from phydrax.enforcement import EnforcementProgram, EnforcementSpec
 
 
-def _line_batch(domain, xs):
+def _line_batch(domain: Any, xs: Any) -> Any:
     structure = SampleLayout((("x",),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -27,15 +30,15 @@ def _line_batch(domain, xs):
     return PointBatch(points=points, structure=structure)
 
 
-def test_multifield_pipeline_uses_enforced_covars():
+def test_multifield_pipeline_uses_enforced_covars() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] * 0.0
 
     @geom.Function("x")
-    def v(x):
+    def v(x: Any) -> Any:
         return x[0]
 
     boundary_component = geom.component({"x": Boundary()})
@@ -81,15 +84,15 @@ def test_multifield_pipeline_uses_enforced_covars():
     assert jnp.allclose(out_v, jnp.array([2.3, 2.7]), atol=1e-6)
 
 
-def test_multifield_pipeline_cycle_error():
+def test_multifield_pipeline_cycle_error() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0]
 
     @geom.Function("x")
-    def v(x):
+    def v(x: Any) -> Any:
         return x[0] * 2.0
 
     boundary_component = geom.component({"x": Boundary()})

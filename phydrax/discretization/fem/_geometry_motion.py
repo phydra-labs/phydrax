@@ -592,7 +592,10 @@ class FiniteElementMeshMotionPlan(StrictModule):
             )
             prepared_extension = self.prepared_extension
             # The extension solve is prepared exactly when interior vertices exist.
-            assert prepared_extension is not None
+            if not (prepared_extension is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: prepared_extension is not None."
+                )
             extension = solve(prepared_extension, right_hand_side)
             interior_displacement = extension.value
             extension_success = jnp.all(extension.successful)

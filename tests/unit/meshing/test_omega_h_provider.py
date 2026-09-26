@@ -1,5 +1,6 @@
 import os
 import shutil
+from typing import Any
 
 import numpy as np
 import pytest
@@ -9,7 +10,7 @@ from phydrax.meshing.providers._omega_h import _read_partition_records
 
 
 @pytest.mark.meshing_omega_h
-def test_real_omega_h_refines_and_preserves_partition_evidence():
+def test_real_omega_h_refines_and_preserves_partition_evidence() -> None:
     requested = os.environ.get("PHYDRAX_OMEGA_H_EXECUTABLE", "phydrax_omega_h")
     executable = shutil.which(requested)
     if executable is None:
@@ -86,7 +87,7 @@ def test_real_omega_h_refines_and_preserves_partition_evidence():
     assert np.all(np.linalg.eigvalsh(np.asarray(result.metric.values)) > 0.0)
 
 
-def test_omega_h_refuses_entity_budget_before_native_launch():
+def test_omega_h_refuses_entity_budget_before_native_launch() -> None:
     points = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
     mesh = phx.discretization.CellMesh.from_triangles(
         points,
@@ -119,7 +120,7 @@ def test_omega_h_refuses_entity_budget_before_native_launch():
     assert failure.value.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
 
 
-def test_omega_h_multirank_output_uses_one_aggregate_byte_budget(tmp_path):
+def test_omega_h_multirank_output_uses_one_aggregate_byte_budget(tmp_path: Any) -> None:
     (tmp_path / "rank-0.json").write_bytes(b"x" * 60)
     (tmp_path / "rank-1.json").write_bytes(b"x" * 60)
 

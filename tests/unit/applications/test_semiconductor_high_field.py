@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -9,13 +11,14 @@ from phydrax.applications.semiconductor._high_field import (
 from phydrax.applications.semiconductor._quantities import ELEMENTARY_CHARGE_SI as Q
 
 
-def _saturation(force=HighFieldDrivingForce.ELECTRIC_FIELD):
+def _saturation(force: Any = HighFieldDrivingForce.ELECTRIC_FIELD) -> Any:
     return LocalVelocitySaturation(
         1e5,
         2.0,
         reference_temperature=300.0,
         temperature_exponent=-0.5,
         maximum_force=1e10,
+        # ty: ignore[invalid-argument-type]
         temperature_range=(200.0, 1000.0),
         driving_force=force,
         orientation="synthetic scalar longitudinal direction",
@@ -23,7 +26,7 @@ def _saturation(force=HighFieldDrivingForce.ELECTRIC_FIELD):
     )
 
 
-def test_velocity_saturation_recovers_low_field_and_bounded_asymptote():
+def test_velocity_saturation_recovers_low_field_and_bounded_asymptote() -> None:
     law = _saturation()
     fields = jnp.array([0.0, 1e-2, 1e9])
     result = law.evaluate(0.1, fields, 300.0)
@@ -36,7 +39,7 @@ def test_velocity_saturation_recovers_low_field_and_bounded_asymptote():
     np.testing.assert_allclose(warm.saturation_velocity, 1e5 / np.sqrt(2.0))
 
 
-def test_driving_choice_distinguishes_builtin_and_electrochemical_fields():
+def test_driving_choice_distinguishes_builtin_and_electrochemical_fields() -> None:
     field_law = _saturation()
     fermi_law = _saturation(HighFieldDrivingForce.QUASI_FERMI_GRADIENT)
     electric = field_law.driving_force.from_fields(1e8, 0.0)
@@ -49,7 +52,7 @@ def test_driving_choice_distinguishes_builtin_and_electrochemical_fields():
     assert np.all(np.isnan(invalid.mobility))
 
 
-def _ionization():
+def _ionization() -> Any:
     return LocalImpactIonization(
         2e6,
         7e5,
@@ -62,6 +65,7 @@ def _ionization():
         electron_birth_energy=0.1 * Q,
         hole_birth_energy=0.2 * Q,
         reference_temperature=300.0,
+        # ty: ignore[invalid-argument-type]
         temperature_range=(200.0, 800.0),
         maximum_field=1e9,
         orientation="synthetic scalar longitudinal direction",
@@ -69,7 +73,7 @@ def _ionization():
     )
 
 
-def test_ionization_pays_pair_creation_energy_and_preserves_charge():
+def test_ionization_pays_pair_creation_energy_and_preserves_charge() -> None:
     law = _ionization()
     field, gn, gp, gap = 1e7, -3e24, 2e24, 1.1 * Q
     result = law.evaluate(field, gn, gp, 300.0, gap)

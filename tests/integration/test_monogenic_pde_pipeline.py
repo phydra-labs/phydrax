@@ -8,9 +8,10 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_monogenic_constant_boundary_field_recovers_without_interior_penalty():
+def test_monogenic_constant_boundary_field_recovers_without_interior_penalty() -> None:
     algebra = phx.metrix.clifford.CliffordAlgebraSpec((1, 1))
     basis = phx.equations.MonogenicPolynomialBasis(algebra, 0)
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0))
     field = domain.Model("x")(phx.equations.LinearMonogenicField(basis))
     target_value = jnp.asarray([1.0, -0.2, 0.4, 0.3])
@@ -33,6 +34,7 @@ def test_monogenic_constant_boundary_field_recovers_without_interior_penalty():
     assert bool(result.valid)
     assert float(result.final_residual_norm) < 1e-10
     interior = domain.component().sample(phx.domain.PointSampling(16), key=jr.key(22))
+    # ty: ignore[invalid-argument-type]
     assert bool(phx.equations.audit_trial_space(result.solver["u"], interior).valid)
     assert jnp.allclose(
         result.solver["u"](interior).data,

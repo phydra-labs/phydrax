@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     prior = phx.uq.Normal(0.0, 1.0)
     likelihood = phx.uq.Normal(1.5, 0.5)
     return phx.uq.PosteriorProblem(
@@ -17,7 +20,7 @@ def _problem():
     )
 
 
-def _config():
+def _config() -> Any:
     return phx.uq.FlowVariationalConfig(
         initialization=phx.uq.VariationalConfig(
             num_steps=30,
@@ -38,7 +41,7 @@ def _config():
     )
 
 
-def test_flow_variational_family_preserves_pytree_sample_density_contract():
+def test_flow_variational_family_preserves_pytree_sample_density_contract() -> None:
     problem = _problem()
     result = phx.uq.fit_flow_variational(
         problem,
@@ -60,7 +63,7 @@ def test_flow_variational_family_preserves_pytree_sample_density_contract():
     assert jnp.all(jnp.isfinite(result.log_variational))
 
 
-def test_flow_variational_reuses_explicit_mean_field_initialization():
+def test_flow_variational_reuses_explicit_mean_field_initialization() -> None:
     problem = _problem()
     config = _config()
     initialization = phx.uq.fit_variational(

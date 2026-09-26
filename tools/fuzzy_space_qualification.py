@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -20,7 +21,7 @@ from phydrax.operators.quantum.lattice import (
 )
 
 
-def _resources():
+def _resources() -> Any:
     return SU2SectorResourcePolicy(
         maximum_product_dimension=128,
         maximum_sector_dimension=128,

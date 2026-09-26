@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def test_spatial_noise_separates_basis_runtime_and_certification_precision():
+def test_spatial_noise_separates_basis_runtime_and_certification_precision() -> None:
     precision = phx.stochastic.SpatialNoisePrecisionPolicy(
         construction_dtype="float64",
         basis_storage_dtype="float32",
@@ -34,7 +37,7 @@ def test_spatial_noise_separates_basis_runtime_and_certification_precision():
     assert basis.precision_evidence.evidence_id
 
 
-def test_spatial_noise_factory_uses_construction_then_storage_precision():
+def test_spatial_noise_factory_uses_construction_then_storage_precision() -> None:
     precision = phx.stochastic.SpatialNoisePrecisionPolicy(
         construction_dtype="float64",
         basis_storage_dtype="float32",
@@ -56,7 +59,7 @@ def test_spatial_noise_factory_uses_construction_then_storage_precision():
     assert basis.approximation.method == "dense_eigh"
 
 
-def _level(index, *, parent=None, witness=None):
+def _level(index: Any, *, parent: Any = None, witness: Any = None) -> Any:
     return phx.stochastic.StochasticLevelSpec(
         f"level-{index}",
         index,
@@ -77,7 +80,7 @@ def _level(index, *, parent=None, witness=None):
     )
 
 
-def test_nested_noise_requires_a_passing_projection_witness():
+def test_nested_noise_requires_a_passing_projection_witness() -> None:
     base = _level(0)
     with pytest.raises(ValueError, match="passing projection witness"):
         phx.stochastic.StochasticCouplingPlan(
@@ -99,7 +102,7 @@ def test_nested_noise_requires_a_passing_projection_witness():
     assert hierarchy.level(1).noise_witness is witness
 
 
-def test_semidiscrete_spde_composes_spatial_and_noise_precision_evidence():
+def test_semidiscrete_spde_composes_spatial_and_noise_precision_evidence() -> None:
     fd_precision = phx.discretization.FDExecutionPrecisionPolicy(
         coefficient_dtype="float32",
         field_dtype="float32",
@@ -110,6 +113,7 @@ def test_semidiscrete_spde_composes_spatial_and_noise_precision_evidence():
         8,
         endpoint=False,
         periodic=True,
+        # ty: ignore[invalid-argument-type]
     ).materialize(0.0, 1.0)
     discretization = phx.discretization.periodic_finite_difference(
         phx.discretization.PreparedTensorGrid((axis,)),

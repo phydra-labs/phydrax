@@ -558,7 +558,8 @@ def _prepared_local_coefficient_values(
         coefficient_field = None
         region = workset.local_region
         # Only prepared-local worksets, whose region the caller checked, reach here.
-        assert region is not None
+        if not (region is not None):
+            raise RuntimeError("Internal invariant failed: region is not None.")
         for field_name in region.field_names:
             binding = discretization.local_field_binding(field_name)
             if binding.field_space.field_space_id == coefficient_.field_space_id:
@@ -2378,7 +2379,8 @@ def _prepared_tensor_facet_residual(
             mask = active.reshape((count, 1) + (1,) * len(component_shape))
             trace = side[4]
             # A side built from a supplied state always carries its trace.
-            assert trace is not None
+            if not (trace is not None):
+                raise RuntimeError("Internal invariant failed: trace is not None.")
             values = jnp.where(mask, trace, values)
         return values
 
@@ -3539,7 +3541,8 @@ def execute_finite_element_value_and_residual(
         accumulation=accumulation,
     )
     # A non-None accumulation always assembles the residual.
-    assert residual is not None
+    if not (residual is not None):
+        raise RuntimeError("Internal invariant failed: residual is not None.")
     return value, term_values, residual
 
 

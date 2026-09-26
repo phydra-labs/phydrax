@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -33,7 +36,7 @@ from phydrax.linalg import (
 )
 
 
-def _prepared_surface(plan, positions):
+def _prepared_surface(plan: Any, positions: Any) -> Any:
     positions = jnp.asarray(positions, dtype=jnp.float64)
     space = ArraySpace(positions.shape, dtype=np.float64)
     operator = selection_collision_operator(
@@ -42,7 +45,7 @@ def _prepared_surface(plan, positions):
     return PreparedCollisionSurface(plan, positions, operator)
 
 
-def test_surface_feature_labels_are_canonical_and_deterministic():
+def test_surface_feature_labels_are_canonical_and_deterministic() -> None:
     first = CollisionSurfacePlan(
         jnp.asarray((40, 10, 30, 20), dtype=jnp.int64),
         ambient_dimension=2,
@@ -69,7 +72,7 @@ def test_surface_feature_labels_are_canonical_and_deterministic():
     assert first.topology_id == second.topology_id
 
 
-def test_heterogeneous_primitive_ownership_is_rejected():
+def test_heterogeneous_primitive_ownership_is_rejected() -> None:
     with pytest.raises(ValueError, match="participant labels must agree"):
         CollisionSurfacePlan(
             jnp.asarray((0, 1), dtype=jnp.int64),
@@ -82,7 +85,7 @@ def test_heterogeneous_primitive_ownership_is_rejected():
         )
 
 
-def test_radius_clearance_and_proxy_error_remain_distinct():
+def test_radius_clearance_and_proxy_error_remain_distinct() -> None:
     plan = CollisionSurfacePlan(
         jnp.asarray((5, 9), dtype=jnp.int64),
         ambient_dimension=2,
@@ -119,7 +122,7 @@ def test_radius_clearance_and_proxy_error_remain_distinct():
     )
 
 
-def test_pair_policy_allows_same_participant_and_honors_self_exclusions():
+def test_pair_policy_allows_same_participant_and_honors_self_exclusions() -> None:
     vertices = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -179,7 +182,7 @@ def test_pair_policy_allows_same_participant_and_honors_self_exclusions():
     assert int(unrestricted_epoch.edge_vertex.actual_count) == 0
 
 
-def test_pair_policy_is_reciprocal_and_explicit_about_self_contact():
+def test_pair_policy_is_reciprocal_and_explicit_about_self_contact() -> None:
     policy = ContactPairPolicy(
         4,
         allowed_participant_pairs=jnp.asarray(((1, 3), (7, 7)), dtype=jnp.int64),
@@ -192,7 +195,7 @@ def test_pair_policy_is_reciprocal_and_explicit_about_self_contact():
     assert not policy.allows(1, 2)
 
 
-def test_static_static_features_do_not_generate_routes():
+def test_static_static_features_do_not_generate_routes() -> None:
     common = dict(
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
@@ -206,12 +209,14 @@ def test_static_static_features_do_not_generate_routes():
         jnp.asarray((0, 1), dtype=jnp.int64),
         participant_ids=0,
         pair_policy=ContactPairPolicy(2, allowed_participant_pairs=allowed),
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     second_plan = CollisionSurfacePlan(
         jnp.asarray((10, 11), dtype=jnp.int64),
         participant_ids=1,
         pair_policy=ContactPairPolicy(2, allowed_participant_pairs=allowed),
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     first = _prepared_surface(first_plan, ((-1.0, 0.0), (1.0, 0.0)))
@@ -245,7 +250,7 @@ def test_static_static_features_do_not_generate_routes():
     assert int(lbvh.edge_vertex.actual_count) == 0
 
 
-def test_dense_compiled_and_lbvh_search_share_feature_policy_semantics():
+def test_dense_compiled_and_lbvh_search_share_feature_policy_semantics() -> None:
     allowed = jnp.asarray(((0, 1),), dtype=jnp.int64)
     first_plan = CollisionSurfacePlan(
         jnp.asarray((30, 31), dtype=jnp.int64),
@@ -330,7 +335,7 @@ def test_dense_compiled_and_lbvh_search_share_feature_policy_semantics():
     assert bool(lbvh.evidence.complete)
 
 
-def test_weighted_spaces_obey_algebraic_power_duality():
+def test_weighted_spaces_obey_algebraic_power_duality() -> None:
     configuration_space = ArraySpace((1,), dtype=np.float64)
     tangent_space = ArraySpace(
         (2,),
@@ -347,22 +352,22 @@ def test_weighted_spaces_obey_algebraic_power_duality():
         patch_ids=6,
     )
 
-    def positions(configuration):
+    def positions(configuration: Any) -> Any:
         return jnp.asarray(((configuration[0], 2.0 * configuration[0]),))
 
-    def velocity(configuration, direction):
+    def velocity(configuration: Any, direction: Any) -> Any:
         del configuration
         return jnp.asarray(((direction[0] + 3.0 * direction[1], 2.0 * direction[0]),))
 
-    def effort_pullback(configuration, effort):
+    def effort_pullback(configuration: Any, effort: Any) -> Any:
         del configuration
         return jnp.asarray(
             (effort[0, 0] + 2.0 * effort[0, 1], 3.0 * effort[0, 0]),
             dtype=effort.dtype,
         )
 
-    def scaled_positions(scale):
-        def action(configuration):
+    def scaled_positions(scale: Any) -> Any:
+        def action(configuration: Any) -> Any:
             return jnp.asarray(((scale * configuration[0], 2.0 * configuration[0]),))
 
         return action
@@ -401,7 +406,7 @@ def test_weighted_spaces_obey_algebraic_power_duality():
     assert bool(participant.duality_evidence(state, direction, effort).valid)
 
 
-def test_dual_transpose_preserves_power_on_unequally_weighted_spaces():
+def test_dual_transpose_preserves_power_on_unequally_weighted_spaces() -> None:
     source = ArraySpace(
         (2,),
         dtype=np.float64,
@@ -431,7 +436,7 @@ def test_dual_transpose_preserves_power_on_unequally_weighted_spaces():
     np.testing.assert_allclose(pulled, matrix.T @ covector, atol=1.0e-12)
 
 
-def test_implicit_geometry_is_bound_to_one_analytic_feature():
+def test_implicit_geometry_is_bound_to_one_analytic_feature() -> None:
     analytic = CollisionFeaturePolicy(
         jnp.asarray((700,), dtype=jnp.int64),
         jnp.asarray((int(CollisionFeatureKind.ANALYTIC),), dtype=jnp.int32),
@@ -444,6 +449,7 @@ def test_implicit_geometry_is_bound_to_one_analytic_feature():
         proxy_error=0.002,
         provenance_id="analytic-sphere-source",
     )
+    # ty: ignore[invalid-argument-type]
     sphere = SphereContactGeometry((0.0, 0.0, 0.0), 1.0, feature_policy=analytic)
 
     assert sphere.feature_policy.policy_id == analytic.policy_id

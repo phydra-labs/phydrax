@@ -8,7 +8,7 @@ from phydrax.ml import ML_INSUFFICIENT_DATA, ML_RANK_DEFICIENT, MLBatch
 from phydrax.ml.covariance import EmpiricalCovariance, WeightedCovariance
 
 
-def test_covariance_distinguishes_empty_and_singleton_batches():
+def test_covariance_distinguishes_empty_and_singleton_batches() -> None:
     features = jnp.array([[2.0, -1.0], [4.0, 3.0]])
     empty = EmpiricalCovariance(regularization=1e-4).fit_batch(
         MLBatch(features, sample_mask=jnp.zeros(2, dtype="bool"))
@@ -24,7 +24,9 @@ def test_covariance_distinguishes_empty_and_singleton_batches():
     assert singleton.status == ML_RANK_DEFICIENT
     assert singleton.valid
     assert singleton.diagnostics.effective_samples == 1.0
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(singleton.as_trainable().mean, features[0])
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.linalg.eigvalsh(singleton.as_trainable().covariance) > 0.0)
     assert corrected_singleton.status == ML_INSUFFICIENT_DATA
     assert not corrected_singleton.valid

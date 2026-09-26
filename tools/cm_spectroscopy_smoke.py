@@ -28,8 +28,11 @@ from phydrax.observation import CoordinateLayout, LinearObservationPlan
 
 def main() -> int:
     raw = SpectralResponseProduct(
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 2.0]],
+        # ty: ignore[invalid-argument-type]
         [True, True],
         units.ELECTRONVOLT,
         units.ONE,

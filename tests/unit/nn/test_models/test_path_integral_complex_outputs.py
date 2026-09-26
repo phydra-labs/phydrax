@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +14,7 @@ from phydrax.nn.models import FeynmaNN, LatentContractionModel, MLP, Separable
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_pimlp_keep_output_complex_scalar(scan):
+def test_pimlp_keep_output_complex_scalar(scan: Any) -> None:
     key = jr.key(0)
     m = FeynmaNN(
         in_size=2,
@@ -30,7 +33,7 @@ def test_pimlp_keep_output_complex_scalar(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_pimlp_keep_output_complex_vector(scan):
+def test_pimlp_keep_output_complex_vector(scan: Any) -> None:
     m = FeynmaNN(
         in_size=3,
         out_size=4,
@@ -48,7 +51,7 @@ def test_pimlp_keep_output_complex_vector(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_separable_wrapper_complex_output_toggle(scan):
+def test_separable_wrapper_complex_output_toggle(scan: Any) -> None:
     # Underlying scalar models for each coordinate produce complex latents
     L = 2
     out = 1
@@ -90,7 +93,7 @@ def test_separable_wrapper_complex_output_toggle(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_latent_contraction_complex_output_toggle(scan):
+def test_latent_contraction_complex_output_toggle(scan: Any) -> None:
     # Space model produces complex latents of size L*out; time model is real L
     L = 3
     d = 2

@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _compile_liquid(*, initial_film=5.0e-4, evaporation_flux=0.0):
+def _compile_liquid(*, initial_film: Any = 5.0e-4, evaporation_flux: Any = 0.0) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([10, 20]), jnp.ones((2,)), ambient_dimension=2
     ).prepare()
@@ -51,7 +54,7 @@ def _compile_liquid(*, initial_film=5.0e-4, evaporation_flux=0.0):
     )
 
 
-def test_bridge_birth_draws_from_films_and_rupture_returns_liquid():
+def test_bridge_birth_draws_from_films_and_rupture_returns_liquid() -> None:
     compiled = _compile_liquid()
     state = compiled.initialize_state(
         0.0,
@@ -86,7 +89,7 @@ def test_bridge_birth_draws_from_films_and_rupture_returns_liquid():
     assert jnp.abs(evaluation.liquid.next_state.balance_residual) < 1.0e-12
 
 
-def test_limited_inventory_allocates_deterministically_without_creating_liquid():
+def test_limited_inventory_allocates_deterministically_without_creating_liquid() -> None:
     compiled = _compile_liquid(initial_film=2.0e-4)
     state = compiled.initialize_state(
         0.0,
@@ -101,7 +104,7 @@ def test_limited_inventory_allocates_deterministically_without_creating_liquid()
     assert jnp.abs(state.liquid.balance_residual) < 1.0e-12
 
 
-def test_surface_area_evaporation_is_conservative_and_replay_safe():
+def test_surface_area_evaporation_is_conservative_and_replay_safe() -> None:
     compiled = _compile_liquid(evaporation_flux=1.0e6)
     state = compiled.initialize_state(
         0.0,
@@ -136,10 +139,11 @@ def test_surface_area_evaporation_is_conservative_and_replay_safe():
         checkpoint=phx.discretization.DEMCheckpointPolicy(1),
     )
     assert replay.successful
+    # ty: ignore[unresolved-attribute]
     assert jnp.abs(replay.final_state.liquid.balance_residual) < 1.0e-12
 
 
-def test_barrier_reservoir_allocation_is_permutation_independent_and_balanced():
+def test_barrier_reservoir_allocation_is_permutation_independent_and_balanced() -> None:
     barrier = phx.discretization.DEMBarrierCapillaryPlan(
         "wall",
         geometry_policy="planar",

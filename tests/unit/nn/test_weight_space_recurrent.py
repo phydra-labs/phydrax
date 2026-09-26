@@ -1,4 +1,5 @@
 import io
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -16,12 +17,12 @@ from phydrax.nn.parameters import ParameterSubspace
 class _ComplexRoot(eqx.Module):
     weight: jax.Array
 
-    def __call__(self, x, *, key=None):
+    def __call__(self, x: Any, *, key: Any = None) -> Any:
         del key
         return jnp.real(jnp.dot(self.weight, x))
 
 
-def _subspace():
+def _subspace() -> Any:
     root = MLP(
         in_size=1,
         out_size="scalar",
@@ -33,7 +34,7 @@ def _subspace():
     return root, ParameterSubspace.from_leaf_paths(root, paths)
 
 
-def test_parameter_subspace_pack_unpack_and_reconstruction_are_exact():
+def test_parameter_subspace_pack_unpack_and_reconstruction_are_exact() -> None:
     root, subspace = _subspace()
     packed = subspace.pack()
     selected = subspace.unpack(packed)
@@ -56,7 +57,7 @@ def test_parameter_subspace_pack_unpack_and_reconstruction_are_exact():
         subspace.pack(wrong_dtype)
 
 
-def test_parameter_subspace_preserves_the_frozen_complement():
+def test_parameter_subspace_preserves_the_frozen_complement() -> None:
     root, _ = _subspace()
     paths = ParameterSubspace.array_leaf_paths(root)
     subspace = ParameterSubspace.from_leaf_paths(root, paths[:1])
@@ -71,7 +72,9 @@ def test_parameter_subspace_preserves_the_frozen_complement():
     assert eqx.tree_equal(original_frozen, moved_frozen)
 
 
-def test_weight_space_recurrence_matches_serial_execution_and_streaming_continuation():
+def test_weight_space_recurrence_matches_serial_execution_and_streaming_continuation() -> (
+    None
+):
     _, subspace = _subspace()
     associative = WeightSpaceRecurrentModel(
         subspace,
@@ -119,7 +122,7 @@ def test_weight_space_recurrence_matches_serial_execution_and_streaming_continua
     assert jnp.all(jnp.isfinite(decoded))
 
 
-def test_weight_space_reset_isolates_parameter_and_observation_state():
+def test_weight_space_reset_isolates_parameter_and_observation_state() -> None:
     _, subspace = _subspace()
     model = WeightSpaceRecurrentModel(
         subspace,
@@ -163,7 +166,7 @@ def test_weight_space_reset_isolates_parameter_and_observation_state():
     assert jnp.allclose(packed, jnp.concatenate((first, second)), atol=2e-10, rtol=2e-10)
 
 
-def test_weight_space_model_is_jittable_differentiable_and_serializable():
+def test_weight_space_model_is_jittable_differentiable_and_serializable() -> None:
     _, subspace = _subspace()
     model = WeightSpaceRecurrentModel(
         subspace,
@@ -197,7 +200,7 @@ def test_weight_space_model_is_jittable_differentiable_and_serializable():
     assert jnp.allclose(restored(batch, queries), expected, rtol=1e-13, atol=1e-13)
 
 
-def test_weight_space_operator_decodes_final_state_on_independent_queries():
+def test_weight_space_operator_decodes_final_state_on_independent_queries() -> None:
     _, subspace = _subspace()
     model = WeightSpaceOperator(
         subspace,
@@ -244,7 +247,7 @@ def test_weight_space_operator_decodes_final_state_on_independent_queries():
         mismatched(batch)
 
 
-def test_weight_space_model_rejects_mixed_real_and_complex_recurrence():
+def test_weight_space_model_rejects_mixed_real_and_complex_recurrence() -> None:
     root = _ComplexRoot(jnp.array([1.0 + 1.0j]))
     subspace = ParameterSubspace(root, eqx.is_inexact_array)
     model = WeightSpaceRecurrentModel(subspace, 1, 1, key=jr.key(9))

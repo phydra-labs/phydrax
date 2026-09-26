@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -8,7 +10,7 @@ import phydrax as phx
 
 
 class _MixedDriverOperator(eqx.Module):
-    def __call__(self, batch, /, *, key=None):
+    def __call__(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         return (
             batch.input("state").values
@@ -17,7 +19,7 @@ class _MixedDriverOperator(eqx.Module):
         )
 
 
-def _counting_process(*, rate, process_id):
+def _counting_process(*, rate: Any, process_id: Any) -> Any:
     return phx.stochastic.JumpProcess(
         lambda time, state, args: jnp.asarray([rate]),
         lambda state, channel, mark, args: state + jnp.asarray([1.0]),
@@ -27,7 +29,7 @@ def _counting_process(*, rate, process_id):
     )
 
 
-def _one_shot_process(*, rate, process_id):
+def _one_shot_process(*, rate: Any, process_id: Any) -> Any:
     return phx.stochastic.JumpProcess(
         lambda time, state, args: jnp.asarray([rate * state[1]]),
         lambda state, channel, mark, args: state.at[1].set(0.0),
@@ -38,14 +40,14 @@ def _one_shot_process(*, rate, process_id):
 
 
 def _guard_schedule(
-    root,
-    reset_shift,
-    schedule_id,
+    root: Any,
+    reset_shift: Any,
+    schedule_id: Any,
     /,
     *,
-    priority=0,
-    terminal=False,
-):
+    priority: Any = 0,
+    terminal: Any = False,
+) -> Any:
     guard = phx.solver.HybridGuardPlan(
         lambda time, state, args: state[0] - root,
         direction=1,
@@ -64,7 +66,7 @@ def _guard_schedule(
     return phx.solver.ScheduledHybridGuard(guard, event=event)
 
 
-def _timed_one_shot_problem(*, jump_time, process_id):
+def _timed_one_shot_problem(*, jump_time: Any, process_id: Any) -> Any:
     realization = phx.stochastic.PoissonClockRealization(
         jr.key(901),
         1,
@@ -87,7 +89,7 @@ def _timed_one_shot_problem(*, jump_time, process_id):
     )
 
 
-def test_hybrid_jump_rejects_nontrivial_state_geometry():
+def test_hybrid_jump_rejects_nontrivial_state_geometry() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     differential = phx.solver.DifferentialProblem(
         lambda time, state, args: jnp.zeros_like(state),
@@ -119,7 +121,7 @@ def test_hybrid_jump_rejects_nontrivial_state_geometry():
         )
 
 
-def test_hybrid_ode_jump_solution_replays_and_is_independent_of_save_partition():
+def test_hybrid_ode_jump_solution_replays_and_is_independent_of_save_partition() -> None:
     process = _counting_process(rate=2.0, process_id="hybrid-counting")
     differential = phx.solver.DifferentialProblem(
         lambda time, state, args: jnp.full_like(state, 0.5),
@@ -183,7 +185,7 @@ def test_hybrid_ode_jump_solution_replays_and_is_independent_of_save_partition()
     assert jnp.array_equal(coarse.numerical_successful, coarse.events.successful)
 
 
-def test_state_dependent_hazard_localizes_known_integrated_intensity_events():
+def test_state_dependent_hazard_localizes_known_integrated_intensity_events() -> None:
     process = phx.stochastic.JumpProcess(
         lambda time, state, args: jnp.asarray([jnp.maximum(state[0], 0.0)]),
         lambda state, channel, mark, args: state,
@@ -226,7 +228,7 @@ def test_state_dependent_hazard_localizes_known_integrated_intensity_events():
     assert jnp.allclose(solution.states[:, -1, 0], 2.0, atol=1e-10)
 
 
-def test_jump_diffusion_uses_one_global_wiener_path_across_event_restarts():
+def test_jump_diffusion_uses_one_global_wiener_path_across_event_restarts() -> None:
     process = _counting_process(rate=1.5, process_id="coupled-jump-diffusion")
     differential = phx.solver.DifferentialProblem(
         lambda time, state, args: jnp.zeros_like(state),
@@ -301,7 +303,7 @@ def test_jump_diffusion_uses_one_global_wiener_path_across_event_restarts():
     )
 
 
-def test_hybrid_paths_accept_distinct_initial_states_and_validate_sample_shape():
+def test_hybrid_paths_accept_distinct_initial_states_and_validate_sample_shape() -> None:
     process = _counting_process(rate=0.0, process_id="path-initial-states")
     differential = phx.solver.DifferentialProblem(
         lambda time, state, args: jnp.full_like(state, 0.5),
@@ -338,7 +340,7 @@ def test_hybrid_paths_accept_distinct_initial_states_and_validate_sample_shape()
         )
 
 
-def test_jump_event_precedes_and_survives_later_terminal_guard():
+def test_jump_event_precedes_and_survives_later_terminal_guard() -> None:
     problem, realization = _timed_one_shot_problem(
         jump_time=0.2,
         process_id="jump-before-guard",
@@ -375,7 +377,7 @@ def test_jump_event_precedes_and_survives_later_terminal_guard():
     assert solution.successful[0]
 
 
-def test_guard_reset_precedes_jump_and_continuation_uses_reset_state():
+def test_guard_reset_precedes_jump_and_continuation_uses_reset_state() -> None:
     problem, realization = _timed_one_shot_problem(
         jump_time=0.7,
         process_id="guard-before-jump",
@@ -403,7 +405,7 @@ def test_guard_reset_precedes_jump_and_continuation_uses_reset_state():
     assert solution.completed[0]
 
 
-def test_simultaneous_deterministic_guards_use_declared_priority():
+def test_simultaneous_deterministic_guards_use_declared_priority() -> None:
     problem, realization = _timed_one_shot_problem(
         jump_time=2.0,
         process_id="deterministic-guard-priority",
@@ -444,7 +446,7 @@ def test_simultaneous_deterministic_guards_use_declared_priority():
     assert deterministic.terminal[0, 0]
 
 
-def test_guard_reset_tape_replays_and_is_save_partition_independent():
+def test_guard_reset_tape_replays_and_is_save_partition_independent() -> None:
     problem, realization = _timed_one_shot_problem(
         jump_time=2.0,
         process_id="guard-reset-replay",
@@ -498,6 +500,7 @@ def test_guard_reset_tape_replays_and_is_save_partition_independent():
     assert jnp.array_equal(coarse.states, replayed.states)
     assert jnp.array_equal(
         coarse_events.event_times,
+        # ty: ignore[unresolved-attribute]
         replayed.deterministic_events.event_times,
     )
     assert jnp.allclose(coarse.states[:, 0], fine.states[:, 0])
@@ -513,7 +516,7 @@ def test_guard_reset_tape_replays_and_is_save_partition_independent():
     assert jnp.allclose(tape_replay.state, path_tape.states_after[0])
 
 
-def test_terminal_guard_freezes_state_and_invalidates_only_later_save_nodes():
+def test_terminal_guard_freezes_state_and_invalidates_only_later_save_nodes() -> None:
     problem, realization = _timed_one_shot_problem(
         jump_time=2.0,
         process_id="terminal-guard-validity",
@@ -553,7 +556,7 @@ def test_terminal_guard_freezes_state_and_invalidates_only_later_save_nodes():
     )
 
 
-def test_deterministic_event_capacity_failure_is_not_physical_termination():
+def test_deterministic_event_capacity_failure_is_not_physical_termination() -> None:
     problem, realization = _timed_one_shot_problem(
         jump_time=2.0,
         process_id="guard-capacity-failure",
@@ -580,7 +583,7 @@ def test_deterministic_event_capacity_failure_is_not_physical_termination():
     assert not solution.successful[0]
 
 
-def test_composite_process_operator_rollout_combines_wiener_and_jump_drivers():
+def test_composite_process_operator_rollout_combines_wiener_and_jump_drivers() -> None:
     x_axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3, endpoint=False))
     channel_axis = phx.nn.operator.OperatorAxis("channel", jnp.arange(1.0))
     template = phx.nn.operator.OperatorBatch(

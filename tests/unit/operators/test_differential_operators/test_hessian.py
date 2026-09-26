@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -11,13 +14,13 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.differential import hessian
 
 
-def test_hessian_scalar_function_point():
+def test_hessian_scalar_function_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     H = hessian(f)
@@ -27,13 +30,13 @@ def test_hessian_scalar_function_point():
     assert jnp.allclose(out, 2.0 * jnp.eye(2))
 
 
-def test_hessian_vector_function_point():
+def test_hessian_vector_function_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return jnp.array([x[0] ** 2, x[0] * x[1]])
 
     H = hessian(f)
@@ -44,13 +47,13 @@ def test_hessian_vector_function_point():
     assert jnp.allclose(out, expected)
 
 
-def test_hessian_spacetime_var_x_ignores_t(sample_batch):
+def test_hessian_spacetime_var_x_ignores_t(sample_batch: Any) -> None:
     dom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     ) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def f(x, t):
+    def f(x: Any, t: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + t
 
     H = hessian(f, var="x")
@@ -61,7 +64,7 @@ def test_hessian_spacetime_var_x_ignores_t(sample_batch):
     assert jnp.allclose(out, 2.0 * jnp.eye(2)[None, None, :, :])
 
 
-def test_hessian_coord_separable_constant(sample_grid):
+def test_hessian_coord_separable_constant(sample_grid: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -69,7 +72,7 @@ def test_hessian_coord_separable_constant(sample_grid):
     batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         x, y = x
         return x**2 + y**2
 
@@ -79,13 +82,13 @@ def test_hessian_coord_separable_constant(sample_grid):
     assert jnp.allclose(out, 2.0 * jnp.eye(2)[None, None, :, :], atol=1e-6)
 
 
-def test_hessian_complex_scalar_point():
+def test_hessian_complex_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + 1j * x[1] ** 2
 
     H = hessian(f)
@@ -95,11 +98,11 @@ def test_hessian_complex_scalar_point():
     assert jnp.allclose(out, expected)
 
 
-def test_hessian_time_only_scalar():
+def test_hessian_time_only_scalar() -> None:
     dom = TimeInterval(0.0, 1.0)
 
     @dom.Function("t")
-    def f(t):
+    def f(t: Any) -> Any:
         return t**3
 
     t = jnp.linspace(0.0, 1.0, 7)
@@ -108,7 +111,7 @@ def test_hessian_time_only_scalar():
     assert jnp.allclose(out, 6.0 * t)
 
 
-def test_hessian_preserves_metadata():
+def test_hessian_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )

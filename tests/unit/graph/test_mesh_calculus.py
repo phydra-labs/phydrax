@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -5,7 +7,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _right_triangle():
+def _right_triangle() -> Any:
     vertices = jnp.array(
         [
             [0.0, 0.0, 0.0],
@@ -17,7 +19,7 @@ def _right_triangle():
     return vertices, faces
 
 
-def test_mesh_geometry_primitives_for_right_triangle():
+def test_mesh_geometry_primitives_for_right_triangle() -> None:
     vertices, faces = _right_triangle()
 
     assert jnp.allclose(phx.graph.mesh_face_areas(vertices, faces), jnp.array([0.5]))
@@ -35,7 +37,7 @@ def test_mesh_geometry_primitives_for_right_triangle():
     )
 
 
-def test_mesh_cotangent_weights_for_right_triangle():
+def test_mesh_cotangent_weights_for_right_triangle() -> None:
     vertices, faces = _right_triangle()
 
     senders, receivers, weights = phx.graph.mesh_cotangent_weights(vertices, faces)
@@ -55,7 +57,7 @@ def test_mesh_cotangent_weights_for_right_triangle():
     assert abs(lookup[(2, 1)]) < 1e-7
 
 
-def test_mesh_to_cotangent_graph_attaches_mass_and_weights():
+def test_mesh_to_cotangent_graph_attaches_mass_and_weights() -> None:
     vertices, faces = _right_triangle()
 
     bundle = phx.graph.mesh_to_cotangent_graph(vertices, faces)
@@ -69,7 +71,7 @@ def test_mesh_to_cotangent_graph_attaches_mass_and_weights():
     assert jnp.allclose(bundle.graph.nodes["mass"], jnp.full((3,), 1.0 / 6.0))
 
 
-def test_mesh_cotangent_laplacian_zero_for_constant_field():
+def test_mesh_cotangent_laplacian_zero_for_constant_field() -> None:
     vertices, faces = _right_triangle()
     graph = phx.graph.mesh_to_cotangent_graph(vertices, faces).graph
     graph = graph.replace(
@@ -84,7 +86,7 @@ def test_mesh_cotangent_laplacian_zero_for_constant_field():
     assert jnp.allclose(out.nodes["lap_u"], jnp.zeros((3,)))
 
 
-def test_mesh_cotangent_laplacian_known_linear_field_on_open_triangle():
+def test_mesh_cotangent_laplacian_known_linear_field_on_open_triangle() -> None:
     vertices, faces = _right_triangle()
     graph = phx.graph.mesh_to_cotangent_graph(vertices, faces).graph
     graph = graph.replace(
@@ -99,7 +101,7 @@ def test_mesh_cotangent_laplacian_known_linear_field_on_open_triangle():
     assert jnp.allclose(out.nodes["lap_u"], jnp.array([3.0, -3.0, 0.0]))
 
 
-def test_mesh_cotangent_laplacian_integrates_with_graph_model_keys():
+def test_mesh_cotangent_laplacian_integrates_with_graph_model_keys() -> None:
     vertices, faces = _right_triangle()
     bundle = phx.graph.mesh_to_cotangent_graph(vertices, faces)
     domain = phx.domain.GraphDomain(bundle.graph)
@@ -107,11 +109,11 @@ def test_mesh_cotangent_laplacian_integrates_with_graph_model_keys():
     structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> float:
         del node
         return 1.0
 
-    def residual(f):
+    def residual(f: Any) -> Any:
         return domain.GraphModel(
             phx.graph.MeshCotangentLaplacian(
                 sign="neighbor_minus_self", input_key="u", output_key="lap_u"

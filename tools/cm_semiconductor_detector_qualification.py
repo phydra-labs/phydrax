@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -48,7 +49,7 @@ _PLANCK = 6.62607015e-34
 _QUANTUM_REFERENCE = "semiconductor quantum qualification synthetic datum"
 
 
-def _policy(**changes):
+def _policy(**changes: Any) -> Any:
     values = dict(
         maximum_nodes=512,
         maximum_edges=1536,
@@ -62,7 +63,7 @@ def _policy(**changes):
     return DetectorResourcePolicy(**values)
 
 
-def _endpoints(bridge):
+def _endpoints(bridge: Any) -> Any:
     x = np.asarray(bridge.cochain.coordinates[0])[:, 0]
     return (
         DetectorElectrode("first", np.isclose(x, x[0])),
@@ -131,7 +132,7 @@ def _coax() -> dict[str, object]:
     }
 
 
-def _segmented(*, complete: bool):
+def _segmented(*, complete: bool) -> Any:
     grid = TensorGridPlan(
         (UniformCellAxisSpec(6), UniformCellAxisSpec(6)),
         axis_names=("x", "y"),
@@ -197,7 +198,7 @@ def _segmented_locked() -> dict[str, object]:
     }
 
 
-def _expected_refusal(operation, message: str) -> dict[str, object]:
+def _expected_refusal(operation: Any, message: str) -> dict[str, object]:
     try:
         operation()
     except ValueError as error:
@@ -271,7 +272,7 @@ def _refusal_cases() -> dict[str, object]:
     }
 
 
-def _quantum_resources():
+def _quantum_resources() -> Any:
     return semiconductor_quantum.QuantumResources(
         max_nodes=512,
         max_evaluations=20_000,
@@ -280,7 +281,9 @@ def _quantum_resources():
     )
 
 
-def _quantum_lead(*, chemical_potential=2.0, onsite=2.0, coupling=-1.0):
+def _quantum_lead(
+    *, chemical_potential: Any = 2.0, onsite: Any = 2.0, coupling: Any = -1.0
+) -> Any:
     return semiconductor_quantum.SemiInfiniteLead(
         onsite * _ELEMENTARY_CHARGE,
         -_ELEMENTARY_CHARGE,
@@ -291,7 +294,7 @@ def _quantum_lead(*, chemical_potential=2.0, onsite=2.0, coupling=-1.0):
     )
 
 
-def _quantum_device(*, left_mu=2.0, right_mu=2.0):
+def _quantum_device(*, left_mu: Any = 2.0, right_mu: Any = 2.0) -> Any:
     hamiltonian = semiconductor_quantum.ChainHamiltonian(
         jnp.asarray([2.0 * _ELEMENTARY_CHARGE]),
         jnp.zeros((0,)),
@@ -507,6 +510,7 @@ def _quantum_transport_cases() -> tuple[dict[str, object], dict[str, bool]]:
         <= 1.0e-10,
         "refusals": bound_refusal["refused"] and resource_refusal["refused"],
     }
+    # ty: ignore[invalid-return-type]
     return cases, criteria
 
 
@@ -517,17 +521,24 @@ def qualify() -> dict[str, object]:
     refusals = _refusal_cases()
     detector_criteria = {
         "parallel_plate": parallel["certified"]
+        # ty: ignore[unsupported-operator]
         and parallel["capacitance_relative_error"] <= 1.0e-8,
         "coax": coax["certified"]
+        # ty: ignore[unsupported-operator]
         and coax["capacitance_relative_error"] <= 1.0e-8
+        # ty: ignore[unsupported-operator]
         and coax["potential_maximum_error"] <= 1.0e-8,
         "segmented": segmented["certified"]
+        # ty: ignore[unsupported-operator]
         and segmented["current_endpoint_closure"] <= 1.0e-28
         and segmented["carrier_state_change"] == 0.0,
         "refusals": all(
             (
+                # ty: ignore[not-subscriptable]
                 refusals["incomplete_electrodes"]["refused"],
+                # ty: ignore[not-subscriptable]
                 refusals["resource_overflow"]["refused"],
+                # ty: ignore[not-subscriptable]
                 refusals["invalid_route"]["refused"],
                 not refusals["incomplete_partition_certified"],
             )

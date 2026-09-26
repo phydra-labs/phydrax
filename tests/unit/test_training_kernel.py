@@ -4,7 +4,7 @@
 
 import io
 import json
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax
@@ -56,24 +56,28 @@ class _Regressor(StrictModule):
     target: jax.Array = fixed_field()
 
 
-def _regressor():
+def _regressor() -> Any:
     return _Regressor(
         jnp.asarray([2.0, -1.0]), jnp.asarray(0.0), jnp.asarray([0.5, 0.25])
     )
 
 
-def _count_call(model_state):
+def _count_call(model_state: Any) -> Any:
     return eqx.tree_at(lambda state: state.calls, model_state, model_state.calls + 1.0)
 
 
-def _squared_error(parameters, model_state, fixed, payload, keys):
+def _squared_error(
+    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+) -> Any:
     del keys
     residual = parameters.weight - payload["scale"] * fixed.target
     contribution = _ObjectiveContribution(jnp.sum(residual**2), payload["support"])
     return contribution, _count_call(model_state), {"residual": residual}
 
 
-def _noisy_squared_error(parameters, model_state, fixed, payload, keys):
+def _noisy_squared_error(
+    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+) -> Any:
     batch = jr.normal(keys.accepted_key("batch"), (2,))
     noise = 0.1 * jr.normal(keys.attempt_key("noise"), (2,))
     residual = parameters.weight - payload["scale"] * fixed.target - batch + noise
@@ -81,7 +85,9 @@ def _noisy_squared_error(parameters, model_state, fixed, payload, keys):
     return contribution, _count_call(model_state), {"residual": residual}
 
 
-def _fit(fn=_squared_error, *, objective_id="fit", weight=1.0):
+def _fit(
+    fn: Any = _squared_error, *, objective_id: Any = "fit", weight: Any = 1.0
+) -> Any:
     return KernelObjective(
         objective_id=objective_id,
         kind=ObjectiveKind.DATA_FIT,
@@ -91,11 +97,18 @@ def _fit(fn=_squared_error, *, objective_id="fit", weight=1.0):
     )
 
 
-def _payload(scale=1.0, support=2.0):
+def _payload(scale: Any = 1.0, support: Any = 2.0) -> Any:
     return {"scale": jnp.asarray(scale), "support": jnp.asarray(support)}
 
 
-def _kernel(rule, *, objectives=None, budget=3, target_policy=None, tree=None):
+def _kernel(
+    rule: Any,
+    *,
+    objectives: Any = None,
+    budget: Any = 3,
+    target_policy: Any = None,
+    tree: Any = None,
+) -> Any:
     tree = _regressor() if tree is None else tree
     spec = TrainingKernelSpec(
         rule,
@@ -112,7 +125,7 @@ def _kernel(rule, *, objectives=None, budget=3, target_policy=None, tree=None):
     return kernel, kernel.init(tree, jr.key(0))
 
 
-def _leaves(tree):
+def _leaves(tree: Any) -> Any:
     return [
         jr.key_data(leaf)
         if jax.dtypes.issubdtype(leaf.dtype, jax.dtypes.prng_key)
@@ -121,7 +134,7 @@ def _leaves(tree):
     ]
 
 
-def _assert_trees_equal(actual, expected):
+def _assert_trees_equal(actual: Any, expected: Any) -> None:
     actual_leaves, expected_leaves = _leaves(actual), _leaves(expected)
     assert jax.tree_util.tree_structure(actual) == jax.tree_util.tree_structure(expected)
     for left, right in zip(actual_leaves, expected_leaves, strict=True):
@@ -142,24 +155,26 @@ class _DampedNewton(AbstractTrialStepRule):
     acceptance_ratio: float = eqx.field(static=True)
     initial_damping: float = eqx.field(static=True)
 
-    def __init__(self, initial_damping):
+    def __init__(self, initial_damping: Any) -> None:
         self.rule_id = "test-damped-newton"
         self.acceptance_ratio = 0.1
         self.initial_damping = initial_damping
 
-    def init(self, parameters):
+    def init(self, parameters: Any) -> Any:
         del parameters
         return _DampingState(
             jnp.asarray(self.initial_damping), jnp.asarray(0, dtype=jnp.int32)
         )
 
-    def trial_step(self, parameters, gradients, value, state, context):
+    def trial_step(
+        self, parameters: Any, gradients: Any, value: Any, state: Any, context: Any
+    ) -> Any:
         del parameters, value, context
         step = jax.tree.map(lambda gradient: -gradient / state.damping, gradients)
         predicted = tree_inner(gradients, gradients) / (2.0 * state.damping)
         return step, predicted, _DampingState(state.damping, state.trials + 1)
 
-    def adapt(self, state, ratio, /, *, accepted):
+    def adapt(self, state: Any, ratio: Any, /, *, accepted: Any) -> Any:
         del ratio
         factor = 1.0 / 3.0 if accepted else 10.0
         return _DampingState(state.damping * factor, state.trials)
@@ -177,16 +192,18 @@ class _CurvaturePreconditioned(AbstractKernelUpdateRule):
     rule_id: str = eqx.field(static=True)
     learning_rate: float = eqx.field(static=True)
 
-    def __init__(self, learning_rate):
+    def __init__(self, learning_rate: Any) -> None:
         self.rule_id = "test-curvature"
         self.learning_rate = learning_rate
 
-    def init(self, parameters):
+    def init(self, parameters: Any) -> Any:
         return _CurvatureState(
             jax.tree.map(jnp.ones_like, parameters), jnp.asarray(0, dtype=jnp.int32)
         )
 
-    def propose(self, parameters, gradients, value, state, context):
+    def propose(
+        self, parameters: Any, gradients: Any, value: Any, state: Any, context: Any
+    ) -> Any:
         curvature = jax.tree.map(
             lambda old, gradient: 0.5 * old + 0.5 * gradient**2,
             state.curvature,
@@ -205,7 +222,7 @@ class _CurvaturePreconditioned(AbstractKernelUpdateRule):
         return candidate, next_state, next_state, accepted
 
 
-def test_accepted_attempt_commits_every_training_quantity_and_runs_hooks():
+def test_accepted_attempt_commits_every_training_quantity_and_runs_hooks() -> None:
     kernel, state = _kernel(
         OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"),
         target_policy=ExponentialMovingAverageTargetPolicy(decay=0.5),
@@ -221,6 +238,7 @@ def test_accepted_attempt_commits_every_training_quantity_and_runs_hooks():
         next_state.parameters.weight, state.parameters.weight - 0.1 * residual
     )
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         next_state.targets.target.weight,
         0.5 * state.parameters.weight + 0.5 * next_state.parameters.weight,
     )
@@ -232,7 +250,7 @@ def test_accepted_attempt_commits_every_training_quantity_and_runs_hooks():
     assert kernel.tree(next_state).target is kernel.fixed.target
 
 
-def test_lm_like_rule_grows_damping_across_finite_rejections_only():
+def test_lm_like_rule_grows_damping_across_finite_rejections_only() -> None:
     kernel, state = _kernel(
         _DampedNewton(0.01),
         target_policy=ExponentialMovingAverageTargetPolicy(decay=0.5),
@@ -275,7 +293,7 @@ def test_lm_like_rule_grows_damping_across_finite_rejections_only():
     assert len(hooks) == 1
 
 
-def test_kfac_like_rule_retains_curvature_on_a_finite_rejection():
+def test_kfac_like_rule_retains_curvature_on_a_finite_rejection() -> None:
     kernel, state = _kernel(_CurvaturePreconditioned(learning_rate=10.0))
     next_state, evidence = run_training_attempt(kernel, state, _payload())
 
@@ -289,7 +307,7 @@ def test_kfac_like_rule_retains_curvature_on_a_finite_rejection():
     _assert_trees_equal(next_state.model_state, state.model_state)
 
 
-def test_nonfinite_attempt_rolls_back_every_training_quantity():
+def test_nonfinite_attempt_rolls_back_every_training_quantity() -> None:
     kernel, state = _kernel(
         OptaxUpdateRule(optax.adam(0.1), rule_id="adam"),
         target_policy=ExponentialMovingAverageTargetPolicy(decay=0.5),
@@ -319,7 +337,7 @@ def test_nonfinite_attempt_rolls_back_every_training_quantity():
 
 
 @pytest.mark.parametrize("budget", [0, 2])
-def test_consecutive_rejection_budget_raises_a_domain_error(budget):
+def test_consecutive_rejection_budget_raises_a_domain_error(budget: Any) -> None:
     kernel, state = _kernel(OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"), budget=budget)
     for _ in range(budget):
         state, _ = run_training_attempt(kernel, state, _payload(scale=jnp.nan))
@@ -329,7 +347,7 @@ def test_consecutive_rejection_budget_raises_a_domain_error(budget):
     assert caught.value.outcome is TrainingAttemptOutcome.NONFINITE
 
 
-def _serialized(payload, like):
+def _serialized(payload: Any, like: Any) -> Any:
     manifest = json.loads(json.dumps(payload.manifest))
     stream = io.BytesIO()
     eqx.tree_serialise_leaves(stream, payload.arrays)
@@ -338,7 +356,7 @@ def _serialized(payload, like):
     return TrainingCheckpointPayload(manifest, arrays)
 
 
-def _resumable_kernel(objective_id="fit"):
+def _resumable_kernel(objective_id: Any = "fit") -> Any:
     return _kernel(
         OptaxUpdateRule(optax.adam(0.05), rule_id="adam"),
         objectives=(_fit(_noisy_squared_error, objective_id=objective_id),),
@@ -346,14 +364,14 @@ def _resumable_kernel(objective_id="fit"):
     )
 
 
-def _advance(kernel, state, steps):
+def _advance(kernel: Any, state: Any, steps: Any) -> Any:
     for _ in range(steps):
         state = kernel.accumulate(state, _payload(support=1.0))
         state, _ = run_training_attempt(kernel, state, _payload(scale=0.5, support=3.0))
     return state
 
 
-def test_resumed_checkpoint_equals_the_uninterrupted_run_bitwise():
+def test_resumed_checkpoint_equals_the_uninterrupted_run_bitwise() -> None:
     kernel, initial = _resumable_kernel()
     like = build_training_checkpoint(kernel, initial)
     uninterrupted = _advance(kernel, initial, 4)
@@ -388,7 +406,7 @@ def test_resumed_checkpoint_equals_the_uninterrupted_run_bitwise():
     _assert_trees_equal(resumed, uninterrupted)
 
 
-def test_checkpoint_restore_fails_closed_on_identity_or_content_mismatch():
+def test_checkpoint_restore_fails_closed_on_identity_or_content_mismatch() -> None:
     kernel, initial = _resumable_kernel()
     state = _advance(kernel, initial, 1)
     payload = build_training_checkpoint(kernel, state, sharding_identity="mesh-a")
@@ -408,36 +426,36 @@ def test_checkpoint_restore_fails_closed_on_identity_or_content_mismatch():
         )
 
 
-def _forge_cursor(arrays):
+def _forge_cursor(arrays: Any) -> Any:
     accepted = arrays["cursors"]["accepted"] + 7
     return {**arrays, "cursors": {**arrays["cursors"], "accepted": accepted}}
 
 
-def _forge_rule_state(arrays):
+def _forge_rule_state(arrays: Any) -> Any:
     return {
         **arrays,
         "rule_state": jax.tree.map(lambda leaf: leaf * 0, arrays["rule_state"]),
     }
 
 
-def _forge_calls(arrays, name):
+def _forge_calls(arrays: Any, name: Any) -> Any:
     forged = eqx.tree_at(lambda state: state.calls, arrays[name], arrays[name].calls + 9)
     return {**arrays, name: forged}
 
 
-def _forge_model_state(arrays):
+def _forge_model_state(arrays: Any) -> Any:
     return _forge_calls(arrays, "model_state")
 
 
-def _forge_pending_model_state(arrays):
+def _forge_pending_model_state(arrays: Any) -> Any:
     return _forge_calls(arrays, "pending_model_state")
 
 
-def _forge_targets(arrays):
+def _forge_targets(arrays: Any) -> Any:
     return {**arrays, "targets": jax.tree.map(lambda leaf: leaf + 1, arrays["targets"])}
 
 
-def _forge_root_key(arrays):
+def _forge_root_key(arrays: Any) -> Any:
     return {**arrays, "root_key_data": arrays["root_key_data"] + 1}
 
 
@@ -452,7 +470,7 @@ def _forge_root_key(arrays):
         _forge_root_key,
     ],
 )
-def test_checkpoint_restore_refuses_forged_state_lanes_and_cursors(forge):
+def test_checkpoint_restore_refuses_forged_state_lanes_and_cursors(forge: Any) -> None:
     kernel, initial = _resumable_kernel()
     payload = build_training_checkpoint(kernel, _advance(kernel, initial, 2))
     with pytest.raises(ValueError, match="content digest"):
@@ -464,21 +482,27 @@ def test_checkpoint_restore_refuses_forged_state_lanes_and_cursors(forge):
 class _HeldWeight(StrictModule):
     weight: jax.Array = parameter_field()
 
-    def __call__(self, parameters, model_state, fixed, payload, keys):
+    def __call__(
+        self, parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+    ) -> Any:
         return _squared_error(parameters, model_state, fixed, payload, keys)
 
 
 class _HeldCounter(StrictModule):
     count: jax.Array = model_state_field()
 
-    def __call__(self, parameters, model_state, fixed, payload, keys):
+    def __call__(
+        self, parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+    ) -> Any:
         return _squared_error(parameters, model_state, fixed, payload, keys)
 
 
 class _HeldTarget(StrictModule):
     offset: jax.Array = fixed_field()
 
-    def __call__(self, parameters, model_state, fixed, payload, keys):
+    def __call__(
+        self, parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+    ) -> Any:
         contribution, next_state, diagnostics = _squared_error(
             parameters, model_state, fixed, payload, keys
         )
@@ -491,7 +515,7 @@ class _HeldTarget(StrictModule):
         )
 
 
-def test_objective_callables_may_hold_only_fixed_arrays():
+def test_objective_callables_may_hold_only_fixed_arrays() -> None:
     rule = OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd")
     with pytest.raises(
         ValueError, match=r"PARAMETER leaves \['\.weight'\].*trained tree"
@@ -504,8 +528,10 @@ def test_objective_callables_may_hold_only_fixed_arrays():
     assert int(evidence.outcome) == TrainingAttemptOutcome.ACCEPTED
 
 
-def _scaled_error(name, center):
-    def objective(parameters, model_state, fixed, payload, keys):
+def _scaled_error(name: Any, center: Any) -> Any:
+    def objective(
+        parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+    ) -> Any:
         del fixed, keys
         residual = parameters.weight - center
         contribution = _ObjectiveContribution(
@@ -516,21 +542,21 @@ def _scaled_error(name, center):
     return objective
 
 
-def _two_objectives(weight_b):
+def _two_objectives(weight_b: Any) -> Any:
     return (
         _fit(_scaled_error("first", 1.0), objective_id="first", weight=0.5),
         _fit(_scaled_error("second", -2.0), objective_id="second", weight=weight_b),
     )
 
 
-def _weighting_payload(support_b):
+def _weighting_payload(support_b: Any) -> Any:
     return {
         "first": {"count": jnp.asarray(4.0), "support": jnp.asarray(4.0)},
         "second": {"count": jnp.asarray(1.0), "support": jnp.asarray(support_b)},
     }
 
 
-def test_second_objective_does_not_rescale_the_first():
+def test_second_objective_does_not_rescale_the_first() -> None:
     weight = jnp.asarray([2.0, -1.0])
     values = {}
     for support_b in (1.0, 100.0):
@@ -551,7 +577,7 @@ def test_second_objective_does_not_rescale_the_first():
     assert values[1.0] == values[100.0]
 
 
-def test_microbatches_of_one_objective_merge_by_support():
+def test_microbatches_of_one_objective_merge_by_support() -> None:
     kernel, state = _kernel(OptaxUpdateRule(optax.sgd(1.0), rule_id="sgd"))
     state = kernel.accumulate(state, _payload(scale=1.0, support=1.0))
     _, evidence = run_training_attempt(kernel, state, _payload(scale=2.0, support=3.0))
@@ -571,13 +597,15 @@ class _AcceleratedSolver(StrictModule):
     shift: jax.Array = parameter_field()
 
 
-def _solution_error(parameters, model_state, fixed, payload, keys):
+def _solution_error(
+    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+) -> Any:
     del fixed, payload, keys
     total = parameters.shift + parameters.accelerator.gain
     return _ObjectiveContribution(jnp.sum(total**2), 1.0), model_state, {}
 
 
-def _work(parameters, model_state, fixed, payload, keys):
+def _work(parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any) -> Any:
     del fixed, payload, keys
     total = parameters.shift + parameters.accelerator.gain - 3.0
     return _ObjectiveContribution(jnp.sum(total**2), 1.0), model_state, {}
@@ -597,7 +625,7 @@ _WORK = KernelObjective(
 )
 
 
-def _accelerator_spec():
+def _accelerator_spec() -> Any:
     return TrainingKernelSpec(
         OptaxUpdateRule(optax.sgd(1.0), rule_id="sgd"),
         context="authority test",
@@ -605,7 +633,7 @@ def _accelerator_spec():
     )
 
 
-def test_accelerator_parameters_need_an_admissible_work_objective():
+def test_accelerator_parameters_need_an_admissible_work_objective() -> None:
     tree = _LearnedAccelerator(jnp.asarray(0.5))
     with pytest.raises(
         ValueError,
@@ -625,7 +653,7 @@ class _BoundHolder(StrictModule):
     shift: jax.Array = parameter_field()
 
 
-def test_component_binding_authority_overrides_the_root_authority():
+def test_component_binding_authority_overrides_the_root_authority() -> None:
     network = phx.nn.models.MLP(
         in_size=2, out_size="scalar", width_size=4, depth=1, key=jr.key(0)
     )
@@ -645,7 +673,7 @@ def test_component_binding_authority_overrides_the_root_authority():
         )
 
 
-def test_each_objective_trains_only_the_authorities_that_admit_it():
+def test_each_objective_trains_only_the_authorities_that_admit_it() -> None:
     tree = _AcceleratedSolver(_LearnedAccelerator(jnp.asarray(0.5)), jnp.asarray(1.0))
     kernel = prepare_training_kernel(
         tree,
@@ -678,14 +706,22 @@ class _PayloadNewtonRule(AbstractKernelUpdateRule):
     def forms_own_derivatives(self) -> bool:
         return True
 
-    def init(self, parameters, /):
+    def init(self, parameters: Any, /) -> Any:
         return None
 
-    def propose(self, parameters, gradients, value, rule_state, context, /):
+    def propose(
+        self,
+        parameters: Any,
+        gradients: Any,
+        value: Any,
+        rule_state: Any,
+        context: Any,
+        /,
+    ) -> Any:
         return parameters, rule_state, rule_state, jnp.asarray(True)
 
 
-def test_rules_reading_the_payload_require_every_group_to_admit_every_objective():
+def test_rules_reading_the_payload_require_every_group_to_admit_every_objective() -> None:
     tree = _AcceleratedSolver(_LearnedAccelerator(jnp.asarray(0.5)), jnp.asarray(1.0))
     spec = TrainingKernelSpec(
         _PayloadNewtonRule(), context="authority test", rejection_budget=0
@@ -698,7 +734,7 @@ def test_rules_reading_the_payload_require_every_group_to_admit_every_objective(
         )
 
 
-def test_rules_that_reevaluate_the_objective_refuse_microbatch_accumulation():
+def test_rules_that_reevaluate_the_objective_refuse_microbatch_accumulation() -> None:
     kernel, state = _kernel(BacktrackingLineSearchRule(initial_step=4.0))
     with pytest.raises(ValueError, match="does not accumulate"):
         kernel.accumulate(state, _payload())
@@ -709,7 +745,7 @@ def test_rules_that_reevaluate_the_objective_refuse_microbatch_accumulation():
     )
 
 
-def test_accepted_site_keys_repeat_across_attempts_and_attempt_keys_do_not():
+def test_accepted_site_keys_repeat_across_attempts_and_attempt_keys_do_not() -> None:
     root = jr.key(3)
     accepted = [
         training_accepted_site_key(
@@ -732,7 +768,7 @@ def test_accepted_site_keys_repeat_across_attempts_and_attempt_keys_do_not():
     assert len({tuple(np.asarray(value)) for value in data[1:]}) == 5
 
 
-def test_per_lane_parameters_train_as_independent_lanes():
+def test_per_lane_parameters_train_as_independent_lanes() -> None:
     tree = _Regressor(
         jnp.asarray([[2.0, -1.0], [1.0, 1.0]]),
         jnp.zeros((2,)),
@@ -778,7 +814,7 @@ def test_per_lane_parameters_train_as_independent_lanes():
         )
 
 
-def test_zero_support_skips_do_not_spend_the_rejection_budget():
+def test_zero_support_skips_do_not_spend_the_rejection_budget() -> None:
     kernel, state = _kernel(OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"), budget=0)
     initial = _leaves((state.parameters, state.rule_state, state.model_state))
     for _ in range(3):
@@ -800,7 +836,9 @@ def test_zero_support_skips_do_not_spend_the_rejection_budget():
     assert raised.value.outcome is TrainingAttemptOutcome.NONFINITE
 
 
-def _unsupported_counter(parameters, model_state, fixed, payload, keys):
+def _unsupported_counter(
+    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+) -> Any:
     del fixed, payload, keys
     contribution = _ObjectiveContribution(jnp.sum(parameters.weight**2), 0.0)
     counted = eqx.tree_at(
@@ -809,7 +847,7 @@ def _unsupported_counter(parameters, model_state, fixed, payload, keys):
     return contribution, counted, {}
 
 
-def test_zero_support_objective_commits_no_model_state_transition():
+def test_zero_support_objective_commits_no_model_state_transition() -> None:
     kernel, state = _kernel(
         OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"),
         objectives=(_fit(), _fit(_unsupported_counter, objective_id="unsupported")),
@@ -827,8 +865,8 @@ def test_zero_support_objective_commits_no_model_state_transition():
     _assert_trees_equal(next_state.model_state, expected.model_state)
 
 
-def test_evaluation_view_drives_evaluation_source_targets_from_the_start():
-    def doubled(optimizer_state, parameters):
+def test_evaluation_view_drives_evaluation_source_targets_from_the_start() -> None:
+    def doubled(optimizer_state: Any, parameters: Any) -> Any:
         del optimizer_state
         return jax.tree.map(lambda value: 2.0 * value, parameters)
 
@@ -841,6 +879,7 @@ def test_evaluation_view_drives_evaluation_source_targets_from_the_start():
 
     next_state, _ = run_training_attempt(kernel, state, _payload())
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         next_state.targets.target.weight,
         0.5 * state.targets.target.weight + next_state.parameters.weight,
     )

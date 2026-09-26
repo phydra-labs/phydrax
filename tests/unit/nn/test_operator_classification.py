@@ -2,10 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -30,7 +33,7 @@ from phydrax.nn.operator.training._fingerprint import operator_fit_schema
 from phydrax.nn.operator.training._normalization import fit_operator_normalization
 
 
-def _point_batch(*, mask=None, weights=None, topology=None):
+def _point_batch(*, mask: Any = None, weights: Any = None, topology: Any = None) -> Any:
     coordinates = jnp.asarray([[0.0], [0.5], [1.0]])
     source = FunctionSamples(values=jnp.zeros((3,)), coordinates=coordinates)
     query = FunctionSamples(
@@ -43,7 +46,7 @@ def _point_batch(*, mask=None, weights=None, topology=None):
     return OperatorBatch(inputs={"u": source}, queries={"query": query})
 
 
-def _grid_batch():
+def _grid_batch() -> Any:
     x = OperatorAxis(
         "x",
         jnp.asarray([0.0, 1.0]),
@@ -61,7 +64,7 @@ def _grid_batch():
     )
 
 
-def _topology_batch():
+def _topology_batch() -> Any:
     graph = phx.graph.GraphIR(
         nodes={"type": jnp.asarray([0, 1, 1], dtype=jnp.int32)},
         edges={"weight": jnp.ones((2,))},
@@ -82,7 +85,7 @@ def _topology_batch():
     )
 
 
-def _paired(batch, spec, logits, target):
+def _paired(batch: Any, spec: Any, logits: Any, target: Any) -> Any:
     predicted = OperatorFieldBatch(logits, query_name="query", spec=spec)
     truth = OperatorFieldBatch(target, query_name="query", spec=spec)
     prediction = OperatorPrediction(
@@ -100,7 +103,7 @@ def _paired(batch, spec, logits, target):
     return prediction, targets
 
 
-def _evaluate(loss, prediction, batch, targets):
+def _evaluate(loss: Any, prediction: Any, batch: Any, targets: Any) -> Any:
     return loss(
         None,
         prediction,
@@ -113,7 +116,7 @@ def _evaluate(loss, prediction, batch, targets):
     )
 
 
-def test_output_spec_splits_prediction_and_target_shapes_without_casting_labels():
+def test_output_spec_splits_prediction_and_target_shapes_without_casting_labels() -> None:
     batch = _point_batch()
     hard = OperatorClassificationSpec("multiclass", ("cold", "warm", "hot"))
     soft = OperatorClassificationSpec(
@@ -150,13 +153,13 @@ def test_output_spec_splits_prediction_and_target_shapes_without_casting_labels(
     ],
 )
 def test_all_classification_kinds_have_explicit_statistical_shapes(
-    kind,
-    classes,
-    target,
-    channels,
-    prediction_tail,
-    target_tail,
-):
+    kind: Any,
+    classes: Any,
+    target: Any,
+    channels: Any,
+    prediction_tail: Any,
+    target_tail: Any,
+) -> None:
     thresholds = (-0.5, 0.75) if kind == "ordinal" else ()
     classification = OperatorClassificationSpec(
         kind,
@@ -169,16 +172,17 @@ def test_all_classification_kinds_have_explicit_statistical_shapes(
     assert output.target_channel_shape == target_tail
 
 
-def test_ordinal_spec_rejects_noncanonical_thresholds():
+def test_ordinal_spec_rejects_noncanonical_thresholds() -> None:
     with pytest.raises(ValueError, match="strictly increasing"):
         OperatorClassificationSpec(
             "ordinal", ("low", "mid", "high"), thresholds=(1.0, 1.0)
         )
     with pytest.raises(TypeError, match="must be strings"):
+        # ty: ignore[invalid-argument-type]
         OperatorClassificationSpec("binary", (0, 1))
 
 
-def test_json_roundtrip_is_primitive_only_and_continuous_shape_is_unchanged():
+def test_json_roundtrip_is_primitive_only_and_continuous_shape_is_unchanged() -> None:
     continuous = OperatorOutputSpec(2, component_names=("x", "y"))
     assert continuous.to_dict() == {
         "channels": 2,
@@ -196,7 +200,7 @@ def test_json_roundtrip_is_primitive_only_and_continuous_shape_is_unchanged():
     assert payload["classification"]["classes"] == ["low", "medium", "high"]
 
 
-def test_classification_field_is_dimensionless_identity_and_target_only():
+def test_classification_field_is_dimensionless_identity_and_target_only() -> None:
     classification = OperatorClassificationSpec("binary", ("off", "on"))
     output = OperatorOutputSpec("scalar", classification=classification)
     field = OperatorFieldSpec("phase", role="target", output_spec=output)
@@ -210,7 +214,7 @@ def test_classification_field_is_dimensionless_identity_and_target_only():
         OperatorFieldSpec("phase", role="both", output_spec=output)
 
 
-def test_normalization_skips_classification_in_mixed_targets():
+def test_normalization_skips_classification_in_mixed_targets() -> None:
     batch = _point_batch(weights=jnp.asarray([1.0, 2.0, 1.0]))
     classification = OperatorClassificationSpec("binary", ("off", "on"))
     class_output = OperatorOutputSpec("scalar", classification=classification)
@@ -258,7 +262,7 @@ def test_normalization_skips_classification_in_mixed_targets():
     )
 
 
-def test_nll_uses_point_grid_and_topology_geometry_masks_and_quadrature():
+def test_nll_uses_point_grid_and_topology_geometry_masks_and_quadrature() -> None:
     classification = OperatorClassificationSpec("binary", ("off", "on"))
     spec = OperatorOutputSpec("scalar", classification=classification)
     loss_mean = OperatorClassificationNLL(classification, zero_measure="zero")
@@ -309,7 +313,7 @@ def test_nll_uses_point_grid_and_topology_geometry_masks_and_quadrature():
 
 
 @pytest.mark.parametrize("kind", ["binary", "multiclass", "multilabel"])
-def test_hard_nll_focal_and_overlap_are_finite_for_supported_kinds(kind):
+def test_hard_nll_focal_and_overlap_are_finite_for_supported_kinds(kind: Any) -> None:
     classes = ("off", "on") if kind == "binary" else ("a", "b", "c")
     classification = OperatorClassificationSpec(kind, classes)
     channels = "scalar" if kind == "binary" else len(classes)
@@ -334,7 +338,7 @@ def test_hard_nll_focal_and_overlap_are_finite_for_supported_kinds(kind):
 
 
 @pytest.mark.parametrize("kind", ["binary", "multiclass", "multilabel"])
-def test_soft_cross_entropy_and_overlap_are_finite_for_supported_kinds(kind):
+def test_soft_cross_entropy_and_overlap_are_finite_for_supported_kinds(kind: Any) -> None:
     classes = ("off", "on") if kind == "binary" else ("a", "b", "c")
     classification = OperatorClassificationSpec(kind, classes, target="soft")
     channels = "scalar" if kind == "binary" else len(classes)
@@ -357,7 +361,7 @@ def test_soft_cross_entropy_and_overlap_are_finite_for_supported_kinds(kind):
         assert jnp.isfinite(_evaluate(loss, prediction, batch, targets))
 
 
-def test_soft_focal_and_overlap_have_distinct_complete_fingerprints():
+def test_soft_focal_and_overlap_have_distinct_complete_fingerprints() -> None:
     hard = OperatorClassificationSpec("multiclass", ("a", "b", "c"))
     reordered = OperatorClassificationSpec("multiclass", ("b", "a", "c"))
     soft = OperatorClassificationSpec("multiclass", ("a", "b", "c"), target="soft")
@@ -390,7 +394,59 @@ def test_soft_focal_and_overlap_have_distinct_complete_fingerprints():
     assert overlap.fingerprint != OperatorOverlapLoss(hard, overlap="jaccard").fingerprint
 
 
-def test_class_order_changes_fit_schema_for_exact_resume_rejection():
+def test_classification_losses_store_canonical_common_selectors() -> None:
+    hard = OperatorClassificationSpec("binary", ("off", "on"))
+    soft = OperatorClassificationSpec("binary", ("off", "on"), target="soft")
+    losses = (
+        OperatorClassificationNLL(
+            hard,
+            # ty: ignore[invalid-argument-type]
+            support_reduction=np.str_("mean"),
+            # ty: ignore[invalid-argument-type]
+            case_reduction=np.str_("sum"),
+            # ty: ignore[invalid-argument-type]
+            zero_measure=np.str_("zero"),
+        ),
+        OperatorSoftClassificationLoss(
+            soft,
+            # ty: ignore[invalid-argument-type]
+            support_reduction=np.str_("integral"),
+            # ty: ignore[invalid-argument-type]
+            case_reduction=np.str_("mean"),
+            # ty: ignore[invalid-argument-type]
+            zero_measure=np.str_("error"),
+        ),
+        OperatorFocalClassificationLoss(
+            hard,
+            # ty: ignore[invalid-argument-type]
+            support_reduction=np.str_("mean"),
+            # ty: ignore[invalid-argument-type]
+            case_reduction=np.str_("sum"),
+            # ty: ignore[invalid-argument-type]
+            zero_measure=np.str_("zero"),
+        ),
+        OperatorOverlapLoss(
+            hard,
+            # ty: ignore[invalid-argument-type]
+            support_reduction=np.str_("integral"),
+            # ty: ignore[invalid-argument-type]
+            case_reduction=np.str_("mean"),
+            # ty: ignore[invalid-argument-type]
+            zero_measure=np.str_("error"),
+        ),
+    )
+
+    for loss in losses:
+        assert type(loss.support_reduction) is str
+        assert type(loss.case_reduction) is str
+        assert type(loss.zero_measure) is str
+
+    with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
+        OperatorClassificationNLL(hard, support_reduction=1)
+
+
+def test_class_order_changes_fit_schema_for_exact_resume_rejection() -> None:
     batch = _point_batch()
     first = OperatorClassificationSpec("multiclass", ("a", "b", "c"))
     second = OperatorClassificationSpec("multiclass", ("b", "a", "c"))
@@ -412,7 +468,7 @@ def test_class_order_changes_fit_schema_for_exact_resume_rejection():
     ]
 
 
-def test_overlap_reduces_ratio_once_and_handles_zero_measure_explicitly():
+def test_overlap_reduces_ratio_once_and_handles_zero_measure_explicitly() -> None:
     classification = OperatorClassificationSpec("binary", ("off", "on"))
     spec = OperatorOutputSpec("scalar", classification=classification)
     batch = _point_batch(weights=jnp.asarray([1.0, 3.0, 0.0]))
@@ -443,7 +499,7 @@ def test_overlap_reduces_ratio_once_and_handles_zero_measure_explicitly():
     assert _evaluate(dice, empty_prediction, empty_batch, empty_targets) == 0.0
 
 
-def test_ordinal_hard_nll_and_overlap_use_scalar_location_and_fixed_thresholds():
+def test_ordinal_hard_nll_and_overlap_use_scalar_location_and_fixed_thresholds() -> None:
     classification = OperatorClassificationSpec(
         "ordinal",
         ("low", "medium", "high"),
@@ -470,7 +526,7 @@ def test_ordinal_hard_nll_and_overlap_use_scalar_location_and_fixed_thresholds()
     )
 
 
-def test_operator_zero_weight_skips_nonfinite_predictions():
+def test_operator_zero_weight_skips_nonfinite_predictions() -> None:
     classification = OperatorClassificationSpec("binary", ("off", "on"))
     spec = OperatorOutputSpec("scalar", classification=classification)
     batch = _point_batch()

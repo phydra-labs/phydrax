@@ -10,7 +10,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_general_plane_stress_director_closes_all_transverse_tractions():
+def test_general_plane_stress_director_closes_all_transverse_tractions() -> None:
     rotation = phx.applications.solid_mechanics.MPMMaterialOrientation(
         jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     )
@@ -39,7 +39,7 @@ def test_general_plane_stress_director_closes_all_transverse_tractions():
     assert bool(linearized.tangent_successful[0])
 
 
-def test_pressure_dependent_materials_report_branches_and_dissipation():
+def test_pressure_dependent_materials_report_branches_and_dissipation() -> None:
     deformation = jnp.asarray([[[1.0, 0.16, 0.0], [0.0, 0.92, 0.0], [0.0, 0.0, 1.08]]])
     density = jnp.asarray((1.0,))
     dp = phx.applications.solid_mechanics.DruckerPragerMPMConstitutivePlan()
@@ -85,7 +85,7 @@ def test_pressure_dependent_materials_report_branches_and_dissipation():
     assert mc_response.dissipation_increment[0] >= 0.0
 
 
-def test_modified_cam_clay_and_nonlocal_softening_are_admissible():
+def test_modified_cam_clay_and_nonlocal_softening_are_admissible() -> None:
     material = phx.applications.solid_mechanics.ModifiedCamClayMPMConstitutivePlan(
         initial_preconsolidation_pressure=2.0,
         initial_void_ratio=0.8,
@@ -116,7 +116,7 @@ def test_modified_cam_clay_and_nonlocal_softening_are_admissible():
     assert jnp.all(regularized <= 2.0)
 
 
-def test_biot_thermal_operator_has_coupled_jvp_vjp_and_boundaries():
+def test_biot_thermal_operator_has_coupled_jvp_vjp_and_boundaries() -> None:
     shape = (8, 8)
     boundary = phx.applications.solid_mechanics.MPMCoupledBoundaryPlan(
         pressure_mask=jnp.zeros(shape, dtype="bool").at[0, :].set(True),

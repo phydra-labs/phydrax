@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),
@@ -44,8 +47,11 @@ def run():
         normals,
         jnp.ones((6,)),
         modal_basis=jnp.linspace(-1.0, 1.0, 6)[:, None],
+        # ty: ignore[invalid-argument-type]
         modal_mass=(1.0,),
+        # ty: ignore[invalid-argument-type]
         modal_stiffness=(2.0,),
+        # ty: ignore[invalid-argument-type]
         modal_damping=(0.1,),
         tolerance=1.0e-6,
     )

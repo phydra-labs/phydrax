@@ -394,7 +394,10 @@ class ImmersedBodyRegimePlan(StrictModule, NonTrainableState):
             if regime != "fixed-topology-sharp":
                 raise ValueError("A sharp epoch owner requires the sharp regime.")
             # _owner_contract assigns the sharp regime only to sharp projection plans.
-            assert isinstance(owner, MACSharpInterfaceProjectionPlan)
+            if not (isinstance(owner, MACSharpInterfaceProjectionPlan)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(owner, MACSharpInterfaceProjectionPlan)."
+                )
             if (
                 sharp_epoch_owner.operators.prepared_id != owner.operators.prepared_id
                 or sharp_epoch_owner.boundaries.prepared_id

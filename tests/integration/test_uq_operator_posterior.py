@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -27,14 +30,16 @@ def _batch() -> phx.nn.operator.OperatorBatch:
     )
 
 
-def test_operator_map_laplace_and_geometry_reattachment_match_gaussian_reference():
+def test_operator_map_laplace_and_geometry_reattachment_match_gaussian_reference() -> (
+    None
+):
     batch = _batch()
     spec = phx.nn.operator.OperatorOutputSpec("scalar")
     target = jnp.asarray([[1.0, 2.0, jnp.nan]])
     observation_scale = 0.5
     prior_scale = 2.0
 
-    def operator_prediction(parameters):
+    def operator_prediction(parameters: Any) -> Any:
         values = jnp.broadcast_to(parameters["level"], spec.expected_shape(batch))
         return phx.nn.operator.OperatorPrediction.from_field(
             "output",

@@ -17,7 +17,7 @@ from .._doc import DOC_KEY0
 from .._model import TRIAL_SPACE_CERTIFICATE_KEY
 from .._strict import StrictModule
 from ..domain._base import EnforcementGateMethod
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._compile import EnforcementProgram, InteriorAnchors
 from ._spec import EnforcementSpec
 
@@ -44,8 +44,7 @@ class EnforcementOptions(StrictModule):
         num_reference: int = 3_000_000,
         sampler: str = "latin_hypercube",
     ) -> None:
-        if gate_method not in ("auto", "global_r_equivalence", "compact"):
-            raise ValueError("Unsupported enforcement gate method.")
+        gate_method = parse(gate_method, EnforcementGateMethod, "gate_method")
         saturation = float(gate_saturation_fraction)
         linear = float(gate_linear_fraction)
         if not 0.0 < saturation <= 1.0:
@@ -120,7 +119,10 @@ def compile(
         if spec.realization is not None:
             condition = spec.condition
             # EnforcementSpec admits a realization only for typed Condition values.
-            assert isinstance(condition, Condition)
+            if not (isinstance(condition, Condition)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(condition, Condition)."
+                )
             declared_sources = condition.fields.sources
             missing = tuple(
                 source for source in declared_sources if source not in resolved_functions

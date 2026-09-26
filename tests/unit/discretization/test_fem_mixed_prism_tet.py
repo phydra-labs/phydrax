@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _mixed_mesh():
+def _mixed_mesh() -> Any:
     coordinates = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -40,7 +43,7 @@ def _mixed_mesh():
     )
 
 
-def _field(*, degree=1, component_shape=()):
+def _field(*, degree: Any = 1, component_shape: Any = ()) -> Any:
     return phx.discretization.FiniteElementFieldSpec(
         "u",
         {
@@ -51,11 +54,11 @@ def _field(*, degree=1, component_shape=()):
     )
 
 
-def _discretization():
+def _discretization() -> Any:
     return phx.discretization.FiniteElementPlan(_mixed_mesh(), _field()).prepare()
 
 
-def test_mixed_prism_tetra_p1_uses_polyhedral_topology_and_shared_vertex_dofs():
+def test_mixed_prism_tetra_p1_uses_polyhedral_topology_and_shared_vertex_dofs() -> None:
     discretization = _discretization()
     mesh = discretization.mesh
     dof_map = discretization.dof_maps[0]
@@ -79,7 +82,7 @@ def test_mixed_prism_tetra_p1_uses_polyhedral_topology_and_shared_vertex_dofs():
     )
 
 
-def test_mixed_prism_tetra_selected_cell_region_integrates_only_that_region():
+def test_mixed_prism_tetra_selected_cell_region_integrates_only_that_region() -> None:
     discretization = _discretization()
     mesh = discretization.mesh
     cells = mesh.entity_set(3)
@@ -109,14 +112,14 @@ def test_mixed_prism_tetra_selected_cell_region_integrates_only_that_region():
     )
 
 
-def test_mixed_prism_tetra_rejects_high_order_conforming_field():
+def test_mixed_prism_tetra_rejects_high_order_conforming_field() -> None:
     mesh = _mixed_mesh()
 
     with pytest.raises(ValueError, match="conforming.*degree 1 only"):
         phx.discretization.FiniteElementPlan(mesh, _field(degree=2))
 
 
-def test_mixed_prism_tetra_rejects_discontinuous_and_vector_admission():
+def test_mixed_prism_tetra_rejects_discontinuous_and_vector_admission() -> None:
     mesh = _mixed_mesh()
     discontinuous = phx.discretization.FiniteElementFieldSpec(
         "u",

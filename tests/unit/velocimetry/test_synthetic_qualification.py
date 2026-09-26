@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -20,7 +23,7 @@ from phydrax.velocimetry.synthetic import (
 )
 
 
-def _split_cases():
+def _split_cases() -> Any:
     return tuple(
         generate_piv_case(
             PIVScenarioPlan(

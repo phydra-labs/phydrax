@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -21,7 +24,7 @@ from phydrax.solver._open_certificates import (
 )
 
 
-def test_finite_subspace_cayley_retains_norm_energy_and_reversibility():
+def test_finite_subspace_cayley_retains_norm_energy_and_reversibility() -> None:
     overlap = jnp.eye(2, dtype=jnp.complex64)
     hamiltonian = jnp.array([[0, 1], [1, 0]], dtype=jnp.complex64)
     problem = FiniteVariationalSubspaceTDVPProblem(
@@ -38,7 +41,7 @@ def test_finite_subspace_cayley_retains_norm_energy_and_reversibility():
     assert result.claim.startswith("cayley")
 
 
-def test_finite_subspace_cayley_rejects_cross_problem_plan_reuse():
+def test_finite_subspace_cayley_rejects_cross_problem_plan_reuse() -> None:
     overlap = jnp.eye(2, dtype=jnp.complex64)
     hamiltonian = jnp.array([[0, 1], [1, 0]], dtype=jnp.complex64)
     source = FiniteVariationalSubspaceTDVPProblem(
@@ -59,7 +62,7 @@ def test_finite_subspace_cayley_rejects_cross_problem_plan_reuse():
         solve_finite_subspace_tdvp(other, plan)
 
 
-def test_adaptive_tdvp_separates_sampling_uncertainty_from_temporal_defect():
+def test_adaptive_tdvp_separates_sampling_uncertainty_from_temporal_defect() -> None:
     plan = AdaptiveTDVPPlan(
         (0.0, 0.2),
         initial_step_size=0.05,
@@ -69,7 +72,7 @@ def test_adaptive_tdvp_separates_sampling_uncertainty_from_temporal_defect():
         maximum_accepted_steps=16,
     )
 
-    def vector_field(parameters, time, key):
+    def vector_field(parameters: Any, time: Any, key: Any) -> Any:
         del time, key
         return -1j * parameters, jnp.asarray(0.0)
 
@@ -84,7 +87,7 @@ def test_adaptive_tdvp_separates_sampling_uncertainty_from_temporal_defect():
     assert jnp.any(result.accepted_attempts)
 
 
-def test_adaptive_tdvp_uses_real_time_dtype_for_complex_parameters():
+def test_adaptive_tdvp_uses_real_time_dtype_for_complex_parameters() -> None:
     plan = AdaptiveTDVPPlan(
         (0.0, 0.2),
         initial_step_size=0.05,
@@ -96,7 +99,7 @@ def test_adaptive_tdvp_uses_real_time_dtype_for_complex_parameters():
     initial = jnp.array([1.0 + 0.0j], dtype=jnp.complex64)
     callback_time_dtypes = []
 
-    def time_dependent_vector_field(parameters, time, key):
+    def time_dependent_vector_field(parameters: Any, time: Any, key: Any) -> Any:
         del key
         callback_time_dtypes.append(time.dtype)
         stopped = jnp.where(time < 0.1, 0.0, 0.0)
@@ -123,7 +126,7 @@ def test_adaptive_tdvp_uses_real_time_dtype_for_complex_parameters():
     )
 
 
-def test_adaptive_tdvp_propagates_velocity_uncertainty_over_the_step():
+def test_adaptive_tdvp_propagates_velocity_uncertainty_over_the_step() -> None:
     plan = AdaptiveTDVPPlan(
         (0.0, 0.1),
         initial_step_size=0.05,
@@ -133,7 +136,7 @@ def test_adaptive_tdvp_propagates_velocity_uncertainty_over_the_step():
         maximum_accepted_steps=2,
     )
 
-    def vector_field(parameters, time, key):
+    def vector_field(parameters: Any, time: Any, key: Any) -> Any:
         del time, key
         return jnp.zeros_like(parameters), jnp.asarray(1e-2)
 
@@ -149,7 +152,7 @@ def test_adaptive_tdvp_propagates_velocity_uncertainty_over_the_step():
     assert jnp.allclose(result.sampling_uncertainties, 5e-4)
 
 
-def test_adaptive_tdvp_exhausts_constant_sampling_noise_without_step_collapse():
+def test_adaptive_tdvp_exhausts_constant_sampling_noise_without_step_collapse() -> None:
     plan = AdaptiveTDVPPlan(
         (0.0, 0.1),
         initial_step_size=0.05,
@@ -159,7 +162,7 @@ def test_adaptive_tdvp_exhausts_constant_sampling_noise_without_step_collapse():
         maximum_accepted_steps=4,
     )
 
-    def vector_field(parameters, time, key):
+    def vector_field(parameters: Any, time: Any, key: Any) -> Any:
         del time, key
         return jnp.zeros_like(parameters), jnp.asarray(1e-1)
 
@@ -177,7 +180,7 @@ def test_adaptive_tdvp_exhausts_constant_sampling_noise_without_step_collapse():
     assert jnp.allclose(result.sampling_uncertainties, 5e-3)
 
 
-def test_finite_steady_state_refinement_and_quotient_identifiability_claims():
+def test_finite_steady_state_refinement_and_quotient_identifiability_claims() -> None:
     identity = jnp.eye(2, dtype=jnp.complex64).reshape(-1)
     trace = jnp.array([1, 0, 0, 1], dtype=jnp.complex64)
     liouvillian = 0.5 * identity[:, None] @ trace[None, :] - jnp.eye(
@@ -205,7 +208,7 @@ def test_finite_steady_state_refinement_and_quotient_identifiability_claims():
     assert bool(identified.identifiable)
 
 
-def test_detailed_balance_gap_is_scale_invariant_and_rejects_growth():
+def test_detailed_balance_gap_is_scale_invariant_and_rejects_growth() -> None:
     identity = jnp.eye(2, dtype=jnp.complex64).reshape(-1)
     trace = jnp.array([1, 0, 0, 1], dtype=jnp.complex64)
     liouvillian = 0.5 * identity[:, None] @ trace[None, :] - jnp.eye(
@@ -240,7 +243,7 @@ def test_detailed_balance_gap_is_scale_invariant_and_rejects_growth():
     assert jnp.isnan(invalid.certified_gap)
 
 
-def test_resource_admission_and_finite_no_pair_metadata():
+def test_resource_admission_and_finite_no_pair_metadata() -> None:
     resource = ElectronicVMCResourcePlan(
         8,
         determinant_count=2,

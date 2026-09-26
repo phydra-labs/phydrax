@@ -2,17 +2,20 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def test_stormer_verlet_preserves_harmonic_energy_and_is_differentiable():
+def test_stormer_verlet_preserves_harmonic_energy_and_is_differentiable() -> None:
     initial_position = jnp.asarray([1.0])
     initial_momentum = jnp.asarray([0.0])
 
-    def terminal(step_size):
+    def terminal(step_size: Any) -> Any:
         result = phx.solver.integrate_stormer_verlet(
             initial_position,
             initial_momentum,

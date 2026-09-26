@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _chain_graph(length=3):
+def _chain_graph(length: Any = 3) -> Any:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(length,), num_states=2)
     edges = jnp.stack(
         [jnp.arange(length - 1), jnp.arange(1, length)],
@@ -25,7 +27,7 @@ def _chain_graph(length=3):
     return phx.pgm.DiscreteFactorGraph((variables,), (interactions,))
 
 
-def _triangle_graph():
+def _triangle_graph() -> Any:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(3,), num_states=2)
     edges = jnp.asarray([[0, 1], [1, 2], [2, 0]])
     interactions = phx.pgm.DenseTableFactorGroup(
@@ -38,12 +40,12 @@ def _triangle_graph():
     return phx.pgm.DiscreteFactorGraph((variables,), (interactions,))
 
 
-def _linear_kernel(parameters, states):
+def _linear_kernel(parameters: Any, states: Any) -> Any:
     parameter_shape = (parameters.shape[0],) + (1,) * (states.ndim - 2)
     return parameters.reshape(parameter_shape) * jnp.sum(states, axis=-1)
 
 
-def test_open_factor_capabilities_are_enforced_and_reported():
+def test_open_factor_capabilities_are_enforced_and_reported() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(2,), num_states=2)
     selections = (
         phx.pgm.VariableSelection(variables, [0]),
@@ -88,7 +90,7 @@ def test_open_factor_capabilities_are_enforced_and_reported():
         phx.pgm.prepare_belief_propagation(unsupported_graph)
 
 
-def test_sparse_enumerated_bp_never_materializes_dense_support():
+def test_sparse_enumerated_bp_never_materializes_dense_support() -> None:
     variables = phx.pgm.DiscreteVariableGroup(
         "x",
         shape=(2,),
@@ -123,11 +125,13 @@ def test_sparse_enumerated_bp_never_materializes_dense_support():
     assert result.successful
     assert prepared.factor_tables[0].shape == (1, 3)
     assert prepared.factor_evidence[0].dense_elements == 0
+    # ty: ignore[unresolved-attribute]
     assert result.factor_probabilities[0].shape == (1, 3)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(result.factor_probabilities[0][0], supported_probabilities)
 
 
-def test_precision_policy_places_factor_messages_and_outputs_by_stage():
+def test_precision_policy_places_factor_messages_and_outputs_by_stage() -> None:
     graph = _chain_graph(2)
     precision = phx.pgm.FactorGraphPrecisionPolicy(
         evaluation_dtype="float32",
@@ -142,13 +146,16 @@ def test_precision_policy_places_factor_messages_and_outputs_by_stage():
     assert prepared.factor_tables[0].dtype == jnp.float32
     assert state.messages.dtype == jnp.float64
     assert state.evidence.values.dtype == jnp.float32
+    # ty: ignore[unresolved-attribute]
     assert result.variable_log_probabilities.values.dtype == jnp.float32
+    # ty: ignore[unresolved-attribute]
     assert result.factor_probabilities[0].dtype == jnp.float32
+    # ty: ignore[unresolved-attribute]
     assert result.log_normalizer.dtype == jnp.float32
     assert dict(result.provenance.configuration)["accumulation_dtype"] == "float64"
 
 
-def test_directed_forest_and_native_batches_match_exact_inference():
+def test_directed_forest_and_native_batches_match_exact_inference() -> None:
     graph = _chain_graph(4)
     exact = phx.pgm.enumerate_factor_graph(graph)
     prepared = phx.pgm.prepare_belief_propagation(graph)
@@ -159,6 +166,7 @@ def test_directed_forest_and_native_batches_match_exact_inference():
     assert result.successful
     assert int(result.diagnostics.iterations) == graph.topology.incidence_edges.shape[0]
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         jnp.exp(result.variable_log_probabilities.values),
         exact.variable_probabilities.values,
     )
@@ -180,7 +188,7 @@ def test_directed_forest_and_native_batches_match_exact_inference():
     assert len(phx.pgm.enumerate_packed_factor_graphs(packed)) == 2
 
 
-def test_loopy_schedule_acceleration_and_qualified_implicit_root():
+def test_loopy_schedule_acceleration_and_qualified_implicit_root() -> None:
     graph = _triangle_graph()
     prepared = phx.pgm.prepare_belief_propagation(
         graph,
@@ -206,7 +214,9 @@ def test_loopy_schedule_acceleration_and_qualified_implicit_root():
     assert implicit.inference.successful
     assert implicit.implicit_derivative
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         synchronous.variable_log_probabilities.values,
+        # ty: ignore[unresolved-attribute]
         asynchronous.variable_log_probabilities.values,
         atol=1e-7,
     )
@@ -218,7 +228,7 @@ def test_loopy_schedule_acceleration_and_qualified_implicit_root():
         )
 
 
-def test_elimination_junction_law_and_map_bounds_are_truthful():
+def test_elimination_junction_law_and_map_bounds_are_truthful() -> None:
     graph = _chain_graph()
     exact = phx.pgm.enumerate_factor_graph(graph)
     plan = phx.pgm.plan_variable_elimination(graph)
@@ -279,7 +289,7 @@ def test_elimination_junction_law_and_map_bounds_are_truthful():
         )
 
 
-def test_explicit_evidence_must_match_structure_and_flat_state_axis():
+def test_explicit_evidence_must_match_structure_and_flat_state_axis() -> None:
     graph = _chain_graph(2)
     prepared = phx.pgm.prepare_belief_propagation(graph)
     wrong_structure = phx.pgm.VariableStateValues(
@@ -326,7 +336,7 @@ def test_explicit_evidence_must_match_structure_and_flat_state_axis():
         phx.pgm.run_implicit_belief_propagation(prepared, malformed)
 
 
-def test_implicit_bp_preserves_feasible_negative_infinity_support():
+def test_implicit_bp_preserves_feasible_negative_infinity_support() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(2,), num_states=2)
     factor = phx.pgm.DenseTableFactorGroup(
         (
@@ -361,7 +371,7 @@ def test_implicit_bp_preserves_feasible_negative_infinity_support():
     assert impossible.status == int(phx.pgm.BeliefPropagationStatus.INFEASIBLE)
 
 
-def test_bethe_likelihood_rejects_unconverged_inference():
+def test_bethe_likelihood_rejects_unconverged_inference() -> None:
     graph = _triangle_graph()
     prepared = phx.pgm.prepare_belief_propagation(graph)
     inference = phx.pgm.run_belief_propagation(

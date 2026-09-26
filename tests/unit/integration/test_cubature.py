@@ -1,5 +1,6 @@
 import itertools
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_fixed_gauss_hermite_uses_matched_standard_normal_measure():
+def test_fixed_gauss_hermite_uses_matched_standard_normal_measure() -> None:
     normal = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
     function = normal.Function("z")(lambda z: z**20)
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussHermiteRule(11))
@@ -27,7 +28,7 @@ def test_fixed_gauss_hermite_uses_matched_standard_normal_measure():
     )
 
 
-def test_gauss_hermite_requires_a_standard_normal_reference_transform():
+def test_gauss_hermite_requires_a_standard_normal_reference_transform() -> None:
     uniform = phx.domain.ProbabilityDomain(phx.uq.Uniform(0.0, 1.0), label="z")
     with pytest.raises(ValueError, match="standard-normal reference"):
         phx.integration.materialize(
@@ -36,7 +37,7 @@ def test_gauss_hermite_requires_a_standard_normal_reference_transform():
         )
 
 
-def test_mapped_xiao_gimbutas_rules_preserve_mass_and_node_counts():
+def test_mapped_xiao_gimbutas_rules_preserve_mass_and_node_counts() -> None:
     triangle = phx.integration.CubatureRule("triangle", 10)
     triangle_target = phx.integration.mapped(
         triangle,
@@ -70,7 +71,7 @@ def test_mapped_xiao_gimbutas_rules_preserve_mass_and_node_counts():
     assert triangle_estimate.error_estimate is None
 
 
-def test_symmetric_triangle_cubature_is_vertex_permutation_invariant():
+def test_symmetric_triangle_cubature_is_vertex_permutation_invariant() -> None:
     vertices = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.2, 0.9)))
     rule = phx.integration.CubatureRule("triangle", 10)
     estimates = []
@@ -95,10 +96,10 @@ def test_symmetric_triangle_cubature_is_vertex_permutation_invariant():
     assert jnp.max(jnp.asarray(estimates)) - jnp.min(jnp.asarray(estimates)) < 2e-12
 
 
-def test_cubature_mapping_is_jittable_and_differentiable():
+def test_cubature_mapping_is_jittable_and_differentiable() -> None:
     rule = phx.integration.CubatureRule("disk", 6)
 
-    def objective(radius):
+    def objective(radius: Any) -> Any:
         target = phx.integration.mapped(
             rule,
             lambda reference: radius * reference,
@@ -116,7 +117,7 @@ def test_cubature_mapping_is_jittable_and_differentiable():
     assert derivative == pytest.approx(4.0 * math.pi, rel=2e-13)
 
 
-def test_simplex_fallback_is_explicit_and_positive():
+def test_simplex_fallback_is_explicit_and_positive() -> None:
     fallback = phx.integration.CubatureRule("triangle", 31)
     assert fallback.family == "duffy"
     assert fallback.exact_degree >= 31
@@ -126,7 +127,7 @@ def test_simplex_fallback_is_explicit_and_positive():
         phx.integration.CubatureRule("triangle", 31, allow_duffy_fallback=False)
 
 
-def test_mixed_hermite_and_interval_product_preserves_measure():
+def test_mixed_hermite_and_interval_product_preserves_measure() -> None:
     normal = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
     interval = phx.domain.ScalarInterval(0.0, 2.0, label="t")
     domain = phx.domain.ProductDomain(normal, interval)

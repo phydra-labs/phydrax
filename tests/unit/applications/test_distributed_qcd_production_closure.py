@@ -5,6 +5,7 @@ from __future__ import annotations
 import zipfile
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -64,7 +65,7 @@ def _su2_links(shape: tuple[int, ...]) -> np.ndarray:
     return links
 
 
-def test_global_ownership_is_exact_and_plaquettes_are_never_double_counted():
+def test_global_ownership_is_exact_and_plaquettes_are_never_double_counted() -> None:
     plan = LatticeDecompositionPlan((4, 6), (2, 3), periodic=(False, False))
     owners = np.asarray(plan.ownership.site_owner)
     assert np.array_equal(np.bincount(owners), np.full((6,), 4))
@@ -84,7 +85,9 @@ def test_global_ownership_is_exact_and_plaquettes_are_never_double_counted():
     assert np.array_equal(face_counts, np.asarray(plan.ownership.face_valid))
 
 
-def test_parity_halo_exchange_reconstructs_reference_without_touching_other_parity():
+def test_parity_halo_exchange_reconstructs_reference_without_touching_other_parity() -> (
+    None
+):
     plan = LatticeDecompositionPlan((6, 4), (3, 2))
     global_values = jnp.arange(plan.site_count, dtype=jnp.float64) + 1.0
     owned = plan.pack_owned_sites(global_values)
@@ -107,7 +110,7 @@ def test_parity_halo_exchange_reconstructs_reference_without_touching_other_pari
     assert np.all(np.asarray(even_complete)[halo & ~even] == 0.0)
 
 
-def test_projected_spinor_halo_reconstructs_directional_block_rhs():
+def test_projected_spinor_halo_reconstructs_directional_block_rhs() -> None:
     plan = LatticeDecompositionPlan((6, 4), (3, 2))
     spinor = (
         np.arange(plan.site_count * 2 * 1 * 3, dtype=np.float64)
@@ -144,17 +147,17 @@ def test_projected_spinor_halo_reconstructs_directional_block_rhs():
 
 
 class _DiagonalDslash:
-    def __init__(self, diagonal: np.ndarray):
+    def __init__(self, diagonal: np.ndarray) -> None:
         self.diagonal = jnp.asarray(diagonal)
 
-    def mv(self, value):
+    def mv(self, value: Any) -> Any:
         return self.diagonal * value
 
-    def adjoint_mv(self, value):
+    def adjoint_mv(self, value: Any) -> Any:
         return jnp.conj(self.diagonal) * value
 
 
-def test_native_block_dslash_preserves_the_true_rhs_axis():
+def test_native_block_dslash_preserves_the_true_rhs_axis() -> None:
     provider = NativeJaxLatticeProvider()
     diagonal = np.asarray([1.0 + 2.0j, 3.0 - 0.5j])[:, None, None]
     operator = _DiagonalDslash(diagonal)
@@ -170,7 +173,7 @@ def test_native_block_dslash_preserves_the_true_rhs_axis():
     )
 
 
-def test_native_archive_is_rank_independent_and_checksum_bound(tmp_path: Path):
+def test_native_archive_is_rank_independent_and_checksum_bound(tmp_path: Path) -> None:
     links = _su2_links((4, 4))
     one = LatticeDecompositionPlan((4, 4), (1, 1))
     four = LatticeDecompositionPlan((4, 4), (2, 2))
@@ -241,21 +244,27 @@ def test_interchange_validates_endian_precision_and_round_trips(
     kind: str,
     byte_order: str,
     precision: str,
-):
+) -> None:
     links = _su2_links((2, 2))
     field = GaugeFieldRecord(links, (2, 2), "fundamental-su2")
     path = tmp_path / f"{kind}-{byte_order}-{precision}.gauge"
     written = write_gauge_interchange(
         path,
         field,
+        # ty: ignore[invalid-argument-type]
         kind,
+        # ty: ignore[invalid-argument-type]
         byte_order=byte_order,
+        # ty: ignore[invalid-argument-type]
         precision=precision,
     )
     restored = read_gauge_interchange(
         path,
+        # ty: ignore[invalid-argument-type]
         expected_kind=kind,
+        # ty: ignore[invalid-argument-type]
         expected_byte_order=byte_order,
+        # ty: ignore[invalid-argument-type]
         expected_precision=precision,
     )
     assert restored.field.field_id == written.field.field_id
@@ -266,7 +275,7 @@ def test_interchange_validates_endian_precision_and_round_trips(
         read_gauge_interchange(path, expected_byte_order=wrong)
 
 
-def test_provider_capability_refusal_is_operation_specific():
+def test_provider_capability_refusal_is_operation_specific() -> None:
     capabilities = LatticeKernelCapabilities(
         "gauge-action-only",
         ("gauge.wilson_action",),
@@ -286,7 +295,7 @@ def test_provider_capability_refusal_is_operation_specific():
     assert refusal.value.capability == "gauge.wilson_force"
 
 
-def test_serial_and_distributed_gauge_action_and_force_are_equal():
+def test_serial_and_distributed_gauge_action_and_force_are_equal() -> None:
     links = _su2_links((4, 4))
     serial = DistributedGaugeTheoryPlan(
         LatticeDecompositionPlan((4, 4), (1, 1)),

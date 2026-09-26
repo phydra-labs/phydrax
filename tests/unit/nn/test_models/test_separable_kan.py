@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -10,7 +13,7 @@ from phydrax.nn.models import BSplineEdgeBasis, SeparableKAN
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_separable_kan_vector_input_shape(scan):
+def test_separable_kan_vector_input_shape(scan: Any) -> None:
     model = SeparableKAN(
         in_size=2,
         out_size=3,
@@ -27,7 +30,7 @@ def test_separable_kan_vector_input_shape(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_separable_kan_coord_separable_shape(scan):
+def test_separable_kan_coord_separable_shape(scan: Any) -> None:
     model = SeparableKAN(
         in_size=2,
         out_size="scalar",
@@ -45,7 +48,7 @@ def test_separable_kan_coord_separable_shape(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_separable_kan_scalar_requires_split_input(scan):
+def test_separable_kan_scalar_requires_split_input(scan: Any) -> None:
     with pytest.raises(ValueError, match="requires in_size >= 2"):
         _ = SeparableKAN(
             in_size="scalar",
@@ -57,7 +60,7 @@ def test_separable_kan_scalar_requires_split_input(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_separable_kan_scalar_with_split_input(scan):
+def test_separable_kan_scalar_with_split_input(scan: Any) -> None:
     model = SeparableKAN(
         in_size="scalar",
         out_size="scalar",
@@ -74,7 +77,7 @@ def test_separable_kan_scalar_with_split_input(scan):
     assert jnp.isfinite(y)
 
 
-def test_separable_bspline_kan_scan_matches_loop():
+def test_separable_bspline_kan_scan_matches_loop() -> None:
     basis = BSplineEdgeBasis(degree=3, num_intervals=5)
     key = jr.key(4)
     loop = SeparableKAN(

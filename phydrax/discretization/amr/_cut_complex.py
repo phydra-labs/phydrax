@@ -804,7 +804,10 @@ def _finalize_cut_complex(
         numeric_version="block-amr-cut-complex",
     )
     connectivity = mesh.connectivity
-    assert isinstance(connectivity, PolyhedralConnectivity)
+    if not (isinstance(connectivity, PolyhedralConnectivity)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(connectivity, PolyhedralConnectivity)."
+        )
     mesh_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
     component_order = mesh_ids.astype(np.int64, copy=False)
     inverse_order = np.empty_like(component_order)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -43,7 +46,7 @@ from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.units import KILOGRAM
 
 
-def _system(*, constraint_damping=0.02, tolerance=1.0e-5):
+def _system(*, constraint_damping: Any = 0.02, tolerance: Any = 1.0e-5) -> Any:
     return Z4cSystem(
         RelativityScaleContract.geometric(KILOGRAM),
         RelativityConvention.canonical(),
@@ -53,7 +56,7 @@ def _system(*, constraint_damping=0.02, tolerance=1.0e-5):
     )
 
 
-def test_z4c_requires_geometric_units_and_rejects_complex_fields():
+def test_z4c_requires_geometric_units_and_rejects_complex_fields() -> None:
     with pytest.raises(ValueError, match="G=c=1"):
         Z4cSystem(
             RelativityScaleContract.si(),
@@ -77,7 +80,7 @@ def test_z4c_requires_geometric_units_and_rejects_complex_fields():
         )
 
 
-def test_fourth_order_polynomial_identities_include_nonperiodic_edges():
+def test_fourth_order_polynomial_identities_include_nonperiodic_edges() -> None:
     shape = (9, 8, 7)
     spacing = (0.2, 0.3, 0.4)
     operators = FourthOrderDerivatives(shape, spacing, boundary="one_sided")
@@ -114,7 +117,7 @@ def test_fourth_order_polynomial_identities_include_nonperiodic_edges():
     assert float(jnp.sum(damping * checkerboard)) < 0.0
 
 
-def test_flat_vacuum_rhs_constraints_and_jit_shape():
+def test_flat_vacuum_rhs_constraints_and_jit_shape() -> None:
     grid = FixedGridGeometry(
         (5, 5, 5), (-2.0, -2.0, -2.0), (1.0, 1.0, 1.0), periodic=True
     )
@@ -146,7 +149,7 @@ def test_flat_vacuum_rhs_constraints_and_jit_shape():
     np.testing.assert_allclose(compiled, 0.0, atol=2e-6)
 
 
-def test_harmonic_and_linearized_tensor_wave_rates():
+def test_harmonic_and_linearized_tensor_wave_rates() -> None:
     shape = (9, 5, 5)
     spacing = (0.25, 1.0, 1.0)
     grid = FixedGridGeometry(shape, (0.0, 0.0, 0.0), spacing, periodic=True)
@@ -214,7 +217,7 @@ def test_harmonic_and_linearized_tensor_wave_rates():
     np.testing.assert_allclose(puncture_rates.shift_driver, -1.5 * driver)
 
 
-def test_stress_energy_and_constraint_damping_are_explicit():
+def test_stress_energy_and_constraint_damping_are_explicit() -> None:
     grid = FixedGridGeometry(
         (5, 5, 5), (-2.0, -2.0, -2.0), (1.0, 1.0, 1.0), periodic=True
     )
@@ -298,7 +301,7 @@ def test_stress_energy_and_constraint_damping_are_explicit():
     np.testing.assert_allclose(damped.rates.theta, expected, rtol=2e-5, atol=2e-8)
 
 
-def test_boundary_evidence_enforcement_and_atomic_flat_step():
+def test_boundary_evidence_enforcement_and_atomic_flat_step() -> None:
     grid = FixedGridGeometry(
         (6, 6, 6), (-2.5, -2.5, -2.5), (1.0, 1.0, 1.0), periodic=False
     )
@@ -362,7 +365,7 @@ def test_boundary_evidence_enforcement_and_atomic_flat_step():
     )
     observed_tokens = []
 
-    def zero_stress_energy(stage_time, geometry):
+    def zero_stress_energy(stage_time: Any, geometry: Any) -> Any:
         observed_tokens.append(int(geometry.snapshot_token))
         shape = geometry.leading_shape
         dtype = geometry.alpha.dtype

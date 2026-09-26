@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -8,7 +10,9 @@ from phydrax.domain import BatchEvaluator
 
 
 class _KeyedBatchValue(BatchEvaluator):
-    def __call_batch__(self, batch, /, *, key=jr.key(0), **kwargs):
+    def __call_batch__(
+        self, batch: Any, /, *, key: Any = jr.key(0), **kwargs: Any
+    ) -> Any:
         del kwargs
         reference = batch["x"]
         return cx.AxisArray(
@@ -17,7 +21,7 @@ class _KeyedBatchValue(BatchEvaluator):
         )
 
 
-def test_prepared_linear_reduction_is_linear_and_refresh_stable():
+def test_prepared_linear_reduction_is_linear_and_refresh_stable() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     target = phx.integration.over(domain.component())
     realization = phx.integration.materialize(
@@ -27,11 +31,11 @@ def test_prepared_linear_reduction_is_linear_and_refresh_stable():
     prepared = phx.integration.prepare_linear_reduction(realization)
 
     @domain.Function("x")
-    def square(x):
+    def square(x: Any) -> Any:
         return x**2
 
     @domain.Function("x")
-    def linear(x):
+    def linear(x: Any) -> Any:
         return x
 
     left = prepared.apply(2.0 * square + 3.0 * linear)
@@ -44,7 +48,7 @@ def test_prepared_linear_reduction_is_linear_and_refresh_stable():
     assert refreshed.realization_id == prepared.realization_id
 
 
-def test_prepared_linear_reduction_requires_declared_domain_functions():
+def test_prepared_linear_reduction_requires_declared_domain_functions() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     realization = phx.integration.materialize(
         phx.integration.over(domain.component()),
@@ -52,7 +56,7 @@ def test_prepared_linear_reduction_requires_declared_domain_functions():
     )
     prepared = phx.integration.prepare_linear_reduction(realization)
 
-    def square(x=jnp.asarray(2.0), *, key=None):
+    def square(x: Any = jnp.asarray(2.0), *, key: Any = None) -> Any:
         del key
         return x**2
 
@@ -62,7 +66,7 @@ def test_prepared_linear_reduction_requires_declared_domain_functions():
     assert jnp.allclose(declared.data, 1.0 / 3.0, atol=1e-10)
 
 
-def test_prepared_replicated_qmc_averages_coefficient_actions():
+def test_prepared_replicated_qmc_averages_coefficient_actions() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     target = phx.integration.over(domain.component())
     realization = phx.integration.materialize(
@@ -76,7 +80,7 @@ def test_prepared_replicated_qmc_averages_coefficient_actions():
     assert jnp.allclose(prepared.apply(1.0).data, 1.0)
 
 
-def test_prepared_additive_reduction_splits_evaluation_keys_per_term():
+def test_prepared_additive_reduction_splits_evaluation_keys_per_term() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     t = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     domain = phx.domain.ProductDomain(x, t)

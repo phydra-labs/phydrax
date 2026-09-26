@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -14,7 +17,7 @@ from phydrax.discretization.finite_volume._block_amr import (
 from phydrax.discretization.finite_volume._dynamics import PreparedFiniteVolumeDynamics
 
 
-def _prepared(*, periodic, capacity=3, levels=1, halo=1):
+def _prepared(*, periodic: Any, capacity: Any = 3, levels: Any = 1, halo: Any = 1) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=periodic),),
         axis_names=("x",),
@@ -26,7 +29,7 @@ def _prepared(*, periodic, capacity=3, levels=1, halo=1):
     return phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
 
 
-def _system():
+def _system() -> Any:
     return phx.equations.ScalarConservationSystem(
         1,
         lambda state, axis, args: state,
@@ -35,14 +38,14 @@ def _system():
     )
 
 
-def _method():
+def _method() -> Any:
     return phx.discretization.FiniteVolumeMethodPlan(
         phx.discretization.PiecewiseConstantReconstruction(),
         phx.discretization.RusanovFluxPlan(),
     )
 
 
-def _state(topology, values):
+def _state(topology: Any, values: Any) -> Any:
     levels = tuple(
         phx.discretization.BlockLevelState(plan, metadata, value)
         for plan, metadata, value in zip(
@@ -52,7 +55,7 @@ def _state(topology, values):
     return phx.discretization.BlockHierarchyState(topology, levels)
 
 
-def test_one_level_periodic_blocks_match_structured_finite_volume_residual():
+def test_one_level_periodic_blocks_match_structured_finite_volume_residual() -> None:
     prepared = _prepared(periodic=True)
     topology = prepared.initial_topology()
     global_state = jnp.asarray(
@@ -88,7 +91,7 @@ def test_one_level_periodic_blocks_match_structured_finite_volume_residual():
     assert result.ledger.evidence_policy_id == dynamics.plan.precision.policy_id
 
 
-def test_constant_periodic_state_is_zero_and_shared_faces_cancel_once():
+def test_constant_periodic_state_is_zero_and_shared_faces_cancel_once() -> None:
     prepared = _prepared(periodic=True)
     topology = prepared.initial_topology()
     values = jnp.full((3, 4, 1), jnp.nan, dtype=jnp.float64)
@@ -112,10 +115,12 @@ def test_constant_periodic_state_is_zero_and_shared_faces_cancel_once():
     np.testing.assert_allclose(jnp.sum(result.ledger.scatter_content_rate(), axis=0), 0.0)
 
 
-def test_physical_boundary_callbacks_are_not_used_on_interblock_faces():
+def test_physical_boundary_callbacks_are_not_used_on_interblock_faces() -> None:
     calls = []
 
-    def target(time, interior, coordinates, outward_normal, args):
+    def target(
+        time: Any, interior: Any, coordinates: Any, outward_normal: Any, args: Any
+    ) -> Any:
         del time, args
         calls.append((np.asarray(coordinates), np.asarray(outward_normal)))
         return interior
@@ -151,7 +156,7 @@ def test_physical_boundary_callbacks_are_not_used_on_interblock_faces():
     )
 
 
-def test_inactive_nonfinite_payload_is_inert_and_fine_interfaces_are_distinct():
+def test_inactive_nonfinite_payload_is_inert_and_fine_interfaces_are_distinct() -> None:
     prepared = _prepared(periodic=False, levels=2)
     initial = prepared.initial_topology()
     tags = jnp.zeros((3, 4), dtype="bool").at[0, 1].set(True)
@@ -193,7 +198,7 @@ def test_inactive_nonfinite_payload_is_inert_and_fine_interfaces_are_distinct():
     assert np.all(np.isfinite(np.asarray(result.ledger.scatter_content_rate())))
 
 
-def test_covered_cell_restriction_is_volume_weighted_and_leaves_uncovered_cells():
+def test_covered_cell_restriction_is_volume_weighted_and_leaves_uncovered_cells() -> None:
     prepared = _prepared(periodic=False, levels=2)
     initial = prepared.initial_topology()
     tags = jnp.zeros((3, 4), dtype="bool").at[0, 1].set(True)
@@ -216,7 +221,7 @@ def test_covered_cell_restriction_is_volume_weighted_and_leaves_uncovered_cells(
     np.testing.assert_array_equal(restricted[2], np.zeros((4, 1)))
 
 
-def test_weno_reconstruction_halo_requirement_uses_stencil_radius():
+def test_weno_reconstruction_halo_requirement_uses_stencil_radius() -> None:
     method = phx.discretization.FiniteVolumeMethodPlan(
         phx.discretization.WENOReconstructionPlan(5),
         phx.discretization.RusanovFluxPlan(),
@@ -230,4 +235,5 @@ def test_weno_reconstruction_halo_requirement_uses_stencil_radius():
     plan = BlockAMRFiniteVolumePlan(
         _prepared(periodic=True, halo=3), _system(), method, boundaries
     )
+    # ty: ignore[unresolved-attribute]
     assert plan.method.reconstruction.order == 5

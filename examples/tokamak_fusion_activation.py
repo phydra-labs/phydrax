@@ -6,13 +6,14 @@
 
 import hashlib
 import json
+from typing import Any
 
 import numpy as np
 
 import phydrax as phx
 
 
-def reference(name):
+def reference(name: Any) -> Any:
     payload = name.encode()
     return phx.qualification.ReferenceArtifactManifest(
         name,
@@ -31,7 +32,7 @@ def reference(name):
     )
 
 
-def main():
+def main() -> None:
     theta = 2.0 * np.pi * np.arange(32) / 32
     contours = np.zeros((3, 32, 2))
     contours[0, :, 0] = 2.0
@@ -92,7 +93,10 @@ def main():
     cobalt = phx.nuclear.NuclideKey(27, 59)
     cobalt60 = phx.nuclear.NuclideKey(27, 60)
     groups = phx.nuclear.EnergyGroupStructure(
-        [0.0, 1.0, 20.0], phx.units.MEGAELECTRONVOLT, source_id="synthetic-groups"
+        # ty: ignore[invalid-argument-type]
+        [0.0, 1.0, 20.0],
+        phx.units.MEGAELECTRONVOLT,
+        source_id="synthetic-groups",
     )
     capture = phx.nuclear.InventoryTransition(
         "cobalt-capture",
@@ -139,6 +143,7 @@ def main():
     faces = np.zeros((3,))
     result = scenario.step(
         state,
+        # ty: ignore[invalid-argument-type]
         activation.inventory([1.0, 0.0]),
         1.0e-3,
         phx.applications.tokamak.TokamakTransportCoefficients(faces, faces, faces),

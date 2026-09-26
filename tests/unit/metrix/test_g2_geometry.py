@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -5,11 +7,11 @@ import pytest
 import phydrax as phx
 
 
-def _chart(name="g2"):
+def _chart(name: Any = "g2") -> Any:
     return phx.metrix.CoordinateChart(name, tuple(f"x{index}" for index in range(7)))
 
 
-def test_octonion_bridge_cross_product_and_forms_share_one_convention():
+def test_octonion_bridge_cross_product_and_forms_share_one_convention() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     bridge = phx.metrix.OctonionG2Bridge(algebra, _chart())
     left = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -26,7 +28,7 @@ def test_octonion_bridge_cross_product_and_forms_share_one_convention():
     assert bridge.associative_tensor().shape == (7, 7, 7)
 
 
-def test_canonical_flat_g2_structure_is_compatible_closed_and_ricci_flat():
+def test_canonical_flat_g2_structure_is_compatible_closed_and_ricci_flat() -> None:
     bridge = phx.metrix.OctonionG2Bridge(
         phx.metrix.algebra.OctonionAlgebraSpec(), _chart()
     )
@@ -49,7 +51,7 @@ def test_canonical_flat_g2_structure_is_compatible_closed_and_ricci_flat():
     assert jnp.allclose(volume[..., 0], 7.0, atol=1e-12)
 
 
-def test_g2_validation_separates_algebraic_and_torsion_failures():
+def test_g2_validation_separates_algebraic_and_torsion_failures() -> None:
     chart = _chart()
     bridge = phx.metrix.OctonionG2Bridge(phx.metrix.algebra.OctonionAlgebraSpec(), chart)
     perturbed = bridge.coefficients.at[0].add(0.1)
@@ -86,7 +88,7 @@ def test_g2_validation_separates_algebraic_and_torsion_failures():
     assert not bool(torsion.valid)
 
 
-def test_g2_validation_is_jittable_when_runtime_errors_are_disabled():
+def test_g2_validation_is_jittable_when_runtime_errors_are_disabled() -> None:
     bridge = phx.metrix.OctonionG2Bridge(
         phx.metrix.algebra.OctonionAlgebraSpec(), _chart()
     )
@@ -101,7 +103,7 @@ def test_g2_validation_is_jittable_when_runtime_errors_are_disabled():
     assert validate(jnp.zeros((7,))) < 1e-12
 
 
-def test_g2_geometry_rejects_invalid_charts_forms_and_lie_group_inference():
+def test_g2_geometry_rejects_invalid_charts_forms_and_lie_group_inference() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     chart = _chart()
     bridge = phx.metrix.OctonionG2Bridge(algebra, chart)

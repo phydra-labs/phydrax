@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from importlib.metadata import version
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -34,7 +35,7 @@ class PICBenchmarkReport:
     successful: bool
 
 
-def _case(count, particle_count):
+def _case(count: Any, particle_count: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(3)
@@ -58,13 +59,13 @@ def _case(count, particle_count):
     return transfer, current, position, position + displacement
 
 
-def run_pic_benchmark(*, smoke=False):
+def run_pic_benchmark(*, smoke: Any = False) -> Any:
     count = 4 if smoke else 8
     particle_count = 16 if smoke else 512
     transfer, current, start, end = _case(count, particle_count)
 
     @jax.jit
-    def apply(left, right):
+    def apply(left: Any, right: Any) -> Any:
         return current.deposit(left, right, jnp.asarray(1.0e-3))
 
     started = perf_counter()
@@ -113,7 +114,7 @@ def run_pic_benchmark(*, smoke=False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

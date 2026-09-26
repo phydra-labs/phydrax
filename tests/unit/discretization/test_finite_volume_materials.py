@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,14 +13,14 @@ import pytest
 import phydrax as phx
 
 
-def _grid(shape):
+def _grid(shape: Any) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(count) for count in shape),
         axis_names=tuple("xy"[: len(shape)]),
     ).prepare(jnp.stack((jnp.zeros(len(shape)), jnp.ones(len(shape)))))
 
 
-def test_ideal_gas_material_and_euler_roundtrip_are_consistent():
+def test_ideal_gas_material_and_euler_roundtrip_are_consistent() -> None:
     material = phx.equations.IdealGasMaterial(1.4, 287.0)
     system = phx.equations.EulerSystem(2, material=material)
     primitive = jnp.asarray([[1.2, 30.0, -4.0, 101325.0]])
@@ -35,7 +38,7 @@ def test_ideal_gas_material_and_euler_roundtrip_are_consistent():
     assert system.system_id != phx.equations.EulerSystem(2).system_id
 
 
-def test_stiffened_gas_pressure_energy_and_temperature_roundtrip():
+def test_stiffened_gas_pressure_energy_and_temperature_roundtrip() -> None:
     material = phx.equations.StiffenedGasMaterial(
         4.4, 6.0e8, 1816.0, reference_energy=2.0e5
     )
@@ -49,7 +52,7 @@ def test_stiffened_gas_pressure_energy_and_temperature_roundtrip():
     assert jnp.all(material.admissible(density, pressure))
 
 
-def test_constant_and_sutherland_transport_have_physical_values_and_gradients():
+def test_constant_and_sutherland_transport_have_physical_values_and_gradients() -> None:
     temperature = jnp.asarray([250.0, 300.0, 600.0])
     state = jnp.ones((3, 3))
     constant = phx.equations.ConstantTransport(1.8e-5, 0.026)
@@ -69,7 +72,7 @@ def test_constant_and_sutherland_transport_have_physical_values_and_gradients():
     assert jnp.isfinite(gradient) and gradient > 0.0
 
 
-def test_transport_closures_reject_negative_bulk_viscosity():
+def test_transport_closures_reject_negative_bulk_viscosity() -> None:
     with pytest.raises(ValueError, match="non-negative"):
         phx.equations.ConstantTransport(1.0, 1.0, bulk_viscosity=-0.1)
     with pytest.raises(ValueError, match="invalid"):
@@ -83,7 +86,7 @@ def test_transport_closures_reject_negative_bulk_viscosity():
         )
 
 
-def test_material_owned_viscous_flux_resolves_couette_shear():
+def test_material_owned_viscous_flux_resolves_couette_shear() -> None:
     grid = _grid((12, 10))
     system = phx.equations.CompressibleNavierStokesSystem(
         phx.equations.ConstantTransport(0.2, 0.0), 2
@@ -113,14 +116,19 @@ def test_material_owned_viscous_flux_resolves_couette_shear():
         phx.discretization.FiniteVolumeBoundarySet(("x", "y"), (pair, pair)),
     ).prepare()
     fluxes = phx.discretization.ViscousFluxPlan().face_fluxes(
-        system, 0.0, state, discretization, halo
+        system,
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        state,
+        discretization,
+        halo,
     )
 
     np.testing.assert_allclose(fluxes[1][1:-1, 2:-2, 0], 0.0, atol=1e-12)
     np.testing.assert_allclose(fluxes[1][1:-1, 2:-2, 1], 0.2, atol=2e-12)
 
 
-def test_mapped_viscous_flux_is_zero_for_uniform_state():
+def test_mapped_viscous_flux_is_zero_for_uniform_state() -> None:
     system = phx.equations.CompressibleNavierStokesSystem(
         phx.equations.ConstantTransport(0.1, 0.2), 2
     )
@@ -145,13 +153,18 @@ def test_mapped_viscous_flux_is_zero_for_uniform_state():
         phx.discretization.FiniteVolumeBoundarySet(("x", "y"), (pair, pair)),
     ).prepare()
     fluxes = phx.discretization.ViscousFluxPlan().face_fluxes(
-        system, 0.0, state, mapped, halo
+        system,
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        state,
+        mapped,
+        halo,
     )
     assert all(jnp.max(jnp.abs(flux)) < 1e-11 for flux in fluxes)
 
 
-def test_viscous_stability_bound_scales_with_spacing_and_transport():
-    def reported_step(cells, viscosity):
+def test_viscous_stability_bound_scales_with_spacing_and_transport() -> None:
+    def reported_step(cells: Any, viscosity: Any) -> Any:
         grid = phx.discretization.TensorGridPlan(
             (phx.discretization.UniformCellAxisSpec(cells, periodic=True),),
             axis_names=("x",),

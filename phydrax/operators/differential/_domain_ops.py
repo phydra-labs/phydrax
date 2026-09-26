@@ -4225,7 +4225,8 @@ def maxwell_stress(
             T = T + mu_v[..., None, None] * (hh - 0.5 * h2 * I)
 
         # maxwell_stress requires E or H, so at least one array term was added.
-        assert isinstance(T, jax.Array)
+        if not (isinstance(T, jax.Array)):
+            raise RuntimeError("Internal invariant failed: isinstance(T, jax.Array).")
         return T
 
     return DomainFunction(domain=joined, deps=deps, func=_op, metadata={})

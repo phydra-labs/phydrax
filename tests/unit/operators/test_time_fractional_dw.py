@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy.special as jsp
@@ -16,11 +19,11 @@ from phydrax.operators.differential import (
 )
 
 
-def test_caputo_time_fractional_dw_time_only_smoke():
+def test_caputo_time_fractional_dw_time_only_smoke() -> None:
     dom = TimeInterval(0.0, 2.0)
 
     @dom.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return jnp.sin(t)
 
     D = caputo_time_fractional_dw(u, alpha=1.5)
@@ -31,11 +34,11 @@ def test_caputo_time_fractional_dw_time_only_smoke():
     assert jnp.isfinite(y)
 
 
-def test_caputo_time_fractional_dw_broadcasts_over_space(sample_batch):
+def test_caputo_time_fractional_dw_broadcasts_over_space(sample_batch: Any) -> None:
     dom = Interval1d(-1.0, 1.0) @ TimeInterval(0.0, 2.0)
 
     @dom.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return jnp.cos(t)
 
     D = caputo_time_fractional_dw(u, alpha=1.25, M=64)
@@ -55,7 +58,9 @@ def test_caputo_time_fractional_dw_broadcasts_over_space(sample_batch):
         (1.75, 3.0, "gj", 2e-10),
     ],
 )
-def test_caputo_time_fractional_matches_power_law(alpha, power, mode, atol):
+def test_caputo_time_fractional_matches_power_law(
+    alpha: Any, power: Any, mode: Any, atol: Any
+) -> None:
     start = 0.3
     endpoint = 1.1
     domain = TimeInterval(start, 1.5)
@@ -76,7 +81,7 @@ def test_caputo_time_fractional_matches_power_law(alpha, power, mode, atol):
     assert jnp.allclose(derivative(points).data, expected, atol=atol, rtol=0.0)
 
 
-def test_caputo_gauss_legendre_converges_under_rule_refinement():
+def test_caputo_gauss_legendre_converges_under_rule_refinement() -> None:
     alpha = 0.75
     power = 2.0
     endpoint = 0.8
@@ -105,7 +110,7 @@ def test_caputo_gauss_legendre_converges_under_rule_refinement():
 
 
 @pytest.mark.parametrize("alpha", [0.4, 1.4])
-def test_caputo_time_fractional_is_exact_zero_at_initial_time(alpha):
+def test_caputo_time_fractional_is_exact_zero_at_initial_time(alpha: Any) -> None:
     domain = TimeInterval(0.2, 1.0)
     function = domain.Function("t")(lambda time: jnp.sin(time))
     derivative = caputo_time_fractional(function, alpha=alpha, order=64)
@@ -115,9 +120,10 @@ def test_caputo_time_fractional_is_exact_zero_at_initial_time(alpha):
     assert derivative.metadata["fractional_randomized"] is False
 
 
-def test_caputo_time_fractional_rejects_hidden_randomized_mode():
+def test_caputo_time_fractional_rejects_hidden_randomized_mode() -> None:
     domain = TimeInterval(0.0, 1.0)
     function = domain.Function("t")(lambda time: time**2)
 
     with pytest.raises(ValueError, match="mode"):
+        # ty: ignore[invalid-argument-type]
         caputo_time_fractional(function, alpha=1.5, mode="qmc")

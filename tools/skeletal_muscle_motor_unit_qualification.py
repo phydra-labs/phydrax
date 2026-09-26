@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -22,7 +23,7 @@ from phydrax.applications.skeletal_muscle.motor_units import (
 )
 
 
-def _scalar_reference(runtime, state, excitation: float, step_s: float):
+def _scalar_reference(runtime: Any, state: Any, excitation: float, step_s: float) -> Any:
     parameters = runtime.parameters
     threshold = np.asarray(parameters.recruitment_threshold)
     rested = np.asarray(parameters.rested_twitch_force)
@@ -91,7 +92,7 @@ def _scalar_reference(runtime, state, excitation: float, step_s: float):
     }
 
 
-def _reference_step_qualification(runtime):
+def _reference_step_qualification(runtime: Any) -> Any:
     state = runtime.initialize()
     maximum_error = 0.0
     cases = []
@@ -133,7 +134,7 @@ def _reference_step_qualification(runtime):
     }
 
 
-def _target_endurance(runtime, target_fraction: float, maximum_time_s: float):
+def _target_endurance(runtime: Any, target_fraction: float, maximum_time_s: float) -> Any:
     step_s = 0.1
     step_count = round(maximum_time_s / step_s)
     excitation = (
@@ -142,7 +143,7 @@ def _target_endurance(runtime, target_fraction: float, maximum_time_s: float):
     rested_maximum_force = runtime.rested_maximum_force()
     target_force = target_fraction * rested_maximum_force
 
-    def protocol_step(carry, _):
+    def protocol_step(carry: Any, _: Any) -> Any:
         state, running = carry
         force_curve = jax.vmap(lambda drive: runtime.evaluate(state, drive).total_force)(
             excitation
@@ -195,7 +196,7 @@ def _target_endurance(runtime, target_fraction: float, maximum_time_s: float):
     }
 
 
-def _protocol_qualification(runtime):
+def _protocol_qualification(runtime: Any) -> Any:
     reported = {0.5: 95.5, 0.8: 14.8}
     protocols = []
     for target, horizon in ((0.2, 200.0), (0.5, 150.0), (0.8, 50.0)):
@@ -212,10 +213,10 @@ def _protocol_qualification(runtime):
     return {"passed": passed, "tolerance_s": tolerance_s, "cases": protocols}
 
 
-def _constant_excitation_endpoint(runtime, step_s: float):
+def _constant_excitation_endpoint(runtime: Any, step_s: float) -> Any:
     step_count = round(20.0 / step_s)
 
-    def protocol_step(state, _):
+    def protocol_step(state: Any, _: Any) -> Any:
         candidate = runtime.candidate(state, 40.0, step_s)
         return candidate.commit(), candidate.evidence.successful
 
@@ -234,7 +235,7 @@ def _constant_excitation_endpoint(runtime, step_s: float):
     }
 
 
-def _time_step_refinement(runtime):
+def _time_step_refinement(runtime: Any) -> Any:
     cases = [
         _constant_excitation_endpoint(runtime, step_s) for step_s in (0.1, 0.05, 0.025)
     ]
@@ -256,7 +257,7 @@ def _time_step_refinement(runtime):
     }
 
 
-def qualify():
+def qualify() -> Any:
     runtime = PotvinFuglevand2017Plan().prepare()
     reference = _reference_step_qualification(runtime)
     protocols = _protocol_qualification(runtime)

@@ -1,4 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -39,7 +42,7 @@ from phydrax.optim import OptimizationTermination
 from phydrax.units import derived_unit, JOULE, METER, ONE, SECOND
 
 
-def one_zone(capacity=10000.0, conductance=10.0):
+def one_zone(capacity: Any = 10000.0, conductance: Any = 10.0) -> Any:
     return BuildingSource(
         (Zone("room", capacity),),
         adjacencies=(Adjacency("outdoor", "room", None, conductance),),
@@ -47,7 +50,7 @@ def one_zone(capacity=10000.0, conductance=10.0):
     )
 
 
-def test_one_zone_exact_affine_and_physical_parameter_derivative():
+def test_one_zone_exact_affine_and_physical_parameter_derivative() -> None:
     model = compile_building(one_zone())
     assert isinstance(model.system, ContinuousSystem)
     result = model.step(jnp.array([300.0]), 280.0, jnp.array([50.0]), 500.0)
@@ -66,7 +69,7 @@ def test_one_zone_exact_affine_and_physical_parameter_derivative():
     np.testing.assert_array_equal(identity.temperature, [300.0])
 
 
-def test_two_zone_internal_energy_conservation_and_balance_detection():
+def test_two_zone_internal_energy_conservation_and_balance_detection() -> None:
     source = BuildingSource(
         (Zone("a", 1000.0), Zone("b", 1000.0)),
         adjacencies=(Adjacency("wall", "a", "b", 10.0),),
@@ -89,7 +92,7 @@ def test_two_zone_internal_energy_conservation_and_balance_detection():
     np.testing.assert_allclose(observation.balance_residual, [100.0, -100.0])
 
 
-def test_massless_dae_and_series_resistance_equivalence():
+def test_massless_dae_and_series_resistance_equivalence() -> None:
     source = BuildingSource(
         (Zone("air", 10000.0), Zone("junction", 0, massless=True)),
         adjacencies=(
@@ -118,7 +121,7 @@ def test_massless_dae_and_series_resistance_equivalence():
         )
 
 
-def test_geometry_area_aperture_retrofit_and_stale_revision():
+def test_geometry_area_aperture_retrofit_and_stale_revision() -> None:
     metadata = SurfaceMetadata(
         source_id="wall",
         source_revision="measured",
@@ -127,7 +130,11 @@ def test_geometry_area_aperture_retrofit_and_stale_revision():
         cell_tags=("wall", "wall"),
     )
     model = SurfaceModel.from_triangles(
-        [[0, 0, 0], [2, 0, 0], [2, 3, 0], [0, 3, 0]], [[0, 1, 2], [0, 2, 3]], metadata
+        # ty: ignore[invalid-argument-type]
+        [[0, 0, 0], [2, 0, 0], [2, 3, 0], [0, 3, 0]],
+        # ty: ignore[invalid-argument-type]
+        [[0, 1, 2], [0, 2, 3]],
+        metadata,
     )
     label = surface_tag_labels(model)[0]
     construction = Construction("wall", 2.0)
@@ -176,7 +183,7 @@ def test_geometry_area_aperture_retrofit_and_stale_revision():
         )
 
 
-def test_ground_ambient_supply_and_adiabatic_boundaries_remain_distinct():
+def test_ground_ambient_supply_and_adiabatic_boundaries_remain_distinct() -> None:
     source = BuildingSource(
         (Zone("room", 1000),),
         boundaries=(
@@ -205,6 +212,7 @@ def test_ground_ambient_supply_and_adiabatic_boundaries_remain_distinct():
     np.testing.assert_allclose(observation.net_heat, [-95])
     np.testing.assert_allclose(observation.edge_heat_flow, [60, 10, 20, 5])
     np.testing.assert_allclose(
+        # ty: ignore[missing-argument]
         model.system.evaluate(
             0.0, jnp.array([300.0]), inputs=jnp.array([270.0, 290.0, 295.0, 0.0])
         ),
@@ -227,7 +235,7 @@ def test_ground_ambient_supply_and_adiabatic_boundaries_remain_distinct():
         model.step(jnp.array([300.0]), 290.0, jnp.zeros(1), 10.0)
 
 
-def test_epw_standard_time_interval_energy_and_missing_flags():
+def test_epw_standard_time_interval_energy_and_missing_flags() -> None:
     text = energyplus_reference_weather().decode()
     rows = text.splitlines()
     record = rows[8].split(",")
@@ -250,7 +258,7 @@ def test_epw_standard_time_interval_energy_and_missing_flags():
         parse_epw("\n".join(rows[:9] + rows[10:]))
 
 
-def test_radiative_factorized_import_and_basis_rejection():
+def test_radiative_factorized_import_and_basis_rejection() -> None:
     sky = RadiativeBasis(("sky",), basis_id="sky", measure="coefficient", weights=(1,))
     window = RadiativeBasis(
         ("window",), basis_id="window", measure="coefficient", weights=(1,)
@@ -286,7 +294,7 @@ def test_radiative_factorized_import_and_basis_rejection():
         )
 
 
-def test_explicit_radiative_response_conserves_nodal_heat():
+def test_explicit_radiative_response_conserves_nodal_heat() -> None:
     basis = RadiativeBasis(
         ("window",),
         basis_id="bands",
@@ -312,7 +320,7 @@ def test_explicit_radiative_response_conserves_nodal_heat():
     np.testing.assert_allclose(step.temperature, [295.0, 297.5], atol=1e-7)
 
 
-def test_native_hvac_optimization_replays_bounded_controls():
+def test_native_hvac_optimization_replays_bounded_controls() -> None:
     model = compile_building(one_zone(capacity=10000, conductance=10))
     times = jnp.array([0.0, 300.0, 900.0, 1200.0, 2400.0])
     result = optimize_hvac(
@@ -338,13 +346,14 @@ def test_native_hvac_optimization_replays_bounded_controls():
     )
     np.testing.assert_allclose(replay.temperature, result.replay.temperature, atol=1e-8)
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         result.optimization.trajectory.states + result.state_reference_temperature,
         result.replay.temperature,
         atol=1e-5,
     )
 
 
-def test_identifiable_calibration_predicts_unseen_forcing():
+def test_identifiable_calibration_predicts_unseen_forcing() -> None:
     time = jnp.arange(6) * 300.0
     truth = compile_building(one_zone(capacity=10000, conductance=10))
     heat = jnp.array([[0], [100], [20], [80], [0]], dtype="float64")
@@ -358,10 +367,22 @@ def test_identifiable_calibration_predicts_unseen_forcing():
         truth, jnp.array([295.0]), time, held_outside, held_heat
     ).temperature[1:]
     training = BuildingExperiment(
-        [300.0], time, outside, heat, target, experiment_id="training"
+        # ty: ignore[invalid-argument-type]
+        [300.0],
+        time,
+        outside,
+        heat,
+        target,
+        experiment_id="training",
     )
     heldout = BuildingExperiment(
-        [295.0], time, held_outside, held_heat, held_target, experiment_id="heldout"
+        # ty: ignore[invalid-argument-type]
+        [295.0],
+        time,
+        held_outside,
+        held_heat,
+        held_target,
+        experiment_id="heldout",
     )
     result = calibrate_building(
         lambda p: one_zone(capacity=10000 * jnp.exp(p[0]), conductance=10),

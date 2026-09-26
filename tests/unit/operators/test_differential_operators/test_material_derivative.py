@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -11,14 +14,14 @@ from phydrax.domain import DomainFunction, TimeInterval
 from phydrax.operators.differential import material_derivative
 
 
-def test_material_derivative_scalar_point():
+def test_material_derivative_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + t
 
     v = geom.Function("x")(lambda x: jnp.array([x[1], -x[0]]))
@@ -34,14 +37,14 @@ def test_material_derivative_scalar_point():
     assert jnp.allclose(out, 1.0)
 
 
-def test_material_derivative_vector_point():
+def test_material_derivative_vector_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     v = geom.Function("x")(lambda x: jnp.array([x[1], -x[0]]))
@@ -57,7 +60,7 @@ def test_material_derivative_vector_point():
     assert jnp.allclose(out, jnp.array([12.0, -12.0]))
 
 
-def test_material_derivative_preserves_metadata():
+def test_material_derivative_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -68,14 +71,14 @@ def test_material_derivative_preserves_metadata():
     assert material_derivative(u, v).metadata == u.metadata
 
 
-def test_material_derivative_ad_engine_jvp_matches_default():
+def test_material_derivative_ad_engine_jvp_matches_default() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + t**3
 
     v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, -0.5]))

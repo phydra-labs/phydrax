@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _periodic_core(count=6):
+def _periodic_core(count: Any = 6) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(2)
@@ -24,7 +27,7 @@ def _periodic_core(count=6):
     return finite_volume, operators, momentum, projection
 
 
-def _taylor_green(discretization):
+def _taylor_green(discretization: Any) -> Any:
     x_faces = discretization.face_centers[0]
     y_faces = discretization.face_centers[1]
     return (
@@ -33,7 +36,7 @@ def _taylor_green(discretization):
     )
 
 
-def test_named_scalar_buoyancy_compiler_closes_content_and_exchange_ledgers():
+def test_named_scalar_buoyancy_compiler_closes_content_and_exchange_ledgers() -> None:
     finite_volume, operators, momentum, projection = _periodic_core()
     scalar_problem = phx.discretization.MACScalarProblem(
         (
@@ -63,6 +66,7 @@ def test_named_scalar_buoyancy_compiler_closes_content_and_exchange_ledgers():
         "tracer": jnp.cos(cells[..., 0]),
     }
     state = compiled.project_state(_taylor_green(finite_volume), scalars)
+    # ty: ignore[invalid-argument-type]
     rate = compiled(0.0, state, None)
     diagnostics = compiled.diagnostics(0.0, state)
 
@@ -71,13 +75,14 @@ def test_named_scalar_buoyancy_compiler_closes_content_and_exchange_ledgers():
     assert diagnostics.scalars.success
     assert diagnostics.buoyancy.success
     assert jnp.isfinite(diagnostics.buoyancy.exchange_defect)
+    # ty: ignore[invalid-argument-type]
     gradient = jax.grad(lambda value: jnp.sum(compiled(0.0, state, value)))(
         jnp.asarray(0.0)
     )
     assert jnp.isfinite(gradient)
 
 
-def test_variable_density_constant_state_reduces_to_divergence_free_mac_flow():
+def test_variable_density_constant_state_reduces_to_divergence_free_mac_flow() -> None:
     finite_volume, operators, momentum, _ = _periodic_core()
     variable = phx.discretization.MACVariableDensityPlan(momentum).prepare()
     projection = phx.solver.MACVariableDensityProjectionPlan(
@@ -99,4 +104,5 @@ def test_variable_density_constant_state_reduces_to_divergence_free_mac_flow():
     assert diagnostics.projection_converged
     assert diagnostics.divergence_norm < 1e-7
     assert jnp.min(physical.density) > 0.0
+    # ty: ignore[invalid-argument-type]
     assert jnp.all(jnp.isfinite(compiled(0.0, state, None)))

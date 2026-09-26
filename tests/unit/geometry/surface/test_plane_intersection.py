@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 
 from phydrax import SpatialCoordinateContract
@@ -10,7 +13,7 @@ from phydrax.geometry.surface._intersection import PlaneSectionStatus
 from phydrax.geometry.surface._model import SurfaceModel
 
 
-def _realization():
+def _realization() -> Any:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -35,7 +38,7 @@ def _realization():
     ).prepare()
 
 
-def test_plane_section_returns_deterministic_loop_and_exact_provenance():
+def test_plane_section_returns_deterministic_loop_and_exact_provenance() -> None:
     realization = _realization()
 
     first = realization.intersect_plane((0.0, 0.0, 0.25), (0.0, 0.0, 1.0))
@@ -59,7 +62,7 @@ def test_plane_section_returns_deterministic_loop_and_exact_provenance():
     )
 
 
-def test_plane_section_reports_typed_unresolved_vertex_and_open_chain():
+def test_plane_section_reports_typed_unresolved_vertex_and_open_chain() -> None:
     realization = _realization()
     vertex_contact = realization.intersect_plane((0.0, 0.0, 0.0), (0.0, 0.0, 1.0))
 
@@ -79,6 +82,7 @@ def test_plane_section_reports_typed_unresolved_vertex_and_open_chain():
         np.asarray(((0, 1, 2),), dtype=np.int32),
         metadata,
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     open_chain = open_surface.intersect_plane((0.25, 0.0, 0.0), (1.0, 0.0, 0.0))
 
     assert open_chain.status is PlaneSectionStatus.UNRESOLVED_OPEN_CHAIN

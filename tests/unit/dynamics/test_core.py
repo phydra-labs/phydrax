@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def test_layouts_distinguish_absent_and_scalar_inputs():
+def test_layouts_distinguish_absent_and_scalar_inputs() -> None:
     state = phx.dynamics.StateLayout((), component_names=("temperature",))
     scalar_input = phx.dynamics.InputLayout(
         (), component_names=("forcing",), roles="forcing"
@@ -46,7 +49,7 @@ def test_layouts_distinguish_absent_and_scalar_inputs():
         autonomous(0.0, jnp.asarray(2.0), inputs=jnp.asarray(0.5))
 
 
-def test_state_layout_distinguishes_point_local_tangent_and_dual_spaces():
+def test_state_layout_distinguishes_point_local_tangent_and_dual_spaces() -> None:
     local_space = phx.linalg.ArraySpace(
         (2,),
         dtype=np.float64,
@@ -96,7 +99,7 @@ def test_state_layout_distinguishes_point_local_tangent_and_dual_spaces():
     assert changed_local.layout_id != layout.layout_id
 
 
-def test_state_layout_equal_space_defaults_preserve_point_metadata():
+def test_state_layout_equal_space_defaults_preserve_point_metadata() -> None:
     layout = phx.dynamics.StateLayout(
         (2,),
         component_names=("position", "velocity"),
@@ -110,7 +113,7 @@ def test_state_layout_equal_space_defaults_preserve_point_metadata():
     assert layout.tangent_component_names == layout.component_names
 
 
-def test_discrete_evolution_rollout_and_jacobians_share_one_transition():
+def test_discrete_evolution_rollout_and_jacobians_share_one_transition() -> None:
     state_layout = phx.dynamics.StateLayout((2,), component_names=("x", "y"))
     matrix = jnp.asarray([[1.1, 0.2], [0.0, 0.9]])
     parameter_matrix = jnp.asarray([[1.0, -0.5], [0.2, 0.3]])
@@ -169,7 +172,7 @@ def test_discrete_evolution_rollout_and_jacobians_share_one_transition():
     )
 
 
-def test_input_policy_is_bound_and_differentiated_with_the_map():
+def test_input_policy_is_bound_and_differentiated_with_the_map() -> None:
     state_layout = phx.dynamics.StateLayout((1,))
     input_layout = phx.dynamics.InputLayout((1,), roles="control")
     system = phx.dynamics.DiscreteSystem(
@@ -197,7 +200,7 @@ def test_input_policy_is_bound_and_differentiated_with_the_map():
     np.testing.assert_allclose(tangent.tangent, jnp.asarray([0.75]))
 
 
-def test_nonfinite_map_result_is_invalid_without_repair():
+def test_nonfinite_map_result_is_invalid_without_repair() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.DiscreteSystem(
         lambda step, state, args: jnp.asarray([jnp.nan]),
@@ -211,7 +214,7 @@ def test_nonfinite_map_result_is_invalid_without_repair():
     assert bool(jnp.isnan(result.final_state[0]))
 
 
-def test_transition_evidence_ignores_unattempted_slots_and_enforces_success():
+def test_transition_evidence_ignores_unattempted_slots_and_enforces_success() -> None:
     evidence = phx.dynamics.DiscreteTransitionEvidence(
         jnp.zeros((3, 1)),
         jnp.zeros((3, 1)),
@@ -237,10 +240,10 @@ def test_transition_evidence_ignores_unattempted_slots_and_enforces_success():
         jnp.asarray(invalid.successful).block_until_ready()
 
 
-def test_failed_finite_discrete_rollback_invalidates_evolution_and_tangent():
+def test_failed_finite_discrete_rollback_invalidates_evolution_and_tangent() -> None:
     failure_status = 71
 
-    def transition(context, state, args):
+    def transition(context: Any, state: Any, args: Any) -> Any:
         del context, args
         return phx.dynamics.DiscreteTransitionResult(
             state + 100.0,
@@ -293,8 +296,8 @@ def test_failed_finite_discrete_rollback_invalidates_evolution_and_tangent():
     assert bool(jnp.isnan(tangent.tangent[0]))
 
 
-def test_evolve_skips_backend_after_first_failed_segment():
-    def transition(context, state, args):
+def test_evolve_skips_backend_after_first_failed_segment() -> None:
+    def transition(context: Any, state: Any, args: Any) -> Any:
         del args
         checked = eqx.error_if(
             state,
@@ -322,13 +325,15 @@ def test_evolve_skips_backend_after_first_failed_segment():
     )
 
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         result.transition_evidence.attempted,
         jnp.asarray([True, False, False]),
     )
+    # ty: ignore[unresolved-attribute]
     assert int(result.transition_evidence.first_failure_status) == 77
 
 
-def test_diffrax_evolution_rollout_and_numerical_flow_jvp_share_system():
+def test_diffrax_evolution_rollout_and_numerical_flow_jvp_share_system() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: -args * state,
@@ -416,7 +421,7 @@ def test_diffrax_evolution_rollout_and_numerical_flow_jvp_share_system():
     )
 
 
-def test_diffrax_evolution_rejects_misoriented_derivative_routes():
+def test_diffrax_evolution_rejects_misoriented_derivative_routes() -> None:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: -state,
         state_layout=phx.dynamics.StateLayout((1,)),
@@ -435,7 +440,7 @@ def test_diffrax_evolution_rejects_misoriented_derivative_routes():
         )
 
 
-def test_diffrax_evolution_reports_backend_failure_without_method_fallback():
+def test_diffrax_evolution_reports_backend_failure_without_method_fallback() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: state,
@@ -456,8 +461,8 @@ def test_diffrax_evolution_reports_backend_failure_without_method_fallback():
     assert int(result.status) == phx.dynamics.EVOLUTION_BACKEND_FAILED
 
 
-def test_declared_discrete_step_rejects_mismatched_and_nonfinite_intervals():
-    def transition(coordinate, state, args):
+def test_declared_discrete_step_rejects_mismatched_and_nonfinite_intervals() -> None:
+    def transition(coordinate: Any, state: Any, args: Any) -> Any:
         del coordinate, args
         return state
 
@@ -481,7 +486,7 @@ def test_declared_discrete_step_rejects_mismatched_and_nonfinite_intervals():
         evolution.advance(jnp.asarray([1.0]), jnp.nan, jnp.nan)
 
 
-def test_discrete_step_metadata_validates_tolerances():
+def test_discrete_step_metadata_validates_tolerances() -> None:
     layout = phx.dynamics.StateLayout((1,))
     transition = lambda coordinate, state, args: state
 

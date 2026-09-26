@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -14,7 +17,9 @@ from phydrax.discretization.finite_volume._mac_passive_tracer import (
 )
 
 
-def _core(*, cells=16, periodic=True, correction_strength=1.0):
+def _core(
+    *, cells: Any = 16, periodic: Any = True, correction_strength: Any = 1.0
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cells, periodic=periodic),),
         axis_names=("x",),
@@ -35,7 +40,9 @@ def _core(*, cells=16, periodic=True, correction_strength=1.0):
     return grid, discretization, operators, tracer_space, transport
 
 
-def test_passive_tracer_plan_rejects_nonperiodic_wrong_representation_and_location():
+def test_passive_tracer_plan_rejects_nonperiodic_wrong_representation_and_location() -> (
+    None
+):
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -70,7 +77,7 @@ def test_passive_tracer_plan_rejects_nonperiodic_wrong_representation_and_locati
         MACPassiveTracerMacCormackPlan(operators, face_value)
 
 
-def test_zero_velocity_and_constant_tracers_are_preserved_exactly():
+def test_zero_velocity_and_constant_tracers_are_preserved_exactly() -> None:
     _, discretization, _, tracer_space, transport = _core()
     dtype = tracer_space.vector_space.dtype
     zero_velocity = tuple(
@@ -100,7 +107,7 @@ def test_zero_velocity_and_constant_tracers_are_preserved_exactly():
     assert translated.limiter_active.shape == discretization.cell_shape
 
 
-def test_maccormack_result_is_donor_bounded_and_integral_defect_is_diagnostic():
+def test_maccormack_result_is_donor_bounded_and_integral_defect_is_diagnostic() -> None:
     _, discretization, _, tracer_space, transport = _core(cells=24)
     dtype = tracer_space.vector_space.dtype
     centers = discretization.cell_centers[..., 0]
@@ -118,7 +125,9 @@ def test_maccormack_result_is_donor_bounded_and_integral_defect_is_diagnostic():
     assert result.maximum_displacement_cell_widths > 0.0
 
 
-def test_zero_correction_is_one_pass_predictor_and_nonfinite_velocity_fails_closed():
+def test_zero_correction_is_one_pass_predictor_and_nonfinite_velocity_fails_closed() -> (
+    None
+):
     _, discretization, _, tracer_space, transport = _core(
         cells=10, correction_strength=0.0
     )
@@ -136,7 +145,7 @@ def test_zero_correction_is_one_pass_predictor_and_nonfinite_velocity_fails_clos
     assert int(failed.status) == MACPassiveTracerStatus.NONFINITE
 
 
-def test_passive_tracer_has_fixed_jit_shapes_and_finite_branchwise_gradient():
+def test_passive_tracer_has_fixed_jit_shapes_and_finite_branchwise_gradient() -> None:
     _, discretization, _, tracer_space, transport = _core(cells=12)
     dtype = tracer_space.vector_space.dtype
     centers = discretization.cell_centers[..., 0]

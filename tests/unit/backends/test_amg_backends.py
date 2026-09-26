@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +17,7 @@ import phydrax.backends.amg as amg
 la = phx.linalg
 
 
-def _problem(matrix, *, operator_id="amg-system"):
+def _problem(matrix: Any, *, operator_id: Any = "amg-system") -> Any:
     size = matrix.shape[0]
     structure = {
         "velocity": jax.ShapeDtypeStruct((size - 1,), matrix.dtype),
@@ -39,14 +41,14 @@ def _problem(matrix, *, operator_id="amg-system"):
     return la.LinearSystem(operator)
 
 
-def _rhs():
+def _rhs() -> Any:
     return {
         "velocity": jnp.asarray([[1.0, -0.5], [2.0, 1.5]]),
         "pressure": jnp.asarray([[0.25, -1.0]]),
     }
 
 
-def _available(capabilities):
+def _available(capabilities: Any) -> Any:
     return phx.backends.BackendAvailability(
         capabilities=capabilities,
         available=True,
@@ -55,7 +57,9 @@ def _available(capabilities):
     )
 
 
-def test_dependency_absence_is_precise_and_importing_phydrax_remains_lazy(monkeypatch):
+def test_dependency_absence_is_precise_and_importing_phydrax_remains_lazy(
+    monkeypatch: Any,
+) -> None:
     monkeypatch.setattr(
         "phydrax.backends._availability.importlib.util.find_spec",
         lambda name: None,
@@ -72,7 +76,7 @@ def test_dependency_absence_is_precise_and_importing_phydrax_remains_lazy(monkey
         cpu.require("linear-system")
 
 
-def test_policy_configuration_is_canonical_and_fingerprinted():
+def test_policy_configuration_is_canonical_and_fingerprinted() -> None:
     left = amg.AmgXPolicy(
         {
             "solver": {"tolerance": 1e-9, "solver": "FGMRES"},
@@ -91,11 +95,11 @@ def test_policy_configuration_is_canonical_and_fingerprinted():
 
 
 class _FakePyAMGCLSolver:
-    def __init__(self, matrix):
+    def __init__(self, matrix: Any) -> None:
         self.matrix = matrix.toarray()
         self.calls = 0
 
-    def __call__(self, right_hand_side, initial_guess=None):
+    def __call__(self, right_hand_side: Any, initial_guess: Any = None) -> Any:
         del initial_guess
         self.calls += 1
         return np.linalg.solve(self.matrix, right_hand_side), {
@@ -105,17 +109,17 @@ class _FakePyAMGCLSolver:
 
 
 class _FakePyAMGCL:
-    def __init__(self):
+    def __init__(self) -> None:
         self.arguments = None
         self.solver = None
 
-    def make_solver(self, matrix, *, solver, prm):
+    def make_solver(self, matrix: Any, *, solver: Any, prm: Any) -> Any:
         self.arguments = (solver, prm)
         self.solver = _FakePyAMGCLSolver(matrix)
         return self.solver
 
 
-def test_pyamgcl_source_api_preserves_pytree_rhs_and_refreshes(monkeypatch):
+def test_pyamgcl_source_api_preserves_pytree_rhs_and_refreshes(monkeypatch: Any) -> None:
     provider = _FakePyAMGCL()
     monkeypatch.setattr(
         amg.PyAMGCLBackend,
@@ -143,6 +147,7 @@ def test_pyamgcl_source_api_preserves_pytree_rhs_and_refreshes(monkeypatch):
         "bicgstab",
         {"solver": {"maxiter": 40, "tol": 1e-6}},
     )
+    # ty: ignore[unresolved-attribute]
     assert provider.solver.calls == 2
     assert jnp.allclose(matrix @ coordinates, expected_rhs)
     assert jnp.all(result.success)
@@ -168,72 +173,72 @@ def test_pyamgcl_source_api_preserves_pytree_rhs_and_refreshes(monkeypatch):
 
 
 class _FakeHandle:
-    def __init__(self, provider):
+    def __init__(self, provider: Any) -> None:
         self.provider = provider
         self.destroyed = 0
 
-    def destroy(self):
+    def destroy(self) -> None:
         self.destroyed += 1
 
 
 class _FakeConfig(_FakeHandle):
-    def create_from_dict(self, config):
+    def create_from_dict(self, config: Any) -> Any:
         self.provider.config = config
         return self
 
 
 class _FakeResources(_FakeHandle):
-    def create_simple(self, config):
+    def create_simple(self, config: Any) -> Any:
         self.config = config
         return self
 
 
 class _FakeMatrix(_FakeHandle):
-    def create(self, resources):
+    def create(self, resources: Any) -> Any:
         self.resources = resources
         return self
 
-    def upload_CSR(self, matrix):
+    def upload_CSR(self, matrix: Any) -> None:
         self.array = matrix.toarray()
         self.provider.matrix_uploads += 1
 
 
 class _FakeVector(_FakeHandle):
-    def create(self, resources):
+    def create(self, resources: Any) -> Any:
         self.resources = resources
         self.provider.vectors.append(self)
         return self
 
-    def upload(self, value):
+    def upload(self, value: Any) -> None:
         self.array = np.array(value, copy=True)
 
-    def download(self):
+    def download(self) -> Any:
         return np.array(self.array, copy=True)
 
 
 class _FakeSolver(_FakeHandle):
-    def create(self, resources, config):
+    def create(self, resources: Any, config: Any) -> Any:
         self.resources = resources
         self.config = config
         return self
 
-    def setup(self, matrix):
+    def setup(self, matrix: Any) -> None:
         self.matrix = matrix
         self.provider.setup_calls += 1
 
-    def solve(self, right_hand_side, solution):
+    def solve(self, right_hand_side: Any, solution: Any) -> None:
         solution.array = np.linalg.solve(self.matrix.array, right_hand_side.array)
         self.provider.solve_calls += 1
 
-    def get_iterations_number(self):
+    def get_iterations_number(self) -> int:
         return 5
 
-    def get_status(self):
+    def get_status(self) -> str:
         return "converged"
 
 
 class _FakeAmgX:
-    def __init__(self):
+    def __init__(self) -> None:
         self.initialized = 0
         self.finalized = 0
         self.matrix_uploads = 0
@@ -247,14 +252,16 @@ class _FakeAmgX:
         self.Vector = lambda: _FakeVector(self)
         self.Solver = lambda: _FakeSolver(self)
 
-    def initialize(self):
+    def initialize(self) -> None:
         self.initialized += 1
 
-    def finalize(self):
+    def finalize(self) -> None:
         self.finalized += 1
 
 
-def test_amgx_official_lifecycle_reuses_hierarchy_for_multiple_rhs(monkeypatch):
+def test_amgx_official_lifecycle_reuses_hierarchy_for_multiple_rhs(
+    monkeypatch: Any,
+) -> None:
     provider = _FakeAmgX()
     monkeypatch.setattr(
         amg.AmgXBackend,

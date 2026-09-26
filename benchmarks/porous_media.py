@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -16,7 +18,7 @@ from phydrax.linalg import DenseLU, LinearSolvePolicy
 from phydrax.nonlinear import NewtonKrylov, NonlinearTermination
 
 
-def _problem():
+def _problem() -> Any:
     discretization = UnstructuredFiniteVolumePlan(
         np.asarray(
             (
@@ -82,7 +84,7 @@ def main() -> None:
     dt = 5.0
     heat_source = 2.0
 
-    def advance(source_rate):
+    def advance(source_rate: Any) -> Any:
         mass_source = jnp.asarray((source_rate, 0.0))
         heat = jnp.asarray((heat_source, 0.0))
         result = coupled.step(
@@ -107,7 +109,7 @@ def main() -> None:
             result.successful,
         )
 
-    def evaluate(source_rate):
+    def evaluate(source_rate: Any) -> Any:
         result = advance(source_rate)
         _, mass_tangent = jax.jvp(
             lambda value: advance(value)[0],

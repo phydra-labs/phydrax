@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -14,7 +17,7 @@ from phydrax.solver._maxwell_modes import (
 )
 
 
-def _plan(gammas, *, target, divergence=None):
+def _plan(gammas: Any, *, target: Any, divergence: Any = None) -> Any:
     gamma = np.asarray(gammas, dtype=np.complex128)
     count = gamma.size
     identity = np.eye(count, dtype=np.complex128)
@@ -40,7 +43,7 @@ def _plan(gammas, *, target, divergence=None):
     )
 
 
-def test_rectangular_waveguide_cutoffs_and_polynomial_mode_evidence():
+def test_rectangular_waveguide_cutoffs_and_polynomial_mode_evidence() -> None:
     vacuum_wavenumber = 4.0
     transverse_wavenumbers = np.sqrt(np.asarray([12.0, 7.0]))
     expected = np.sqrt(vacuum_wavenumber**2 - transverse_wavenumbers**2)
@@ -57,7 +60,7 @@ def test_rectangular_waveguide_cutoffs_and_polynomial_mode_evidence():
     assert np.all(result.classifications == int(GuidedModeClassification.PROPAGATING))
 
 
-def test_cutoff_pml_classification_divergence_and_mode_launch():
+def test_cutoff_pml_classification_divergence_and_mode_launch() -> None:
     cutoff = _plan([0.0], target=0.0).solve()
     assert int(cutoff.classifications[0]) == int(GuidedModeClassification.CUTOFF)
     assert not bool(cutoff.derivative_evidence.derivative_valid_mask[0])
@@ -78,7 +81,7 @@ def test_cutoff_pml_classification_divergence_and_mode_launch():
     assert int(divergent.status) == int(GuidedModeStatus.DIVERGENCE_TOLERANCE_NOT_MET)
 
 
-def test_isolated_beta_derivative_uses_left_right_polynomial_pairing():
+def test_isolated_beta_derivative_uses_left_right_polynomial_pairing() -> None:
     prepared = _plan([2.0], target=2.0).prepare()
     result = solve_fixed_frequency_guided_modes(prepared)
     derivative = guided_mode_beta_derivative(

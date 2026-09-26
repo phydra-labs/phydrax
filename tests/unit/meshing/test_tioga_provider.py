@@ -1,6 +1,7 @@
 import os
 import shlex
 import shutil
+from typing import Any
 
 import numpy as np
 import pytest
@@ -17,7 +18,15 @@ from phydrax.meshing._contracts import (
 from phydrax.meshing.providers._tioga import TiogaOptions, TiogaProvider
 
 
-def _grid(name, lower, upper, count, *, cavity=False, center=(0, 0, 0)):
+def _grid(
+    name: Any,
+    lower: Any,
+    upper: Any,
+    count: Any,
+    *,
+    cavity: Any = False,
+    center: Any = (0, 0, 0),
+) -> Any:
     axis = np.linspace(lower, upper, count)
     coordinates = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(
         -1, 3
@@ -62,7 +71,7 @@ def _grid(name, lower, upper, count, *, cavity=False, center=(0, 0, 0)):
 
 
 @pytest.fixture(scope="module")
-def overset_case():
+def overset_case() -> Any:
     executable = shutil.which(os.environ.get("PHYDRAX_TIOGA_EXECUTABLE", "phydrax-tioga"))
     if executable is None:
         pytest.skip("Real phydrax-tioga native bridge is not installed")
@@ -85,7 +94,7 @@ def overset_case():
 
 
 @pytest.mark.parametrize("ranks", (1, 2))
-def test_tioga_real_hole_cut_and_affine_transfer(overset_case, ranks):
+def test_tioga_real_hole_cut_and_affine_transfer(overset_case: Any, ranks: Any) -> None:
     executable, assembly, walls, overset = overset_case
     launcher = os.environ.get("PHYDRAX_TIOGA_MPI_LAUNCHER", "mpiexec")
     if ranks > 1 and shutil.which(launcher) is None:
@@ -154,14 +163,17 @@ def test_tioga_real_hole_cut_and_affine_transfer(overset_case, ranks):
             )
         }
         for cell, nodes in zip(
-            np.asarray(record.donor_cell_ids), np.asarray(link.donor_ids), strict=True
+            np.asarray(record.donor_cell_ids),
+            # ty: ignore[unresolved-attribute]
+            np.asarray(link.donor_ids),
+            strict=True,
         ):
             np.testing.assert_array_equal(
                 np.sort(nodes[nodes >= 0]), np.sort(cells[int(cell)])
             )
 
 
-def test_tioga_rejects_surface_cells_before_loading_native_dependency():
+def test_tioga_rejects_surface_cells_before_loading_native_dependency() -> None:
     mesh = CellMesh(
         np.array(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
         (CellBlock("surface", "triangle", np.array(((0, 1, 2),))),),
@@ -175,7 +187,7 @@ def test_tioga_rejects_surface_cells_before_loading_native_dependency():
     assert failure.value.category is MeshingFailureCategory.UNSUPPORTED_CAPABILITY
 
 
-def test_tioga_refuses_entity_budget_before_native_launch():
+def test_tioga_refuses_entity_budget_before_native_launch() -> None:
     first = _grid("first", 0.0, 1.0, 2)
     second = _grid("second", 2.0, 3.0, 2)
     assembly = MeshAssembly((first, second))

@@ -665,7 +665,10 @@ def read_finite_element_mesh(
     connectivity = mesh.connectivity
     if topological_dimension == 2:
         # CellMesh builds polygonal connectivity for every two-dimensional mesh.
-        assert isinstance(connectivity, PolygonalConnectivity)
+        if not (isinstance(connectivity, PolygonalConnectivity)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(connectivity, PolygonalConnectivity)."
+            )
         facet_vertices = np.asarray(connectivity.edges)
         facets_by_key = {
             tuple(sorted(int(value) for value in vertices)): index
@@ -682,7 +685,12 @@ def read_finite_element_mesh(
         }
     else:
         # Other three-dimensional CellMesh connectivity is tetrahedral or hexahedral.
-        assert isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity))
+        if not (
+            isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity))
+        ):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity))."
+            )
         facet_vertices = np.asarray(connectivity.faces)
         facets_by_key = {
             tuple(sorted(int(value) for value in vertices)): index

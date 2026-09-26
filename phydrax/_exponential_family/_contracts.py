@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
 from ..domain._measure import MeasureKind
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 ExponentialFamilyStatus: TypeAlias = Literal[0, 1, 2, 3, 4, 5, 6, 7]
@@ -75,17 +75,9 @@ class ExponentialFamilySignature(StrictModule):
             raise ValueError("Exponential-family coordinate dimension must be positive.")
         if any(size < 0 for size in events):
             raise ValueError("Exponential-family event dimensions must be non-negative.")
-        if density_measure_kind not in (
-            "lebesgue",
-            "hausdorff",
-            "probability",
-            "counting",
-            "dirac",
-            "trajectory",
-            "riemannian",
-            "external",
-        ):
-            raise ValueError(f"Unknown density measure kind {density_measure_kind!r}.")
+        density_measure_kind = parse(
+            density_measure_kind, MeasureKind, "density_measure_kind"
+        )
         self.family_id = str(family_id)
         self.dimension = dimensions
         self.event_shape = events

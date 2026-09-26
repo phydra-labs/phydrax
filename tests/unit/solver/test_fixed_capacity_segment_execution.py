@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -8,11 +10,11 @@ from phydrax.solver._segmented_execution import (
 )
 
 
-def test_fixed_capacity_segments_jit_runtime_count_and_neutral_tail():
+def test_fixed_capacity_segments_jit_runtime_count_and_neutral_tail() -> None:
     policy = FixedCapacitySegmentPolicy(4, 3, 0)
 
-    def run(initial):
-        def advance(carry, index):
+    def run(initial: Any) -> Any:
+        def advance(carry: Any, index: Any) -> Any:
             del index
             next_carry = carry + 1
             return FixedCapacitySegmentStep(
@@ -35,10 +37,10 @@ def test_fixed_capacity_segments_jit_runtime_count_and_neutral_tail():
     assert jnp.array_equal(evidence.step_counts, jnp.asarray([1, 1, 0, 0]))
 
 
-def test_fixed_capacity_segments_fail_closed_on_exact_cap_without_terminal():
+def test_fixed_capacity_segments_fail_closed_on_exact_cap_without_terminal() -> None:
     policy = FixedCapacitySegmentPolicy(2, 1, 0, failure=17)
 
-    def advance(carry, index):
+    def advance(carry: Any, index: Any) -> Any:
         del index
         return FixedCapacitySegmentStep(carry + 1, carry, carry + 1, 1)
 
@@ -47,10 +49,10 @@ def test_fixed_capacity_segments_fail_closed_on_exact_cap_without_terminal():
     assert evidence.terminal_status == 17
 
 
-def test_fixed_capacity_segments_enforce_cumulative_event_capacity():
+def test_fixed_capacity_segments_enforce_cumulative_event_capacity() -> None:
     policy = FixedCapacitySegmentPolicy(3, 1, 1, failure=23)
 
-    def advance(carry, index):
+    def advance(carry: Any, index: Any) -> Any:
         del index
         next_carry = carry + 1
         return FixedCapacitySegmentStep(

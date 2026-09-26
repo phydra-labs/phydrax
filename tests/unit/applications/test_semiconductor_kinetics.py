@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ from phydrax.applications.semiconductor._kinetics import (
 from phydrax.applications.semiconductor._quantities import ELEMENTARY_CHARGE_SI as Q
 
 
-def _trap(kind="bulk", density=2e21):
+def _trap(kind: Any = "bulk", density: Any = 2e21) -> Any:
     return DynamicTrap(
         density,
         2e-14,
@@ -22,13 +24,14 @@ def _trap(kind="bulk", density=2e21):
         0.1 * Q,
         empty_charge_number=0,
         population_kind=kind,
+        # ty: ignore[invalid-argument-type]
         temperature_range=(250.0, 400.0),
         energy_reference="synthetic zero",
         provenance="synthetic single-level rates; not trap/reliability calibration",
     )
 
 
-def test_trap_exact_step_is_bounded_and_ledger_matches_inventory_change():
+def test_trap_exact_step_is_bounded_and_ledger_matches_inventory_change() -> None:
     trap = _trap()
     initial = jnp.array([0.0, 1.0, 0.2])
     dt = jnp.array([1e-14, 1e-8, 1e-2])
@@ -72,7 +75,7 @@ def test_trap_exact_step_is_bounded_and_ledger_matches_inventory_change():
     assert np.isnan(invalid.occupancy)
 
 
-def test_trap_detailed_balance_and_energy_reference_invariance():
+def test_trap_detailed_balance_and_energy_reference_invariance() -> None:
     trap = _trap()
     equilibrium = trap.evaluate(2 / 3, 1e20, 1.5e19, 300.0, 0.8 * Q, 0.4 * Q)
     np.testing.assert_allclose(
@@ -94,7 +97,7 @@ def test_trap_detailed_balance_and_energy_reference_invariance():
     )
 
 
-def test_surface_inventory_uses_area_not_neighbor_volume():
+def test_surface_inventory_uses_area_not_neighbor_volume() -> None:
     bulk, surface = _trap(), _trap("surface", 2e15)
     volume, area = 3e-18, 3e-12
     args = (0.25, 3e20, 2e20, 300.0, 0.8 * Q, 0.4 * Q)
@@ -112,7 +115,9 @@ def test_surface_inventory_uses_area_not_neighbor_volume():
     )
 
 
-def _barrier(positions, energies, masses, minimum_action=0.0):
+def _barrier(
+    positions: Any, energies: Any, masses: Any, minimum_action: Any = 0.0
+) -> Any:
     return WKBBarrierPath(
         positions,
         energies,
@@ -123,7 +128,7 @@ def _barrier(positions, energies, masses, minimum_action=0.0):
     )
 
 
-def test_wkb_rectangular_and_linear_turning_point_actions():
+def test_wkb_rectangular_and_linear_turning_point_actions() -> None:
     mass, length, height, energy = 0.2 * 9.1093837139e-31, 4e-9, 1.0 * Q, 0.25 * Q
     rectangular = _barrier([0.0, length], [height, height], [mass])
     result = rectangular.evaluate(energy)
@@ -154,7 +159,7 @@ def test_wkb_rectangular_and_linear_turning_point_actions():
     assert float(over.forbidden_length) == 0.0
 
 
-def test_wkb_rejects_resonant_multibarrier_and_unadmitted_small_action():
+def test_wkb_rejects_resonant_multibarrier_and_unadmitted_small_action() -> None:
     mass = 0.2 * 9.1093837139e-31
     two_barriers = _barrier([0.0, 2e-9, 4e-9], [Q, 0.0, Q], [mass, mass])
     result = two_barriers.evaluate(0.5 * Q)
@@ -164,11 +169,15 @@ def test_wkb_rejects_resonant_multibarrier_and_unadmitted_small_action():
     assert not bool(thin.evaluate(0.5 * Q).successful)
 
 
-def test_nonlocal_tunneling_has_nodewise_charge_and_energy_incidence():
+def test_nonlocal_tunneling_has_nodewise_charge_and_energy_incidence() -> None:
     mass = 0.2 * 9.1093837139e-31
     barrier = _barrier([0.0, 2e-9, 4e-9], [Q, Q, Q], [mass, mass])
     path = NonlocalTunnelingPath(
-        barrier, 5, [3, 1, 4], provenance="synthetic spectral channel"
+        barrier,
+        5,
+        # ty: ignore[invalid-argument-type]
+        [3, 1, 4],
+        provenance="synthetic spectral channel",
     )
     result = path.evaluate(0.25 * Q, 0.8, 0.1, 1e12, 0.5 * Q, 0.0)
     assert bool(result.successful)
@@ -207,7 +216,11 @@ def test_nonlocal_tunneling_has_nodewise_charge_and_energy_incidence():
         lambda value: value.barrier_energies, barrier, barrier.barrier_energies + Q
     )
     shifted = NonlocalTunnelingPath(
-        shifted_barrier, 5, [3, 1, 4], provenance="same channel shifted energy datum"
+        shifted_barrier,
+        5,
+        # ty: ignore[invalid-argument-type]
+        [3, 1, 4],
+        provenance="same channel shifted energy datum",
     )
     after = shifted.evaluate(1.25 * Q, 0.8, 0.1, 1e12, 1.5 * Q, Q)
     np.testing.assert_allclose(after.path_charge_current, result.path_charge_current)

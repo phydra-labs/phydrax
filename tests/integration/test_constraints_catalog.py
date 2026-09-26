@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -13,7 +15,7 @@ import phydrax.axes as cx
 from phydrax.domain import Boundary, FixedStart, Interval1d, SampleLayout, TimeInterval
 
 
-def _continuous_term(condition, num_samples):
+def _continuous_term(condition: Any, num_samples: Any) -> Any:
     source = phx.integration.per_step(
         phx.integration.mean_over(condition.on),
         phx.integration.MonteCarloPlan(num_samples),
@@ -21,12 +23,13 @@ def _continuous_term(condition, num_samples):
     return phx.terms.ResidualPenalty(condition, source)
 
 
-def _fixed_term(condition, points, structure):
+def _fixed_term(condition: Any, points: Any, structure: Any) -> Any:
     layout = structure.canonicalize(condition.on.domain.labels)
     axis_names = layout.axis_names
     assert axis_names is not None
     axis = axis_names[0]
     batch = phx.domain.PointBatch(
+        # ty: ignore[invalid-argument-type]
         {"x": cx.AxisArray(jnp.asarray(points["x"], dtype="float64"), dims=(axis, None))},
         layout,
     )
@@ -37,19 +40,19 @@ def _fixed_term(condition, points, structure):
     return phx.terms.ResidualPenalty(condition, phx.integration.fixed(realization))
 
 
-def _assert_zero_loss(term, functions, *, atol=1e-5):
+def _assert_zero_loss(term: Any, functions: Any, *, atol: Any = 1e-5) -> None:
     key = jr.key(0)
     loss_fn = eqx.filter_jit(lambda k: term.loss(functions, key=k))
     value = loss_fn(key)
     assert jnp.allclose(value, 0.0, atol=atol)
 
 
-def test_functional_boundary_and_initial_constraints():
+def test_functional_boundary_and_initial_constraints() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 0.0
 
     functions = {"u": u}
@@ -72,14 +75,14 @@ def test_functional_boundary_and_initial_constraints():
     initial_component = domain.component({"t": FixedStart()})
 
     @domain.Function("x", "t")
-    def u_xt(x, t):
+    def u_xt(x: Any, t: Any) -> float:
         return 0.0
 
     initial = phx.conditions.Initial("u", initial_component, target=0.0)
     _assert_zero_loss(_continuous_term(initial, 8), {"u": u_xt})
 
 
-def test_cfd_constraints_continuous_and_discrete():
+def test_cfd_constraints_continuous_and_discrete() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -87,11 +90,11 @@ def test_cfd_constraints_continuous_and_discrete():
     structure = SampleLayout((("x",),))
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([0.0, 0.0])
 
     @geom.Function("x")
-    def p(x):
+    def p(x: Any) -> float:
         return 0.0
 
     functions = {"u": u, "p": p}
@@ -134,7 +137,7 @@ def test_cfd_constraints_continuous_and_discrete():
         _assert_zero_loss(_fixed_term(condition, points, structure), functions)
 
 
-def test_solid_constraints_continuous_and_discrete():
+def test_solid_constraints_continuous_and_discrete() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -142,7 +145,7 @@ def test_solid_constraints_continuous_and_discrete():
     structure = SampleLayout((("x",),))
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([0.0, 0.0])
 
     functions = {"u": u}
@@ -192,13 +195,13 @@ def test_solid_constraints_continuous_and_discrete():
         _assert_zero_loss(_fixed_term(condition, points, structure), functions)
 
 
-def test_thermal_constraints_continuous_and_discrete():
+def test_thermal_constraints_continuous_and_discrete() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
     structure = SampleLayout((("x",),))
 
     @geom.Function("x")
-    def temp(x):
+    def temp(x: Any) -> float:
         return 0.0
 
     functions = {"T": temp}
@@ -248,7 +251,7 @@ def test_thermal_constraints_continuous_and_discrete():
         _assert_zero_loss(_fixed_term(condition, points, structure), functions)
 
 
-def test_thermal_constraints_use_physical_outward_flux_sign():
+def test_thermal_constraints_use_physical_outward_flux_sign() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
     structure = SampleLayout((("x",),))
@@ -256,15 +259,15 @@ def test_thermal_constraints_use_physical_outward_flux_sign():
     convection = 4.0
 
     @geom.Function("x")
-    def temperature(x):
+    def temperature(x: Any) -> Any:
         return x[0] ** 2
 
     @geom.Function("x")
-    def outward_flux(x):
+    def outward_flux(x: Any) -> Any:
         return -2.0 * conductivity * x[0]
 
     @geom.Function("x")
-    def ambient_temperature(x):
+    def ambient_temperature(x: Any) -> Any:
         return x[0] ** 2 + 2.0 * conductivity * x[0] / convection
 
     points = {"x": jnp.array([[0.0], [1.0]], dtype="float64")}
@@ -308,7 +311,7 @@ def test_thermal_constraints_use_physical_outward_flux_sign():
         )
 
 
-def test_em_constraints_continuous_and_discrete():
+def test_em_constraints_continuous_and_discrete() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
     )
@@ -316,27 +319,27 @@ def test_em_constraints_continuous_and_discrete():
     structure = SampleLayout((("x",),))
 
     @geom.Function("x")
-    def e(x):
+    def e(x: Any) -> Any:
         return jnp.array([0.0, 0.0, 0.0])
 
     @geom.Function("x")
-    def h(x):
+    def h(x: Any) -> Any:
         return jnp.array([0.0, 0.0, 0.0])
 
     @geom.Function("x")
-    def e1(x):
+    def e1(x: Any) -> Any:
         return jnp.array([0.0, 0.0, 0.0])
 
     @geom.Function("x")
-    def e2(x):
+    def e2(x: Any) -> Any:
         return jnp.array([0.0, 0.0, 0.0])
 
     @geom.Function("x")
-    def h1(x):
+    def h1(x: Any) -> Any:
         return jnp.array([0.0, 0.0, 0.0])
 
     @geom.Function("x")
-    def h2(x):
+    def h2(x: Any) -> Any:
         return jnp.array([0.0, 0.0, 0.0])
 
     functions = {"E": e, "H": h, "E1": e1, "E2": e2, "H1": h1, "H2": h2}

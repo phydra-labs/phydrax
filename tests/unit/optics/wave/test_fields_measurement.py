@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -19,7 +21,7 @@ from phydrax.optics.wave import (
 )
 
 
-def _finite_space(shape=(5, 7)):
+def _finite_space(shape: Any = (5, 7)) -> Any:
     grid = TensorGridPlan(
         tuple(UniformAxisSpec(size) for size in shape),
         axis_names=("u", "v"),
@@ -27,7 +29,7 @@ def _finite_space(shape=(5, 7)):
     return PlaneFieldSpace(grid, RigidFrame.identity(3), "finite-window")
 
 
-def test_plane_space_validates_dimension_topology_and_field_shapes():
+def test_plane_space_validates_dimension_topology_and_field_shapes() -> None:
     one_dimensional = TensorGridPlan((UniformAxisSpec(5),), axis_names=("u",)).prepare(
         jnp.asarray([[-1.0], [1.0]])
     )
@@ -54,7 +56,7 @@ def test_plane_space_validates_dimension_topology_and_field_shapes():
         IntensityPlane(space, jnp.ones((5, 7, 1)), 2.0, 0.0)
 
 
-def test_plane_space_composes_grid_coordinates_and_rigid_frame():
+def test_plane_space_composes_grid_coordinates_and_rigid_frame() -> None:
     grid = TensorGridPlan(
         (UniformAxisSpec(3), UniformAxisSpec(4)),
         axis_names=("u", "v"),
@@ -72,7 +74,7 @@ def test_plane_space_composes_grid_coordinates_and_rigid_frame():
     assert jnp.all(space.world_points[..., 2] == 3.0)
 
 
-def test_square_law_scalar_tangential_parity_and_physical_integration():
+def test_square_law_scalar_tangential_parity_and_physical_integration() -> None:
     space = _finite_space()
     scalar = ScalarPlaneField(space, (1.0 + 2.0j) * jnp.ones(space.shape), 7.0, 0.25)
     tangential = TangentialPlaneField(

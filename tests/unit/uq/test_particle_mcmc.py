@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _problem(*, offset=0.0):
+def _problem(*, offset: Any = 0.0) -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[0.5], [1.0]]),
@@ -45,7 +47,7 @@ def _problem(*, offset=0.0):
     )
 
 
-def test_conditional_smc_retains_reference_and_samples_complete_paths():
+def test_conditional_smc_retains_reference_and_samples_complete_paths() -> None:
     reference = jnp.asarray([[0.0], [0.4], [0.9]])
     fixed = phx.uq.conditional_particle_filter(
         jr.key(2),
@@ -74,7 +76,7 @@ def test_conditional_smc_retains_reference_and_samples_complete_paths():
     assert jnp.allclose(jnp.sum(jnp.exp(pgas.log_weights), axis=-1), 1.0)
 
 
-def test_conditional_smc_rejects_coupled_resampling_schemes():
+def test_conditional_smc_rejects_coupled_resampling_schemes() -> None:
     reference = jnp.asarray([[0.0], [0.4], [0.9]])
     with pytest.raises(ValueError, match="multinomial"):
         phx.uq.conditional_particle_filter(
@@ -86,7 +88,7 @@ def test_conditional_smc_rejects_coupled_resampling_schemes():
         )
 
 
-def test_particle_gibbs_returns_reproducible_pgas_path_chain():
+def test_particle_gibbs_returns_reproducible_pgas_path_chain() -> None:
     reference = jnp.asarray([[0.0], [0.4], [0.9]])
     first = phx.uq.particle_gibbs(
         jr.key(10),
@@ -112,7 +114,7 @@ def test_particle_gibbs_returns_reproducible_pgas_path_chain():
     assert 0.0 <= first.movement_rate <= 1.0
 
 
-def test_particle_marginal_metropolis_hastings_tracks_pseudo_marginal_chain():
+def test_particle_marginal_metropolis_hastings_tracks_pseudo_marginal_chain() -> None:
     result = phx.uq.particle_marginal_metropolis_hastings(
         jr.key(20),
         {"offset": jnp.asarray(0.0)},

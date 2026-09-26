@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_bounded_atlas_distinguishes_sampled_and_cell_certified_cover():
+def test_bounded_atlas_distinguishes_sampled_and_cell_certified_cover() -> None:
     chart = phx.metrix.CoordinateChart("line", ("x",))
     candidate = phx.metrix.AtlasCandidate(
         chart,
@@ -41,7 +41,7 @@ def test_bounded_atlas_distinguishes_sampled_and_cell_certified_cover():
     assert certified.path_table == ((0, 0),)
 
 
-def test_regular_level_set_projector_retraction_and_immersion_measure():
+def test_regular_level_set_projector_retraction_and_immersion_measure() -> None:
     sphere = phx.metrix.RegularLevelSetManifold(
         lambda point: jnp.asarray([jnp.dot(point, point) - 1.0]),
         ambient_dimension=2,
@@ -75,7 +75,7 @@ def test_regular_level_set_projector_retraction_and_immersion_measure():
     assert jnp.allclose(map_evidence.hausdorff_jacobian, 1.0, atol=1e-6)
 
 
-def test_complex_leaf_consumes_jax_cotangent_once_and_adam_moments_are_real():
+def test_complex_leaf_consumes_jax_cotangent_once_and_adam_moments_are_real() -> None:
     point = jnp.asarray([1.0 + 2.0j, -0.5 + 0.25j])
     manifold = phx.metrix.ComplexEuclideanManifold((2,))
     cotangent = jax.grad(lambda value: jnp.real(jnp.vdot(value, value)))(point)
@@ -90,7 +90,7 @@ def test_complex_leaf_consumes_jax_cotangent_once_and_adam_moments_are_real():
     assert jnp.issubdtype(state.second_moment.dtype, jnp.floating)
 
 
-def test_fixed_rank_strata_are_smooth_only_inside_one_rank_epoch():
+def test_fixed_rank_strata_are_smooth_only_inside_one_rank_epoch() -> None:
     manifold = phx.metrix.FixedRankDensityManifold(3, 2, tolerance=1e-7)
     factor = jnp.asarray(
         [[1.0 + 0.0j, 0.0j], [0.0j, 1.0 + 0.0j], [0.0j, 0.0j]]
@@ -112,7 +112,7 @@ def test_fixed_rank_strata_are_smooth_only_inside_one_rank_epoch():
     assert bool(ambiguous.ambiguous)
 
 
-def test_calabi_yau_certificate_never_promotes_residual_to_exact_ricci_flatness():
+def test_calabi_yau_certificate_never_promotes_residual_to_exact_ricci_flatness() -> None:
     certificate = phx.geometry.complex.CalabiYauCertificate(
         projective_dimension=4,
         degree=5,
@@ -134,7 +134,7 @@ def test_calabi_yau_certificate_never_promotes_residual_to_exact_ricci_flatness(
     assert not bool(certificate.topology_certified)
 
 
-def test_trainable_hypersurface_continues_only_fixed_simple_root_ancestry():
+def test_trainable_hypersurface_continues_only_fixed_simple_root_ancestry() -> None:
     family = phx.geometry.complex.TrainableHomogeneousHypersurface(
         jnp.asarray([[2, 0], [0, 2]]),
         jnp.asarray([1.0 + 0.0j, 1.0 + 0.0j]),

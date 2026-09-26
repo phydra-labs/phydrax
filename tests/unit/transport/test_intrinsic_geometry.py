@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_intrinsic_transport_cost_and_riemannian_flow_metric():
+def test_intrinsic_transport_cost_and_riemannian_flow_metric() -> None:
     sphere = phx.metrix.SphereManifold(3)
     cost = phx.transport.IntrinsicSquaredDistanceCost(sphere)
     points = jnp.asarray([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])

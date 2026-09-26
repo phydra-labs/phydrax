@@ -300,6 +300,12 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- The pinned ty and complete-annotation gate cover every first-party Python file
+  in `phydrax`, tests, tools, examples, benchmarks, and `mkdocstrings_setup.py`.
+  Selector auditing resolves imported `Literal` aliases, rejects discarded
+  selector parses, and reaches zero duplicated validation tables or dispatches.
+  Typing-introduced internal narrowing checks remain active under optimized Python
+  and raise explicit internal-invariant errors instead of relying on `assert`.
 - Randomized PDE compilation validates `loss_mode` against the shared
   `RandomizedResidualLossMode` alias; uncertainty-source lists in predictive fields,
   variance decomposition orders, and process retention are parsed against
@@ -497,6 +503,13 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Fixed
+- Failed `phydrax.typing.parse` and conversion operations roll back every dimension
+  binding introduced into a shared `Scope`, while preserving bindings established
+  by earlier successful operations.
+- Imported closed selectors are parsed and stored canonically across the package;
+  equal NumPy/Python selector scalars now produce identical scientific identities,
+  and wrong-kind selectors raise `TypeError`. Operator classification losses also
+  store the canonical common reduction selectors returned by `parse`.
 - The certified implicit adjoint of Neural Galerkin evolution works with the default
   rectangular tangent formulation. `NeuralTangentSolvePolicy` gains
   `adjoint_linear_policy` for the self-adjoint damped normal system; it defaults to

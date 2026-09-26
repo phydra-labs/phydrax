@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -9,7 +12,7 @@ import phydrax as phx
 
 
 class _IncomingWeightedSource:
-    def __call__(self, graph):
+    def __call__(self, graph: Any) -> Any:
         nodes = graph.nodes if graph.nodes.ndim == 1 else graph.nodes[:, 0]
         messages = graph.edges * nodes[graph.senders]
         nodes = phx.graph.segment_sum(messages, graph.receivers, graph.num_nodes)
@@ -38,7 +41,7 @@ def _graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
     return graph0, graph1
 
 
-def test_graph_dataset_domain_materializes_batched_node_entities():
+def test_graph_dataset_domain_materializes_batched_node_entities() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs(), measure="count")
     batch = domain.points_from_indices(
         jnp.array([0, 1], dtype=jnp.int32),
@@ -59,15 +62,18 @@ def test_graph_dataset_domain_materializes_batched_node_entities():
         jnp.array([0, 0, 1, 1, 1], dtype=jnp.int32),
     )
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         domain.component({"graph": phx.domain.Nodes()}).mass.value,
         5.0,
     )
 
 
-def test_graph_dataset_domain_applies_local_node_sets_per_graph():
+def test_graph_dataset_domain_applies_local_node_sets_per_graph() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs(), measure="count")
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         component=phx.domain.BoundaryNodes([1]),
         structure=phx.domain.SampleLayout((("graph",),)),
     )
@@ -78,34 +84,38 @@ def test_graph_dataset_domain_applies_local_node_sets_per_graph():
         jnp.array([1, 3], dtype=jnp.int32),
     )
     assert jnp.allclose(
+        # ty: ignore[invalid-argument-type, unresolved-attribute]
         domain.component({"graph": phx.domain.BoundaryNodes([1])}).mass.value,
         2.0,
     )
 
 
-def test_graph_dataset_domain_graph_gradient_on_local_edge_set():
+def test_graph_dataset_domain_graph_gradient_on_local_edge_set() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs())
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         component=phx.domain.EdgeSet([0]),
         structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     grad = phx.operators.graph_gradient(u)
     assert jnp.allclose(jnp.asarray(grad(batch).data), jnp.array([1.0, 2.0]))
 
 
-def test_graph_dataset_domain_samples_through_residual_penalty():
+def test_graph_dataset_domain_samples_through_residual_penalty() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs())
+    # ty: ignore[invalid-argument-type]
     component = domain.component({"graph": phx.domain.EdgeSet([0])})
     structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> float:
         del node
         return 2.0
 
@@ -119,10 +129,12 @@ def test_graph_dataset_domain_samples_through_residual_penalty():
     assert term.loss({"u": u}, key=jr.key(0)) < 1e-12
 
 
-def test_graph_dataset_domain_graph_model_restricts_to_node_set():
+def test_graph_dataset_domain_graph_model_restricts_to_node_set() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs())
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         component=phx.domain.BoundaryNodes([1]),
         structure=phx.domain.SampleLayout((("graph",),)),
     )
@@ -132,20 +144,22 @@ def test_graph_dataset_domain_graph_model_restricts_to_node_set():
     assert jnp.allclose(u(batch).data[:, 0], jnp.array([2.0, 5.0]))
 
 
-def test_graph_dataset_domain_graph_model_accepts_edge_input_fn():
+def test_graph_dataset_domain_graph_model_accepts_edge_input_fn() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs())
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         component=phx.domain.BoundaryNodes([1]),
         structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
     @domain.Function("graph")
-    def k(edge):
+    def k(edge: Any) -> Any:
         return 0.0 * edge[0] + 2.0
 
     model = domain.GraphModel(
@@ -157,11 +171,12 @@ def test_graph_dataset_domain_graph_model_accepts_edge_input_fn():
     assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([0.0, 4.0]))
 
 
-def test_graph_dataset_domain_layout_packs_graph_but_exposes_real_entities():
+def test_graph_dataset_domain_layout_packs_graph_but_exposes_real_entities() -> None:
     base = phx.domain.GraphDatasetDomain(_graphs())
     layout = base.layout_for_batch_size(2, multiple=2)
     domain = base.with_layout(layout)
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
         component=phx.domain.Nodes(),
         structure=phx.domain.SampleLayout((("graph",),)),
@@ -169,11 +184,15 @@ def test_graph_dataset_domain_layout_packs_graph_but_exposes_real_entities():
 
     assert domain.layout is not None
     assert batch.graph.nodes.shape == (6, 1)
+    # ty: ignore[unresolved-attribute]
     assert batch.graph.senders.shape == (4,)
     assert batch.graph.n_node.shape == (2,)
     assert jnp.allclose(
-        batch.graph.node_mask, jnp.array([True, True, True, True, True, False])
+        # ty: ignore[invalid-argument-type]
+        batch.graph.node_mask,
+        jnp.array([True, True, True, True, True, False]),
     )
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(batch.graph.edge_mask, jnp.array([True, True, True, False]))
     assert jnp.allclose(batch["graph"].data[:, 0], jnp.array([0.0, 1.0, 2.0, 4.0, 8.0]))
     assert jnp.allclose(
@@ -182,36 +201,41 @@ def test_graph_dataset_domain_layout_packs_graph_but_exposes_real_entities():
     )
 
 
-def test_graph_dataset_domain_layout_preserves_graph_operator_results():
+def test_graph_dataset_domain_layout_preserves_graph_operator_results() -> None:
     base = phx.domain.GraphDatasetDomain(_graphs())
     domain = base.with_layout(base.layout_for_batch_size(2, multiple=2))
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         component=phx.domain.EdgeSet([0]),
         structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node[0]
 
+    # ty: ignore[unresolved-attribute]
     assert batch.graph.edge_mask.shape == (4,)
     assert jnp.allclose(
         jnp.asarray(phx.operators.graph_gradient(u)(batch).data), jnp.array([1.0, 2.0])
     )
 
 
-def test_graph_dataset_domain_layout_preserves_graph_model_results():
+def test_graph_dataset_domain_layout_preserves_graph_model_results() -> None:
     base = phx.domain.GraphDatasetDomain(_graphs())
     domain = base.with_layout(base.layout_for_batch_size(2, multiple=2))
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         component=phx.domain.BoundaryNodes([1]),
         structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     class AddValidNodeMask:
-        def __call__(self, graph):
+        def __call__(self, graph: Any) -> Any:
             assert graph.node_mask is not None
             assert graph.nodes.shape == (6, 1)
             nodes = graph.nodes + graph.node_mask.astype("float64")[:, None]
@@ -221,12 +245,13 @@ def test_graph_dataset_domain_layout_preserves_graph_model_results():
     assert jnp.allclose(u(batch).data[:, 0], jnp.array([2.0, 5.0]))
 
 
-def test_graph_dataset_domain_layout_rejects_oversized_sample():
+def test_graph_dataset_domain_layout_rejects_oversized_sample() -> None:
     layout = phx.graph.LayoutPlan(max_nodes=4, max_edges=4, max_graphs=2)
     domain = phx.domain.GraphDatasetDomain(_graphs(), layout=layout)
 
     try:
         domain.points_from_indices(
+            # ty: ignore[invalid-argument-type]
             [0, 1],
             component=phx.domain.Nodes(),
             structure=phx.domain.SampleLayout((("graph",),)),

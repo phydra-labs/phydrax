@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_trajectory_blocks_preserve_boundaries_weights_and_references():
+def test_trajectory_blocks_preserve_boundaries_weights_and_references() -> None:
     trajectory = phx.stochastic.StochasticTrajectory(
         jnp.asarray([0.0, 0.2, 0.5, 1.0]),
         jnp.arange(8.0).reshape((4, 2)),
@@ -25,5 +25,7 @@ def test_trajectory_blocks_preserve_boundaries_weights_and_references():
     assert len(result.references) == result.selection.capacity
 
     dataset = result.to_operator_dataset()
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(dataset.case_mask, result.mask)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(dataset.case_log_weights, result.selection.log_weights)

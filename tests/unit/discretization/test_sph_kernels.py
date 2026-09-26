@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -18,7 +21,7 @@ import phydrax as phx
     ],
 )
 @pytest.mark.parametrize("dimension", [1, 2, 3])
-def test_sph_kernel_is_radially_normalized(kernel_type, dimension):
+def test_sph_kernel_is_radially_normalized(kernel_type: Any, dimension: Any) -> None:
     kernel = kernel_type(dimension)
     radius = np.linspace(0.0, 2.0, 20_001)
     values = np.asarray(kernel.value(jnp.asarray(radius), 1.0))
@@ -35,7 +38,7 @@ def test_sph_kernel_is_radially_normalized(kernel_type, dimension):
         phx.discretization.CubicSplineSPHKernel(2),
     ],
 )
-def test_sph_kernel_derivatives_match_automatic_differentiation(kernel):
+def test_sph_kernel_derivatives_match_automatic_differentiation(kernel: Any) -> None:
     distance = jnp.asarray(0.73)
     smoothing_length = jnp.asarray(0.61)
     radial_reference = jax.grad(lambda radius: kernel.value(radius, smoothing_length))(
@@ -59,7 +62,7 @@ def test_sph_kernel_derivatives_match_automatic_differentiation(kernel):
     )
 
 
-def test_sph_kernel_gradient_is_zero_safe_and_compact():
+def test_sph_kernel_gradient_is_zero_safe_and_compact() -> None:
     kernel = phx.discretization.WendlandC2SPHKernel(2)
     zero = kernel.gradient(jnp.zeros((2,)), jnp.asarray(0.0), 0.5)
     boundary = kernel.value(jnp.asarray(1.0), 0.5)

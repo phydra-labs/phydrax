@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _infinite_memory_problem(*, stochastic=False):
+def _infinite_memory_problem(*, stochastic: Any = False) -> Any:
     lags = jnp.asarray([0.2, 1.0, 10.0])
     tail = phx.solver.FunctionalDelay(
         "tail",
@@ -40,7 +43,7 @@ def _infinite_memory_problem(*, stochastic=False):
     )
 
 
-def test_full_history_supports_infinite_memory_functionals():
+def test_full_history_supports_infinite_memory_functionals() -> None:
     problem = _infinite_memory_problem()
     solution = phx.solver.solve_diffrax_delay(
         problem,
@@ -60,7 +63,7 @@ def test_full_history_supports_infinite_memory_functionals():
     )
 
 
-def test_stochastic_full_history_accepts_infinite_memory_functionals():
+def test_stochastic_full_history_accepts_infinite_memory_functionals() -> None:
     problem = _infinite_memory_problem(stochastic=True)
     realization = phx.stochastic.WienerRealization(
         jr.key(31),
@@ -83,7 +86,7 @@ def test_stochastic_full_history_accepts_infinite_memory_functionals():
 
 
 @pytest.mark.parametrize("execution", ["rolling", "segmented"])
-def test_infinite_memory_rejects_bounded_history_execution(execution):
+def test_infinite_memory_rejects_bounded_history_execution(execution: Any) -> None:
     problem = _infinite_memory_problem()
 
     with pytest.raises(ValueError, match="finite maximum"):

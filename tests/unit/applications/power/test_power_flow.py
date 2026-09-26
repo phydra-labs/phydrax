@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -23,7 +26,7 @@ from phydrax.applications.power import (
 )
 
 
-def _two_bus(*, p=0.5, q=0.0, q_max=float("inf")):
+def _two_bus(*, p: Any = 0.5, q: Any = 0.0, q_max: Any = float("inf")) -> Any:
     network = PowerNetwork(
         (Bus("source", 110), Bus("load", 110)),
         (Branch("line", "source", "load", 0.0, 0.1),),
@@ -33,7 +36,7 @@ def _two_bus(*, p=0.5, q=0.0, q_max=float("inf")):
     return network, PowerStudy((BusControl("source", "reference"), BusControl("load")))
 
 
-def test_total_three_phase_bases_and_machine_impedance_rebasing():
+def test_total_three_phase_bases_and_machine_impedance_rebasing() -> None:
     base = PowerBase(100)
     assert base.impedance_ohm(110) == pytest.approx(121)
     assert 3 * base.phase_voltage_volt(110) * base.current_ampere(110) == pytest.approx(
@@ -44,7 +47,7 @@ def test_total_three_phase_bases_and_machine_impedance_rebasing():
     )
 
 
-def test_two_bus_analytic_rectangular_sign_loss_and_balance():
+def test_two_bus_analytic_rectangular_sign_loss_and_balance() -> None:
     compiled = compile_network(*_two_bus())
     result = solve_power_flow(compiled)
     expected = 0.5 * (1 + np.sqrt(1 - 4 * 0.05**2)) - 0.05j
@@ -58,7 +61,7 @@ def test_two_bus_analytic_rectangular_sign_loss_and_balance():
     np.testing.assert_allclose(result.bus_balance, 0, atol=2e-7)
 
 
-def test_complex_tap_orientation_and_shunt_inward_power():
+def test_complex_tap_orientation_and_shunt_inward_power() -> None:
     network = PowerNetwork(
         (Bus("h", 110), Bus("l", 11)),
         (Branch("t", "h", "l", 0.01, 0.1, tap=1.1, phase=0.2),),
@@ -75,7 +78,7 @@ def test_complex_tap_orientation_and_shunt_inward_power():
     np.testing.assert_allclose(result.external_reference_power, [0.1 - 0.2j], atol=2e-7)
 
 
-def test_each_electrical_island_requires_exactly_one_reference():
+def test_each_electrical_island_requires_exactly_one_reference() -> None:
     disconnected = PowerNetwork((Bus("a"), Bus("b")), ())
     one_reference = PowerStudy((BusControl("a", "reference"), BusControl("b")))
     two_references = PowerStudy(
@@ -91,7 +94,7 @@ def test_each_electrical_island_requires_exactly_one_reference():
     np.testing.assert_allclose(result.voltage, [1, 1], atol=2e-7)
 
 
-def test_three_bus_pv_saturates_and_preserves_original_balance():
+def test_three_bus_pv_saturates_and_preserves_original_balance() -> None:
     network = PowerNetwork(
         (Bus("r"), Bus("v"), Bus("d")),
         (Branch("rv", "r", "v", 0, 0.1), Branch("vd", "v", "d", 0, 0.1)),
@@ -116,7 +119,7 @@ def test_three_bus_pv_saturates_and_preserves_original_balance():
     assert failed.status == "mode_budget_exhausted"
 
 
-def test_reference_limit_failure_is_not_hidden_as_success_or_pq_conversion():
+def test_reference_limit_failure_is_not_hidden_as_success_or_pq_conversion() -> None:
     network, study = _two_bus(q=0.3, q_max=0.001)
     result = solve_power_flow(network, study=study)
     assert not bool(result.converged)
@@ -126,10 +129,10 @@ def test_reference_limit_failure_is_not_hidden_as_success_or_pq_conversion():
     assert abs(result.bus_balance[0]) > 0.29
 
 
-def test_fixed_mode_matrix_free_implicit_load_gradient_matches_analytic_voltage():
+def test_fixed_mode_matrix_free_implicit_load_gradient_matches_analytic_voltage() -> None:
     compiled = compile_network(*_two_bus())
 
-    def voltage_imaginary(load):
+    def voltage_imaginary(load: Any) -> Any:
         injections = compiled.specified_power.at[1].set(-load + 0j)
         return fixed_mode_power_flow(compiled, injections).voltage[1].imag
 
@@ -137,7 +140,9 @@ def test_fixed_mode_matrix_free_implicit_load_gradient_matches_analytic_voltage(
     np.testing.assert_allclose(derivative, -0.1, atol=2e-6)
 
 
-def test_one_physical_network_supports_independent_studies_without_inferred_slack():
+def test_one_physical_network_supports_independent_studies_without_inferred_slack() -> (
+    None
+):
     network = PowerNetwork((Bus("a"), Bus("b")), (Branch("ab", "a", "b", 0, 0.1),))
     left = PowerStudy((BusControl("a", "reference"), BusControl("b")))
     # Controls may be presented in a different order than the physical buses.

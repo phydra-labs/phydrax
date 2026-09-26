@@ -7,6 +7,8 @@ Run: .venv/bin/python benchmarks/protein_cotranslation.py --residues 6 --steps 8
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -46,7 +48,7 @@ from phydrax.discretization import DenseParticleNeighborhoodPlan
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def prepare_case(residues: int, steps: int):
+def prepare_case(residues: int, steps: int) -> Any:
     ids = tuple(1001 + 17 * i for i in range(residues))
     bonds = tuple(zip(ids[:-1], ids[1:], strict=True))
     topology = MolecularTopologyPlan(
@@ -146,7 +148,7 @@ def prepare_case(residues: int, steps: int):
     return protocol, initial
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--residues", type=int, default=6)
     parser.add_argument("--steps", type=int, default=8)

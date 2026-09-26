@@ -25,8 +25,9 @@ class Value(AbstractValue):
         return self.value
 
 
-def test_abstract_var_and_method_resolve_in_one_final_class():
+def test_abstract_var_and_method_resolve_in_one_final_class() -> None:
     with pytest.raises(TypeError, match="abstract"):
+        # ty: ignore[call-non-callable, missing-argument]
         AbstractValue()
 
     value = Value(3)
@@ -39,7 +40,7 @@ def test_abstract_var_and_method_resolve_in_one_final_class():
             pass
 
 
-def test_abstract_property_can_be_implemented():
+def test_abstract_property_can_be_implemented() -> None:
     class AbstractPropertyContract(StrictModule):
         @property
         @abstractmethod
@@ -54,7 +55,7 @@ def test_abstract_property_can_be_implemented():
     assert PropertyImplementation().label == "implemented"
 
 
-def test_abstract_strict_bases_may_supply_overridable_defaults():
+def test_abstract_strict_bases_may_supply_overridable_defaults() -> None:
     class AbstractContract(StrictModule):
         @abstractmethod
         def evaluate(self) -> int:

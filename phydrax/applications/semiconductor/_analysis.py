@@ -150,7 +150,10 @@ def _equilibrate_setup(
     """Bound each equation's coefficient sum before iterative error control."""
     relation = operator.relation
     # Setup operators reuse a SparseDerivativePlan pattern, which is edge-form.
-    assert isinstance(relation, EdgeRelation)
+    if not (isinstance(relation, EdgeRelation)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(relation, EdgeRelation)."
+        )
     rows = relation.target_indices
     row_norm = (
         jnp.zeros((operator.target.size,), dtype=jnp.real(operator.coefficients).dtype)

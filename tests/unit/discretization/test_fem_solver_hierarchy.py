@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -54,7 +57,7 @@ def _positive_properties(*, diagonal: bool = False) -> OperatorProperties:
     )
 
 
-def _dense_endomorphism(matrix, space):
+def _dense_endomorphism(matrix: Any, space: Any) -> Any:
     return DenseLinearOperator(
         matrix,
         source=space,
@@ -63,7 +66,7 @@ def _dense_endomorphism(matrix, space):
     )
 
 
-def test_p_transfer_keeps_dual_pairing_and_physical_mass_roles_distinct():
+def test_p_transfer_keeps_dual_pairing_and_physical_mass_roles_distinct() -> None:
     coarse = ReferenceNodalFamily("quadrilateral", 1).finite_element()
     fine = ReferenceNodalFamily("quadrilateral", 2).finite_element()
     coarse_pairing = jnp.diag(jnp.asarray([1.0, 2.0, 3.0, 4.0]))
@@ -96,10 +99,11 @@ def test_p_transfer_keeps_dual_pairing_and_physical_mass_roles_distinct():
         coarse_mass @ projected,
         transfer.dual_pullback @ (fine_mass @ fine_value),
     )
+    # ty: ignore[invalid-argument-type]
     assert not jnp.allclose(transfer.pairing_adjoint, transfer.mass_projection)
 
 
-def test_anisotropic_p_transfer_accepts_nested_axes_and_rejects_axis_coarsening():
+def test_anisotropic_p_transfer_accepts_nested_axes_and_rejects_axis_coarsening() -> None:
     coarse = ReferenceNodalFamily("quadrilateral", (2, 3))
     fine = ReferenceNodalFamily("quadrilateral", (2, 5))
     transfer = quadrilateral_p_transfer(coarse, fine)
@@ -112,7 +116,7 @@ def test_anisotropic_p_transfer_accepts_nested_axes_and_rejects_axis_coarsening(
         )
 
 
-def test_p_multigrid_selects_direct_or_galerkin_coarse_operators():
+def test_p_multigrid_selects_direct_or_galerkin_coarse_operators() -> None:
     fine_space = ArraySpace((4,))
     coarse_space = ArraySpace((2,))
     fine_matrix = jnp.diag(jnp.asarray([2.0, 3.0, 4.0, 5.0]))
@@ -155,7 +159,9 @@ def test_p_multigrid_selects_direct_or_galerkin_coarse_operators():
 
     assert isinstance(direct.hierarchy_builder, MultigridHierarchyBuilder)
     assert jnp.allclose(
-        direct.hierarchy_builder.levels[-1].operator.matrix, direct_matrix
+        # ty: ignore[unresolved-attribute]
+        direct.hierarchy_builder.levels[-1].operator.matrix,
+        direct_matrix,
     )
     assert isinstance(galerkin.hierarchy_builder, GalerkinHierarchyBuilder)
     prepared = galerkin.hierarchy_builder.prepare(
@@ -163,6 +169,7 @@ def test_p_multigrid_selects_direct_or_galerkin_coarse_operators():
         materialization=MaterializationPolicy(),
     )
     coarse = materialize(
+        # ty: ignore[unresolved-attribute]
         prepared.hierarchy.levels[-1].operator,
         MaterializationPolicy(),
     )
@@ -172,7 +179,7 @@ def test_p_multigrid_selects_direct_or_galerkin_coarse_operators():
     )
 
 
-def test_tensor_fast_diagonalization_matches_dense_separable_solve():
+def test_tensor_fast_diagonalization_matches_dense_separable_solve() -> None:
     axis = ArraySpace((2,))
     mass_x_values = jnp.asarray([2.0, 3.0])
     mass_y_values = jnp.asarray([5.0, 7.0])
@@ -219,7 +226,7 @@ def test_tensor_fast_diagonalization_matches_dense_separable_solve():
     assert jnp.allclose(preconditioner.apply(right_hand_side), dense.value)
 
 
-def test_one_ring_schwarz_weights_form_partition_of_unity():
+def test_one_ring_schwarz_weights_form_partition_of_unity() -> None:
     plan = FiniteElementPatchPlan(
         jnp.asarray([[0, 1], [1, 2]], dtype=jnp.int32),
         jnp.ones((2, 2), dtype="bool"),
@@ -239,7 +246,7 @@ def test_one_ring_schwarz_weights_form_partition_of_unity():
     assert jnp.allclose(preconditioner.apply(value), value)
 
 
-def test_low_order_auxiliary_builder_uses_generic_subspace_correction():
+def test_low_order_auxiliary_builder_uses_generic_subspace_correction() -> None:
     high = ArraySpace((3,))
     low = ArraySpace((3,))
     high_to_low = DenseLinearOperator(
@@ -270,7 +277,7 @@ def test_low_order_auxiliary_builder_uses_generic_subspace_correction():
     assert jnp.allclose(preconditioner.apply(value), value)
 
 
-def test_anisotropic_half_dof_hierarchy_is_strict_and_bounded():
+def test_anisotropic_half_dof_hierarchy_is_strict_and_bounded() -> None:
     fine_order = (15, 5, 3)
     sequence = FiniteElementPMultigridPolicy("half-dofs").degree_sequence(
         "hexahedron",

@@ -7,6 +7,8 @@ are treated as SD under an explicit diagonal-noise approximation.
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -29,7 +31,7 @@ from phydrax.applications.nucleic_acid_biophysics.observations import (
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--fixture",
@@ -67,7 +69,7 @@ def main():
     if not 1 <= args.training_constructs < len(imported.entries) or args.repeats < 1:
         raise ValueError("The benchmark must withhold at least one complete construct.")
 
-    def model(entries):
+    def model(entries: Any) -> Any:
         signals = tuple(
             np.asarray(
                 [
@@ -89,7 +91,7 @@ def main():
     fitted, fit_seconds = measure_synchronized(training.fit)
     parameters = fitted.optimization.parameters
 
-    def held_scores(values):
+    def held_scores(values: Any) -> Any:
         predictions = withheld.predict(values)
         return jnp.stack(
             tuple(

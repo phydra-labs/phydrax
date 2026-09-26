@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -18,7 +21,7 @@ from phydrax.optics.geometric._nonsequential import (
 )
 
 
-def _planes(z_values):
+def _planes(z_values: Any) -> Any:
     vertices = []
     triangles = []
     for z in z_values:
@@ -32,7 +35,7 @@ def _planes(z_values):
     return jnp.asarray(vertices), jnp.asarray(triangles, dtype=jnp.int32)
 
 
-def _single_ray():
+def _single_ray() -> Any:
     return OpticalRayState(
         jnp.asarray([[0.0, 0.0, -1.0]]),
         jnp.asarray([[0.0, 0.0, 1.0]]),
@@ -42,11 +45,11 @@ def _single_ray():
 
 def _slab_surfaces(
     *,
-    kinds=None,
-    modes=None,
-    attenuation=None,
-    attenuation_model_ids=(),
-):
+    kinds: Any = None,
+    modes: Any = None,
+    attenuation: Any = None,
+    attenuation_model_ids: Any = (),
+) -> Any:
     vertices, triangles = _planes((0.0, 1.0))
     if kinds is None:
         kinds = jnp.full((4,), int(NonSequentialSurfaceKind.DIELECTRIC))
@@ -216,6 +219,7 @@ def test_explicit_zero_attenuation_preserves_lossless_trace() -> None:
         power_tolerance=0.0,
     )
     default_result = trace_nonsequential_optics(
+        # ty: ignore[invalid-argument-type]
         prepare_nonsequential_optics(NonSequentialOpticsPlan(default_surfaces, **common)),
         _single_ray(),
         jnp.asarray([1.0]),
@@ -223,6 +227,7 @@ def test_explicit_zero_attenuation_preserves_lossless_trace() -> None:
     )
     explicit_result = trace_nonsequential_optics(
         prepare_nonsequential_optics(
+            # ty: ignore[invalid-argument-type]
             NonSequentialOpticsPlan(explicit_surfaces, **common)
         ),
         _single_ray(),
@@ -282,7 +287,7 @@ def test_explicit_zero_attenuation_preserves_lossless_trace() -> None:
 def test_tiny_and_extreme_optical_depth_are_stable_and_keep_detector_separate() -> None:
     vertices, triangles = _planes((0.0,))
 
-    def trace(coefficient):
+    def trace(coefficient: Any) -> Any:
         surfaces = NonSequentialSurfaceTable(
             vertices,
             triangles,
@@ -351,7 +356,7 @@ def test_fresnel_branching_uses_power_after_segment_attenuation() -> None:
     np.testing.assert_allclose(result.power_ledger_residual, 0.0, atol=2e-6)
 
 
-def test_fresnel_tree_candidates_and_complete_energy_ledger():
+def test_fresnel_tree_candidates_and_complete_energy_ledger() -> None:
     prepared = prepare_nonsequential_optics(
         NonSequentialOpticsPlan(
             _slab_surfaces(),
@@ -385,13 +390,15 @@ def test_fresnel_tree_candidates_and_complete_energy_ledger():
     }
 
 
-def test_history_enabled_and_disabled_have_identical_terminal_trace():
+def test_history_enabled_and_disabled_have_identical_terminal_trace() -> None:
     surface = _slab_surfaces()
     common = dict(maximum_interactions=4, branch_capacity=12, power_tolerance=0.0)
     without_history = prepare_nonsequential_optics(
+        # ty: ignore[invalid-argument-type]
         NonSequentialOpticsPlan(surface, record_history=False, **common)
     )
     with_history = prepare_nonsequential_optics(
+        # ty: ignore[invalid-argument-type]
         NonSequentialOpticsPlan(surface, record_history=True, **common)
     )
     args = (_single_ray(), jnp.asarray([1.0]), jnp.asarray([0]))
@@ -409,7 +416,7 @@ def test_history_enabled_and_disabled_have_identical_terminal_trace():
     assert result_with.history_origins.shape[-3] == 5
 
 
-def test_mirror_detector_and_branch_capacity_ledgers():
+def test_mirror_detector_and_branch_capacity_ledgers() -> None:
     vertices, triangles = _planes((0.0,))
     mirror = NonSequentialSurfaceTable(
         vertices,
@@ -477,7 +484,7 @@ def test_mirror_detector_and_branch_capacity_ledgers():
     np.testing.assert_allclose(capacity_result.power_ledger_residual, 0.0, atol=2e-6)
 
 
-def test_transmission_only_records_omitted_fresnel_branch():
+def test_transmission_only_records_omitted_fresnel_branch() -> None:
     modes = jnp.full(
         (4,), int(NonSequentialBranchMode.TRANSMISSION_ONLY), dtype=jnp.int32
     )
@@ -499,7 +506,7 @@ def test_transmission_only_records_omitted_fresnel_branch():
     np.testing.assert_allclose(result.power_ledger_residual, 0.0, atol=2e-6)
 
 
-def test_ambiguous_coincident_interfaces_stop_without_continuation():
+def test_ambiguous_coincident_interfaces_stop_without_continuation() -> None:
     vertices = jnp.asarray([[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]])
     triangles = jnp.asarray([[0, 1, 2], [0, 1, 2]], dtype=jnp.int32)
     surfaces = NonSequentialSurfaceTable(

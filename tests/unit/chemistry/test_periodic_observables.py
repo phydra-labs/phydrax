@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 
 from phydrax.chemistry.periodic._observables import (
@@ -22,20 +24,24 @@ from phydrax.units import ANGSTROM, conversion_factor, ELECTRONVOLT, JOULE, METE
 HBAR = 1.054_571_817e-34
 
 
-def _scalar_chain(*, overlap=0.0):
+def _scalar_chain(*, overlap: Any = 0.0) -> Any:
+    # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[2.0]])
     basis = PeriodicOrbitalBasisPlan(
         cell,
         ("s",),
+        # ty: ignore[invalid-argument-type]
         [[0.0]],
         ANGSTROM,
         PeriodicBlochGauge("lattice"),
     )
     h = periodic_translation_family_from_dense_blocks(
+        # ty: ignore[invalid-argument-type]
         [[-1], [0], [1]],
         np.asarray([[[[[-0.25]]]], [[[[0.2]]]], [[[[-0.25]]]]]),
     )
     s = periodic_translation_family_from_dense_blocks(
+        # ty: ignore[invalid-argument-type]
         [[-1], [0], [1]],
         np.asarray([[[[[overlap]]]], [[[[1.0]]]], [[[[overlap]]]]]),
     )
@@ -52,7 +58,7 @@ def _scalar_chain(*, overlap=0.0):
     return pencil, mesh, spectrum
 
 
-def test_generalized_velocity_contains_dS_and_is_physical_cartesian():
+def test_generalized_velocity_contains_dS_and_is_physical_cartesian() -> None:
     pencil, mesh, spectrum = _scalar_chain(overlap=0.1)
     velocity = PeriodicVelocityPlan(pencil, spectrum).evaluate()
     q = np.asarray(mesh.fractional_points[:, 0])
@@ -76,16 +82,19 @@ def test_generalized_velocity_contains_dS_and_is_physical_cartesian():
     assert bool(velocity.successful)
 
 
-def test_dos_and_metric_grouped_pdos_preserve_state_partition():
+def test_dos_and_metric_grouped_pdos_preserve_state_partition() -> None:
+    # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[3.0]])
     basis = PeriodicOrbitalBasisPlan(
         cell,
         ("left", "right"),
+        # ty: ignore[invalid-argument-type]
         [[0.0], [0.4]],
         ANGSTROM,
         PeriodicBlochGauge("atomic"),
     )
     h = periodic_translation_family_from_dense_blocks(
+        # ty: ignore[invalid-argument-type]
         [[0]],
         np.asarray([[[[[-1.0]], [[0.2]]], [[[0.2]], [[1.0]]]]]).reshape(1, 2, 1, 2, 1),
     )
@@ -96,6 +105,7 @@ def test_dos_and_metric_grouped_pdos_preserve_state_partition():
     spectrum = PeriodicSpectrumPlan(pencil, mesh).evaluate()
     grid = np.linspace(-3.0, 3.0, 4001)
     dos = PeriodicDensityOfStatesPlan(spectrum, grid, 0.08).evaluate()
+    # ty: ignore[invalid-argument-type]
     groups = PeriodicProjectorGroups(("left", "right"), [0, 1], basis.basis_id)
     pdos = PeriodicProjectedDOSPlan(pencil, spectrum, groups, grid, 0.08).evaluate()
 
@@ -110,7 +120,7 @@ def test_dos_and_metric_grouped_pdos_preserve_state_partition():
     assert bool(pdos.successful)
 
 
-def test_fermi_surface_reports_unresolved_corner_without_silent_interpolation():
+def test_fermi_surface_reports_unresolved_corner_without_silent_interpolation() -> None:
     _, mesh, spectrum = _scalar_chain()
     resolved = fermi_surface_evidence(mesh, spectrum, 0.2)
     corner_energy = float(spectrum.energies[0, 0])
@@ -121,7 +131,7 @@ def test_fermi_surface_reports_unresolved_corner_without_silent_interpolation():
     assert np.any(np.asarray(unresolved.unresolved_mask))
 
 
-def test_bounded_chebyshev_candidate_uses_sparse_orthonormal_recurrence():
+def test_bounded_chebyshev_candidate_uses_sparse_orthonormal_recurrence() -> None:
     pencil, mesh, _ = _scalar_chain()
     moments = ChebyshevMomentPlan(
         pencil,

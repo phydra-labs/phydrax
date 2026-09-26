@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -26,7 +29,7 @@ from phydrax.equations._materials import IdealGasMaterial
 from phydrax.equations._transport_closures import ConstantTransport
 
 
-def _method(quadrature):
+def _method(quadrature: Any) -> Any:
     return SmoothCompressibleD2VKineticMethod(
         quadrature,
         IdealGasMaterial(1.4, 1.0),
@@ -34,14 +37,18 @@ def _method(quadrature):
     )
 
 
-def _prepared(shape=(5, 6), spacing=(0.7, 1.1), time_step=0.13):
+def _prepared(
+    shape: Any = (5, 6), spacing: Any = (0.7, 1.1), time_step: Any = 0.13
+) -> Any:
     method = _method(d2v37_off_lattice_quadrature())
     return PreparedCoupledD2V37OffLatticeTransport.prepare(
         method, shape, spacing, time_step
     )
 
 
-def test_periodic_uniform_departure_transfer_preserves_constant_integral_and_direction():
+def test_periodic_uniform_departure_transfer_preserves_constant_integral_and_direction() -> (
+    None
+):
     transfer = PeriodicUniformGridDepartureTransfer((4, 3), (0.5, 2.0), (0.25, -0.5))
     constant = jnp.full((4, 3), 2.75, dtype=jnp.float64)
     transported_constant = transfer.primal_operator.mv(constant)
@@ -60,7 +67,7 @@ def test_periodic_uniform_departure_transfer_preserves_constant_integral_and_dir
     np.testing.assert_allclose(transported, expected, atol=1.0e-14)
 
 
-def test_coupled_d2v37_uses_one_transfer_tuple_and_audits_declared_moments():
+def test_coupled_d2v37_uses_one_transfer_tuple_and_audits_declared_moments() -> None:
     prepared = _prepared()
     quadrature = prepared.quadrature
     f_constants = jnp.linspace(
@@ -116,7 +123,7 @@ def test_coupled_d2v37_uses_one_transfer_tuple_and_audits_declared_moments():
     )
 
 
-def test_coupled_d2v37_preserves_positive_population_integrals_and_gradients():
+def test_coupled_d2v37_preserves_positive_population_integrals_and_gradients() -> None:
     prepared = _prepared(shape=(4, 5), spacing=(0.8, 0.6), time_step=0.09)
     q = prepared.quadrature.population_count
     dtype = prepared.quadrature.velocities.dtype
@@ -149,7 +156,7 @@ def test_coupled_d2v37_preserves_positive_population_integrals_and_gradients():
         atol=2.0e-11,
     )
 
-    def objective(particle_populations):
+    def objective(particle_populations: Any) -> Any:
         candidate = prepared.transport_with_evidence(
             SmoothCompressibleKineticState(particle_populations, g),
             prepared.required_step_size,
@@ -162,7 +169,9 @@ def test_coupled_d2v37_preserves_positive_population_integrals_and_gradients():
     assert float(jnp.max(jnp.abs(gradient))) > 0.0
 
 
-def test_coupled_d2v37_refuses_variable_step_nonperiodic_geometry_and_bad_shapes():
+def test_coupled_d2v37_refuses_variable_step_nonperiodic_geometry_and_bad_shapes() -> (
+    None
+):
     prepared = _prepared()
     q = prepared.quadrature.population_count
     shape = prepared.population_transport.source_shape
@@ -199,7 +208,7 @@ def test_coupled_d2v37_refuses_variable_step_nonperiodic_geometry_and_bad_shapes
         prepared.transport_with_evidence(bad_state, prepared.required_step_size)
 
 
-def test_coupled_d2v37_rejects_integer_roll_and_d2v17_identity_claims():
+def test_coupled_d2v37_rejects_integer_roll_and_d2v17_identity_claims() -> None:
     transfer = PeriodicUniformGridDepartureTransfer((4, 5), (1.0, 1.0), (0.25, 0.5))
     with pytest.raises(ValueError, match="integer_roll"):
         SemiLagrangianTransferRequirements(exact_on=("integer_roll",)).validate(transfer)

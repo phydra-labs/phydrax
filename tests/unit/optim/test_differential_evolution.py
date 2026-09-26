@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -14,12 +17,13 @@ from phydrax.optim._differential_evolution import (
 )
 
 
-def test_configuration_validation():
+def test_configuration_validation() -> None:
     with pytest.raises(ValueError, match="at least 4"):
         phx.optim.DifferentialEvolutionSearch(3, 4)
     with pytest.raises(ValueError, match="non-negative"):
         phx.optim.DifferentialEvolutionSearch(4, -1)
     with pytest.raises(ValueError, match="strategy"):
+        # ty: ignore[invalid-argument-type]
         phx.optim.DifferentialEvolutionSearch(4, 1, strategy="invalid")
     with pytest.raises(ValueError, match="differential_weight"):
         phx.optim.DifferentialEvolutionSearch(4, 1, differential_weight=2.0)
@@ -33,7 +37,7 @@ def test_configuration_validation():
         phx.optim.DifferentialEvolutionSearch(4, 1, design="unknown")
 
 
-def test_vector_and_bound_validation():
+def test_vector_and_bound_validation() -> None:
     search = phx.optim.DifferentialEvolutionSearch(4, 0)
     objective = lambda vector: jnp.sum(vector * vector)
 
@@ -103,7 +107,7 @@ def test_vector_and_bound_validation():
 
 
 @pytest.mark.parametrize("strategy", ["best1bin", "rand1bin"])
-def test_search_is_reproducible_bounded_and_exactly_accounted(strategy):
+def test_search_is_reproducible_bounded_and_exactly_accounted(strategy: Any) -> None:
     search = phx.optim.DifferentialEvolutionSearch(
         8,
         3,
@@ -146,7 +150,7 @@ def test_search_is_reproducible_bounded_and_exactly_accounted(strategy):
     )
 
 
-def test_initial_convergence_and_invalid_objectives_are_explicit():
+def test_initial_convergence_and_invalid_objectives_are_explicit() -> None:
     search = phx.optim.DifferentialEvolutionSearch(4, 10)
     bounds = (jnp.asarray([-1.0]), jnp.asarray([1.0]))
 
@@ -176,7 +180,7 @@ def test_initial_convergence_and_invalid_objectives_are_explicit():
     assert np.all(np.isinf(np.asarray(invalid.population_objectives)))
 
 
-def test_repair_reflects_arbitrary_overshoot_into_unit_box():
+def test_repair_reflects_arbitrary_overshoot_into_unit_box() -> None:
     candidates = jnp.asarray([-4.2, -1.2, -0.2, 0.0, 0.2, 1.0, 1.2, 2.2, 5.2])
     repaired = _reflect_unit_box(candidates)
     np.testing.assert_allclose(
@@ -188,7 +192,7 @@ def test_repair_reflects_arbitrary_overshoot_into_unit_box():
     assert np.all(np.asarray(repaired) <= 1.0)
 
 
-def test_pareto_search_never_uses_scalar_spread_convergence():
+def test_pareto_search_never_uses_scalar_spread_convergence() -> None:
     space = phx.optim.DifferentialEvolutionSpace(
         phx.optim.DifferentialEvolutionContinuous(
             jnp.asarray([-1.0]),

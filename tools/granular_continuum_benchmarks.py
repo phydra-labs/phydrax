@@ -6,6 +6,7 @@
 
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _timing(function, argument, *, repeats=20):
+def _timing(function: Any, argument: Any, *, repeats: Any = 20) -> Any:
     started = time.perf_counter()
     result = function(argument)
     jax.block_until_ready(result)
@@ -26,7 +27,7 @@ def _timing(function, argument, *, repeats=20):
     return result, compile_seconds, (time.perf_counter() - started) / repeats
 
 
-def _cohesion_benchmark():
+def _cohesion_benchmark() -> Any:
     pair_count = 8192
     dtype = jnp.float64
     normal = jnp.broadcast_to(jnp.asarray([1.0, 0.0]), (pair_count, 2))
@@ -79,7 +80,7 @@ def _cohesion_benchmark():
         )
 
         @jax.jit
-        def evaluate(current_gap, plan=plan, history=history):
+        def evaluate(current_gap: Any, plan: Any = plan, history: Any = history) -> Any:
             batch = phx.discretization.DEMContactBatch(
                 batch_template.normal,
                 current_gap,
@@ -110,7 +111,7 @@ def _cohesion_benchmark():
     return results
 
 
-def _coarse_graining_benchmark():
+def _coarse_graining_benchmark() -> Any:
     side = 16
     count = side * side
     axis_values = np.linspace(0.05, 0.95, side)
@@ -148,7 +149,7 @@ def _coarse_graining_benchmark():
     force = jnp.broadcast_to(jnp.asarray([1.0, -0.25]), displacement.shape)
 
     @jax.jit
-    def evaluate(current_position):
+    def evaluate(current_position: Any) -> Any:
         return prepared.evaluate(
             current_position,
             velocity,
@@ -174,7 +175,7 @@ def _coarse_graining_benchmark():
     }
 
 
-def main():
+def main() -> None:
     payload = {
         "benchmark": "granular-continuum",
         "cohesion": _cohesion_benchmark(),

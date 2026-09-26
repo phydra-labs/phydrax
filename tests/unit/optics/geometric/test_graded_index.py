@@ -1,10 +1,12 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
 import phydrax as phx
 
 
-def _contract():
+def _contract() -> Any:
     return phx.SpatialCoordinateContract(
         phx.units.METER,
         coordinate_system="cartesian-world",
@@ -12,10 +14,12 @@ def _contract():
     )
 
 
-def test_constant_structured_index_preserves_straight_hamiltonian_rays():
+def test_constant_structured_index_preserves_straight_hamiltonian_rays() -> None:
     field = phx.optics.geometric.StructuredRefractiveIndexField(
         np.ones((4, 4, 4)),
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.0, 0.0),
+        # ty: ignore[invalid-argument-type]
         (1.0, 1.0, 1.0),
         _contract(),
         field_id="uniform-index",
@@ -31,7 +35,7 @@ def test_constant_structured_index_preserves_straight_hamiltonian_rays():
     assert bool(result.evidence.successful)
 
 
-def test_tetrahedral_field_and_curved_schlieren_retain_route_evidence():
+def test_tetrahedral_field_and_curved_schlieren_retain_route_evidence() -> None:
     vertices = np.asarray(((0, 0, 0), (2, 0, 0), (0, 2, 0), (0, 0, 2)), dtype="float64")
     field = phx.optics.geometric.TetrahedralRefractiveIndexField(
         vertices,
@@ -40,6 +44,7 @@ def test_tetrahedral_field_and_curved_schlieren_retain_route_evidence():
         _contract(),
         field_id="linear-index",
     )
+    # ty: ignore[invalid-argument-type]
     n, gradient, hessian, valid = field.sample(np.asarray(((0.2, 0.2, 0.2),)))
     np.testing.assert_allclose(n, (1.002,))
     np.testing.assert_allclose(gradient, ((0.01, 0.0, 0.0),))
@@ -47,7 +52,13 @@ def test_tetrahedral_field_and_curved_schlieren_retain_route_evidence():
     assert bool(valid[0])
 
     uniform = phx.optics.geometric.StructuredRefractiveIndexField(
-        np.ones((4, 4, 4)), (0, 0, 0), (1, 1, 1), _contract(), field_id="image-index"
+        np.ones((4, 4, 4)),
+        # ty: ignore[invalid-argument-type]
+        (0, 0, 0),
+        # ty: ignore[invalid-argument-type]
+        (1, 1, 1),
+        _contract(),
+        field_id="image-index",
     )
     rays = phx.optics.geometric.GradedIndexRayPlan(uniform, 0.1, 5).prepare()
     image = phx.imaging.ImagePlaneSupport((2, 2), detector_frame_id="detector")
@@ -82,7 +93,7 @@ def test_tetrahedral_field_and_curved_schlieren_retain_route_evidence():
     assert bool(result.successful)
 
 
-def test_smooth_focusing_index_detects_a_caustic_without_clipping():
+def test_smooth_focusing_index_detects_a_caustic_without_clipping() -> None:
     field = phx.optics.geometric.AnalyticRefractiveIndexField(
         lambda point: 1.0 - 0.1 * (point[0] - 2.0) ** 2,
         _contract(),

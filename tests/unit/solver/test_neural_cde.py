@@ -13,11 +13,11 @@ import phydrax as phx
 class _ScalarRateModel(eqx.Module):
     rate: jax.Array = phx.parameter_field()
 
-    def __call__(self, state):
+    def __call__(self, state: Any) -> Any:
         return jnp.asarray([self.rate * state[0]])
 
 
-def _time_path(path_id):
+def _time_path(path_id: Any) -> Any:
     return phx.solver.CallableDrivingPath(
         lambda time, side: jnp.asarray([time]),
         lambda time, side: jnp.asarray([1.0]),
@@ -29,7 +29,7 @@ def _time_path(path_id):
     )
 
 
-def _training_data():
+def _training_data() -> Any:
     rate = 0.4
     initial = jnp.asarray([[1.0], [1.5], [0.7]])
     times = jnp.asarray(
@@ -60,7 +60,7 @@ def _training_data():
     )
 
 
-def test_vector_field_adapter_composes_callable_mlp_and_kan_models():
+def test_vector_field_adapter_composes_callable_mlp_and_kan_models() -> None:
     callable_field = phx.solver.NeuralCDEVectorField(
         lambda state: jnp.asarray([state[0], -state[0]]),
         state_shape=(1,),
@@ -96,7 +96,7 @@ def test_vector_field_adapter_composes_callable_mlp_and_kan_models():
         assert jnp.all(jnp.isfinite(value))
 
 
-def test_irregular_observation_loss_uses_mask_and_explicit_time_channel():
+def test_irregular_observation_loss_uses_mask_and_explicit_time_channel() -> None:
     data = _training_data()
     vector_field = phx.solver.NeuralCDEVectorField(
         _ScalarRateModel(jnp.asarray(0.4)),
@@ -118,7 +118,7 @@ def test_irregular_observation_loss_uses_mask_and_explicit_time_channel():
     assert loss < 1e-13
 
 
-def test_complex_residual_uses_hermitian_squared_norm():
+def test_complex_residual_uses_hermitian_squared_norm() -> None:
     data = phx.solver.NeuralCDETrainingData(
         (_time_path("complex-residual"),),
         jnp.asarray([[1.0j]]),
@@ -139,7 +139,7 @@ def test_complex_residual_uses_hermitian_squared_norm():
     assert jnp.allclose(loss, 1.0)
 
 
-def test_failed_requested_save_rejects_loss_before_optimizer_update():
+def test_failed_requested_save_rejects_loss_before_optimizer_update() -> None:
     data = _training_data()
     field = phx.solver.NeuralCDEVectorField(
         _ScalarRateModel(jnp.asarray(0.1)),
@@ -159,11 +159,11 @@ def test_failed_requested_save_rejects_loss_before_optimizer_update():
 
     update_calls = []
 
-    def init_optimizer(parameters):
+    def init_optimizer(parameters: Any) -> Any:
         del parameters
         return ()
 
-    def update_optimizer(gradients, state, parameters=None):
+    def update_optimizer(gradients: Any, state: Any, parameters: Any = None) -> Any:
         del parameters
         update_calls.append(True)
         return gradients, state
@@ -189,7 +189,7 @@ def test_failed_requested_save_rejects_loss_before_optimizer_update():
     assert jnp.array_equal(field.model.rate, original_rate)
 
 
-def test_optax_training_resume_is_step_for_step_equivalent():
+def test_optax_training_resume_is_step_for_step_equivalent() -> None:
     data = _training_data()
     optimizer = optax.adam(2e-2)
     solve_options = {"rtol": 2e-6, "atol": 2e-8}

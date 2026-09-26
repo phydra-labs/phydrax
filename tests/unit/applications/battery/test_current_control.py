@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -56,7 +59,7 @@ class AnalyticCurrentAdapter(StrictModule, NonTrainableState):
     observable_names: tuple[str, ...] = eqx.field(static=True)
     observable_units: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.model_id = "test:battery:analytic-current"
         self.equation_form = "ode"
         self.observable_names = (
@@ -67,19 +70,23 @@ class AnalyticCurrentAdapter(StrictModule, NonTrainableState):
         )
         self.observable_units = ("V", "1", "1", "K")
 
-    def prepare(self, /):
+    def prepare(self, /) -> str:
         return "test:battery:analytic-current:prepared-model"
 
-    def initial_state(self, prepared_model, parameters, initial_condition, /):
+    def initial_state(
+        self, prepared_model: Any, parameters: Any, initial_condition: Any, /
+    ) -> Any:
         assert prepared_model == "test:battery:analytic-current:prepared-model"
         assert isinstance(parameters, AnalyticCurrentParameters)
         return jnp.asarray((initial_condition,))
 
-    def problem(self, prepared_model, initial_state, runtime_inputs, /):
+    def problem(
+        self, prepared_model: Any, initial_state: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == "test:battery:analytic-current:prepared-model"
         assert isinstance(runtime_inputs, BatteryRuntimeInputs)
 
-        def drift(time_s, state, runtime):
+        def drift(time_s: Any, state: Any, runtime: Any) -> Any:
             current = runtime.current(time_s, state)
             parameters = runtime.parameters
             derivative = jnp.asarray((current,), dtype=state.dtype)
@@ -98,7 +105,9 @@ class AnalyticCurrentAdapter(StrictModule, NonTrainableState):
             problem_id="test:battery:analytic-current:problem",
         )
 
-    def observe(self, prepared_model, times_s, states, runtime_inputs, /):
+    def observe(
+        self, prepared_model: Any, times_s: Any, states: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == "test:battery:analytic-current:prepared-model"
         charge = states[..., 0]
         flat_times = times_s.reshape((-1,))
@@ -123,7 +132,9 @@ class AnalyticCurrentAdapter(StrictModule, NonTrainableState):
         )
         return BatteryModelOutput(values, domain)
 
-    def ledger(self, prepared_model, native_solution, runtime_inputs, /):
+    def ledger(
+        self, prepared_model: Any, native_solution: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == "test:battery:analytic-current:prepared-model"
         successful = (
             jnp.asarray(native_solution.backend_successful, dtype="bool")
@@ -136,7 +147,7 @@ class AnalyticCurrentAdapter(StrictModule, NonTrainableState):
         return AnalyticCurrentLedger(successful)
 
 
-def _support():
+def _support() -> Any:
     support = SupportTuple(
         "battery.simulation",
         {
@@ -156,7 +167,7 @@ def _support():
 
 
 @pytest.fixture(autouse=True)
-def _synthetic_candidate_registry(monkeypatch):
+def _synthetic_candidate_registry(monkeypatch: Any) -> None:
     profile, _ = _support()
     monkeypatch.setattr(
         _qualification,
@@ -167,11 +178,11 @@ def _synthetic_candidate_registry(monkeypatch):
 
 def _prepared_experiment(
     *,
-    runtime_limit=10.0,
-    ledger_limit=10.0,
-    protocol=None,
-    save_times=(0.0, 0.5, 1.0, 1.5, 2.0),
-):
+    runtime_limit: Any = 10.0,
+    ledger_limit: Any = 10.0,
+    protocol: Any = None,
+    save_times: Any = (0.0, 0.5, 1.0, 1.5, 2.0),
+) -> Any:
     protocol = (
         BatteryProtocolPlan((CurrentStepPlan(1.0), CurrentStepPlan(1.0)))
         if protocol is None
@@ -179,6 +190,7 @@ def _prepared_experiment(
     )
     profile, support = _support()
     experiment = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         AnalyticCurrentAdapter(),
         protocol,
         BatteryOutputPlan(
@@ -210,12 +222,12 @@ def _prepared_experiment(
 
 def _prepared_control(
     *,
-    voltage_upper=4.5,
-    runtime_limit=10.0,
-    ledger_limit=10.0,
-    protocol=None,
-    save_times=(0.0, 0.5, 1.0, 1.5, 2.0),
-):
+    voltage_upper: Any = 4.5,
+    runtime_limit: Any = 10.0,
+    ledger_limit: Any = 10.0,
+    protocol: Any = None,
+    save_times: Any = (0.0, 0.5, 1.0, 1.5, 2.0),
+) -> Any:
     experiment, parameters = _prepared_experiment(
         runtime_limit=runtime_limit,
         ledger_limit=ledger_limit,
@@ -251,7 +263,7 @@ def _prepared_control(
     ).prepare()
 
 
-def test_piecewise_current_lowering_exposes_fixed_knots_and_dynamic_amplitudes():
+def test_piecewise_current_lowering_exposes_fixed_knots_and_dynamic_amplitudes() -> None:
     prepared = _prepared_control()
     amplitudes = jnp.asarray((1.0, 0.0))
     lowered = prepared.lower(amplitudes)
@@ -270,7 +282,9 @@ def test_piecewise_current_lowering_exposes_fixed_knots_and_dynamic_amplitudes()
     assert any(leaf is lowered.amplitudes_a for leaf in leaves)
 
 
-def test_native_control_terminal_equality_objective_gradient_and_constraint_signs():
+def test_native_control_terminal_equality_objective_gradient_and_constraint_signs() -> (
+    None
+):
     prepared = _prepared_control()
     amplitudes = jnp.asarray((1.0, 0.0))
     result = prepared.evaluate(amplitudes)
@@ -288,7 +302,7 @@ def test_native_control_terminal_equality_objective_gradient_and_constraint_sign
         result.feasibility.path_residuals[:, current_lower], (-3.0, -2.0)
     )
 
-    def loss(values):
+    def loss(values: Any) -> Any:
         return prepared.evaluate(values).sampled_loss.total
 
     point = jnp.asarray((0.4, 0.6))
@@ -303,7 +317,7 @@ def test_native_control_terminal_equality_objective_gradient_and_constraint_sign
     assert float(violating.feasibility.path_residuals[0, current_upper]) == 0.5
 
 
-def test_replay_is_independent_finer_and_catches_between_knot_voltage_violation():
+def test_replay_is_independent_finer_and_catches_between_knot_voltage_violation() -> None:
     prepared = _prepared_control(voltage_upper=3.5)
     amplitudes = jnp.asarray((1.0, 0.0))
     sampled = prepared.evaluate(amplitudes)
@@ -321,7 +335,7 @@ def test_replay_is_independent_finer_and_catches_between_knot_voltage_violation(
     assert replay.replay_plan_id == prepared.replay_plan_id
 
 
-def test_failed_runtime_and_ledger_are_explicit_infeasible_constraints():
+def test_failed_runtime_and_ledger_are_explicit_infeasible_constraints() -> None:
     runtime_failure = _prepared_control(runtime_limit=0.75)
     runtime_evidence = runtime_failure.replay(jnp.asarray((1.0, 0.0)))
     assert not bool(runtime_evidence.feasible)
@@ -340,7 +354,7 @@ def test_failed_runtime_and_ledger_are_explicit_infeasible_constraints():
     )
 
 
-def test_fixed_topology_deterministic_identities_and_native_nlp_compilation():
+def test_fixed_topology_deterministic_identities_and_native_nlp_compilation() -> None:
     first = _prepared_control()
     second = _prepared_control()
     assert first.plan.control_plan_id == second.plan.control_plan_id
@@ -376,7 +390,7 @@ def test_fixed_topology_deterministic_identities_and_native_nlp_compilation():
     )
 
 
-def test_control_construction_rejects_moving_or_underresolved_phase_topology():
+def test_control_construction_rejects_moving_or_underresolved_phase_topology() -> None:
     rest_protocol = BatteryProtocolPlan((CurrentStepPlan(1.0), RestStepPlan(1.0)))
     with pytest.raises(ValueError, match="Every fixed current-control phase"):
         _prepared_control(protocol=rest_protocol)

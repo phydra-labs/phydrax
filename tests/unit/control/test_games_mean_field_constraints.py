@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -52,8 +54,8 @@ def _law(
     flow_id: str,
     source_path_id: str,
     *,
-    weights=None,
-    sample_shape=(2,),
+    weights: Any = None,
+    sample_shape: Any = (2,),
 ) -> EmpiricalMeanField:
     return EmpiricalMeanField(
         jnp.asarray([0.0, 1.0]),
@@ -66,11 +68,11 @@ def _law(
     )
 
 
-def _law_means(flow: EmpiricalMeanField):
+def _law_means(flow: EmpiricalMeanField) -> Any:
     return jnp.stack([flow.snapshot(time).mean[0] for time in flow.times])
 
 
-def _response(flow: EmpiricalMeanField):
+def _response(flow: EmpiricalMeanField) -> Any:
     path_id = f"best-response-evaluation:{flow.mean_field_id}"
     paths = BSDEPathBatch(
         flow.times,
@@ -118,12 +120,14 @@ def _response(flow: EmpiricalMeanField):
     )
 
 
-def _normalized_weights(flow: EmpiricalMeanField):
+def _normalized_weights(flow: EmpiricalMeanField) -> Any:
     weights = flow.weights.reshape((flow.num_particles, flow.times.size))
     return weights / jnp.sum(weights, axis=0, keepdims=True)
 
 
-def _exact_law_mixture(current, induced, damping, iteration, args):
+def _exact_law_mixture(
+    current: Any, induced: Any, damping: Any, iteration: Any, args: Any
+) -> Any:
     del args
     time_count = current.times.size
     particles = jnp.concatenate(
@@ -163,13 +167,13 @@ def _exact_law_mixture(current, induced, damping, iteration, args):
 
 
 def _fixed_point_problem(
-    initial,
-    induced_value,
+    initial: Any,
+    induced_value: Any,
     *,
-    induced_weights=None,
-    law_mixture=None,
-):
-    def induced(response, args):
+    induced_weights: Any = None,
+    law_mixture: Any = None,
+) -> Any:
+    def induced(response: Any, args: Any) -> Any:
         return _law(
             induced_value,
             f"induced:{response.flow_id}",
@@ -223,13 +227,13 @@ def _block(
 
 
 def _individual_evidence(
-    response,
+    response: Any,
     constraints: OpenLoopGameConstraints,
     *,
     residual: float = 0.0,
     stationarity: float = 0.0,
     evidence_id: str = "sampled-individual-kkt",
-):
+) -> Any:
     trajectory = TrajectoryOptimizationView(
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([[0.0], [residual]]),
@@ -250,23 +254,23 @@ def _individual_evidence(
 
 
 def _problem(
-    initial,
-    blocks,
-    concept,
+    initial: Any,
+    blocks: Any,
+    concept: Any,
     *,
-    induced_value=0.0,
-    aggregate_residual=0.0,
-    multipliers=(),
-    multiplier_ids=(),
-    individual_residual=0.0,
-    stationarity=0.0,
-    induced_weights=None,
-    multiplier_layout=None,
-    aggregate_jacobian=None,
-    derivative_multipliers=None,
-    derivative_induced_flow_id=None,
-    law_mixture=None,
-):
+    induced_value: Any = 0.0,
+    aggregate_residual: Any = 0.0,
+    multipliers: Any = (),
+    multiplier_ids: Any = (),
+    individual_residual: Any = 0.0,
+    stationarity: Any = 0.0,
+    induced_weights: Any = None,
+    multiplier_layout: Any = None,
+    aggregate_jacobian: Any = None,
+    derivative_multipliers: Any = None,
+    derivative_induced_flow_id: Any = None,
+    law_mixture: Any = None,
+) -> Any:
     partition = PlayerControlPartition(("alpha", "beta"), (1, 1))
     constraints = OpenLoopGameConstraints(partition, blocks)
     fixed_point = _fixed_point_problem(
@@ -354,7 +358,7 @@ def _problem(
     )
 
 
-def _plan(maximum_iterations=2, *, damping=1.0):
+def _plan(maximum_iterations: Any = 2, *, damping: Any = 1.0) -> Any:
     return ConstrainedMeanFieldGamePlan(
         maximum_iterations=maximum_iterations,
         consistency_tolerance=1.0e-8,
@@ -366,7 +370,7 @@ def _plan(maximum_iterations=2, *, damping=1.0):
     )
 
 
-def test_constrained_outer_damping_uses_exact_law_mixture_callback():
+def test_constrained_outer_damping_uses_exact_law_mixture_callback() -> None:
     initial = _law(-1.0, "damped-initial", "damped-input-paths")
     problem = _problem(
         initial,
@@ -394,7 +398,7 @@ def test_constrained_outer_damping_uses_exact_law_mixture_callback():
     )
 
 
-def test_unconstrained_reduction_preserves_current_fixed_point_evidence():
+def test_unconstrained_reduction_preserves_current_fixed_point_evidence() -> None:
     initial = _law(0.0, "unconstrained-initial", "unconstrained-input-paths")
     problem = _problem(
         initial,
@@ -422,7 +426,7 @@ def test_unconstrained_reduction_preserves_current_fixed_point_evidence():
     )
 
 
-def test_individual_constraint_requires_feasibility_and_original_kkt_evidence():
+def test_individual_constraint_requires_feasibility_and_original_kkt_evidence() -> None:
     initial = _law(0.0, "individual-initial", "individual-input-paths")
     local = _block(
         "alpha-action-limit",
@@ -462,7 +466,7 @@ def test_individual_constraint_requires_feasibility_and_original_kkt_evidence():
     np.testing.assert_allclose(nonstationary_result.final_stationarity_residual, 0.25)
 
 
-def test_aggregate_capacity_distinguishes_generic_population_multipliers():
+def test_aggregate_capacity_distinguishes_generic_population_multipliers() -> None:
     initial = _law(0.0, "generic-initial", "generic-input-paths")
     capacity = _block(
         "population-capacity",
@@ -492,7 +496,7 @@ def test_aggregate_capacity_distinguishes_generic_population_multipliers():
     assert result.common_multipliers.shape == (0,)
 
 
-def test_aggregate_capacity_variational_mode_has_one_declared_common_multiplier():
+def test_aggregate_capacity_variational_mode_has_one_declared_common_multiplier() -> None:
     initial = _law(0.0, "variational-initial", "variational-input-paths")
     capacity = _block(
         "population-capacity",
@@ -518,7 +522,7 @@ def test_aggregate_capacity_variational_mode_has_one_declared_common_multiplier(
     assert result.population_multipliers[1].shape == (0,)
 
 
-def test_positive_aggregate_prices_require_complete_stationarity():
+def test_positive_aggregate_prices_require_complete_stationarity() -> None:
     initial = _law(0.0, "nonstationary-price-initial", "nonstationary-price-paths")
     capacity = _block(
         "population-capacity",
@@ -542,7 +546,7 @@ def test_positive_aggregate_prices_require_complete_stationarity():
     assert not result.kkt_validity_history[0]
 
 
-def test_binding_aggregate_price_is_added_to_original_stationarity():
+def test_binding_aggregate_price_is_added_to_original_stationarity() -> None:
     initial = _law(0.0, "binding-price-initial", "binding-price-paths")
     capacity = _block(
         "population-capacity",
@@ -564,6 +568,7 @@ def test_binding_aggregate_price_is_added_to_original_stationarity():
 
     assert result.status == ConstrainedMeanFieldGameStatus.SUCCESS
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         result.individual_evidence.original_stationarity_residual,
         1.0,
     )
@@ -571,11 +576,12 @@ def test_binding_aggregate_price_is_added_to_original_stationarity():
     assert result.aggregate_derivative_evidence is not None
     assert (
         result.aggregate_derivative_evidence.induced_flow_id
+        # ty: ignore[unresolved-attribute]
         == result.induced_flow.mean_field_id
     )
 
 
-def test_aggregate_derivative_evidence_rejects_wrong_price_vector():
+def test_aggregate_derivative_evidence_rejects_wrong_price_vector() -> None:
     initial = _law(0.0, "wrong-price-initial", "wrong-price-paths")
     capacity = _block(
         "population-capacity",
@@ -603,7 +609,7 @@ def test_aggregate_derivative_evidence_rejects_wrong_price_vector():
     assert not result.valid
 
 
-def test_generic_aggregate_problem_rejects_a_common_multiplier_claim():
+def test_generic_aggregate_problem_rejects_a_common_multiplier_claim() -> None:
     initial = _law(0.0, "wrong-common-initial", "wrong-common-input-paths")
     capacity = _block(
         "population-capacity",
@@ -628,7 +634,7 @@ def test_generic_aggregate_problem_rejects_a_common_multiplier_claim():
         )
 
 
-def test_law_consistent_but_population_infeasible_candidate_is_rejected():
+def test_law_consistent_but_population_infeasible_candidate_is_rejected() -> None:
     initial = _law(0.0, "infeasible-initial", "infeasible-input-paths")
     capacity = _block(
         "population-capacity",
@@ -654,7 +660,7 @@ def test_law_consistent_but_population_infeasible_candidate_is_rejected():
     assert not result.valid
 
 
-def test_population_feasible_but_law_inconsistent_candidate_is_rejected():
+def test_population_feasible_but_law_inconsistent_candidate_is_rejected() -> None:
     initial = _law(0.0, "law-mismatch-initial", "law-mismatch-input-paths")
     capacity = _block(
         "population-capacity",
@@ -697,10 +703,10 @@ def test_population_feasible_but_law_inconsistent_candidate_is_rejected():
     ],
 )
 def test_aggregate_dual_and_complementarity_failures_are_separate(
-    aggregate_residual,
-    multipliers,
-    expected_status,
-):
+    aggregate_residual: Any,
+    multipliers: Any,
+    expected_status: Any,
+) -> None:
     initial = _law(0.0, "kkt-failure-initial", "kkt-failure-input-paths")
     capacity = _block(
         "population-capacity",
@@ -724,7 +730,7 @@ def test_aggregate_dual_and_complementarity_failures_are_separate(
     assert not result.kkt_validity_history[0]
 
 
-def test_low_effective_sample_size_fails_before_constraint_acceptance():
+def test_low_effective_sample_size_fails_before_constraint_acceptance() -> None:
     initial = _law(0.0, "low-ess-initial", "low-ess-input-paths")
     capacity = _block(
         "population-capacity",
@@ -749,7 +755,7 @@ def test_low_effective_sample_size_fails_before_constraint_acceptance():
     assert not result.valid
 
 
-def test_candidate_label_retains_sampling_scope_and_separates_stronger_claims():
+def test_candidate_label_retains_sampling_scope_and_separates_stronger_claims() -> None:
     initial = _law(0.0, "claim-initial", "claim-input-paths")
     capacity = _block(
         "population-capacity",

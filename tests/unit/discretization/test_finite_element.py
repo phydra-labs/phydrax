@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _square_mesh():
+def _square_mesh() -> Any:
     vertices = jnp.asarray(
         [
             [0.0, 0.0],
@@ -26,7 +29,7 @@ def _square_mesh():
     return phx.discretization.CellMesh.from_triangles(vertices, cells)
 
 
-def _square_discretization(*, degree=1):
+def _square_discretization(*, degree: Any = 1) -> Any:
     mesh = _square_mesh()
     field = phx.discretization.FiniteElementFieldSpec(
         "u",
@@ -35,7 +38,7 @@ def _square_discretization(*, degree=1):
     return phx.discretization.FiniteElementPlan(mesh, field).prepare()
 
 
-def test_reference_elements_partition_unity_and_reproduce_coordinates():
+def test_reference_elements_partition_unity_and_reproduce_coordinates() -> None:
     cases = (
         ("triangle", 1, jnp.asarray([[0.2, 0.3]])),
         ("triangle", 2, jnp.asarray([[0.2, 0.3]])),
@@ -52,7 +55,7 @@ def test_reference_elements_partition_unity_and_reproduce_coordinates():
         assert jnp.allclose(reconstructed, points)
 
 
-def test_generic_preparation_assembles_mass_stiffness_and_p2_dofs():
+def test_generic_preparation_assembles_mass_stiffness_and_p2_dofs() -> None:
     p1 = _square_discretization()
     p2 = _square_discretization(degree=2)
     ones = jnp.ones((p1.dof_maps[0].global_dof_count,))
@@ -66,7 +69,7 @@ def test_generic_preparation_assembles_mass_stiffness_and_p2_dofs():
     assert jnp.count_nonzero(p2.boundary_dof_mask) == 8
 
 
-def test_variational_compiler_reproduces_affine_dirichlet_solution():
+def test_variational_compiler_reproduces_affine_dirichlet_solution() -> None:
     discretization = _square_discretization()
     constraint = phx.discretization.dirichlet_constraint(discretization, "u")
     form = phx.equations.FiniteElementForm(
@@ -97,11 +100,11 @@ def test_variational_compiler_reproduces_affine_dirichlet_solution():
     assert isinstance(compiled.residual_space, phx.linalg.DualSpace)
 
 
-def test_auxiliary_evaluator_receives_constraint_expanded_full_state():
+def test_auxiliary_evaluator_receives_constraint_expanded_full_state() -> None:
     discretization = _square_discretization()
     constraint = phx.discretization.dirichlet_constraint(discretization, "u")
 
-    def auxiliary(state, context):
+    def auxiliary(state: Any, context: Any) -> Any:
         del context
         return phx.equations.fem.FiniteElementAuxiliaryEvaluation(state)
 
@@ -122,11 +125,13 @@ def test_auxiliary_evaluator_receives_constraint_expanded_full_state():
     _, evaluation = compiled.residual_with_auxiliary(reduced)
 
     expected = compiled.expand(reduced)
+    # ty: ignore[unresolved-attribute]
     assert evaluation.trial_state.shape == expected.shape
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(evaluation.trial_state, expected)
 
 
-def test_boundary_loading_reconstruction_and_functional_preserve_integrals():
+def test_boundary_loading_reconstruction_and_functional_preserve_integrals() -> None:
     discretization = _square_discretization()
     form = phx.equations.FiniteElementForm(
         "boundary-load",
@@ -170,7 +175,7 @@ def test_boundary_loading_reconstruction_and_functional_preserve_integrals():
     assert jnp.allclose(compiled_functional.potential(jnp.ones((5,))), 1.0)
 
 
-def test_fixed_topology_geometry_is_differentiable():
+def test_fixed_topology_geometry_is_differentiable() -> None:
     discretization = _square_discretization()
     direction = jnp.zeros_like(discretization.vertices).at[2, 0].set(1.0)
 
@@ -187,7 +192,7 @@ def test_fixed_topology_geometry_is_differentiable():
     assert tangent != 0.0
 
 
-def test_native_dae_adapter_preserves_constant_heat_state():
+def test_native_dae_adapter_preserves_constant_heat_state() -> None:
     discretization = _square_discretization()
     form = phx.equations.FiniteElementForm(
         "heat",
@@ -208,7 +213,7 @@ def test_native_dae_adapter_preserves_constant_heat_state():
     assert jnp.allclose(residual, 0.0, atol=1e-10)
 
 
-def test_finite_elements_reject_degenerate_and_unconstrained_components():
+def test_finite_elements_reject_degenerate_and_unconstrained_components() -> None:
     degenerate = phx.discretization.CellMesh.from_triangles(
         jnp.asarray([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]),
         jnp.asarray([[0, 1, 2]], dtype=jnp.int32),

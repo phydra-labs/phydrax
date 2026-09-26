@@ -26,6 +26,7 @@ from ....observation import (
     KroneckerCholeskyCovarianceAction,
     LinearNuisancePlan,
 )
+from ....typing import parse
 from ._acquisition import SeismicAcquisition
 from ._constant_density import ConstantDensityAcousticPlan
 
@@ -133,8 +134,7 @@ class AcousticWaveformInversionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Waveform inversion shots must share the prepared forward grid/clock."
             )
-        if replay not in ("full", "step", "block", "scheduled"):
-            raise ValueError("Unsupported waveform replay mode.")
+        replay = parse(replay, CheckpointedScanMode, "replay")
         if replay == "scheduled":
             raise ValueError(
                 "Scheduled waveform inversion needs an explicit per-call replay schedule."

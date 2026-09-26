@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -32,7 +33,7 @@ def _index(i: int, j: int, k: int, /, size: int) -> int:
     return i + size * (j + size * k)
 
 
-def manufactured_lv_slab(subdivisions: int):
+def manufactured_lv_slab(subdivisions: int) -> Any:
     if subdivisions < 2:
         raise ValueError("Qualification slab requires at least two subdivisions.")
     size = subdivisions + 1
@@ -68,6 +69,7 @@ def manufactured_lv_slab(subdivisions: int):
                     )
                 )
     mesh = CellMesh.from_tetrahedra(points, np.asarray(cells, dtype=np.int32))
+    # ty: ignore[unresolved-attribute]
     faces = np.asarray(mesh.connectivity.faces)
     face_points = points[faces]
     assignments = {

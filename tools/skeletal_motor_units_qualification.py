@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -19,7 +20,7 @@ from phydrax.applications.skeletal_muscle.motor_units import (
 )
 
 
-def _trial(prepared, *, seed: int, steps: int):
+def _trial(prepared: Any, *, seed: int, steps: int) -> Any:
     state = prepared.initialize()
     key = jr.key(seed)
     force = []

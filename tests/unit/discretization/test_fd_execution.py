@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _periodic_fd(points):
+def _periodic_fd(points: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(
@@ -23,7 +26,9 @@ def _periodic_fd(points):
     return phx.discretization.periodic_finite_difference(grid, accuracy_order=4)
 
 
-def test_periodic_interior_lowering_removes_per_row_metadata_and_matches_operator():
+def test_periodic_interior_lowering_removes_per_row_metadata_and_matches_operator() -> (
+    None
+):
     discretization = _periodic_fd(1024)
     reference = discretization.operator("d_x_1")
     execution = phx.discretization.lower_stencil_operator(reference)
@@ -40,7 +45,7 @@ def test_periodic_interior_lowering_removes_per_row_metadata_and_matches_operato
     )
 
 
-def test_bounded_execution_keeps_only_closures_and_preserves_transpose():
+def test_bounded_execution_keeps_only_closures_and_preserves_transpose() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(257),),
         axis_names=("x",),
@@ -74,7 +79,7 @@ def test_bounded_execution_keeps_only_closures_and_preserves_transpose():
     assert execution.execution.report.interior_rows > 240
 
 
-def test_fused_pipeline_reuses_identical_source_operator_application():
+def test_fused_pipeline_reuses_identical_source_operator_application() -> None:
     discretization = _periodic_fd(128)
     program = phx.discretization.StencilProgramPlan(
         discretization,
@@ -100,7 +105,7 @@ def test_fused_pipeline_reuses_identical_source_operator_application():
     assert program.report.lowered_metadata_bytes < program.report.canonical_metadata_bytes
 
 
-def _two_dimensional_halo_plan(periodic):
+def _two_dimensional_halo_plan(periodic: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(
@@ -123,7 +128,7 @@ def _two_dimensional_halo_plan(periodic):
     return phx.discretization.FiniteDifferencePlan(grid, requests).prepare().halo_plan
 
 
-def test_distributed_schedule_fills_faces_edges_and_corners_with_periodicity():
+def test_distributed_schedule_fills_faces_edges_and_corners_with_periodicity() -> None:
     schedule = phx.discretization.DistributedHaloSchedule(
         (4, 5),
         (1, 1),
@@ -141,7 +146,7 @@ def test_distributed_schedule_fills_faces_edges_and_corners_with_periodicity():
     assert schedule.shard(block[0, 0]).sharding == schedule.sharding
 
 
-def test_distributed_physical_boundary_slots_are_zero_and_interior_is_explicit():
+def test_distributed_physical_boundary_slots_are_zero_and_interior_is_explicit() -> None:
     schedule = phx.discretization.DistributedHaloSchedule(
         (4, 5),
         (1, 1),
@@ -157,7 +162,7 @@ def test_distributed_physical_boundary_slots_are_zero_and_interior_is_explicit()
     assert schedule.interior_slices() == (slice(2, 2), slice(2, 3))
 
 
-def test_compact_metadata_is_independent_of_periodic_interior_size():
+def test_compact_metadata_is_independent_of_periodic_interior_size() -> None:
     small = phx.discretization.lower_stencil_operator(_periodic_fd(128).operator("d_x_2"))
     large = phx.discretization.lower_stencil_operator(
         _periodic_fd(1024).operator("d_x_2")

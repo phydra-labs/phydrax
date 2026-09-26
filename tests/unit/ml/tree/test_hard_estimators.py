@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -48,7 +51,7 @@ from phydrax.ml.tree import (
 )
 
 
-def _regression_batch():
+def _regression_batch() -> Any:
     x0 = jnp.linspace(-3.0, 3.0, 10)
     features = jnp.stack((x0, jnp.square(x0) - 2.0), axis=-1)
     targets = 1.5 * x0 - 0.25
@@ -60,7 +63,7 @@ def _regression_batch():
     )
 
 
-def _classification_batch(classes=2):
+def _classification_batch(classes: Any = 2) -> Any:
     x0 = jnp.linspace(-3.0, 3.0, 12)
     features = jnp.stack((x0, jnp.sin(x0)), axis=-1)
     if classes == 2:
@@ -77,7 +80,9 @@ def _classification_batch(classes=2):
     )
 
 
-def test_recipe_configuration_is_immutable_while_fit_returns_a_frozen_executable_model():
+def test_recipe_configuration_is_immutable_while_fit_returns_a_frozen_executable_model() -> (
+    None
+):
     recipe = DecisionTreeRegressor(max_depth=1)
     result = recipe.fit_batch(_regression_batch())
     new_rows = jnp.array([[-5.0, 23.0], [5.0, 23.0]])
@@ -127,8 +132,8 @@ _REGRESSORS = (
 
 @pytest.mark.parametrize("factory,requires_key", _REGRESSORS)
 def test_every_hard_regression_family_fits_frozen_executable_ensembles(
-    factory, requires_key
-):
+    factory: Any, requires_key: Any
+) -> None:
     batch = _regression_batch()
     recipe = factory()
     if requires_key:
@@ -169,7 +174,7 @@ def test_every_hard_regression_family_fits_frozen_executable_ensembles(
     )
 
 
-def test_hard_tree_fit_refuses_every_derivative_request_on_its_stopped_route():
+def test_hard_tree_fit_refuses_every_derivative_request_on_its_stopped_route() -> None:
     batch = _regression_batch()
     result = DecisionTreeRegressor(max_depth=2).fit_batch(batch)
     request = DifferentiationRequest((DerivativeSurface.MODEL_PARAMETER,))
@@ -225,8 +230,8 @@ _CLASSIFIERS = (
 
 @pytest.mark.parametrize("factory,requires_key", _CLASSIFIERS)
 def test_every_hard_classifier_family_exposes_probabilities_labels_and_diagnostics(
-    factory, requires_key
-):
+    factory: Any, requires_key: Any
+) -> None:
     batch = _classification_batch()
     recipe = factory()
     if requires_key:
@@ -248,7 +253,7 @@ def test_every_hard_classifier_family_exposes_probabilities_labels_and_diagnosti
     )
 
 
-def test_auto_boosting_objective_selects_binary_logistic_and_multiclass_softmax():
+def test_auto_boosting_objective_selects_binary_logistic_and_multiclass_softmax() -> None:
     for recipe_type in (
         GradientBoostingClassifier,
         HistGradientBoostingClassifier,
@@ -264,17 +269,20 @@ def test_auto_boosting_objective_selects_binary_logistic_and_multiclass_softmax(
             .fit_batch(_classification_batch(3))
             .as_trainable()
         )
+        # ty: ignore[unresolved-attribute]
         assert binary.objective_transform == "sigmoid"
         assert binary(_classification_batch(2).features).shape == (12,)
+        # ty: ignore[unresolved-attribute]
         assert multiclass.objective_transform == "softmax"
         assert multiclass(_classification_batch(3).features).shape == (12, 3)
         assert jnp.allclose(
             jnp.sum(multiclass(_classification_batch(3).features), axis=-1), 1.0
         )
+        # ty: ignore[unresolved-attribute]
         assert multiclass.predict_labels(_classification_batch(3).features).shape == (12,)
 
 
-def test_classical_histogram_second_order_and_adaboost_keep_distinct_semantics():
+def test_classical_histogram_second_order_and_adaboost_keep_distinct_semantics() -> None:
     batch = _regression_batch()
     exact = GradientBoostingRegressor(n_estimators=3, max_depth=1).fit_batch(batch)
     histogram = HistGradientBoostingRegressor(
@@ -296,13 +304,16 @@ def test_classical_histogram_second_order_and_adaboost_keep_distinct_semantics()
     assert second_order.diagnostics.method == "xgboost_regressor"
     poisson_model = poisson.as_trainable()
     adaptive_model = adaptive.as_trainable()
+    # ty: ignore[unresolved-attribute]
     assert poisson_model.objective_transform == "exponential"
     assert jnp.all(poisson_model(poisson_batch.features) > 0.0)
+    # ty: ignore[unresolved-attribute]
     assert adaptive_model.aggregation == "weighted_median"
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(adaptive_model.tree_weight >= 0.0)
 
 
-def test_cart_leaf_values_use_statistical_sample_weights():
+def test_cart_leaf_values_use_statistical_sample_weights() -> None:
     features = jnp.array([[0.0], [1.0]])
     targets = jnp.array([0.0, 10.0])
     weighted = (
@@ -319,7 +330,9 @@ def test_cart_leaf_values_use_statistical_sample_weights():
     assert not jnp.allclose(weighted(features), unweighted(features))
 
 
-def test_masks_statistical_weights_measure_policy_target_and_case_axes_are_preserved():
+def test_masks_statistical_weights_measure_policy_target_and_case_axes_are_preserved() -> (
+    None
+):
     x = jnp.stack(
         (
             jnp.stack((jnp.arange(8.0), jnp.arange(8.0) ** 2), axis=-1),
@@ -365,7 +378,7 @@ def test_masks_statistical_weights_measure_policy_target_and_case_axes_are_prese
     assert jnp.array_equal(first.model(x), second.model(x))
 
 
-def test_sparse_training_and_inference_require_explicit_dense_conversion():
+def test_sparse_training_and_inference_require_explicit_dense_conversion() -> None:
     batch = _regression_batch()
     columns = jnp.broadcast_to(jnp.arange(batch.feature_count), batch.features.shape)
     sparse = SparseFeatures(batch.features, columns, feature_count=batch.feature_count)
@@ -396,7 +409,9 @@ def test_sparse_training_and_inference_require_explicit_dense_conversion():
         explicitly_dense.model(sparse)
 
 
-def test_categorical_fit_records_membership_and_routes_unseen_and_missing_rows_out_of_sample():
+def test_categorical_fit_records_membership_and_routes_unseen_and_missing_rows_out_of_sample() -> (
+    None
+):
     features = jnp.array([[0.0], [0.0], [1.0], [1.0], [2.0], [2.0]])
     targets = jnp.array([5.0, 5.0, -2.0, -2.0, -2.0, -2.0])
     result = DecisionTreeRegressor(max_depth=1).fit_batch(
@@ -407,18 +422,21 @@ def test_categorical_fit_records_membership_and_routes_unseen_and_missing_rows_o
         )
     )
     model = result.as_trainable()
+    # ty: ignore[unresolved-attribute]
     root_category = model.category_values[0, 0][model.category_mask[0, 0]][0]
     member = model(jnp.array([[root_category]]))[0]
     nonmember = model(jnp.array([[99.0]]))[0]
     missing = model(jnp.array([[jnp.nan]]))[0]
 
+    # ty: ignore[unresolved-attribute]
     assert model.split_kind[0, 0] == 1
     assert member != nonmember
+    # ty: ignore[unresolved-attribute]
     expected_missing = member if model.default_left[0, 0] else nonmember
     assert missing == expected_missing
 
 
-def test_exact_split_ties_are_deterministic_and_choose_the_first_feature():
+def test_exact_split_ties_are_deterministic_and_choose_the_first_feature() -> None:
     feature = jnp.arange(8.0)
     batch = MLBatch(
         jnp.stack((feature, feature), axis=-1), (feature > 3).astype("float64")
@@ -427,12 +445,14 @@ def test_exact_split_ties_are_deterministic_and_choose_the_first_feature():
     second = DecisionTreeRegressor(max_depth=1).fit_batch(batch)
     first_model = first.as_trainable()
     second_model = second.as_trainable()
+    # ty: ignore[unresolved-attribute]
     assert first_model.feature_index[0, 0] == 0
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(first_model.threshold, second_model.threshold)
     assert jnp.array_equal(first_model(batch.features), second_model(batch.features))
 
 
-def test_monotonic_interaction_constraints_and_pairwise_ranking_are_enforced():
+def test_monotonic_interaction_constraints_and_pairwise_ranking_are_enforced() -> None:
     batch = _regression_batch()
     constrained = XGBoostRegressor(
         n_estimators=4,
@@ -455,6 +475,7 @@ def test_monotonic_interaction_constraints_and_pairwise_ranking_are_enforced():
     )
     ranking_model = ranking.as_trainable()
     assert ranking_model(ranking_batch.features).shape == (6,)
+    # ty: ignore[unresolved-attribute]
     assert ranking_model.target_schema.kind == "ranking"
     isolated_groups = MLBatch(
         ranking_batch.features,
@@ -479,7 +500,9 @@ def test_monotonic_interaction_constraints_and_pairwise_ranking_are_enforced():
         DecisionTreeRegressor(interaction_constraints=((0, 7),)).fit_batch(batch)
 
 
-def test_capacity_exhaustion_and_insufficient_weight_return_structured_failure_values():
+def test_capacity_exhaustion_and_insufficient_weight_return_structured_failure_values() -> (
+    None
+):
     exhausted = DecisionTreeRegressor(max_depth=2, max_nodes=2).fit_batch(
         _regression_batch()
     )
@@ -487,6 +510,7 @@ def test_capacity_exhaustion_and_insufficient_weight_return_structured_failure_v
     assert exhausted.status == ML_CAPACITY_EXHAUSTED
     assert bool(exhausted.diagnostics.capacity_exhausted)
     assert not bool(exhausted.diagnostics.converged)
+    # ty: ignore[unresolved-attribute]
     assert bool(exhausted.as_trainable().structure_diagnostics().capacity_exhausted)
 
     batch = _regression_batch()
@@ -499,7 +523,7 @@ def test_capacity_exhaustion_and_insufficient_weight_return_structured_failure_v
     assert not bool(empty.diagnostics.converged)
 
 
-def test_invalid_weights_complex_features_and_recipe_parameters_fail_explicitly():
+def test_invalid_weights_complex_features_and_recipe_parameters_fail_explicitly() -> None:
     batch = _regression_batch()
     with pytest.raises(ValueError, match="nonnegative sample weights"):
         DecisionTreeRegressor().fit_batch(

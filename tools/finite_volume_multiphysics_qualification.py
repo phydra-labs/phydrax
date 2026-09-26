@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +14,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _gravity_mode():
+def _gravity_mode() -> Any:
     count = 32
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
@@ -38,7 +39,9 @@ def _gravity_mode():
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
-        dynamics, phx.discretization.FluxPositivityPlan()
+        # ty: ignore[invalid-argument-type]
+        dynamics,
+        phx.discretization.FluxPositivityPlan(),
     )
     gravity = phx.solver.NewtonianSelfGravityPlan(0.1).prepare(
         phx.solver.prepare_balance_law_transport(runtime)
@@ -54,7 +57,7 @@ def _gravity_mode():
     }
 
 
-def _cochain_and_hlld():
+def _cochain_and_hlld() -> Any:
     count = 3
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -87,7 +90,7 @@ def _cochain_and_hlld():
     }
 
 
-def _cooling_curve():
+def _cooling_curve() -> Any:
     curve = phx.equations.TabulatedCoolingCurve(
         jnp.asarray([1.0, 2.0, 3.0]),
         jnp.asarray([-2.0, -1.0, 0.0]),

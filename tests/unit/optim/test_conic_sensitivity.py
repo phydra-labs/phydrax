@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ import phydrax as phx
 from phydrax.optim._programming._clarabel import _audit_result
 
 
-def _policy(*, regularization=0.0):
+def _policy(*, regularization: Any = 0.0) -> Any:
     return phx.optim.ConvexSolvePolicy(
         phx.optim.ClarabelInteriorPoint(presolve=False),
         termination=phx.optim.ConvexTermination(
@@ -25,16 +28,16 @@ def _policy(*, regularization=0.0):
 
 
 def _prepare(
-    program,
+    program: Any,
     *,
-    solution=None,
-    regularization=0.0,
-    linear=None,
-    regularity_tolerance=1e-7,
-    representation="dense",
-    stability=None,
-    generalized=None,
-):
+    solution: Any = None,
+    regularization: Any = 0.0,
+    linear: Any = None,
+    regularity_tolerance: Any = 1e-7,
+    representation: Any = "dense",
+    stability: Any = None,
+    generalized: Any = None,
+) -> Any:
     policy = _policy(regularization=regularization)
     if solution is None:
         pytest.importorskip("clarabel")
@@ -91,15 +94,15 @@ def _prepare(
 
 
 def _tangent(
-    program,
+    program: Any,
     *,
-    quadratic=None,
-    linear=None,
-    matrix=None,
-    rhs=None,
-    lower=None,
-    upper=None,
-):
+    quadratic: Any = None,
+    linear: Any = None,
+    matrix: Any = None,
+    rhs: Any = None,
+    lower: Any = None,
+    upper: Any = None,
+) -> Any:
     zero = phx.optim.ConicProgramData.zeros_like(program)
     return phx.optim.ConicProgramData(
         zero.quadratic if quadratic is None else quadratic,
@@ -111,7 +114,7 @@ def _tangent(
     )
 
 
-def _data_pairing(left, right):
+def _data_pairing(left: Any, right: Any) -> Any:
     value = jnp.vdot(left.linear, right.linear)
     value += jnp.vdot(left.constraint_matrix, right.constraint_matrix)
     value += jnp.vdot(left.constraint_rhs, right.constraint_rhs)
@@ -122,7 +125,7 @@ def _data_pairing(left, right):
     return value
 
 
-def test_cone_dual_projection_smoothness_margins_locate_kinks():
+def test_cone_dual_projection_smoothness_margins_locate_kinks() -> None:
     zero = phx.optim.ZeroCone(2)
     nonnegative = phx.optim.NonnegativeCone(3)
     soc = phx.optim.SecondOrderCone(3)
@@ -151,7 +154,7 @@ def test_cone_dual_projection_smoothness_margins_locate_kinks():
     assert jnp.isinf(empty.dual_projection_smoothness_margin(jnp.empty((0,))))
 
 
-def test_dense_sensitivity_rejects_sparse_tangent_operator():
+def test_dense_sensitivity_rejects_sparse_tangent_operator() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.asarray([-2.0]),
@@ -185,7 +188,7 @@ def test_dense_sensitivity_rejects_sparse_tangent_operator():
         phx.optim.conic_primal_jvp(sensitivity, tangent)
 
 
-def test_active_orthant_primal_jvp_is_linear_at_small_scale():
+def test_active_orthant_primal_jvp_is_linear_at_small_scale() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.asarray([-2.0]),
@@ -223,7 +226,7 @@ def test_active_orthant_primal_jvp_is_linear_at_small_scale():
     )
 
 
-def test_soc_projection_qcp_matches_analytic_jvp_and_adjoint():
+def test_soc_projection_qcp_matches_analytic_jvp_and_adjoint() -> None:
     cone = phx.optim.SecondOrderCone(2)
     center = jnp.asarray([0.0, 2.0])
     direction = jnp.asarray([0.3, -0.2])
@@ -265,7 +268,7 @@ def test_soc_projection_qcp_matches_analytic_jvp_and_adjoint():
     assert adjoint.regular
 
 
-def test_batched_soc_sensitivity_maps_common_residual_over_array_leaves():
+def test_batched_soc_sensitivity_maps_common_residual_over_array_leaves() -> None:
     cone = phx.optim.SecondOrderCone(2)
     centers = jnp.asarray([[0.0, 2.0], [0.0, 3.0]])
     directions = jnp.asarray([[0.3, -0.2], [-0.4, 0.1]])
@@ -309,7 +312,7 @@ def test_batched_soc_sensitivity_maps_common_residual_over_array_leaves():
     np.testing.assert_array_equal(adjoint.regular, jnp.asarray([True, True]))
 
 
-def test_fixed_bound_sensitivity_uses_diagonal_tangent_and_symmetric_pullback():
+def test_fixed_bound_sensitivity_uses_diagonal_tangent_and_symmetric_pullback() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.zeros(1),
@@ -344,7 +347,7 @@ def test_fixed_bound_sensitivity_uses_diagonal_tangent_and_symmetric_pullback():
         jax.block_until_ready(phx.optim.conic_primal_jvp(sensitivity, invalid).value)
 
 
-def test_weak_complementarity_returns_nonregular_nan_sensitivity():
+def test_weak_complementarity_returns_nonregular_nan_sensitivity() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.zeros(1),
@@ -375,7 +378,7 @@ def test_weak_complementarity_returns_nonregular_nan_sensitivity():
     assert jnp.isnan(derivative.value[0])
 
 
-def test_regularized_linear_conic_objective_differentiates_executed_map():
+def test_regularized_linear_conic_objective_differentiates_executed_map() -> None:
     problem = phx.optim.ConicProgram(
         None,
         jnp.asarray([-1.0]),
@@ -407,8 +410,8 @@ def test_regularized_linear_conic_objective_differentiates_executed_map():
     np.testing.assert_allclose(adjoint.value.linear, jnp.asarray([-0.5]), atol=2e-7)
 
 
-def test_prepared_sensitivity_rejects_stale_numeric_execution():
-    def problem(rhs):
+def test_prepared_sensitivity_rejects_stale_numeric_execution() -> None:
+    def problem(rhs: Any) -> Any:
         return phx.optim.ConicProgram(
             jnp.ones((1, 1)),
             jnp.asarray([-2.0]),
@@ -434,7 +437,7 @@ def test_prepared_sensitivity_rejects_stale_numeric_execution():
         phx.optim.prepare_conic_sensitivity(refreshed, execution)
 
 
-def test_prepared_sensitivity_rejects_independent_same_version_binding():
+def test_prepared_sensitivity_rejects_independent_same_version_binding() -> None:
     solution = (
         jnp.ones(1),
         jnp.zeros(1),
@@ -458,7 +461,7 @@ def test_prepared_sensitivity_rejects_independent_same_version_binding():
         phx.optim.prepare_conic_sensitivity(second, execution)
 
 
-def test_projection_regularity_uses_the_differentiated_residual_point():
+def test_projection_regularity_uses_the_differentiated_residual_point() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.asarray([-2.0]),
@@ -490,7 +493,7 @@ def test_projection_regularity_uses_the_differentiated_residual_point():
     )
 
 
-def test_damped_derivative_svd_is_rejected():
+def test_damped_derivative_svd_is_rejected() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.asarray([-2.0]),
@@ -515,7 +518,7 @@ def test_damped_derivative_svd_is_rejected():
         )
 
 
-def test_advanced_cone_projection_qcps_match_native_regular_jvps():
+def test_advanced_cone_projection_qcps_match_native_regular_jvps() -> None:
     psd = phx.optim.PositiveSemidefiniteCone(2)
     cases = (
         (
@@ -578,7 +581,7 @@ def test_advanced_cone_projection_qcps_match_native_regular_jvps():
         )
 
 
-def test_advanced_cone_projection_boundaries_are_nonregular():
+def test_advanced_cone_projection_boundaries_are_nonregular() -> None:
     psd = phx.optim.PositiveSemidefiniteCone(2)
     cases = (
         (psd, psd.pack(jnp.diag(jnp.asarray([1.0, 0.0])))),
@@ -616,7 +619,7 @@ def test_advanced_cone_projection_boundaries_are_nonregular():
         assert jnp.all(jnp.isnan(derivative.value))
 
 
-def test_matrix_free_sensitivity_requires_matching_verified_stability():
+def test_matrix_free_sensitivity_requires_matching_verified_stability() -> None:
     program = phx.optim.ConicProgram(
         jnp.asarray([[1.0]]),
         jnp.asarray([-1.0]),
@@ -633,7 +636,7 @@ def test_matrix_free_sensitivity_requires_matching_verified_stability():
     )
     linear = phx.linalg.LinearSolvePolicy(phx.linalg.LSMR())
 
-    def stability(operator):
+    def stability(operator: Any) -> Any:
         return phx.linalg.StabilityLowerBound(operator, 0.25, evidence="verified")
 
     _, _, prepared = _prepare(

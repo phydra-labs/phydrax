@@ -12,6 +12,7 @@ import argparse
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -68,7 +69,7 @@ SIGNALS = {
 }
 
 
-def twin_model():
+def twin_model() -> Any:
     optics = ColumnOpticalProperties(
         shortwave_absorption=(0.0004, 0.02, 0.4, 0.2),
         shortwave_scattering=(0.0001, 0.0, 0.5, 0.3),
@@ -82,10 +83,15 @@ def twin_model():
         background_diffusivity=0.2,
     )
     initial = plan.initialize(
+        # ty: ignore[invalid-argument-type]
         [100.0, 110.0],
+        # ty: ignore[invalid-argument-type]
         [0.2, 0.4],
+        # ty: ignore[invalid-argument-type]
         [285.0, 290.0],
+        # ty: ignore[invalid-argument-type]
         [100.0, 100.0],
+        # ty: ignore[invalid-argument-type]
         rain_mass=[0.2, 0.25],
         surface_temperature=295.0,
         surface_water_mass=1000.0,
@@ -99,8 +105,11 @@ def twin_model():
             "background_diffusivity",
             "rain_evaporation_timescale",
         ),
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 0.0012, 0.0012, 0.2, 120.0],
+        # ty: ignore[invalid-argument-type]
         [0.5, 0.5, 0.0006, 0.0006, 0.05, 80.0],
+        # ty: ignore[invalid-argument-type]
         [1.5, 1.5, 0.002, 0.002, 0.4, 180.0],
     )
     truth = jnp.asarray([1.1, 0.9, 0.0014, 0.0011, 0.25, 135.0])
@@ -108,15 +117,15 @@ def twin_model():
 
 
 def twin_experiment(
-    initial,
+    initial: Any,
     *,
-    steps=12,
-    dt=1.0,
-    signals=None,
-    times=None,
-    intervention=None,
-    source_id="synthetic-control",
-):
+    steps: Any = 12,
+    dt: Any = 1.0,
+    signals: Any = None,
+    times: Any = None,
+    intervention: Any = None,
+    source_id: Any = "synthetic-control",
+) -> Any:
     clock = GeophysicalTimeSpec()
     signals = tuple(SIGNALS) if signals is None else tuple(signals)
     times = (
@@ -159,7 +168,9 @@ def twin_experiment(
     )
 
 
-def twin_data(experiment, truth_plan, *, role, noise_seed=None):
+def twin_data(
+    experiment: Any, truth_plan: Any, *, role: Any, noise_seed: Any = None
+) -> Any:
     prediction = experiment.predict(truth_plan)
     if not bool(prediction.successful):
         raise ValueError(
@@ -207,7 +218,7 @@ def twin_data(experiment, truth_plan, *, role, noise_seed=None):
     )
 
 
-def twin_candidate(experiment):
+def twin_candidate(experiment: Any) -> Any:
     variances = np.concatenate(
         [
             np.full(
@@ -224,7 +235,8 @@ def twin_candidate(experiment):
     )
 
 
-def run_twin(*, steps=12, maximum_steps=24, audit=True):
+def run_twin(*, steps: Any = 12, maximum_steps: Any = 24, audit: Any = True) -> Any:
+    # ty: ignore[unresolved-attribute]
     if not jax.config.x64_enabled:
         raise ValueError(
             "This qualification requires JAX_ENABLE_X64=1 for small physical response differences."

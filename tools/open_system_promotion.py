@@ -6,16 +6,17 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 from tools.open_system_campaign_matrix import run_campaign_matrix
 
 
-def run_promotion(*, output_directory: str):
+def run_promotion(*, output_directory: str) -> Any:
     """Run the sole artifact-driven open-system graduation path."""
     return run_campaign_matrix(output_directory)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-directory", required=True)
     arguments = parser.parse_args()

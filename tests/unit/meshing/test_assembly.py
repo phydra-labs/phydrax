@@ -7,7 +7,7 @@ import phydrax as phx
 from phydrax.meshing._assembly import MeshAssembly, MeshPart
 
 
-def test_assembly_preserves_compact_carriers_and_binds_spline_geometry_revision():
+def test_assembly_preserves_compact_carriers_and_binds_spline_geometry_revision() -> None:
     contract = phx.SpatialCoordinateContract.si()
     tensor = phx.discretization.TensorGridPlan(
         (
@@ -38,9 +38,11 @@ def test_assembly_preserves_compact_carriers_and_binds_spline_geometry_revision(
     assert isinstance(assembly.part("cloud").carrier, phx.discretization.PointCloudPlan)
     assert isinstance(assembly.part("spline").carrier, iga.IsogeometricPlan)
     np.testing.assert_allclose(
+        # ty: ignore[invalid-argument-type]
         assembly.part("cloud").point_coordinates(parts[1].scope(0, [2, 4])),
         points[[2, 4]],
     )
+    # ty: ignore[invalid-argument-type]
     spline_scope = parts[2].scope(2, [0])
     changed_geometry = iga.NURBSGeometryState(
         spline.geometry.control_points * 2, spline.geometry.weights
@@ -51,10 +53,13 @@ def test_assembly_preserves_compact_carriers_and_binds_spline_geometry_revision(
     with pytest.raises(ValueError, match="stale"):
         changed_part.require_scope(spline_scope)
     with pytest.raises(ValueError, match="coefficient vertices"):
+        # ty: ignore[invalid-argument-type]
         parts[2].scope(0, [0])
 
 
-def test_assembly_rejects_duplicate_part_ownership_and_coordinate_frame_mismatch():
+def test_assembly_rejects_duplicate_part_ownership_and_coordinate_frame_mismatch() -> (
+    None
+):
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -71,4 +76,5 @@ def test_assembly_rejects_duplicate_part_ownership_and_coordinate_frame_mismatch
     with pytest.raises(ValueError, match="coordinate contract"):
         MeshAssembly((part, other))
     with pytest.raises(ValueError, match="unknown or inactive"):
+        # ty: ignore[invalid-argument-type]
         part.scope(1, [9])

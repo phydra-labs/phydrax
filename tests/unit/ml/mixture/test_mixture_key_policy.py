@@ -10,7 +10,7 @@ from phydrax.ml import ML_SUCCESS, MLBatch
 from phydrax.ml.mixture import BayesianGaussianMixture
 
 
-def test_bayesian_random_initialization_requires_and_replays_explicit_key():
+def test_bayesian_random_initialization_requires_and_replays_explicit_key() -> None:
     features = jnp.array([[-3.0], [3.0], [-2.0], [2.0], [-1.0], [1.0]])
     recipe = BayesianGaussianMixture(
         2, initialization="random", max_iterations=4, tolerance=1e6
@@ -24,5 +24,6 @@ def test_bayesian_random_initialization_requires_and_replays_explicit_key():
     first = recipe.fit_batch(batch, key=key)
     second = recipe.fit_batch(batch, key=key)
     assert first.status == ML_SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(first.as_trainable().means, second.as_trainable().means)
     assert jnp.array_equal(first.model(features), second.model(features))

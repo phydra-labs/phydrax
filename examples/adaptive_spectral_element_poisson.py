@@ -4,6 +4,8 @@
 
 """Adaptive tensor-hp Poisson solve on a refined quadrilateral epoch."""
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -50,7 +52,7 @@ def run() -> dict[str, float | int | bool]:
         "u",
     )
 
-    def exact(points):
+    def exact(points: Any) -> Any:
         return points[..., 0] ** 3 + points[..., 1] ** 3
 
     source = phx.equations.coefficient(
@@ -65,9 +67,11 @@ def run() -> dict[str, float | int | bool]:
             phx.equations.SourceAction("u", source),
         ),
     )
+    # ty: ignore[invalid-argument-type]
     constraint = phx.discretization.dirichlet_constraint(epoch.discretization, "u")
     compiled = phx.equations.compile_finite_element_problem(
         form,
+        # ty: ignore[invalid-argument-type]
         epoch.discretization,
         constraint=constraint,
         dirichlet_values=lambda points: exact(points),
@@ -79,6 +83,7 @@ def run() -> dict[str, float | int | bool]:
     operator, right_hand_side = compiled.linear_system()
     result = phx.linalg.solve(operator, right_hand_side)
     solution = compiled.expand(result.value)
+    # ty: ignore[unresolved-attribute]
     expected = exact(epoch.discretization.dof_maps[0].dof_coordinates)
     error = float(jnp.max(jnp.abs(solution - expected)))
     successful = bool(jnp.all(result.successful))
@@ -88,6 +93,7 @@ def run() -> dict[str, float | int | bool]:
         "initial_cells": 1,
         "active_cells": refined.topology.active_count,
         "degree": 3,
+        # ty: ignore[unresolved-attribute]
         "global_dofs": epoch.discretization.dof_maps[0].global_dof_count,
         "maximum_error": error,
         "successful": successful,

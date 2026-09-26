@@ -22,7 +22,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -68,8 +68,8 @@ def _constant_collection(node: ast.expr, /) -> frozenset[object] | None:
     return frozenset(e.value for e in node.elts if isinstance(e, ast.Constant))
 
 
-def _aliases(tree: ast.Module, /) -> dict[frozenset[object], str]:
-    aliases: dict[frozenset[object], str] = {}
+def _aliases(tree: ast.Module, /) -> dict[str, frozenset[object]]:
+    aliases: dict[str, frozenset[object]] = {}
     for node in tree.body:
         target: ast.expr | None = None
         value: ast.expr | None = None
@@ -79,8 +79,8 @@ def _aliases(tree: ast.Module, /) -> dict[frozenset[object], str]:
             target, value = node.target, node.value
         if isinstance(target, ast.Name) and value is not None:
             members = _literal_members(value)
-            if members is not None and len(members) >= 2:
-                aliases.setdefault(members, target.id)
+            if members:
+                aliases[target.id] = members
     return aliases
 
 
@@ -109,12 +109,66 @@ def _equality_chain(node: ast.If, /) -> tuple[str, list[object]] | None:
     return name, values
 
 
-def _findings(path: Path, /) -> Iterator[Finding]:
+def _module_name(path: Path, /) -> str:
+    parts = path.relative_to(ROOT).with_suffix("").parts
+    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+
+
+def _import_owner(path: Path, node: ast.ImportFrom, /) -> str:
+    if node.level == 0:
+        return node.module or ""
+    current = _module_name(path)
+    package = current if path.name == "__init__.py" else current.rsplit(".", 1)[0]
+    parts = package.split(".")
+    prefix = parts[: len(parts) - node.level + 1]
+    return ".".join((*prefix, *((node.module,) if node.module else ())))
+
+
+def _visible_aliases(
+    path: Path,
+    tree: ast.Module,
+    registry: Mapping[str, Mapping[str, frozenset[object]]],
+    /,
+) -> dict[str, frozenset[object]]:
+    visible = dict(registry[_module_name(path)])
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        available = registry.get(_import_owner(path, node), {})
+        for alias in node.names:
+            if alias.name in available:
+                visible[alias.asname or alias.name] = available[alias.name]
+    return visible
+
+
+def _findings(
+    path: Path,
+    registry: Mapping[str, Mapping[str, frozenset[object]]],
+    /,
+) -> Iterator[Finding]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    aliases = _aliases(tree)
-    if not aliases:
+    aliases_by_name = _visible_aliases(path, tree, registry)
+    if not aliases_by_name:
         return
+    aliases = {
+        members: name
+        for name, members in sorted(aliases_by_name.items())
+        if len(members) >= 2
+    }
     relative = path.relative_to(ROOT).as_posix()
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    membership_tables = {
+        comparison.comparators[0].id
+        for comparison in ast.walk(tree)
+        if isinstance(comparison, ast.Compare)
+        and len(comparison.ops) == 1
+        and isinstance(comparison.ops[0], ast.In | ast.NotIn)
+        and isinstance(comparison.comparators[0], ast.Name)
+    }
     chained: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.If) and id(node) not in chained:
@@ -126,7 +180,7 @@ def _findings(path: Path, /) -> Iterator[Finding]:
                     chained.add(id(current))
                     current = current.orelse[0] if len(current.orelse) == 1 else None
                 for members, alias in aliases.items():
-                    if set(values) <= members:
+                    if set(values) == members:
                         yield Finding(
                             relative, node.lineno, "equality-chain", alias, subject
                         )
@@ -143,23 +197,50 @@ def _findings(path: Path, /) -> Iterator[Finding]:
                         ast.unparse(node.left),
                     )
         if isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None:
+            target = node.targets[0] if isinstance(node, ast.Assign) else node.target
+            if not isinstance(target, ast.Name) or target.id not in membership_tables:
+                continue
             members = _constant_collection(node.value)
             if members is not None and members in aliases:
-                target = node.targets[0] if isinstance(node, ast.Assign) else node.target
                 yield Finding(
                     relative,
                     node.lineno,
                     "option-table",
                     aliases[members],
-                    ast.unparse(target),
+                    target.id,
                 )
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "parse"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Name)
+            and node.args[1].id in aliases_by_name
+            and isinstance(parents.get(node), ast.Expr)
+            and isinstance(node.args[0], ast.Name)
+        ):
+            yield Finding(
+                relative,
+                node.lineno,
+                "discarded-parse",
+                node.args[1].id,
+                ast.unparse(node.args[0]),
+            )
 
 
 def audit(root: Path, /) -> list[Finding]:
+    paths = tuple(
+        path for path in sorted(root.rglob("*.py")) if "__pycache__" not in path.parts
+    )
+    registry = {
+        _module_name(path): _aliases(
+            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        )
+        for path in paths
+    }
     findings: list[Finding] = []
-    for path in sorted(root.rglob("*.py")):
-        if "__pycache__" not in path.parts:
-            findings.extend(_findings(path))
+    for path in paths:
+        findings.extend(_findings(path, registry))
     return sorted(findings)
 
 

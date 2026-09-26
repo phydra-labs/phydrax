@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[1.0], [2.0]]),
@@ -38,7 +40,7 @@ def _problem():
     )
 
 
-def test_kalman_filter_checkpoint_replays_streaming_state(tmp_path):
+def test_kalman_filter_checkpoint_replays_streaming_state(tmp_path: Any) -> None:
     problem = _problem()
     initial = phx.uq.initialize_kalman_filter(problem, covariance_regularization=1e-8)
     state, _ = phx.uq.kalman_filter_step(problem, initial)
@@ -69,7 +71,9 @@ def test_kalman_filter_checkpoint_replays_streaming_state(tmp_path):
         )
 
 
-def test_bellman_filter_checkpoint_replays_and_rejects_changed_numerics(tmp_path):
+def test_bellman_filter_checkpoint_replays_and_rejects_changed_numerics(
+    tmp_path: Any,
+) -> None:
     problem = _problem()
     initial = phx.uq.initialize_bellman_filter(problem)
     state, _ = phx.uq.bellman_filter_step(problem, initial)
@@ -95,7 +99,7 @@ def test_bellman_filter_checkpoint_replays_and_rejects_changed_numerics(tmp_path
         )
 
 
-def test_ensemble_filter_checkpoint_replays_key_and_members(tmp_path):
+def test_ensemble_filter_checkpoint_replays_key_and_members(tmp_path: Any) -> None:
     problem = _problem()
     initial = phx.uq.initialize_ensemble_filter(
         jr.key(60, impl="rbg"),
@@ -132,7 +136,7 @@ def test_ensemble_filter_checkpoint_replays_key_and_members(tmp_path):
         )
 
 
-def test_unified_particle_checkpoint_dispatch(tmp_path):
+def test_unified_particle_checkpoint_dispatch(tmp_path: Any) -> None:
     problem = _problem()
     state = phx.uq.initialize_particle_filter(
         jr.key(61, impl="rbg"),

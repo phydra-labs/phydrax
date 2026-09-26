@@ -17,6 +17,7 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import FactorizationPolicy, inverse
+from ..typing import parse
 from ._chart import CoordinateChart
 from ._lorentzian import _assemble_adm_matrix
 from ._metric import _metric_inverse, LorentzianConvention, LorentzianMetric
@@ -67,8 +68,7 @@ class ADMDecomposition(StrictModule):
             raise TypeError("chart must be a CoordinateChart.")
         if chart.dimension < 2:
             raise ValueError("An ADM decomposition requires at least one spatial axis.")
-        if convention not in ("mostly_plus", "mostly_minus"):
-            raise ValueError("convention must be 'mostly_plus' or 'mostly_minus'.")
+        convention = parse(convention, LorentzianConvention, "convention")
         lapse_array = jnp.asarray(lapse)
         shift_array = jnp.asarray(shift)
         spatial_array = jnp.asarray(spatial_metric)
@@ -389,8 +389,7 @@ class ADMParameterization(StrictModule):
             raise ValueError("minimum_lapse must be finite and positive.")
         if not isfinite(diagonal_floor) or diagonal_floor <= 0.0:
             raise ValueError("minimum_spatial_diagonal must be finite and positive.")
-        if convention not in ("mostly_plus", "mostly_minus"):
-            raise ValueError("convention must be 'mostly_plus' or 'mostly_minus'.")
+        convention = parse(convention, LorentzianConvention, "convention")
         self.raw_lapse = raw_lapse
         self.shift_function = shift
         self.raw_spatial_factor = raw_spatial_factor

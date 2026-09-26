@@ -8,7 +8,9 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_cached_rolling_curved_wall_rollout_preserves_replay_and_energy_evidence():
+def test_cached_rolling_curved_wall_rollout_preserves_replay_and_energy_evidence() -> (
+    None
+):
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0, 1]), jnp.ones((2,)), ambient_dimension=2
     ).prepare()

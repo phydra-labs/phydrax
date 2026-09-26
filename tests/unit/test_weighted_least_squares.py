@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,7 +16,7 @@ from phydrax._numerics import (
 )
 
 
-def test_weighted_least_squares_recovers_multioutput_and_raw_coordinates():
+def test_weighted_least_squares_recovers_multioutput_and_raw_coordinates() -> None:
     x = jnp.linspace(-2.0, 3.0, 17)
     design = jnp.stack((jnp.ones_like(x), x, x**2), axis=-1)
     expected = jnp.asarray([[1.0, -2.0], [0.5, 3.0], [-0.25, 0.75]])
@@ -40,7 +43,7 @@ def test_weighted_least_squares_recovers_multioutput_and_raw_coordinates():
     assert float(result.normal_equation_error) < 1e-12
 
 
-def test_masked_nonfinite_padding_is_inert():
+def test_masked_nonfinite_padding_is_inert() -> None:
     design = jnp.asarray([[1.0, 0.0], [1.0, 1.0], [jnp.nan, jnp.inf]])
     target = jnp.asarray([[2.0], [5.0], [jnp.nan]])
     mask = jnp.asarray([True, True, False])
@@ -58,7 +61,7 @@ def test_masked_nonfinite_padding_is_inert():
     assert not bool(result.valid_rows[-1])
 
 
-def test_complex_least_squares_uses_hermitian_geometry():
+def test_complex_least_squares_uses_hermitian_geometry() -> None:
     design = jnp.asarray([[1.0 + 1.0j, 2.0], [2.0 - 1.0j, -1.0j], [0.5, 3.0 + 2.0j]])
     expected = jnp.asarray([[2.0 - 0.5j], [-1.0 + 3.0j]])
     target = design @ expected
@@ -69,7 +72,7 @@ def test_complex_least_squares_uses_hermitian_geometry():
     np.testing.assert_allclose(result.coefficients, expected, atol=2e-12)
 
 
-def test_unregularized_rank_deficiency_is_reported_without_repair():
+def test_unregularized_rank_deficiency_is_reported_without_repair() -> None:
     design = jnp.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
     target = jnp.asarray([1.0, 2.0, 3.0])
 
@@ -80,7 +83,7 @@ def test_unregularized_rank_deficiency_is_reported_without_repair():
     assert int(result.rank) == 1
 
 
-def test_regularized_rank_deficiency_is_finite_and_diagnosed():
+def test_regularized_rank_deficiency_is_finite_and_diagnosed() -> None:
     design = jnp.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
     target = jnp.asarray([1.0, 2.0, 3.0])
 
@@ -98,11 +101,11 @@ def test_regularized_rank_deficiency_is_finite_and_diagnosed():
     assert jnp.isinf(result.condition_number)
 
 
-def test_regularized_weighted_solve_is_jittable_and_differentiable():
+def test_regularized_weighted_solve_is_jittable_and_differentiable() -> None:
     design = jnp.asarray([[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]])
     target = jnp.asarray([1.0, 2.0, 2.5])
 
-    def objective(candidate, response):
+    def objective(candidate: Any, response: Any) -> Any:
         result = solve_weighted_least_squares(
             candidate,
             response,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -16,7 +19,7 @@ from phydrax.discretization.fem import (
 )
 
 
-def _mesh():
+def _mesh() -> Any:
     return CellMesh(
         jnp.asarray(
             (
@@ -39,7 +42,7 @@ def _mesh():
     )
 
 
-def test_children_inherit_owners_and_adaptive_halos_include_mortar_neighbors():
+def test_children_inherit_owners_and_adaptive_halos_include_mortar_neighbors() -> None:
     topology, geometry = initial_finite_element_hp_topology(_mesh(), 2, 16)
     source_epoch = prepare_finite_element_hp_epoch(
         topology,
@@ -83,7 +86,7 @@ def test_children_inherit_owners_and_adaptive_halos_include_mortar_neighbors():
     assert np.count_nonzero(halo_valid[1]) == 2
 
 
-def test_hp_ownership_inheritance_rejects_a_lineage_for_another_target():
+def test_hp_ownership_inheritance_rejects_a_lineage_for_another_target() -> None:
     topology, geometry = initial_finite_element_hp_topology(_mesh(), 2, 16)
     source_epoch = prepare_finite_element_hp_epoch(
         topology,

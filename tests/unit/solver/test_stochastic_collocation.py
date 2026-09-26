@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _factors():
+def _factors() -> Any:
     uniform = phx.domain.ProbabilityDomain(
         phx.uq.Uniform(-1.0, 1.0), label="uniform-input"
     )
@@ -12,7 +14,7 @@ def _factors():
     return uniform, normal
 
 
-def test_stochastic_collocation_fits_surrogate_moments_and_level_difference():
+def test_stochastic_collocation_fits_surrogate_moments_and_level_difference() -> None:
     plan = phx.solver.StochasticCollocationPlan(
         _factors(),
         4,
@@ -21,7 +23,7 @@ def test_stochastic_collocation_fits_surrogate_moments_and_level_difference():
     design = phx.solver.materialize_stochastic_collocation(plan)
     calls = []
 
-    def solve_node(node):
+    def solve_node(node: Any) -> Any:
         calls.append(node.node_id)
         uniform = node.parameters["uniform-input"]
         normal = node.parameters["normal-input"]
@@ -59,7 +61,7 @@ def test_stochastic_collocation_fits_surrogate_moments_and_level_difference():
     assert result.diagnostics.variance_level_difference_norm < 1e-9
 
 
-def test_collocation_retains_solver_failures_and_refuses_partial_surrogate():
+def test_collocation_retains_solver_failures_and_refuses_partial_surrogate() -> None:
     uniform = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="coefficient")
     plan = phx.solver.StochasticCollocationPlan(
         (uniform,),
@@ -73,7 +75,7 @@ def test_collocation_retains_solver_failures_and_refuses_partial_surrogate():
         node.node_id for node in replay_design.nodes
     )
 
-    def solve_node(node):
+    def solve_node(node: Any) -> Any:
         coefficient = node.parameters["coefficient"]
         failed = coefficient > 0.9
         return phx.solver.StochasticCollocationNodeEvaluation(
@@ -99,7 +101,7 @@ def test_collocation_retains_solver_failures_and_refuses_partial_surrogate():
     )
 
 
-def test_collocation_marks_nonfinite_outputs_with_canonical_status():
+def test_collocation_marks_nonfinite_outputs_with_canonical_status() -> None:
     uniform = phx.domain.ProbabilityDomain(phx.uq.Uniform(0.0, 1.0), label="input")
     design = phx.solver.materialize_stochastic_collocation(
         phx.solver.StochasticCollocationPlan((uniform,), 2)

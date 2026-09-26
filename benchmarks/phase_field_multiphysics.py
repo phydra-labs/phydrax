@@ -25,7 +25,7 @@ from benchmarks._runtime import (
 from tools.phase_field_multiphysics_qualification import build_coupled_case
 
 
-def _compiler(executable) -> dict[str, object]:
+def _compiler(executable: Any) -> dict[str, object]:
     cost = executable.compiled.cost_analysis()
     memory = executable.compiled.memory_analysis()
     evidence = compiler_evidence(
@@ -80,7 +80,7 @@ def _subsystem_cases(repeats: int) -> dict[str, dict[str, Any]]:
         inputs.chemical_potential,
     )
 
-    def thermal_call():
+    def thermal_call() -> Any:
         return thermal_operation(
             *thermal_arguments,
             heat_input=inputs.heat_input,

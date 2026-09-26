@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _solve(space, costs, method):
+def _solve(space: Any, costs: Any, method: Any) -> Any:
     return phx.combinatorial.solve_combinatorial(
         phx.combinatorial.LinearCombinatorialProblem(
             space, jnp.asarray(costs, dtype="float64")
@@ -18,7 +21,7 @@ def _solve(space, costs, method):
     )
 
 
-def test_branch_and_bound_set_packing_solves_conflicts_and_certifies():
+def test_branch_and_bound_set_packing_solves_conflicts_and_certifies() -> None:
     space = phx.combinatorial.SetPackingSpace(
         jnp.asarray(
             [
@@ -42,7 +45,7 @@ def test_branch_and_bound_set_packing_solves_conflicts_and_certifies():
     assert result.provenance.exact
 
 
-def test_branch_and_bound_ties_infeasibility_and_budget_evidence_are_explicit():
+def test_branch_and_bound_ties_infeasibility_and_budget_evidence_are_explicit() -> None:
     tied_space = phx.combinatorial.SetPackingSpace(
         jnp.asarray([[True], [True]]),
         minimum_selected=1,
@@ -85,7 +88,7 @@ def test_branch_and_bound_ties_infeasibility_and_budget_evidence_are_explicit():
     np.testing.assert_array_equal(budgeted.decision.selected, [True, True, True])
 
 
-def test_greedy_set_packing_distinguishes_feasible_and_certified_results():
+def test_greedy_set_packing_distinguishes_feasible_and_certified_results() -> None:
     conflicted = phx.combinatorial.SetPackingSpace(
         jnp.asarray(
             [
@@ -119,7 +122,7 @@ def test_greedy_set_packing_distinguishes_feasible_and_certified_results():
     assert not certified.provenance.exact
 
 
-def test_set_packing_outputs_have_stopped_ordinary_gradients():
+def test_set_packing_outputs_have_stopped_ordinary_gradients() -> None:
     space = phx.combinatorial.SetPackingSpace(jnp.eye(2, dtype="bool"))
     method = phx.combinatorial.BranchAndBoundSetPacking()
 
@@ -134,7 +137,7 @@ def test_set_packing_outputs_have_stopped_ordinary_gradients():
     np.testing.assert_array_equal(gradient, jnp.zeros((2,)))
 
 
-def test_set_packing_oracle_honors_required_and_forbidden_sets():
+def test_set_packing_oracle_honors_required_and_forbidden_sets() -> None:
     space = phx.combinatorial.SetPackingSpace(
         jnp.asarray(
             [

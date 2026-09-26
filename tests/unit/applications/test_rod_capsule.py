@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -26,7 +28,7 @@ from phydrax.discretization.contact._surface import (
 )
 
 
-def _spatial_rod(*, stiffness_scale: float = 1.0):
+def _spatial_rod(*, stiffness_scale: float = 1.0) -> Any:
     dtype = jnp.float32
     segment_count = 5
     return prepare_rod(
@@ -63,7 +65,7 @@ def _spatial_rod(*, stiffness_scale: float = 1.0):
     )
 
 
-def _planar_rod():
+def _planar_rod() -> Any:
     dtype = jnp.float32
     return prepare_rod(
         RodPlan(
@@ -78,7 +80,7 @@ def _planar_rod():
     )
 
 
-def _geometry(rod=None):
+def _geometry(rod: Any = None) -> Any:
     source = _spatial_rod() if rod is None else rod
     plan = RodCapsuleGeometryPlan(
         jnp.asarray((0.2, 0.25, 0.15, 0.3, 0.1), dtype=jnp.float32),
@@ -91,7 +93,7 @@ def _geometry(rod=None):
     return source, plan, plan.prepare(source)
 
 
-def _reduced(rod):
+def _reduced(rod: Any) -> Any:
     basis = RodStrainBasisPlan.shifted_legendre(
         0,
         dimension=3,
@@ -100,7 +102,7 @@ def _reduced(rod):
     return prepare_reduced_rod(rod, ReducedRodPlan(basis))
 
 
-def _skew_configuration(rod):
+def _skew_configuration(rod: Any) -> Any:
     positions = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -119,7 +121,7 @@ def _skew_configuration(rod):
     return positions, orientations
 
 
-def _plane(normal, offset):
+def _plane(normal: Any, offset: Any) -> Any:
     policy = CollisionFeaturePolicy(
         jnp.asarray((100,), dtype=jnp.int64),
         jnp.asarray((int(CollisionFeatureKind.ANALYTIC),), dtype=jnp.int32),
@@ -133,7 +135,7 @@ def _plane(normal, offset):
     return PlaneContactGeometry(normal, offset, feature_policy=policy)
 
 
-def test_plan_owns_exact_feature_radius_labels_proxy_and_adjacency_policy():
+def test_plan_owns_exact_feature_radius_labels_proxy_and_adjacency_policy() -> None:
     rod, plan, geometry = _geometry()
     features = geometry.surface_plan.feature_policy
     edge_slice = features.edge_slice
@@ -185,7 +187,9 @@ def test_plan_owns_exact_feature_radius_labels_proxy_and_adjacency_policy():
     assert changed.plan_id != plan.plan_id
 
 
-def test_capsule_plane_witness_is_exact_for_endpoint_support_and_penetration_gap():
+def test_capsule_plane_witness_is_exact_for_endpoint_support_and_penetration_gap() -> (
+    None
+):
     rod, _, geometry = _geometry()
     positions, orientations = _skew_configuration(rod)
     positions = positions.at[0].set(jnp.asarray((0.0, 0.0, 2.0)))
@@ -212,7 +216,7 @@ def test_capsule_plane_witness_is_exact_for_endpoint_support_and_penetration_gap
     )
 
 
-def test_capsule_capsule_witness_is_exact_and_rigid_motion_invariant():
+def test_capsule_capsule_witness_is_exact_and_rigid_motion_invariant() -> None:
     rod, _, geometry = _geometry()
     configuration = _skew_configuration(rod)
     pairs = jnp.asarray(((0, 3),), dtype=jnp.int32)
@@ -255,7 +259,9 @@ def test_capsule_capsule_witness_is_exact_and_rigid_motion_invariant():
     )
 
 
-def test_spin_surface_velocity_and_native_effort_pullback_preserve_power_and_wrench():
+def test_spin_surface_velocity_and_native_effort_pullback_preserve_power_and_wrench() -> (
+    None
+):
     rod, _, geometry = _geometry()
     state = rod.initialize_state()
     configuration = rod.configuration_from_state(state)
@@ -299,7 +305,7 @@ def test_spin_surface_velocity_and_native_effort_pullback_preserve_power_and_wre
     assert surface_power == pytest.approx(native_power)
 
 
-def test_reduced_surface_pullback_is_the_true_dual_of_native_lift_and_spin_map():
+def test_reduced_surface_pullback_is_the_true_dual_of_native_lift_and_spin_map() -> None:
     rod, _, geometry = _geometry()
     reduced = _reduced(rod)
     participant = prepare_reduced_rod_contact_participant(reduced, geometry)
@@ -348,7 +354,7 @@ def test_reduced_surface_pullback_is_the_true_dual_of_native_lift_and_spin_map()
     assert generic.valid
 
 
-def test_adjacent_capsules_are_filtered_and_ambiguous_geometry_is_rejected():
+def test_adjacent_capsules_are_filtered_and_ambiguous_geometry_is_rejected() -> None:
     rod, _, geometry = _geometry()
     adjacent = geometry.capsule_capsule_witness(
         rod.configuration_from_state(rod.initialize_state()),
@@ -367,6 +373,7 @@ def test_adjacent_capsules_are_filtered_and_ambiguous_geometry_is_rejected():
     with pytest.raises(TypeError, match="participant_id"):
         RodCapsuleGeometryPlan(
             jnp.asarray((0.2,)),
+            # ty: ignore[invalid-argument-type]
             participant_id=jnp.asarray((0, 1)),
             body_id=0,
             material_id=0,
@@ -389,7 +396,7 @@ def test_adjacent_capsules_are_filtered_and_ambiguous_geometry_is_rejected():
         )
 
 
-def test_reduced_participant_rejects_geometry_owned_by_a_different_native_rod():
+def test_reduced_participant_rejects_geometry_owned_by_a_different_native_rod() -> None:
     first_rod, _, geometry = _geometry()
     second_rod = _spatial_rod(stiffness_scale=2.0)
     reduction = _reduced(second_rod)

@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -18,17 +20,17 @@ class _LinearEncoder(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.weight = jnp.asarray([[0.2], [1.0]], dtype=jnp.float64)
         self.in_size = 2
         self.out_size = 1
 
-    def __call__(self, value, /, *, key=None):
+    def __call__(self, value: Any, /, *, key: Any = None) -> Any:
         del key
         return value @ self.weight
 
 
-def _data(steps=300):
+def _data(steps: Any = 300) -> Any:
     state = jnp.asarray([1.0, -0.3], dtype=jnp.float64)
     values = []
     for index in range(steps):
@@ -44,7 +46,7 @@ def _data(steps=300):
     )
 
 
-def test_variational_training_selects_executable_canonical_coordinate():
+def test_variational_training_selects_executable_canonical_coordinate() -> None:
     data = _data()
     policy = phx.dynamics.identification.VariationalKineticTrainingPolicy(
         maximum_steps=4,
@@ -74,7 +76,7 @@ def test_variational_training_selects_executable_canonical_coordinate():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_training_capacity_and_shape_fail_closed():
+def test_training_capacity_and_shape_fail_closed() -> None:
     data = _data(20)
     policy = phx.dynamics.identification.VariationalKineticTrainingPolicy(
         maximum_steps=0, maximum_transitions=5
@@ -91,7 +93,7 @@ def test_training_capacity_and_shape_fail_closed():
         )
 
 
-def test_variational_training_checkpoint_roundtrip(tmp_path):
+def test_variational_training_checkpoint_roundtrip(tmp_path: Any) -> None:
     data = _data(80)
     policy = phx.dynamics.identification.VariationalKineticTrainingPolicy(
         maximum_steps=1,
@@ -146,17 +148,17 @@ class _UnsupportedEncoder(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.weight = jnp.asarray([[0.2], [1.0]], dtype=jnp.float64)
         self.in_size = 2
         self.out_size = 1
 
-    def __call__(self, value, /, *, key=None):
+    def __call__(self, value: Any, /, *, key: Any = None) -> Any:
         del key
         return value @ self.weight * jnp.nan
 
 
-def test_unsuccessful_score_commits_no_update_and_stops_infeasible():
+def test_unsuccessful_score_commits_no_update_and_stops_infeasible() -> None:
     data = _data(40)
     encoder = _UnsupportedEncoder()
     policy = phx.dynamics.identification.VariationalKineticTrainingPolicy(
@@ -175,6 +177,7 @@ def test_unsuccessful_score_commits_no_update_and_stops_infeasible():
     )
 
     assert result.progress.update_step == 0
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(result.model.weight, encoder.weight)
     assert not bool(result.valid)
     assert result.history.steps.tolist() == [0, 1]

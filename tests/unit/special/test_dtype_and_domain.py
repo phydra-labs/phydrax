@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -17,7 +18,7 @@ import phydrax as phx
         (jnp.float64, jnp.float64),
     ],
 )
-def test_real_dtype_contract(dtype, expected):
+def test_real_dtype_contract(dtype: Any, expected: Any) -> None:
     value = jnp.asarray(0.5, dtype=dtype)
     assert phx.special.dawsn(value).dtype == expected
     assert phx.special.voigt_profile(value, value, value).dtype == expected
@@ -58,7 +59,7 @@ def test_real_dtype_contract(dtype, expected):
         (jnp.complex128, jnp.complex128),
     ],
 )
-def test_faddeeva_dtype_contract(dtype, expected):
+def test_faddeeva_dtype_contract(dtype: Any, expected: Any) -> None:
     assert phx.special.wofz(jnp.asarray(0.5, dtype=dtype)).dtype == expected
 
 
@@ -71,18 +72,18 @@ def test_faddeeva_dtype_contract(dtype, expected):
         (jnp.float64, jnp.complex128),
     ],
 )
-def test_hankel_dtype_contract(dtype, expected):
+def test_hankel_dtype_contract(dtype: Any, expected: Any) -> None:
     value = jnp.asarray(0.5, dtype=dtype)
     assert phx.special.hankel1(value, value).dtype == expected
     assert phx.special.hankel2(value, value).dtype == expected
 
 
-def test_python_integer_uses_configured_default_float_dtype():
+def test_python_integer_uses_configured_default_float_dtype() -> None:
     assert phx.special.dawsn(1).dtype == jnp.float64
     assert phx.special.wofz(1).dtype == jnp.complex128
 
 
-def test_mixed_voigt_arguments_use_common_inexact_dtype():
+def test_mixed_voigt_arguments_use_common_inexact_dtype() -> None:
     value = phx.special.voigt_profile(
         jnp.asarray(0.5, dtype=jnp.float32),
         jnp.asarray(1.0, dtype=jnp.float64),
@@ -99,12 +100,12 @@ def test_mixed_voigt_arguments_use_common_inexact_dtype():
         lambda value: phx.special.voigt_profile(1.0, 1.0, value),
     ],
 )
-def test_nonholomorphic_voigt_arguments_reject_complex_inputs(function):
+def test_nonholomorphic_voigt_arguments_reject_complex_inputs(function: Any) -> None:
     with pytest.raises(TypeError, match="does not support complex-valued inputs"):
         function(1.0 + 0.5j)
 
 
-def test_voigt_arguments_broadcast():
+def test_voigt_arguments_broadcast() -> None:
     x = jnp.asarray([-1.0, 0.0, 1.0])[:, None]
     sigma = jnp.asarray([0.5, 1.0])
     value = phx.special.voigt_profile(x, sigma, 0.25)
@@ -112,7 +113,7 @@ def test_voigt_arguments_broadcast():
     assert np.all(np.asarray(value) >= 0.0)
 
 
-def test_jit_and_vmap_compose():
+def test_jit_and_vmap_compose() -> None:
     points = jnp.linspace(-2.0, 2.0, 9)
     compiled = jax.jit(
         lambda values: (
@@ -130,7 +131,7 @@ def test_jit_and_vmap_compose():
     )
 
 
-def test_dawson_nan_infinity_and_signed_zero_contract():
+def test_dawson_nan_infinity_and_signed_zero_contract() -> None:
     values = np.asarray(
         phx.special.dawsn(jnp.asarray([jnp.nan, -jnp.inf, -0.0, 0.0, jnp.inf]))
     )
@@ -146,7 +147,7 @@ def test_dawson_nan_infinity_and_signed_zero_contract():
     np.testing.assert_array_equal(derivatives, np.zeros(2))
 
 
-def test_faddeeva_nan_and_complex_infinity_contract():
+def test_faddeeva_nan_and_complex_infinity_contract() -> None:
     arguments = jax.lax.complex(
         jnp.asarray([jnp.nan, -jnp.inf, jnp.inf, 0.0, 0.0]),
         jnp.asarray([0.0, 0.0, 0.0, jnp.inf, -jnp.inf]),
@@ -167,7 +168,7 @@ def test_faddeeva_nan_and_complex_infinity_contract():
     np.testing.assert_array_equal(derivatives, np.zeros(3, dtype=np.complex128))
 
 
-def test_voigt_scale_boundaries_match_limiting_densities():
+def test_voigt_scale_boundaries_match_limiting_densities() -> None:
     x = jnp.asarray([-jnp.inf, -2.0, 0.0, 2.0, jnp.inf])
     sigma = 1.25
     gamma = 0.75
@@ -196,7 +197,7 @@ def test_voigt_scale_boundaries_match_limiting_densities():
     np.testing.assert_array_equal(np.asarray(cauchy_derivatives), np.zeros(2))
 
 
-def test_voigt_invalid_scales_and_nans_propagate():
+def test_voigt_invalid_scales_and_nans_propagate() -> None:
     values = np.asarray(
         phx.special.voigt_profile(
             jnp.asarray([0.0, 0.0, jnp.nan, 0.0]),

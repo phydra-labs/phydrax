@@ -1,12 +1,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _dataset():
+def _dataset() -> Any:
     coordinates = jnp.linspace(0.0, 1.0, 4)[:, None]
     source = phx.nn.operator.FunctionSamples(
         values=jnp.arange(12.0).reshape((3, 4, 1)),
@@ -27,7 +30,7 @@ def _dataset():
     return phx.nn.operator.training.OperatorDataset(batch, targets)
 
 
-def test_atomic_operator_case_coreset_carries_weights_and_provenance():
+def test_atomic_operator_case_coreset_carries_weights_and_provenance() -> None:
     dataset = _dataset()
     result = phx.nn.operator.training.compress_operator_cases(
         dataset,
@@ -35,19 +38,22 @@ def test_atomic_operator_case_coreset_carries_weights_and_provenance():
         features=jnp.asarray([[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]]),
     )
     assert result.dataset.size == result.selection.capacity
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(result.dataset.case_mask, result.selection.mask)
     source = phx.nn.operator.InMemoryOperatorCaseSource(result.dataset)
     for index in range(result.dataset.size):
         case = source.read_case(index)
+        # ty: ignore[not-subscriptable]
         assert case.case_log_weight == float(result.dataset.case_log_weights[index])
         assert case.case_active == bool(result.selection.mask[index])
     assert (
+        # ty: ignore[not-iterable]
         tuple(record.case_id for record in result.dataset.provenance)
         == result.source_case_ids
     )
 
 
-def test_named_query_coreset_aligns_geometry_targets_and_mass():
+def test_named_query_coreset_aligns_geometry_targets_and_mass() -> None:
     dataset = _dataset()
     result = phx.nn.operator.training.compress_operator_queries(
         dataset,
@@ -58,10 +64,11 @@ def test_named_query_coreset_aligns_geometry_targets_and_mass():
     query = result.dataset.batch.query("query")
     target = result.dataset.targets.field("field")
     assert target.values.shape[1] == query.sample_shape[0]
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(jnp.sum(query.quadrature_weights), result.source_physical_mass[0])
 
 
-def test_custom_weighted_losses_require_explicit_per_case_protocol():
+def test_custom_weighted_losses_require_explicit_per_case_protocol() -> None:
     term = phx.nn.operator.training.OperatorLossTerm(
         "per-case",
         lambda *args, **kwargs: jnp.ones((3,)),
@@ -71,6 +78,8 @@ def test_custom_weighted_losses_require_explicit_per_case_protocol():
     with pytest.raises(ValueError, match="case_reduction"):
         phx.nn.operator.training.OperatorLossTerm(
             "invalid",
+            # ty: ignore[invalid-argument-type]
             lambda *args, **kwargs: 0.0,
+            # ty: ignore[invalid-argument-type]
             case_reduction="automatic",
         )

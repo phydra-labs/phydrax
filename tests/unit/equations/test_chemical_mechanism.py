@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _schema():
+def _schema() -> Any:
     return phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B", "C"),
         (
@@ -25,7 +28,7 @@ def _schema():
     )
 
 
-def _thermodynamics(schema):
+def _thermodynamics(schema: Any) -> Any:
     return phx.equations.PolynomialSpeciesThermodynamicsPlan(
         schema,
         jnp.asarray((10.0, 10.0, 10.0)),
@@ -36,7 +39,7 @@ def _thermodynamics(schema):
     )
 
 
-def test_prepared_mechanism_preserves_elements_charge_and_zero_reactants():
+def test_prepared_mechanism_preserves_elements_charge_and_zero_reactants() -> None:
     schema = _schema()
     mechanism = phx.equations.ChemicalMechanismIR(
         "association",
@@ -72,7 +75,7 @@ def test_prepared_mechanism_preserves_elements_charge_and_zero_reactants():
     assert blocked.successful
 
 
-def test_thermodynamically_reversible_equal_species_is_stationary():
+def test_thermodynamically_reversible_equal_species_is_stationary() -> None:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (
@@ -120,7 +123,7 @@ def test_thermodynamically_reversible_equal_species_is_stationary():
     np.testing.assert_allclose(fields.species_amount_rate, 0.0, atol=1e-12)
 
 
-def test_mechanism_rejects_unbalanced_reaction():
+def test_mechanism_rejects_unbalanced_reaction() -> None:
     schema = _schema()
     mechanism = phx.equations.ChemicalMechanismIR(
         "invalid",
@@ -139,7 +142,7 @@ def test_mechanism_rejects_unbalanced_reaction():
         mechanism.prepare()
 
 
-def test_surface_coverage_and_sticking_rates_are_positive_and_finite():
+def test_surface_coverage_and_sticking_rates_are_positive_and_finite() -> None:
     runtime = phx.equations.ChemicalRateRuntime()
     concentration = jnp.asarray((0.25, 1.0))
     coverage = phx.equations.SurfaceCoverageRatePlan(

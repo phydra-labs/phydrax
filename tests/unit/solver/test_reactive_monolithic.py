@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -10,12 +13,12 @@ import phydrax as phx
 
 def _problem(
     *,
-    drag=0.0,
-    particle_temperature=300.0,
-    fluid_temperature=500.0,
-    fluid_species=0.0,
-    mass_transfer=0.0,
-):
+    drag: Any = 0.0,
+    particle_temperature: Any = 300.0,
+    fluid_temperature: Any = 500.0,
+    fluid_species: Any = 0.0,
+    mass_transfer: Any = 0.0,
+) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.ones((1,)), ambient_dimension=2
     ).prepare()
@@ -121,7 +124,7 @@ def _problem(
     return coupling, state, stage
 
 
-def test_monolithic_heat_exchange_is_conservative_and_implicit():
+def test_monolithic_heat_exchange_is_conservative_and_implicit() -> None:
     coupling, state, stage = _problem()
     prepared = phx.solver.prepare_reactive_monolithic_step(
         coupling, phx.solver.ReactiveMonolithicSolverPlan(), stage
@@ -129,10 +132,11 @@ def test_monolithic_heat_exchange_is_conservative_and_implicit():
     result = phx.solver.solve_reactive_monolithic_step(prepared, state)
     assert result.successful
     assert result.accepted_state.fluid.temperature[0] < state.fluid.temperature[0]
+    # ty: ignore[unresolved-attribute]
     assert jnp.abs(result.evaluation.energy_residual) < 1.0e-12
 
 
-def test_monolithic_implicit_drag_closes_momentum():
+def test_monolithic_implicit_drag_closes_momentum() -> None:
     coupling, state, stage = _problem(drag=100.0)
     prepared = phx.solver.prepare_reactive_monolithic_step(
         coupling, phx.solver.ReactiveMonolithicSolverPlan(), stage
@@ -141,10 +145,11 @@ def test_monolithic_implicit_drag_closes_momentum():
     assert result.successful
     assert result.accepted_state.particle_velocity[0, 0] > 0.0
     assert result.accepted_state.fluid.velocity[0, 0] < 1.0
+    # ty: ignore[unresolved-attribute]
     assert jnp.linalg.norm(result.evaluation.momentum_residual) < 1.0e-12
 
 
-def test_monolithic_preconditioner_modes_recover_same_root():
+def test_monolithic_preconditioner_modes_recover_same_root() -> None:
     coupling, state, stage = _problem(drag=10.0)
     values = []
     for mode in phx.solver.ReactiveMonolithicPreconditionerMode:
@@ -158,7 +163,7 @@ def test_monolithic_preconditioner_modes_recover_same_root():
     assert jnp.allclose(jnp.stack(values), values[0], rtol=1.0e-8)
 
 
-def test_monolithic_residual_has_finite_matrix_free_jvp():
+def test_monolithic_residual_has_finite_matrix_free_jvp() -> None:
     coupling, _, stage = _problem(drag=1.0)
     unknown = coupling.initial_unknown(stage)
     tangent = jax.tree.map(jnp.ones_like, unknown)
@@ -171,7 +176,7 @@ def test_monolithic_residual_has_finite_matrix_free_jvp():
     assert all(jnp.all(jnp.isfinite(value)) for value in jax.tree.leaves(derivative))
 
 
-def test_monolithic_species_exchange_closes_inventory():
+def test_monolithic_species_exchange_closes_inventory() -> None:
     coupling, state, stage = _problem(fluid_species=2.0, mass_transfer=1.0)
     result = phx.solver.solve_reactive_monolithic_step(
         phx.solver.prepare_reactive_monolithic_step(
@@ -180,6 +185,7 @@ def test_monolithic_species_exchange_closes_inventory():
         state,
     )
     assert result.successful
+    # ty: ignore[unresolved-attribute]
     assert jnp.max(jnp.abs(result.evaluation.species_residual)) < 1.0e-12
     assert not jnp.isclose(
         result.accepted_state.fluid.species_concentration[0, 0],
@@ -187,7 +193,7 @@ def test_monolithic_species_exchange_closes_inventory():
     )
 
 
-def test_stiff_monolithic_exchange_converges_without_staggered_iterations():
+def test_stiff_monolithic_exchange_converges_without_staggered_iterations() -> None:
     coupling, state, stage = _problem(drag=1.0e4)
     result = phx.solver.solve_reactive_monolithic_step(
         phx.solver.prepare_reactive_monolithic_step(
@@ -202,10 +208,11 @@ def test_stiff_monolithic_exchange_converges_without_staggered_iterations():
         state,
     )
     assert result.successful
+    # ty: ignore[unresolved-attribute]
     assert jnp.linalg.norm(result.evaluation.momentum_residual) < 1.0e-12
 
 
-def test_monolithic_radiative_source_is_solved_inside_root():
+def test_monolithic_radiative_source_is_solved_inside_root() -> None:
     coupling, state, stage = _problem()
     stage = phx.solver.make_reactive_monolithic_stage(
         coupling,
@@ -232,7 +239,7 @@ def test_monolithic_radiative_source_is_solved_inside_root():
     )
 
 
-def test_monolithic_event_margin_rejects_and_rolls_back():
+def test_monolithic_event_margin_rejects_and_rolls_back() -> None:
     coupling, state, stage = _problem()
     solver = phx.solver.ReactiveMonolithicSolverPlan(event_margin=2.0)
     result = phx.solver.solve_reactive_monolithic_step(

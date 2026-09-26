@@ -21,6 +21,7 @@ from ..linalg import (
     LocalEliminationResult,
     OperatorProperties,
 )
+from ..typing import parse
 from ._execution import (
     RelationAccumulation,
     RelationExecutionPlan,
@@ -106,8 +107,7 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
             raise ValueError("Element tensor input gathers are out of bounds.")
         if bool(jnp.any((outputs < 0) | (outputs >= target))):
             raise ValueError("Element tensor output gathers are out of bounds.")
-        if accumulation_ not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown local accumulation policy.")
+        accumulation_ = parse(accumulation_, RelationAccumulation, "accumulation_")
         valid_ = (
             jnp.ones((matrices.shape[0],), dtype=jnp.bool_)
             if valid is None

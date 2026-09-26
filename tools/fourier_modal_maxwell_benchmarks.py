@@ -7,6 +7,7 @@ import json
 import platform
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +19,7 @@ from phydrax.solver.maxwell import fourier_modal as fm
 jax.config.update("jax_enable_x64", True)
 
 
-def _timed(function):
+def _timed(function: Any) -> Any:
     start = time.perf_counter()
     value = function()
     jax.block_until_ready(value)

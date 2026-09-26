@@ -7,7 +7,7 @@ from phydrax.operators.integral.layer_potential._scalar_interfaces3d import (
 )
 
 
-def test_matching_laplace_transmission_recovers_manufactured_cauchy_blocks():
+def test_matching_laplace_transmission_recovers_manufactured_cauchy_blocks() -> None:
     vertices = jnp.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +15,7 @@ from phydrax.discretization.spatial import (
 )
 
 
-def _dense_grid(*, periodic: bool = False):
+def _dense_grid(*, periodic: bool = False) -> Any:
     address = MortonAddressPlan(
         (0.0, 0.0),
         (1.0, 1.0),
@@ -30,7 +32,7 @@ def _dense_grid(*, periodic: bool = False):
     ).prepare(coordinates)
 
 
-def _coordinate_field(grid):
+def _coordinate_field(grid: Any) -> Any:
     centers = grid.voxel_centers()
     values = 2.0 * centers[..., 0] - 3.0 * centers[..., 1] + 0.5
     return SparseVoxelField(grid, values)

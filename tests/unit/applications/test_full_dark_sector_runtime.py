@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -208,7 +210,7 @@ def _projection(
     /,
     *,
     projection_id: str,
-    snapshot_token=None,
+    snapshot_token: Any = None,
 ) -> StressEnergyProjection:
     return StressEnergyProjection(
         jnp.asarray(energy),
@@ -238,7 +240,7 @@ def _component(
     /,
     *,
     projection_id: str,
-    snapshot_token=None,
+    snapshot_token: Any = None,
 ) -> NamedStressEnergyComponent:
     return NamedStressEnergyComponent(
         name,
@@ -315,7 +317,7 @@ def test_dark_radiation_four_force_is_exactly_opposite() -> None:
     assert jnp.array_equal(exchange.balance_residual, jnp.zeros((4,)))
 
 
-def _packet_runtime_owners():
+def _packet_runtime_owners() -> Any:
     units = RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1),
         RelativityConvention(metric_signature="mostly_minus"),
@@ -651,6 +653,7 @@ def test_packet_radiation_runtime_binds_to_the_shared_quantum_frame() -> None:
     owners = _packet_runtime_owners()
     radiation = owners[-1]
 
+    # ty: ignore[too-many-positional-arguments]
     plan = FullDarkSectorRuntimePlan(*owners, _matrix_revision())
 
     assert plan.radiation is radiation

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -80,13 +83,13 @@ from tools.statistical_dynamics_qualification import (
 
 
 def _evidence(
-    kind,
-    subject,
-    criteria=("criterion",),
+    kind: Any,
+    subject: Any,
+    criteria: Any = ("criterion",),
     *,
-    outcome="passed",
-    precision="float64",
-):
+    outcome: Any = "passed",
+    precision: Any = "float64",
+) -> Any:
     return QualificationEvidence(
         kind,
         outcome,
@@ -109,7 +112,7 @@ def _evidence(
     )
 
 
-def _run(profile, support):
+def _run(profile: Any, support: Any) -> Any:
     dependency = SupportDependency(profile.profile_id, support.support_tuple_id)
     return ResolvedRunSpec(
         (dependency,),
@@ -131,7 +134,7 @@ def _run(profile, support):
     )
 
 
-def _lbm_point():
+def _lbm_point() -> Any:
     return LatticeBoltzmannOperatingPoint(
         mach_number=0.05,
         knudsen_number=0.005,
@@ -145,7 +148,7 @@ def _lbm_point():
     )
 
 
-def _lbm_evidence(profile, *, omit_operational=()):
+def _lbm_evidence(profile: Any, *, omit_operational: Any = ()) -> Any:
     operational_claims = tuple(
         value.value
         for value in profile.required_claims
@@ -190,7 +193,7 @@ def _lbm_evidence(profile, *, omit_operational=()):
     )
 
 
-def _lbm_deployment(profile, evidence):
+def _lbm_deployment(profile: Any, evidence: Any) -> Any:
     return LatticeBoltzmannDeploymentRecord(
         "sharded",
         "array-archive",
@@ -207,16 +210,19 @@ def _lbm_deployment(profile, evidence):
     )
 
 
-def test_immersed_and_lbm_profile_records_preserve_exact_route_distinctions():
+def test_immersed_and_lbm_profile_records_preserve_exact_route_distinctions() -> None:
     immersed = immersed_profile_record()
     body_methods = {
-        value["regime"]: value["body_method"] for value in immersed["supports"]
+        value["regime"]: value["body_method"]
+        # ty: ignore[not-iterable]
+        for value in immersed["supports"]
     }
     assert body_methods["prescribed-marker"] == "marker-regularized"
     assert body_methods["fixed-topology-sharp"] == "sharp-interface"
     assert body_methods["lbm-body"] == "lattice-boltzmann-body"
     assert (
         len(
+            # ty: ignore[not-iterable]
             {value["support_tuple"]["support_tuple_id"] for value in immersed["supports"]}
         )
         == 6
@@ -243,7 +249,7 @@ def test_immersed_and_lbm_profile_records_preserve_exact_route_distinctions():
     assert lbm == lbm_profile_records(conjugate_thermal=thermal)
 
 
-def test_lbm_candidate_retains_gap_report_and_resource_refusal():
+def test_lbm_candidate_retains_gap_report_and_resource_refusal() -> None:
     hardware = LatticeBoltzmannHardwareTarget(
         "cpu",
         "qualification-test",
@@ -263,7 +269,9 @@ def test_lbm_candidate_retains_gap_report_and_resource_refusal():
         at_time=10,
         resource_counts={"local_cell_count": 64},
     )
+    # ty: ignore[not-subscriptable]
     assert refused["gates"]["performance"]["outcome"] == "failed"
+    # ty: ignore[not-subscriptable]
     assert refused["resources"]["fits_budget"] is False
     assert refused["status"] == "failed"
     assert refused["release_ready"] is False
@@ -287,12 +295,14 @@ def test_lbm_candidate_retains_gap_report_and_resource_refusal():
         at_time=10,
         resource_counts={"local_cell_count": 1},
     )
+    # ty: ignore[not-subscriptable]
     coverage = gap_candidate["commercial_evidence"]["coverage"]
     assert "output-parity" in coverage["inconclusive_predicate_ids"]
+    # ty: ignore[not-subscriptable]
     assert gap_candidate["gates"]["operational"]["outcome"] == "inconclusive"
 
 
-def _closure_pipeline(*, partition_salt="partition-a"):
+def _closure_pipeline(*, partition_salt: Any = "partition-a") -> Any:
     prepared_filter = FilterSpec.identity().prepare((2, 2))
     alignment = ConservativeAlignmentPlan().prepare((2, 2), (2, 2))
     node = ClosureAnalysisNode(
@@ -370,7 +380,7 @@ def _closure_pipeline(*, partition_salt="partition-a"):
     )
 
 
-def _denied_reference():
+def _denied_reference() -> Any:
     return ReferenceArtifactManifest(
         "restricted-reference",
         checksum_algorithm="sha256",
@@ -388,7 +398,7 @@ def _denied_reference():
     )
 
 
-def test_closure_candidates_isolate_offline_deployment_and_fail_leakage_rights():
+def test_closure_candidates_isolate_offline_deployment_and_fail_leakage_rights() -> None:
     pipeline = _closure_pipeline()
     prepared_filter, alignment, dag, dataset, partition, normalizer, binding, quality = (
         pipeline
@@ -445,7 +455,9 @@ def test_closure_candidates_isolate_offline_deployment_and_fail_leakage_rights()
         binding=binding,
         reference_manifests=(_denied_reference(),),
     )
+    # ty: ignore[not-subscriptable]
     assert candidate["gates"]["security"]["outcome"] == "failed"
+    # ty: ignore[not-subscriptable]
     reasons = candidate["gates"]["security"]["failed_reasons"]
     assert "normalizer-partition-mismatch" in reasons
     assert any("commercial-use-not-permitted" in value for value in reasons)
@@ -454,7 +466,7 @@ def test_closure_candidates_isolate_offline_deployment_and_fail_leakage_rights()
     assert candidate["release_ready"] is False
 
 
-def _cumulant_plan(closure, interaction_model):
+def _cumulant_plan(closure: Any, interaction_model: Any) -> Any:
     layout = SecondCumulantLayout(2, (0,), eddy_indices=(1,))
     dynamics = QuadraticDynamics(jnp.zeros((2,)), jnp.zeros((2, 2)), jnp.zeros((2, 2, 2)))
     forcing = ForcingCovariance(jnp.eye(1))
@@ -468,7 +480,7 @@ def _cumulant_plan(closure, interaction_model):
     )
 
 
-def _statistical_layout(process_count):
+def _statistical_layout(process_count: Any) -> Any:
     return DistributedStatisticalLayout(
         DistributedBatchLayout(
             4,
@@ -484,7 +496,7 @@ def _statistical_layout(process_count):
     )
 
 
-def test_statistical_labels_resources_and_topology_restart_are_isolated():
+def test_statistical_labels_resources_and_topology_restart_are_isolated() -> None:
     nl = NonlinearInteractions()
     ql = QuasilinearInteractions()
     gql = GeneralizedQuasilinearInteractions()
@@ -501,6 +513,7 @@ def test_statistical_labels_resources_and_topology_restart_are_isolated():
     )
     records = statistical_profile_records((nl, ql, gql, ce2, gce2))
     assert len(records) == 5
+    # ty: ignore[not-subscriptable]
     assert len({value["support_tuples"][0]["support_tuple_id"] for value in records}) == 5
     with pytest.raises(ValueError, match="cannot describe"):
         statistical_candidate_profile(nl, model_label="ce2")
@@ -536,9 +549,13 @@ def test_statistical_labels_resources_and_topology_restart_are_isolated():
         shadowing=shadowing,
     )
     assert candidate["model_label"] == "nl-dns"
+    # ty: ignore[not-subscriptable]
     assert candidate["shadowing"]["method"] == "nilsas"
+    # ty: ignore[not-subscriptable]
     assert candidate["restart"]["accepted"] is True
+    # ty: ignore[not-subscriptable]
     assert candidate["restart"]["topology_changed"] is True
+    # ty: ignore[not-subscriptable]
     assert candidate["gates"]["operational"]["outcome"] == "passed"
     assert candidate["status"] == "passed"
     assert candidate == build_statistical_dynamics_candidate(
@@ -573,5 +590,6 @@ def test_statistical_labels_resources_and_topology_restart_are_isolated():
             "workspace_bytes": 1,
         },
     )
+    # ty: ignore[not-subscriptable]
     assert refused["gates"]["performance"]["outcome"] == "failed"
     assert refused["status"] == "failed"

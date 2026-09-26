@@ -101,14 +101,7 @@ class SampledSeriesReconstruction(StrictModule):
     ) -> None:
         if not isinstance(series, SampledSeries):
             raise TypeError("series must be a SampledSeries.")
-        if interpolation not in (
-            "nearest",
-            "previous",
-            "linear",
-            "cubic_hermite",
-            "interval_hold",
-        ):
-            raise ValueError("Unsupported sampled-series interpolation method.")
+        interpolation = parse(interpolation, SeriesInterpolation, "interpolation")
         if bounds not in ("clip", "error", "extrapolate", "fill"):
             raise ValueError("bounds must be 'clip', 'error', 'extrapolate', or 'fill'.")
         if nearest_tie_policy not in ("lower", "round_even", "upper"):

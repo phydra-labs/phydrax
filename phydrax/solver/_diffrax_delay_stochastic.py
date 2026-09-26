@@ -1026,7 +1026,10 @@ def _solve_diffrax_delay_stochastic(
         history_bytes = None
     native_times = native.ts
     native_values = native.ys
-    assert native_times is not None and native_values is not None
+    if not (native_times is not None and native_values is not None):
+        raise RuntimeError(
+            "Internal invariant failed: native_times is not None and native_values is not None."
+        )
     native_states = state_adapter.unpack_values(
         native_values["requested"],
         len(realization.sample_shape) + 1,

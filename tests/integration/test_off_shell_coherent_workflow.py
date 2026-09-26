@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -31,7 +34,7 @@ from phydrax.metrix import (
 )
 
 
-def _support(occupancy):
+def _support(occupancy: Any) -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 3, 2, 1)
     units = RelativisticUnitContract(
         scale,
@@ -95,7 +98,7 @@ def _support(occupancy):
     )
 
 
-def test_narrow_width_off_shell_observable_matches_coherent_on_shell_trace():
+def test_narrow_width_off_shell_observable_matches_coherent_on_shell_trace() -> None:
     target_occupancy = 0.3
     support = _support(target_occupancy)
     coherent_plan = CoherentTransportPlan(

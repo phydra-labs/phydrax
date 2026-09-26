@@ -1,12 +1,17 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _dense_condition(kernel, train_times, query_times, values, noise):
+def _dense_condition(
+    kernel: Any, train_times: Any, query_times: Any, values: Any, noise: Any
+) -> Any:
     observation = kernel.matrix(train_times[:, None], train_times[:, None])
     observation = observation + noise**2 * jnp.eye(train_times.size)
     cross = kernel.matrix(query_times[:, None], train_times[:, None])
@@ -25,7 +30,7 @@ def _dense_condition(kernel, train_times, query_times, values, noise):
         phx.kernels.SHOKernel(frequency=1.2, quality_factor=0.8, variance=1.3),
     ],
 )
-def test_bounded_temporal_components_match_dense_gp(kernel):
+def test_bounded_temporal_components_match_dense_gp(kernel: Any) -> None:
     train_times = jnp.asarray([0.0, 0.25, 0.8, 1.4])
     query_times = jnp.asarray([-0.2, 0.5, 1.9])
     values = jnp.asarray([0.4, -0.1, 0.7, 0.2])
@@ -42,7 +47,7 @@ def test_bounded_temporal_components_match_dense_gp(kernel):
     assert jnp.allclose(result.posterior_variance, expected_variance, atol=2e-4)
 
 
-def test_sums_repeated_rows_vector_noise_and_parallel_covariance():
+def test_sums_repeated_rows_vector_noise_and_parallel_covariance() -> None:
     kernel = phx.kernels.Matern32Kernel(
         length_scale=0.4
     ) + 0.3 * phx.kernels.Matern52Kernel(length_scale=0.9)
@@ -85,7 +90,7 @@ def test_sums_repeated_rows_vector_noise_and_parallel_covariance():
         )
 
 
-def test_time_derivative_and_state_capacity_guards():
+def test_time_derivative_and_state_capacity_guards() -> None:
     design = phx.uq.StateSpaceGaussianProcessDesign(
         jnp.asarray([0.0, 0.4]),
         jnp.asarray([0.2]),
@@ -106,7 +111,7 @@ def test_time_derivative_and_state_capacity_guards():
         )
 
 
-def test_spatial_train_and_query_designs_match_dense_separable_gp():
+def test_spatial_train_and_query_designs_match_dense_separable_gp() -> None:
     temporal = phx.kernels.Matern32Kernel(length_scale=0.7)
     spatial = phx.kernels.SquaredExponentialKernel(length_scale=0.6)
     train_times = jnp.asarray([0.0, 0.3, 0.9])
@@ -114,7 +119,7 @@ def test_spatial_train_and_query_designs_match_dense_separable_gp():
     train_points = jnp.asarray([[0.1], [0.4], [0.8]])
     query_points = jnp.asarray([[0.3], [0.7]])
 
-    def spatial_design(points, name):
+    def spatial_design(points: Any, name: Any) -> Any:
         return phx.uq.FunctionalDesign(
             (
                 phx.uq.FunctionalObservationBlock(
@@ -134,7 +139,9 @@ def test_spatial_train_and_query_designs_match_dense_separable_gp():
     noise = jnp.asarray(0.05)
     result = phx.uq.fit_state_space_gaussian_process(plan, values, noise_scale=noise)
 
-    def joint(left_times, left_points, right_times, right_points):
+    def joint(
+        left_times: Any, left_points: Any, right_times: Any, right_points: Any
+    ) -> Any:
         return temporal.matrix(
             left_times[:, None], right_times[:, None]
         ) * spatial.matrix(left_points, right_points)
@@ -149,12 +156,14 @@ def test_spatial_train_and_query_designs_match_dense_separable_gp():
     assert jnp.allclose(result.posterior_variance, expected_variance, atol=2e-4)
 
 
-def test_carma_stability_and_supported_algebra_fail_closed():
+def test_carma_stability_and_supported_algebra_fail_closed() -> None:
+    # ty: ignore[invalid-argument-type]
     stable = phx.kernels.CARMAKernel([2.0, 1.0], [1.0], 0.5)
     assert jnp.all(
         jnp.isfinite(stable.matrix(jnp.asarray([0.0, 0.5]), jnp.asarray([0.0, 0.5])))
     )
     with pytest.raises(ValueError, match="stable"):
+        # ty: ignore[invalid-argument-type]
         phx.kernels.CARMAKernel([-1.0], [1.0], 1.0)
     design = phx.uq.StateSpaceGaussianProcessDesign(
         jnp.asarray([0.0]), jnp.asarray([0.5])

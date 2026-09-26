@@ -403,8 +403,14 @@ def solve_scalar_laplace_fem_bem_3d(
     double_layer = prepared.calderon.double_layer_potential(trace)
     single_layer = prepared.calderon.single_layer_potential(conormal)
     # Preparation admits only the Laplace Calderon kernel family.
-    assert isinstance(double_layer, LaplaceLayerPotential3D)
-    assert isinstance(single_layer, LaplaceLayerPotential3D)
+    if not (isinstance(double_layer, LaplaceLayerPotential3D)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(double_layer, LaplaceLayerPotential3D)."
+        )
+    if not (isinstance(single_layer, LaplaceLayerPotential3D)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(single_layer, LaplaceLayerPotential3D)."
+        )
     finite = (
         jnp.all(jnp.isfinite(interior))
         & jnp.all(jnp.isfinite(conormal))

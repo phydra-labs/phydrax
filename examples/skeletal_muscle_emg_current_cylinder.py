@@ -18,27 +18,40 @@ from phydrax.applications.skeletal_muscle.fibers import (
 )
 
 
-def main():
+def main() -> None:
     nodes = 7
     mask = jnp.zeros((1, 1, nodes), dtype="bool").at[0, 0, nodes // 2].set(True)
+    # ty: ignore[invalid-argument-type]
     stimulus = PrescribedFiberStimulusSchedule([0.0], [0.5], [150.0], mask)
     fiber = SkeletalFiberBundlePlan(
-        ("fiber-0",), nodes, [12.0], [0.05], stimulus
+        ("fiber-0",),
+        nodes,
+        # ty: ignore[invalid-argument-type]
+        [12.0],
+        # ty: ignore[invalid-argument-type]
+        [0.05],
+        stimulus,
     ).prepare()
     positions = jnp.zeros((1, nodes, 3)).at[..., 0].set(0.015)
     positions = positions.at[..., 2].set(jnp.linspace(-0.006, 0.006, nodes))
     current = PereiraBotelho2019FiberCurrentPlan(
         ("fiber-0",),
         positions,
+        # ty: ignore[invalid-argument-type]
         [25e-6],
         geometry_source_id="explicit-idealized-example-not-anatomy",
         geometry_license="CC0-1.0 manufactured numerical input",
     ).prepare(fiber)
     cylinder = Farina2004CylindricalConductorPlan(
+        # ty: ignore[invalid-argument-type]
         [0.03, 0.035, 0.04],
+        # ty: ignore[invalid-argument-type]
         [0.1, 0.5, 0.05, 1.0],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0], [0.0, 0.005]],
+        # ty: ignore[invalid-argument-type]
         [[0.002, 0.003], [0.002, 0.003]],
+        # ty: ignore[invalid-argument-type]
         [[1.0, -1.0]],
         ("contact-0", "contact-1"),
         ("bipolar",),

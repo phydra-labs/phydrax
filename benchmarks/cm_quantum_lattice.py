@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -45,7 +47,7 @@ from phydrax.tensor_network._quantum_lattice import (
 )
 
 
-def _model(mode_count: int):
+def _model(mode_count: int) -> Any:
     order = FermionModeOrder(tuple(f"m{index}" for index in range(mode_count)))
     spaces = tuple(LocalSpacePlan.fermion(label, label) for label in order.labels)
     create = np.asarray(((0.0, 0.0), (1.0, 0.0)))
@@ -77,7 +79,7 @@ def _model(mode_count: int):
     return order, specification, resources
 
 
-def benchmark_case(mode_count: int, repeats: int):
+def benchmark_case(mode_count: int, repeats: int) -> Any:
     (order, specification, resources), model_seconds = measure_host(
         lambda: _model(mode_count)
     )
@@ -175,7 +177,7 @@ def benchmark_case(mode_count: int, repeats: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--modes", nargs="+", type=int, default=(6, 10))
     parser.add_argument("--repeats", type=int, default=7)

@@ -8,7 +8,7 @@ from phydrax._physical import DimensionalScaleContract, RelativityScaleContract
 from phydrax.units import KILOGRAM
 
 
-def test_si_relativity_scale_round_trips_mass_and_quantum_quantities():
+def test_si_relativity_scale_round_trips_mass_and_quantum_quantities() -> None:
     scale = RelativityScaleContract.si()
 
     assert scale.gravitational_constant == Fraction(66_743, 10**15)
@@ -39,7 +39,7 @@ def test_si_relativity_scale_round_trips_mass_and_quantum_quantities():
     assert jnp.allclose(scale.entropy_to_area(entropies), areas, rtol=2e-6)
 
 
-def test_relativity_conversion_does_not_clip_or_repair_numeric_inputs():
+def test_relativity_conversion_does_not_clip_or_repair_numeric_inputs() -> None:
     scale = RelativityScaleContract.si()
     values = jnp.asarray([-1.0, jnp.nan])
 
@@ -49,7 +49,9 @@ def test_relativity_conversion_does_not_clip_or_repair_numeric_inputs():
     assert jnp.isnan(converted[1])
 
 
-def test_geometric_scale_sets_classical_constants_to_one_without_erasing_quantum_constants():
+def test_geometric_scale_sets_classical_constants_to_one_without_erasing_quantum_constants() -> (
+    None
+):
     scale = RelativityScaleContract.geometric(KILOGRAM)
 
     assert scale.gravitational_constant == 1
@@ -62,7 +64,7 @@ def test_geometric_scale_sets_classical_constants_to_one_without_erasing_quantum
     assert scale.entropy_unit == scale.boltzmann_constant_unit
 
 
-def test_relativity_scale_payload_is_content_addressed_and_tamper_evident():
+def test_relativity_scale_payload_is_content_addressed_and_tamper_evident() -> None:
     scale = RelativityScaleContract.si()
     restored = RelativityScaleContract.from_dict(scale.to_dict())
 
@@ -75,14 +77,18 @@ def test_relativity_scale_payload_is_content_addressed_and_tamper_evident():
         RelativityScaleContract.from_dict(payload)
 
 
-def test_relativity_scale_rejects_invalid_constants_and_requires_quantum_declaration_for_quantum_maps():
+def test_relativity_scale_rejects_invalid_constants_and_requires_quantum_declaration_for_quantum_maps() -> (
+    None
+):
     dimensional = DimensionalScaleContract.si()
     constants = ("6.67430e-11", 299_792_458, "1.054571817e-34", "1.380649e-23")
 
     for index, invalid in enumerate((0.0, -1.0, float("inf"), float("nan"))):
         values = list(constants)
+        # ty: ignore[invalid-assignment]
         values[index] = invalid
         with pytest.raises(ValueError, match="finite and positive"):
+            # ty: ignore[invalid-argument-type]
             RelativityScaleContract(dimensional, *values)
 
     classical = RelativityScaleContract(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -25,7 +28,7 @@ from phydrax.linalg._low_rank_updates import (
 la = phx.linalg
 
 
-def _positive_definite_properties():
+def _positive_definite_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -37,7 +40,7 @@ def _positive_definite_properties():
     )
 
 
-def _low_rank_data():
+def _low_rank_data() -> Any:
     base = jnp.diag(jnp.asarray([3.0, 4.0, 5.0]))
     left = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
     right = jnp.asarray([[0.5, 0.0], [0.0, 0.25], [0.1, 0.2]])
@@ -45,7 +48,7 @@ def _low_rank_data():
     return base, left, right, core
 
 
-def _status_policy(*, condition_limit=1e12, resources=None):
+def _status_policy(*, condition_limit: Any = 1e12, resources: Any = None) -> Any:
     return la.LowRankSolvePolicy(
         la.LinearSolvePolicy(la.DenseLU()),
         condition_limit=condition_limit,
@@ -55,7 +58,7 @@ def _status_policy(*, condition_limit=1e12, resources=None):
     )
 
 
-def test_base_plus_low_rank_operator_actions_match_its_dense_matrix():
+def test_base_plus_low_rank_operator_actions_match_its_dense_matrix() -> None:
     base, left, right, core = _low_rank_data()
     operator = la.BasePlusLowRankLinearOperator(
         la.DenseLinearOperator(base),
@@ -79,7 +82,7 @@ def test_base_plus_low_rank_operator_actions_match_its_dense_matrix():
     assert cost.operation_class == "base-plus-low-rank-action"
 
 
-def test_low_rank_solve_is_jittable_refreshable_and_supports_rhs_layouts():
+def test_low_rank_solve_is_jittable_refreshable_and_supports_rhs_layouts() -> None:
     base, left, right, core = _low_rank_data()
     operator = la.BasePlusLowRankLinearOperator(
         la.DenseLinearOperator(base, operator_id="woodbury-base"),
@@ -134,7 +137,7 @@ def test_low_rank_solve_is_jittable_refreshable_and_supports_rhs_layouts():
     )
 
 
-def test_low_rank_solve_uses_an_arbitrary_matrix_free_base():
+def test_low_rank_solve_uses_an_arbitrary_matrix_free_base() -> None:
     base, left, right, core = _low_rank_data()
     space = la.ArraySpace((3,), dtype=jnp.float64)
     base_operator = la.FunctionLinearOperator(
@@ -170,7 +173,7 @@ def test_low_rank_solve_uses_an_arbitrary_matrix_free_base():
     assert jnp.allclose(result.value, expected, rtol=1e-10, atol=1e-11)
 
 
-def test_low_rank_one_shot_derivative_matches_the_dense_solve_derivative():
+def test_low_rank_one_shot_derivative_matches_the_dense_solve_derivative() -> None:
     base, left, right, core = _low_rank_data()
     rhs = jnp.asarray([1.0, 3.0, 5.0])
     policy = la.LowRankSolvePolicy(
@@ -182,7 +185,7 @@ def test_low_rank_one_shot_derivative_matches_the_dense_solve_derivative():
         failure=la.FailurePolicy("status"),
     )
 
-    def specialized(candidate_core):
+    def specialized(candidate_core: Any) -> Any:
         operator = la.BasePlusLowRankLinearOperator(
             la.DenseLinearOperator(base),
             left,
@@ -191,7 +194,7 @@ def test_low_rank_one_shot_derivative_matches_the_dense_solve_derivative():
         )
         return jnp.sum(la.solve_low_rank(operator, rhs, policy).value)
 
-    def dense(candidate_core):
+    def dense(candidate_core: Any) -> Any:
         matrix = base + left @ candidate_core @ right.T
         return jnp.sum(jnp.linalg.solve(matrix, rhs))
 
@@ -201,7 +204,7 @@ def test_low_rank_one_shot_derivative_matches_the_dense_solve_derivative():
     assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-11)
 
 
-def test_low_rank_planning_requires_evidence_and_enforces_resource_bounds():
+def test_low_rank_planning_requires_evidence_and_enforces_resource_bounds() -> None:
     base, left, right, core = _low_rank_data()
     operator = la.BasePlusLowRankLinearOperator(
         la.DenseLinearOperator(base),
@@ -219,7 +222,7 @@ def test_low_rank_planning_requires_evidence_and_enforces_resource_bounds():
         )
 
 
-def test_low_rank_status_exposes_an_ill_conditioned_correction():
+def test_low_rank_status_exposes_an_ill_conditioned_correction() -> None:
     base, left, right, core = _low_rank_data()
     operator = la.BasePlusLowRankLinearOperator(
         la.DenseLinearOperator(base),
@@ -243,9 +246,9 @@ def test_low_rank_status_exposes_an_ill_conditioned_correction():
     ((False, 1), (False, 2), (True, 1), (True, 2)),
 )
 def test_low_rank_determinant_ratio_and_sequence_solve_match_dense_recomputation(
-    complex_data,
-    rank,
-):
+    complex_data: Any,
+    rank: Any,
+) -> None:
     base = jnp.asarray(
         [[3.0, 0.2, -0.1], [0.1, 2.5, 0.3], [0.0, -0.2, 4.0]],
         dtype=jnp.complex128 if complex_data else jnp.float64,
@@ -308,7 +311,9 @@ def test_low_rank_determinant_ratio_and_sequence_solve_match_dense_recomputation
 
 
 @pytest.mark.parametrize("route", ("row", "column"))
-def test_indexed_low_rank_updates_match_dense_without_retained_one_hot(route):
+def test_indexed_low_rank_updates_match_dense_without_retained_one_hot(
+    route: Any,
+) -> None:
     base = jnp.diag(jnp.asarray([2.0, 3.0, 4.0, 5.0]))
     indices = jnp.asarray([1, 3])
     sequence = prepare_low_rank_sequence(
@@ -345,7 +350,7 @@ def test_indexed_low_rank_updates_match_dense_without_retained_one_hot(route):
     )
 
 
-def test_skew_row_column_update_is_one_joint_rank_two_ratio():
+def test_skew_row_column_update_is_one_joint_rank_two_ratio() -> None:
     base = jnp.asarray(
         [
             [0.0, 1.2, -0.7, 0.3],
@@ -375,7 +380,7 @@ def test_skew_row_column_update_is_one_joint_rank_two_ratio():
     )
 
 
-def test_skew_row_column_pfaffian_ratio_reuses_native_solve_state():
+def test_skew_row_column_pfaffian_ratio_reuses_native_solve_state() -> None:
     base = jnp.asarray(
         [
             [0.0, 1.2, -0.7, 0.3],
@@ -412,7 +417,9 @@ def test_skew_row_column_pfaffian_ratio_reuses_native_solve_state():
     )
 
 
-def test_sequence_selection_composes_signed_logs_and_reuses_candidate_factorization():
+def test_sequence_selection_composes_signed_logs_and_reuses_candidate_factorization() -> (
+    None
+):
     base = jnp.diag(jnp.asarray([2.0, 3.0, 4.0]))
     sequence = prepare_low_rank_sequence(
         la.DenseLinearOperator(base),
@@ -464,7 +471,7 @@ def test_sequence_selection_composes_signed_logs_and_reuses_candidate_factorizat
     assert unchanged.accepted_count == composed.accepted_count
 
 
-def test_low_rank_proposal_cannot_cross_numeric_base_lineage():
+def test_low_rank_proposal_cannot_cross_numeric_base_lineage() -> None:
     first_base = jnp.diag(jnp.asarray([2.0, 3.0]))
     second_base = jnp.diag(jnp.asarray([4.0, 5.0]))
     first_sequence = prepare_low_rank_sequence(
@@ -494,7 +501,7 @@ def test_low_rank_proposal_cannot_cross_numeric_base_lineage():
     )
 
 
-def test_ill_conditioned_proposal_is_reported_and_not_accepted():
+def test_ill_conditioned_proposal_is_reported_and_not_accepted() -> None:
     base = jnp.eye(3)
     sequence = prepare_low_rank_sequence(
         la.DenseLinearOperator(base),
@@ -514,14 +521,14 @@ def test_ill_conditioned_proposal_is_reported_and_not_accepted():
     assert unchanged.active_rank == 0
 
 
-def test_low_rank_proposals_support_jit_vmap_refresh_and_explicit_rebase():
+def test_low_rank_proposals_support_jit_vmap_refresh_and_explicit_rebase() -> None:
     base = jnp.diag(jnp.asarray([2.0, 3.0, 4.0]))
     base_operator = la.DenseLinearOperator(base, operator_id="refreshable-sequence-base")
     sequence = prepare_low_rank_sequence(base_operator, 2, _status_policy())
     right = jnp.asarray([[0.2], [-0.1], [0.3]])
     left_batch = jnp.asarray([[[0.1], [0.0], [-0.2]], [[-0.2], [0.3], [0.1]]])
 
-    def ratio(left):
+    def ratio(left: Any) -> Any:
         return propose_low_rank_update(
             sequence,
             dense_low_rank_update(left, right),

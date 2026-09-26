@@ -28,7 +28,7 @@ class StructuredFlowBenchmarkRecord:
     smoke_successful: bool
 
 
-def _norm(value) -> float:
+def _norm(value: Any) -> float:
     return float(jnp.linalg.norm(jnp.asarray(value)))
 
 
@@ -374,6 +374,7 @@ def run_structured_flow_benchmark(
             axis=-1,
         )
     )
+    # ty: ignore[invalid-argument-type]
     sbp_rate, sbp_diagnostics = compiled.residual_with_diagnostics(0.0, sbp_state)
     conservation = jnp.max(
         jnp.abs(jnp.sum(sbp.quadrature_weights[..., None] * sbp_rate, axis=0))
@@ -388,6 +389,7 @@ def run_structured_flow_benchmark(
     sbp_finite = bool(
         jnp.all(jnp.isfinite(sbp_rate))
         & jnp.isfinite(conservation)
+        # ty: ignore[invalid-argument-type, unresolved-attribute]
         & jnp.isfinite(sbp_diagnostics.convective_entropy_rate)
     )
     finite = (
@@ -421,7 +423,9 @@ def run_structured_flow_benchmark(
             "compilation_id": compiled.compilation_id,
             "raw_invariants": {
                 "conservation_defect": float(conservation),
+                # ty: ignore[invalid-argument-type, unresolved-attribute]
                 "entropy_defect": float(jnp.abs(sbp_diagnostics.convective_entropy_rate)),
+                # ty: ignore[unresolved-attribute]
                 "pair_count": int(compiled.dynamics.report.pair_counts[0]),
                 "finite": sbp_finite,
             },

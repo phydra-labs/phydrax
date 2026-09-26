@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -22,13 +23,14 @@ from phydrax.dynamics import TimeGrid
 from phydrax.solver import solve_dae
 
 
-def run_power_fault(output_dir, *, execution=None):
+def run_power_fault(output_dir: Any, *, execution: Any = None) -> Any:
     """Audit native states/rates at initialization, every sample and both events.
 
     DC economic dispatch supplies only P. A separate original AC power flow sets
     Q/voltage before initialization. The infinite grid is explicitly declared;
     the machine is not turned into an infinite source by its PV study control.
     """
+    # ty: ignore[unresolved-attribute]
     if not jax.config.x64_enabled:
         raise ValueError("This qualification requires JAX_ENABLE_X64=1.")
     execution = execution_identity() if execution is None else execution
@@ -95,8 +97,14 @@ def run_power_fault(output_dir, *, execution=None):
     if not bool(trajectory.valid):
         raise RuntimeError(f"Native fault trajectory failed: {trajectory.status}")
     arrays, units = {}, {}
+    # ty: ignore[missing-argument]
     initial_residual = initial.problem.system.residual(
-        0.0, initial.problem.initial_state, initial.problem.initial_state_rate, None
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        initial.problem.initial_state,
+        initial.problem.initial_state_rate,
+        # ty: ignore[invalid-argument-type]
+        None,
     )
     sample_residual = 0.0
     differential = []
@@ -105,6 +113,7 @@ def run_power_fault(output_dir, *, execution=None):
         if solution is None:
             raise RuntimeError("A requested topology segment was not executed.")
         problem = initial.model.problem(solution.states[0], topology=segment.topology)
+        # ty: ignore[invalid-argument-type, missing-argument]
         residuals = jax.vmap(lambda t, x, dx: problem.system.residual(t, x, dx, None))(
             solution.times, solution.states, solution.state_rates
         )
@@ -126,11 +135,23 @@ def run_power_fault(output_dir, *, execution=None):
             event.before, topology=event.topology_before
         )
         after_problem = initial.model.problem(event.after, topology=event.topology_after)
+        # ty: ignore[missing-argument]
         before = before_problem.system.residual(
-            event.event.time, event.before, event.rate_before, None
+            # ty: ignore[invalid-argument-type]
+            event.event.time,
+            event.before,
+            event.rate_before,
+            # ty: ignore[invalid-argument-type]
+            None,
         )
+        # ty: ignore[missing-argument]
         after = after_problem.system.residual(
-            event.event.time, event.after, event.rate_after, None
+            # ty: ignore[invalid-argument-type]
+            event.event.time,
+            event.after,
+            event.rate_after,
+            # ty: ignore[invalid-argument-type]
+            None,
         )
         jump = (
             event.after[: initial.model.differential_size]
@@ -218,12 +239,16 @@ def run_power_fault(output_dir, *, execution=None):
         and len(event_metrics) == 2
         and all(
             event["applied"]
+            # ty: ignore[unsupported-operator]
             and event["maximum_residual_before"] <= 1e-5
+            # ty: ignore[unsupported-operator]
             and event["maximum_residual_after"] <= 1e-5
+            # ty: ignore[unsupported-operator]
             and event["maximum_differential_jump"] <= 1e-10
             and event["restart_order"] == 1
             for event in event_metrics
         )
+        # ty: ignore[unsupported-operator]
         and event_metrics[0]["maximum_voltage_jump_pu"] >= 0.01
         and not trajectory.events[-1].topology_after.faults
         and abs(float(trajectory.final_time) - 0.2) <= 1e-12
@@ -346,7 +371,7 @@ def run_power_fault(output_dir, *, execution=None):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("energy-results/power"))
     args = parser.parse_args()

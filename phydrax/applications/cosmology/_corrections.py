@@ -15,6 +15,7 @@ from ..._differentiation import DerivativeContract, DerivativeRoute, DerivativeS
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._products import (
     CosmologyProductProvenance,
     MatterPowerDescriptor,
@@ -54,6 +55,10 @@ class CorrectionModelCard(StrictModule, NonTrainableState):
         expected_error: str,
         license_id: str,
     ) -> None:
+        denominator_stage = parse(
+            denominator_stage, MatterPowerStage, "denominator_stage"
+        )
+        output_stage = parse(output_stage, MatterPowerStage, "output_stage")
         strings = tuple(
             str(value).strip()
             for value in (
@@ -69,11 +74,6 @@ class CorrectionModelCard(StrictModule, NonTrainableState):
         )
         if any(not value for value in strings):
             raise ValueError("Correction model-card strings must be non-empty.")
-        if denominator_stage not in ("linear", "nonlinear") or output_stage not in (
-            "linear",
-            "nonlinear",
-        ):
-            raise ValueError("Correction stages must be linear or nonlinear.")
         a_min, a_max = (float(value) for value in scale_factor_domain)
         k_min, k_max = (float(value) for value in wavenumber_domain)
         if (

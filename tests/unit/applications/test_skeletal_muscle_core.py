@@ -81,7 +81,7 @@ EXPECTED_QUANTITIES = {
 }
 
 
-def test_skeletal_quantities_are_exact_complete_and_immutable():
+def test_skeletal_quantities_are_exact_complete_and_immutable() -> None:
     assert EXPECTED_QUANTITIES == set(SKELETAL_MUSCLE_QUANTITIES)
     assert len(
         {value.quantity_id for value in SKELETAL_MUSCLE_QUANTITIES.values()}
@@ -91,6 +91,7 @@ def test_skeletal_quantities_are_exact_complete_and_immutable():
         assert quantity.from_si(quantity.to_si(Fraction(13, 7))) == Fraction(13, 7)
 
     with pytest.raises(FrozenInstanceError):
+        # ty: ignore[invalid-assignment]
         skeletal_muscle_quantity("time").name = "changed"
     with pytest.raises(KeyError):
         skeletal_muscle_quantity("unknown")
@@ -108,7 +109,7 @@ def test_skeletal_quantities_are_exact_complete_and_immutable():
     assert skeletal_muscle_quantity("spindle_afferent_rate").to_si(1.0) == 1.0
 
 
-def test_skeletal_quantity_identity_is_domain_and_metadata_sensitive():
+def test_skeletal_quantity_identity_is_domain_and_metadata_sensitive() -> None:
     baseline = SkeletalMuscleQuantitySpec(
         "drive",
         "dimensionless",

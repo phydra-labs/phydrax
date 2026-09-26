@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +14,7 @@ import phydrax as phx
 from phydrax.discretization import iga
 
 
-def test_isogeometric_poisson_exact_quadratic_solution():
+def test_isogeometric_poisson_exact_quadratic_solution() -> None:
     degree = 2
     grid = iga.BSplineGrid.open_uniform(
         degree,
@@ -72,7 +74,7 @@ def test_isogeometric_poisson_exact_quadratic_solution():
     np.testing.assert_allclose(residual, 0.0, rtol=1e-11, atol=1e-12)
 
 
-def test_isogeometric_tensor_diffusion_uses_prepared_capability():
+def test_isogeometric_tensor_diffusion_uses_prepared_capability() -> None:
     grid = iga.BSplineGrid.open_uniform(2, 1, interval=(0.0, 1.0))
     coordinates = grid.greville_abscissae
     xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
@@ -109,6 +111,7 @@ def test_isogeometric_tensor_diffusion_uses_prepared_capability():
         execution_policy=policy,
     )
     state = jnp.linspace(-0.4, 0.7, scalar.state_space.zeros().size).reshape(
+        # ty: ignore[unresolved-attribute]
         scalar.state_space.shape
     )
 
@@ -120,7 +123,7 @@ def test_isogeometric_tensor_diffusion_uses_prepared_capability():
     )
 
 
-def test_isogeometric_natural_load_uses_physical_boundary_measure():
+def test_isogeometric_natural_load_uses_physical_boundary_measure() -> None:
     grid = iga.BSplineGrid.open_uniform(2, 1, interval=(0.0, 1.0))
     coordinates = grid.greville_abscissae
     xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
@@ -151,7 +154,7 @@ def test_isogeometric_natural_load_uses_physical_boundary_measure():
 
     np.testing.assert_allclose(jnp.sum(residual), -4.0, rtol=1e-12, atol=1e-12)
 
-    def boundary_density(fields, geometry, context):
+    def boundary_density(fields: Any, geometry: Any, context: Any) -> Any:
         del context
         if geometry.normal is None:
             raise ValueError("Prepared boundary functional requires normals.")
@@ -196,7 +199,7 @@ def test_isogeometric_natural_load_uses_physical_boundary_measure():
     )
 
 
-def test_isogeometric_functional_flattens_basis_coefficients():
+def test_isogeometric_functional_flattens_basis_coefficients() -> None:
     grid = iga.BSplineGrid.open_uniform(2, 1, interval=(0.0, 1.0))
     coordinates = grid.greville_abscissae
     xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")

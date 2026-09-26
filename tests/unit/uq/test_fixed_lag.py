@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0, 1.5]),
         jnp.asarray([[0.5], [1.0], [1.5]]),
@@ -43,7 +45,7 @@ def _problem():
     )
 
 
-def test_full_lag_kalman_smoother_matches_batch_rts_and_zero_lag_filter():
+def test_full_lag_kalman_smoother_matches_batch_rts_and_zero_lag_filter() -> None:
     filtered = phx.uq.kalman_filter(_problem())
     zero = phx.uq.fixed_lag_kalman_smoother(filtered, 0)
     full = phx.uq.fixed_lag_kalman_smoother(filtered, 10)
@@ -57,7 +59,7 @@ def test_full_lag_kalman_smoother_matches_batch_rts_and_zero_lag_filter():
     assert jnp.all(full.valid)
 
 
-def test_particle_fixed_lag_weights_are_normalized_and_trace_genealogy():
+def test_particle_fixed_lag_weights_are_normalized_and_trace_genealogy() -> None:
     filtered = phx.uq.bootstrap_particle_filter(
         jr.key(9),
         _problem(),

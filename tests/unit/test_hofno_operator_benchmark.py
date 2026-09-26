@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -20,7 +22,7 @@ class _ComplexParameters(eqx.Module, phx.ParameterOwner):
     real_bias: jax.Array
 
 
-def _collocation_poisson_solution(source):
+def _collocation_poisson_solution(source: Any) -> Any:
     values = np.asarray(source)
     size = values.shape[-1]
     forcing = values**2 - np.mean(values**2, axis=(-2, -1), keepdims=True)
@@ -34,7 +36,7 @@ def _collocation_poisson_solution(source):
     return np.fft.ifft2(solution_hat, axes=(-2, -1)).real
 
 
-def test_benchmark_parameter_count_uses_real_degrees_of_freedom():
+def test_benchmark_parameter_count_uses_real_degrees_of_freedom() -> None:
     model = _ComplexParameters(
         weight=jnp.ones((2, 3), dtype=jnp.complex128),
         real_bias=jnp.ones((4,), dtype=jnp.float64),
@@ -43,7 +45,7 @@ def test_benchmark_parameter_count_uses_real_degrees_of_freedom():
     assert parameter_count(model) == 16
 
 
-def test_polynomial_poisson_targets_are_alias_free_reference_projections():
+def test_polynomial_poisson_targets_are_alias_free_reference_projections() -> None:
     scenario = polynomial_poisson_scenario(
         resolution=8,
         num_cases=3,
@@ -76,7 +78,7 @@ def test_polynomial_poisson_targets_are_alias_free_reference_projections():
     )
 
 
-def test_controlled_hofno_candidates_train_on_corrected_scenario():
+def test_controlled_hofno_candidates_train_on_corrected_scenario() -> None:
     scenario = polynomial_poisson_scenario(
         resolution=8,
         num_cases=2,

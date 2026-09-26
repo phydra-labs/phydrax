@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -14,7 +15,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _elapsed(callable_, repetitions: int = 10) -> float:
+def _elapsed(callable_: Any, repetitions: int = 10) -> float:
     started = time.perf_counter()
     value = None
     for _ in range(repetitions):

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Any
 
 import pytest
 
@@ -32,7 +33,7 @@ from tools._commercial_qualification import (
 )
 
 
-def _request(capability, definition):
+def _request(capability: Any, definition: Any) -> Any:
     support = SupportTuple(
         capability,
         {"route": definition.route, "method": f"{definition.route}-test-method"},
@@ -80,7 +81,7 @@ def _request(capability, definition):
     }
 
 
-def _serialized_request(request):
+def _serialized_request(request: Any) -> Any:
     result = dict(request)
     result["support_tuple"] = request["support_tuple"].to_record()
     result["support_dependency"] = request["support_dependency"].to_record()
@@ -88,11 +89,11 @@ def _serialized_request(request):
     return result
 
 
-def _gate(artifact, category, name):
+def _gate(artifact: Any, category: Any, name: Any) -> Any:
     return next(value for value in artifact["gates"][category] if value["name"] == name)
 
 
-def test_route_inventories_cover_each_commercial_qualification_surface():
+def test_route_inventories_cover_each_commercial_qualification_surface() -> None:
     assert set(incompressible.ROUTES) == {
         "weighted-pressure",
         "open-pressure",
@@ -152,8 +153,8 @@ def test_route_inventories_cover_each_commercial_qualification_surface():
 
 
 def test_serialization_and_metric_identity_are_deterministic_and_content_derived(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     definition = incompressible.ROUTES["weighted-pressure"]
     request = _request(incompressible.CAPABILITY, definition)
     request["observations"]["weighted-residual"] = {
@@ -180,7 +181,9 @@ def test_serialization_and_metric_identity_are_deterministic_and_content_derived
     assert left["artifact_id"] == same["artifact_id"]
     assert left["artifact_id"] != changed["artifact_id"]
     assert (
+        # ty: ignore[not-subscriptable]
         left["metrics"]["weighted-residual"]["metric_id"]
+        # ty: ignore[not-subscriptable]
         != changed["metrics"]["weighted-residual"]["metric_id"]
     )
 
@@ -201,21 +204,27 @@ def test_serialization_and_metric_identity_are_deterministic_and_content_derived
     assert output_path.read_text().endswith("\n")
 
 
-def test_candidate_binds_exact_tuple_dependency_run_and_separate_evidence():
+def test_candidate_binds_exact_tuple_dependency_run_and_separate_evidence() -> None:
     definition = incompressible.ROUTES["mac-controller"]
     request = _request(incompressible.CAPABILITY, definition)
     artifact = incompressible.produce_candidate("mac-controller", request)
 
     verify_candidate_artifact(artifact)
+    # ty: ignore[invalid-argument-type]
     assert tuple(artifact["gates"]) == GATE_CATEGORIES
+    # ty: ignore[invalid-argument-type]
     assert tuple(artifact["qualification_evidence"]) == GATE_CATEGORIES
+    # ty: ignore[unresolved-attribute]
     assert {criterion["kind"] for criterion in artifact["criteria"].values()} == {
         "commercial-route-criterion"
     }
+    # ty: ignore[invalid-argument-type]
     dependency = SupportDependency.from_record(artifact["support_dependency"])
+    # ty: ignore[invalid-argument-type]
     run_spec = ResolvedRunSpec.from_record(artifact["resolved_run_spec"])
     for category in GATE_CATEGORIES:
         evidence = QualificationEvidence.from_record(
+            # ty: ignore[not-subscriptable]
             artifact["qualification_evidence"][category]
         )
         assert dependency.dependency_id in evidence.subject_ids
@@ -235,7 +244,7 @@ def test_candidate_binds_exact_tuple_dependency_run_and_separate_evidence():
         incompressible.produce_candidate("mac-controller", bad_request)
 
 
-def test_observed_failure_and_unavailable_evidence_remain_distinct():
+def test_observed_failure_and_unavailable_evidence_remain_distinct() -> None:
     definition = incompressible.ROUTES["open-pressure"]
     failed_request = _request(incompressible.CAPABILITY, definition)
     failed_request["observations"]["open-pressure-residual"] = False
@@ -255,7 +264,7 @@ def test_observed_failure_and_unavailable_evidence_remain_distinct():
     assert not inconclusive["failed_reasons"]
 
 
-def test_timing_cannot_be_scientific_evidence():
+def test_timing_cannot_be_scientific_evidence() -> None:
     with pytest.raises(ValueError, match="Timing measurements"):
         GateDefinition(
             "wall-clock-seconds",
@@ -275,15 +284,17 @@ def test_timing_cannot_be_scientific_evidence():
         incompressible.produce_candidate("weighted-pressure", request)
 
 
-def test_compressible_candidate_never_inherits_or_claims_dns_support():
+def test_compressible_candidate_never_inherits_or_claims_dns_support() -> None:
     definition = compressible.ROUTES["smooth-dgsem"]
     request = _request(compressible.CAPABILITY, definition)
     artifact = compressible.produce_candidate("smooth-dgsem", request)
 
     verify_candidate_artifact(artifact)
+    # ty: ignore[not-subscriptable]
     application = artifact["extra"]["application_route_evidence"]
     assert artifact["dns_claimed"] is False
     assert artifact["inherits_dns"] is False
+    # ty: ignore[not-subscriptable]
     assert artifact["extra"]["dns_support_inherited"] is False
     assert application["dns_claimed"] is False
     assert application["signed"] is False
@@ -303,8 +314,8 @@ def test_compressible_candidate_never_inherits_or_claims_dns_support():
     ),
 )
 def test_external_reference_requires_rights_and_quantification(
-    commercial, uncertainty, error, reason
-):
+    commercial: Any, uncertainty: Any, error: Any, reason: Any
+) -> None:
     payload = b"governed-reference"
     manifest = ReferenceArtifactManifest(
         "restricted-reference.bin",
@@ -333,7 +344,7 @@ def test_external_reference_requires_rights_and_quantification(
         )
 
 
-def test_absent_or_simulated_multidevice_and_provider_are_inconclusive():
+def test_absent_or_simulated_multidevice_and_provider_are_inconclusive() -> None:
     slab_definition = distributed.ROUTES["slab"]
     absent_request = _request(distributed.CAPABILITY, slab_definition)
     absent = distributed.produce_candidate("slab", absent_request)
@@ -364,7 +375,7 @@ def test_absent_or_simulated_multidevice_and_provider_are_inconclusive():
     assert _gate(cantera, "operational", "cantera-provider")["outcome"] == "inconclusive"
 
 
-def test_scale_candidate_binds_observed_and_forecast_resource_records():
+def test_scale_candidate_binds_observed_and_forecast_resource_records() -> None:
     definition = distributed.ROUTES["scale-resource"]
     request = _request(distributed.CAPABILITY, definition)
     context = request["evidence_context"]
@@ -402,6 +413,7 @@ def test_scale_candidate_binds_observed_and_forecast_resource_records():
 
     artifact = distributed.produce_candidate("scale-resource", request)
     performance = QualificationEvidence.from_record(
+        # ty: ignore[not-subscriptable]
         artifact["qualification_evidence"]["performance"]
     )
     assert artifact["status"] == "passed"
@@ -409,7 +421,7 @@ def test_scale_candidate_binds_observed_and_forecast_resource_records():
     assert performance.forecast_resource_record_ids == (forecast.record_id,)
 
 
-def test_profile_is_content_addressed_but_remains_unsigned_and_unreleased():
+def test_profile_is_content_addressed_but_remains_unsigned_and_unreleased() -> None:
     definition = reacting.ROUTES["statistics"]
     request = _request(reacting.CAPABILITY, definition)
     artifact = reacting.produce_candidate("statistics", request)
@@ -419,7 +431,9 @@ def test_profile_is_content_addressed_but_remains_unsigned_and_unreleased():
     assert candidate["signed"] is False
     assert candidate["release_ready"] is False
     assert "signature" not in candidate
+    # ty: ignore[not-subscriptable]
     assert candidate["profile"]["released"] is False
+    # ty: ignore[not-subscriptable]
     assert candidate["profile"]["release_evidence"] == []
     assert candidate["candidate_id"]
     assert "schema" not in artifact

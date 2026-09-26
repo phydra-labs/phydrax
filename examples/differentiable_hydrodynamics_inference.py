@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def build_problem(cell_count: int = 32, latent_rank: int = 6):
+def build_problem(cell_count: int = 32, latent_rank: int = 6) -> Any:
     bounds = jnp.asarray([[0.0], [1.0]])
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cell_count, periodic=True),),
@@ -36,6 +38,7 @@ def build_problem(cell_count: int = 32, latent_rank: int = 6):
         problem, discretization, method
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -48,7 +51,10 @@ def build_problem(cell_count: int = 32, latent_rank: int = 6):
     )
 
     fd_axis = phx.discretization.UniformAxisSpec(
-        cell_count, endpoint=False, periodic=True
+        cell_count,
+        endpoint=False,
+        periodic=True,
+        # ty: ignore[invalid-argument-type]
     ).materialize(0.0, 1.0)
     finite_difference = phx.discretization.periodic_finite_difference(
         phx.discretization.PreparedTensorGrid((fd_axis,))
@@ -59,7 +65,7 @@ def build_problem(cell_count: int = 32, latent_rank: int = 6):
         rank=latent_rank,
     )
 
-    def initial_state(latent):
+    def initial_state(latent: Any) -> Any:
         fluctuation = basis.diffusion_matrix @ latent
         density = jnp.exp(0.02 * fluctuation)
         primitive = jnp.stack(
@@ -67,7 +73,7 @@ def build_problem(cell_count: int = 32, latent_rank: int = 6):
         )
         return system.primitive_to_conserved(primitive)
 
-    def predict(latent):
+    def predict(latent: Any) -> Any:
         conservative = initial_state(latent)
         state = runtime.initialize_state(
             conservative,

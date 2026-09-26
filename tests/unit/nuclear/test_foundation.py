@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 import numpy as np
 import pytest
@@ -8,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def _reference(payload: bytes, name: str = "fixture"):
+def _reference(payload: bytes, name: str = "fixture") -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -26,7 +27,7 @@ def _reference(payload: bytes, name: str = "fixture"):
     )
 
 
-def test_nuclide_identity_is_independent_of_evaluated_mass_data():
+def test_nuclide_identity_is_independent_of_evaluated_mass_data() -> None:
     deuterium = phx.nuclear.NuclideKey(1, 2)
     species = (phx.nuclear.NuclearSpeciesKey.from_nuclide(deuterium),)
     first = phx.nuclear.NuclearSpeciesTable(
@@ -42,7 +43,7 @@ def test_nuclide_identity_is_independent_of_evaluated_mass_data():
     assert int(first.prepare().charge_numbers[0]) == 1
 
 
-def test_nuclear_data_provenance_binds_processing_and_rights():
+def test_nuclear_data_provenance_binds_processing_and_rights() -> None:
     reference = _reference(b"evaluated")
     raw = phx.nuclear.NuclearDataProvenance(
         reference,
@@ -77,7 +78,7 @@ def test_nuclear_data_provenance_binds_processing_and_rights():
         )
 
 
-def test_energy_groups_and_composition_preserve_physical_semantics():
+def test_energy_groups_and_composition_preserve_physical_semantics() -> None:
     groups = phx.nuclear.EnergyGroupStructure(
         np.asarray([0.0, 1.0, 14.0]),
         phx.units.MEGAELECTRONVOLT,
@@ -117,7 +118,7 @@ def test_energy_groups_and_composition_preserve_physical_semantics():
     assert restored.closure_residual < 1.0e-15
 
 
-def test_elemental_composition_is_normalized_immutable_and_material_owned():
+def test_elemental_composition_is_normalized_immutable_and_material_owned() -> None:
     water_elements = phx.nuclear.ElementalComposition(
         (1, 8),
         np.asarray([2.0 / 18.0, 16.0 / 18.0]),
@@ -158,7 +159,7 @@ def test_elemental_composition_is_normalized_immutable_and_material_owned():
         )
 
 
-def test_nuclear_material_state_preserves_nuclide_compositions():
+def test_nuclear_material_state_preserves_nuclide_compositions() -> None:
     composition = phx.nuclear.NuclideComposition(
         (phx.nuclear.NuclideKey(1, 1),),
         np.asarray([1.0]),
@@ -176,9 +177,12 @@ def test_nuclear_material_state_preserves_nuclide_compositions():
     assert state.state_id
 
 
-def test_multigroup_source_uses_shared_measurement_contracts():
+def test_multigroup_source_uses_shared_measurement_contracts() -> None:
     groups = phx.nuclear.EnergyGroupStructure(
-        [0.0, 1.0, 2.0], phx.units.MEGAELECTRONVOLT, source_id="groups"
+        # ty: ignore[invalid-argument-type]
+        [0.0, 1.0, 2.0],
+        phx.units.MEGAELECTRONVOLT,
+        source_id="groups",
     )
     support = phx.measurement.IndexSampleSupport(
         (2, 2), ("region", "energy_group"), frame_id="fixture-regions"
@@ -215,7 +219,7 @@ def test_multigroup_source_uses_shared_measurement_contracts():
     assert source.source_id == prepared.source_id
 
 
-def test_group_reaction_rate_contracts_the_energy_axis():
+def test_group_reaction_rate_contracts_the_energy_axis() -> None:
     cross_section = np.asarray([[1.0e-28, 2.0e-28], [3.0e-28, 4.0e-28]])
     flux = np.asarray([[1.0e18, 2.0e18], [3.0e18, 4.0e18]])
     expected = np.sum(cross_section * flux, axis=-1)

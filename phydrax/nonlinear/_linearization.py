@@ -268,7 +268,8 @@ def prepare_jacobian(
 
     if policy.mode == "sparse":
         sparse_plan = policy.sparse_plan
-        assert sparse_plan is not None
+        if not (sparse_plan is not None):
+            raise RuntimeError("Internal invariant failed: sparse_plan is not None.")
         sparse = (
             prepare_sparse_linearization(sparse_plan, state, args)
             if problem.trial_validity_function is None

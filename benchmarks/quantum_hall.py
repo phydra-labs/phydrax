@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -25,14 +26,14 @@ _ENERGY_SCALE = qh.QuantumHallEnergyScale(
 )
 
 
-def _elapsed(function):
+def _elapsed(function: Any) -> Any:
     start = perf_counter()
     value = function()
     jax.block_until_ready(value)
     return value, perf_counter() - start
 
 
-def lattice(mesh: int):
+def lattice(mesh: int) -> Any:
     plan = qh.HaldaneModelPlan(
         1.0,
         0.0,
@@ -54,7 +55,7 @@ def lattice(mesh: int):
     }
 
 
-def sphere(particles: int):
+def sphere(particles: int) -> Any:
     flux = 3 * (particles - 1)
     sphere_plan = qh.HaldaneSpherePlan(
         particles,
@@ -88,7 +89,7 @@ def sphere(particles: int):
     }
 
 
-def vmc(particles: int):
+def vmc(particles: int) -> Any:
     flux = 3 * (particles - 1)
     sphere_plan = qh.HaldaneSpherePlan(
         particles,
@@ -122,7 +123,7 @@ def vmc(particles: int):
     }
 
 
-def higher_landau(level: int):
+def higher_landau(level: int) -> Any:
     start = perf_counter()
     result = qh.planar_coulomb_pseudopotentials(
         level,
@@ -139,7 +140,7 @@ def higher_landau(level: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("route", choices=("higher", "lattice", "sphere", "vmc"))
     parser.add_argument("--size", type=int, default=5)

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -16,18 +18,18 @@ ISHIGAMI_FIRST_ORDER = jnp.asarray([0.3139, 0.4424, 0.0])
 ISHIGAMI_TOTAL_ORDER = jnp.asarray([0.5576, 0.4424, 0.2437])
 
 
-def _poisson_basis(x):
+def _poisson_basis(x: Any) -> Any:
     return 0.5 * x * (1.0 - x)
 
 
-def _uniform_exponential_moment(rate, lower: float, upper: float):
+def _uniform_exponential_moment(rate: Any, lower: float, upper: float) -> Any:
     width = upper - lower
     rate_width = rate * width
     regular = jnp.exp(-rate * lower) * (-jnp.expm1(-rate_width)) / rate_width
     return jnp.where(rate == 0.0, 1.0, regular)
 
 
-def test_inverse_poisson_likelihood_and_posterior_benchmark():
+def test_inverse_poisson_likelihood_and_posterior_benchmark() -> None:
     """Infer a Poisson source, then propagate its posterior to the solution field."""
     true_source = 4.0
     observation_scale = 0.02
@@ -45,7 +47,7 @@ def test_inverse_poisson_likelihood_and_posterior_benchmark():
     source_parameter = sensor_domain.Parameter(1.0)
 
     @sensor_domain.Function("data")
-    def sensor_basis(row):
+    def sensor_basis(row: Any) -> Any:
         return _poisson_basis(row[0])
 
     state = source_parameter * sensor_basis
@@ -108,7 +110,7 @@ def test_inverse_poisson_likelihood_and_posterior_benchmark():
     geometry = phx.domain.Interval1d(0.0, 1.0)
 
     @geometry.Function("x")
-    def posterior_solution(x):
+    def posterior_solution(x: Any) -> Any:
         return posterior_mean * _poisson_basis(x[0])
 
     residual = -phx.operators.laplacian(posterior_solution, var="x") - posterior_mean
@@ -129,7 +131,7 @@ def test_inverse_poisson_likelihood_and_posterior_benchmark():
     assert jnp.max(jnp.abs(jnp.asarray(residual(residual_points).data))) < 1e-6
 
 
-def test_uncertain_heat_joint_qmc_propagation_benchmark():
+def test_uncertain_heat_joint_qmc_propagation_benchmark() -> None:
     """Match analytic heat-solution moments under joint input uncertainty."""
     amplitude_mean = 1.0
     amplitude_scale = 0.15
@@ -150,7 +152,7 @@ def test_uncertain_heat_joint_qmc_propagation_benchmark():
         key=jr.key(20),
     )
 
-    def solve_heat(amplitude, diffusivity):
+    def solve_heat(amplitude: Any, diffusivity: Any) -> Any:
         return cx.AxisArray(
             amplitude * spatial * jnp.exp(-diffusivity * decay_rate),
             dims=("x", "t"),
@@ -181,7 +183,7 @@ def test_uncertain_heat_joint_qmc_propagation_benchmark():
         sampler="uniform",
     )
 
-    def terminal_midpoint(amplitude, diffusivity):
+    def terminal_midpoint(amplitude: Any, diffusivity: Any) -> Any:
         return amplitude * jnp.exp(-(jnp.pi**2) * diffusivity)
 
     exact_terminal_mean = amplitude_mean * _uniform_exponential_moment(
@@ -199,7 +201,7 @@ def test_uncertain_heat_joint_qmc_propagation_benchmark():
     reference_diffusivity = 0.08
 
     @domain.Function("x", "t")
-    def reference_solution(x_value, time_value):
+    def reference_solution(x_value: Any, time_value: Any) -> Any:
         return (
             reference_amplitude
             * jnp.sin(jnp.pi * x_value[0])
@@ -223,7 +225,7 @@ def test_uncertain_heat_joint_qmc_propagation_benchmark():
     assert jnp.max(jnp.abs(jnp.asarray(pde_residual(residual_points).data))) < 2e-6
 
 
-def test_functional_conformal_simultaneous_coverage_benchmark():
+def test_functional_conformal_simultaneous_coverage_benchmark() -> None:
     """Calibrate one score per trajectory and verify held-out simultaneous coverage."""
     num_cases = 12_000
     x = jnp.linspace(0.0, 1.0, 33)
@@ -283,10 +285,10 @@ def test_functional_conformal_simultaneous_coverage_benchmark():
     assert jnp.isfinite(phx.uq.interval_width(lower, upper))
 
 
-def test_ishigami_sobol_sensitivity_benchmark():
+def test_ishigami_sobol_sensitivity_benchmark() -> None:
     """Recover reference first- and total-order Ishigami sensitivity indices."""
 
-    def ishigami(x1, x2, x3):
+    def ishigami(x1: Any, x2: Any, x3: Any) -> Any:
         return jnp.sin(x1) + 7.0 * jnp.sin(x2) ** 2 + 0.1 * x3**4 * jnp.sin(x1)
 
     distributions = {

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -26,7 +29,7 @@ from phydrax.applications.supersymmetric_lattice import (
 jax.config.update("jax_enable_x64", True)
 
 
-def _site_gauge(shape):
+def _site_gauge(shape: Any) -> Any:
     diagonal = np.empty(shape + (2, 2), dtype=np.complex128)
     inverse = np.empty_like(diagonal)
     for site in np.ndindex(shape):
@@ -37,7 +40,7 @@ def _site_gauge(shape):
     return jnp.asarray(diagonal), jnp.asarray(inverse)
 
 
-def test_frontier_p_form_placement_and_complexified_gauge_invariance():
+def test_frontier_p_form_placement_and_complexified_gauge_invariance() -> None:
     two_form = PFormLatticePlan((2, 3, 4), 2)
     values = jnp.zeros(two_form.configuration_shape(2), dtype=jnp.complex128)
     field = ComplexifiedPFormField(two_form, values)
@@ -82,7 +85,7 @@ def test_frontier_p_form_placement_and_complexified_gauge_invariance():
     assert "reference-only" in gauge_evidence.claim
 
 
-def test_frontier_bfss_action_and_ward_pfaffian_controls_are_explicit():
+def test_frontier_bfss_action_and_ward_pfaffian_controls_are_explicit() -> None:
     prepared = prepare_bfss(BFSSPlan(4, 3, 2, coupling=1.2, time_spacing=0.1, mass=0.2))
     key = jax.random.key(91)
     keys = jax.random.split(key, 4)

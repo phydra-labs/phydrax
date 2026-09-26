@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -49,13 +51,13 @@ def _adapter() -> MeanFieldBSDEControlAdapter:
 
 
 def _facade(
-    particles,
+    particles: Any,
     *,
-    weights=None,
-    valid=None,
-    supplied_law_id="supplied-law",
-    flow_id="flow",
-):
+    weights: Any = None,
+    valid: Any = None,
+    supplied_law_id: Any = "supplied-law",
+    flow_id: Any = "flow",
+) -> Any:
     paths = _paths()
     law = EmpiricalMeanField(
         paths.times,
@@ -88,7 +90,7 @@ def _facade(
     return facade, paths, base, adapter, law
 
 
-def _solve(facade, paths):
+def _solve(facade: Any, paths: Any) -> Any:
     return solve_frozen_law_best_response(
         facade,
         paths,
@@ -98,7 +100,7 @@ def _solve(facade, paths):
     )
 
 
-def test_frozen_law_facade_preserves_problem_law_and_evidence_identity():
+def test_frozen_law_facade_preserves_problem_law_and_evidence_identity() -> None:
     facade, paths, base, adapter, law = _facade(
         [[[0.0], [0.0], [0.0]], [[2.0], [2.0], [2.0]]]
     )
@@ -122,7 +124,7 @@ def test_frozen_law_facade_preserves_problem_law_and_evidence_identity():
     assert jnp.array_equal(result.law_particle_validity, law.valid)
 
 
-def test_frozen_law_facade_delegates_bsde_and_hamiltonian_evaluation():
+def test_frozen_law_facade_delegates_bsde_and_hamiltonian_evaluation() -> None:
     facade, paths, base, _, _ = _facade([[[0.0], [0.0], [0.0]], [[2.0], [2.0], [2.0]]])
     value = lambda time, state: jnp.zeros((1,))
     control = lambda time, state: jnp.ones((1, 1))
@@ -158,7 +160,7 @@ def test_frozen_law_facade_delegates_bsde_and_hamiltonian_evaluation():
     assert result.valid
 
 
-def test_frozen_law_facade_fails_closed_for_invalid_and_degenerate_law_evidence():
+def test_frozen_law_facade_fails_closed_for_invalid_and_degenerate_law_evidence() -> None:
     particles = [[[0.0], [0.0], [0.0]], [[2.0], [2.0], [2.0]]]
     invalid, paths, _, _, _ = _facade(
         particles,
@@ -186,7 +188,7 @@ def test_frozen_law_facade_fails_closed_for_invalid_and_degenerate_law_evidence(
     assert not degenerate_result.valid
 
 
-def test_frozen_law_label_is_only_a_candidate_evaluation_certificate():
+def test_frozen_law_label_is_only_a_candidate_evaluation_certificate() -> None:
     facade, paths, _, _, _ = _facade([[[0.0], [0.0], [0.0]], [[2.0], [2.0], [2.0]]])
     result = _solve(facade, paths)
 
@@ -200,7 +202,9 @@ def test_frozen_law_label_is_only_a_candidate_evaluation_certificate():
     assert not result.finite_population_game_claimed
 
 
-def test_changing_only_supplied_frozen_law_changes_candidate_without_consistency_claim():
+def test_changing_only_supplied_frozen_law_changes_candidate_without_consistency_claim() -> (
+    None
+):
     low, paths, _, _, _ = _facade(
         [[[0.0], [0.0], [0.0]], [[0.0], [0.0], [0.0]]],
         supplied_law_id="law:low",
@@ -222,11 +226,11 @@ def test_changing_only_supplied_frozen_law_changes_candidate_without_consistency
     assert not high_result.law_consistency_evaluated
 
 
-def test_frozen_law_facade_rejects_unsupported_semantics_before_prediction():
+def test_frozen_law_facade_rejects_unsupported_semantics_before_prediction() -> None:
     facade, paths, base, _, _ = _facade([[[0.0], [0.0], [0.0]], [[2.0], [2.0], [2.0]]])
     calls = []
 
-    def predictor(time, state):
+    def predictor(time: Any, state: Any) -> Any:
         calls.append((time, state))
         return jnp.zeros((1,))
 

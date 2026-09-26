@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -21,19 +22,19 @@ from phydrax.solver._variational_monte_carlo import (
 )
 
 
-def _seconds(callable_, /):
+def _seconds(callable_: Any, /) -> Any:
     started = perf_counter()
     value = callable_()
     jax.block_until_ready(value)
     return value, perf_counter() - started
 
 
-def markov_benchmark(*, chains: int, draws: int, dimension: int):
+def markov_benchmark(*, chains: int, draws: int, dimension: int) -> Any:
     proposal = phx.sampling.GaussianRandomWalkProposal(0.2)
     kernel = phx.sampling.MetropolisHastings(proposal)
     initial = jnp.zeros((chains, dimension))
 
-    def log_target(value):
+    def log_target(value: Any) -> Any:
         return -0.5 * jnp.sum(value**2)
 
     target = phx.sampling.FullMarkovTarget(
@@ -44,7 +45,7 @@ def markov_benchmark(*, chains: int, draws: int, dimension: int):
     state = kernel.initialize(target, initial)
 
     @eqx.filter_jit
-    def run(current, key):
+    def run(current: Any, key: Any) -> Any:
         return phx.sampling.sample_markov(
             target,
             kernel,
@@ -73,7 +74,7 @@ def markov_benchmark(*, chains: int, draws: int, dimension: int):
     }
 
 
-def gram_benchmark(*, samples: int, parameters: int):
+def gram_benchmark(*, samples: int, parameters: int) -> Any:
     matrix = jr.normal(jr.key(2), (samples, parameters))
     weights = jax.nn.softmax(jr.normal(jr.key(3), (samples,)))
     direction = jr.normal(jr.key(4), (parameters,))
@@ -113,17 +114,17 @@ def gram_benchmark(*, samples: int, parameters: int):
 class _TableModel(eqx.Module):
     parameters: jax.Array
 
-    def __call__(self, configuration):
+    def __call__(self, configuration: Any) -> Any:
         bits = (configuration > 0).astype(jnp.int32)
         index = 2 * bits[0] + bits[1]
         return phx.operators.LogAmplitude(self.parameters[index], 1.0 + 0.0j)
 
 
-def _ising_operator():
-    def diagonal(configurations):
+def _ising_operator() -> Any:
+    def diagonal(configurations: Any) -> Any:
         return -configurations[..., 0] * configurations[..., 1]
 
-    def connections(configurations):
+    def connections(configurations: Any) -> Any:
         first = configurations.at[..., 0].multiply(-1)
         second = configurations.at[..., 1].multiply(-1)
         values = jnp.stack((first, second), axis=-2)
@@ -143,12 +144,12 @@ def _ising_operator():
     )
 
 
-def _spin_kernel():
-    def sample(key, current):
+def _spin_kernel() -> Any:
+    def sample(key: Any, current: Any) -> Any:
         index = jr.randint(key, (), 0, current.shape[0])
         return current.at[index].multiply(-1)
 
-    def log_prob(_proposed, current):
+    def log_prob(_proposed: Any, current: Any) -> Any:
         return -jnp.log(float(current.shape[0]))
 
     return phx.sampling.MetropolisHastings(
@@ -160,7 +161,7 @@ def _spin_kernel():
     )
 
 
-def vmc_benchmark(*, iterations: int, draws: int):
+def vmc_benchmark(*, iterations: int, draws: int) -> Any:
     problem = phx.solver.VariationalMonteCarloProblem(
         _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2])),
         _ising_operator(),
@@ -204,20 +205,20 @@ class _JastrowChain(eqx.Module):
     fields: jax.Array
     bonds: jax.Array
 
-    def __call__(self, configuration):
+    def __call__(self, configuration: Any) -> Any:
         log_abs = jnp.vdot(self.fields, configuration) + jnp.vdot(
             self.bonds, configuration * jnp.roll(configuration, -1)
         )
         return phx.operators.LogAmplitude(jnp.real(log_abs), 1.0 + 0.0j)
 
 
-def _spin_chain_operator(num_sites: int, *, coupling: float, field: float):
-    def diagonal(configurations):
+def _spin_chain_operator(num_sites: int, *, coupling: float, field: float) -> Any:
+    def diagonal(configurations: Any) -> Any:
         return -coupling * jnp.sum(
             configurations * jnp.roll(configurations, -1, axis=-1), axis=-1
         )
 
-    def connections(configurations):
+    def connections(configurations: Any) -> Any:
         values = jnp.stack(
             [configurations.at[..., site].multiply(-1) for site in range(num_sites)],
             axis=-2,
@@ -244,7 +245,7 @@ def spin_chain_benchmark(
     num_chains: int,
     draws: int,
     iterations: int,
-):
+) -> Any:
     parameter_key, chain_key, run_key = jr.split(jr.key(num_sites), 3)
     fields, bonds = jr.normal(parameter_key, (2, num_sites)) * 0.02
     initial = (
@@ -344,7 +345,7 @@ def spin_chain_benchmark(
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--case",

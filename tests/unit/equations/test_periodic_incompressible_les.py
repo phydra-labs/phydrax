@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -16,7 +18,7 @@ from phydrax.equations._periodic_les import (
 from phydrax.solver._etdrk import LESStabilityGuardedETDRKMethod
 
 
-def _space(count=6, *, dimension=3, lengths=None):
+def _space(count: Any = 6, *, dimension: Any = 3, lengths: Any = None) -> Any:
     lengths = (1.0,) * dimension if lengths is None else lengths
     names = ("x", "y", "z")[:dimension]
     return phx.discretization.TensorSpectralPlan(
@@ -28,7 +30,7 @@ def _space(count=6, *, dimension=3, lengths=None):
     )
 
 
-def _resolved_filter(axis_names=("x", "y", "z")):
+def _resolved_filter(axis_names: Any = ("x", "y", "z")) -> Any:
     return ResolvedLESFilter(
         "retained Fourier grid",
         family="sharp-fourier-projection",
@@ -41,7 +43,7 @@ def _resolved_filter(axis_names=("x", "y", "z")):
     )
 
 
-def _les_plan(space, coefficient=0.16, *, oversampling=1.5):
+def _les_plan(space: Any, coefficient: Any = 0.16, *, oversampling: Any = 1.5) -> Any:
     resolved_filter = _resolved_filter(tuple(space.plan.axis_names))
     provenance = LESParameterProvenance(
         resolved_filter,
@@ -63,7 +65,9 @@ def _les_plan(space, coefficient=0.16, *, oversampling=1.5):
     )
 
 
-def _compiled(space, coefficient=0.16, *, forcing=None, forcing_id=None):
+def _compiled(
+    space: Any, coefficient: Any = 0.16, *, forcing: Any = None, forcing_id: Any = None
+) -> Any:
     problem = phx.equations.IncompressibleFlowProblem(
         3,
         0.01,
@@ -81,7 +85,7 @@ def _compiled(space, coefficient=0.16, *, forcing=None, forcing_id=None):
     )
 
 
-def _velocity(space, amplitude=1.0):
+def _velocity(space: Any, amplitude: Any = 1.0) -> Any:
     x, y, z = jnp.meshgrid(
         space.axes[0].nodes,
         space.axes[1].nodes,
@@ -99,7 +103,7 @@ def _velocity(space, amplitude=1.0):
     )
 
 
-def test_periodic_filter_constructor_widths_live_modes_and_identity():
+def test_periodic_filter_constructor_widths_live_modes_and_identity() -> None:
     space = _space(count=6, lengths=(1.0, 2.0, 3.0))
     plan = PeriodicFourierGridFilterPlan(_resolved_filter())
     prepared = plan.prepare(space)
@@ -120,7 +124,7 @@ def test_periodic_filter_constructor_widths_live_modes_and_identity():
     assert prepared.plan.resolved_filter.filter_id == plan.resolved_filter.filter_id
 
 
-def test_periodic_filter_and_algebraic_les_refuse_unsupported_semantics():
+def test_periodic_filter_and_algebraic_les_refuse_unsupported_semantics() -> None:
     nonperiodic = ResolvedLESFilter(
         "volume grid",
         family="implicit-grid-volume",
@@ -162,7 +166,7 @@ def test_periodic_filter_and_algebraic_les_refuse_unsupported_semantics():
         )
 
 
-def test_periodic_algebraic_les_enforces_three_dimensional_provenance():
+def test_periodic_algebraic_les_enforces_three_dimensional_provenance() -> None:
     space_2d = _space(dimension=2)
     resolved_filter = _resolved_filter()
     provenance = LESParameterProvenance(
@@ -191,7 +195,7 @@ def test_periodic_algebraic_les_enforces_three_dimensional_provenance():
         )
 
 
-def test_periodic_les_stress_sign_modal_work_pressure_and_constraints():
+def test_periodic_les_stress_sign_modal_work_pressure_and_constraints() -> None:
     space = _space(count=6)
     compiled = _compiled(space)
     state = compiled.project_state(_velocity(space))
@@ -236,7 +240,7 @@ def test_periodic_les_stress_sign_modal_work_pressure_and_constraints():
     np.testing.assert_allclose(modal_work, -physical_transfer, atol=2e-9)
 
 
-def test_periodic_les_preserves_hermitian_nyquist_and_diagnostic_evidence():
+def test_periodic_les_preserves_hermitian_nyquist_and_diagnostic_evidence() -> None:
     space = _space(count=6)
     compiled = _compiled(space)
     state = compiled.project_state(_velocity(space))
@@ -265,7 +269,7 @@ def test_periodic_les_preserves_hermitian_nyquist_and_diagnostic_evidence():
     assert jnp.abs(diagnostics.energy_balance_defect) < 2e-9
 
 
-def test_periodic_les_zero_coefficient_matches_no_les_rhs_and_diagnostics():
+def test_periodic_les_zero_coefficient_matches_no_les_rhs_and_diagnostics() -> None:
     space = _space(count=6)
     method = phx.discretization.PseudospectralMethodPlan(
         dealiasing=phx.discretization.PaddingDealiasingPlan(2)
@@ -283,7 +287,9 @@ def test_periodic_les_zero_coefficient_matches_no_les_rhs_and_diagnostics():
         algebraic_les=_les_plan(space, 0.0),
     )
     state = baseline.project_state(_velocity(space))
+    # ty: ignore[invalid-argument-type]
     baseline_rate = baseline(0.0, state, None)
+    # ty: ignore[invalid-argument-type]
     les_rate = zero_les(0.0, state, None)
     les_stage = zero_les.algebraic_les_stage(state)
 
@@ -330,7 +336,7 @@ def test_periodic_les_zero_coefficient_matches_no_les_rhs_and_diagnostics():
     )
 
 
-def test_periodic_les_oversampling_is_inexact_and_distinct_from_grid_filter():
+def test_periodic_les_oversampling_is_inexact_and_distinct_from_grid_filter() -> None:
     space = _space(count=5)
     projector = phx.discretization.PeriodicLerayProjector(space)
     prepared = tuple(
@@ -368,7 +374,7 @@ def test_periodic_les_oversampling_is_inexact_and_distinct_from_grid_filter():
     assert errors[2] <= errors[0]
 
 
-def test_periodic_les_restriction_and_guard_reject_without_advancing():
+def test_periodic_les_restriction_and_guard_reject_without_advancing() -> None:
     space = _space(count=6)
     compiled = _compiled(space)
     state = compiled.project_state(_velocity(space))
@@ -385,6 +391,7 @@ def test_periodic_les_restriction_and_guard_reject_without_advancing():
     coordinates = space.real_coordinates(component_shape=(3,))
     guard = LESStabilityGuardedETDRKMethod(phx.solver.ETDRKMethod(2), safety_factor=0.5)
     with pytest.raises(TypeError, match="HermitianSpectralCoordinates"):
+        # ty: ignore[invalid-argument-type]
         guard.prepare(compiled, coordinates=None)
     mismatched = _space(count=6, lengths=(2.0, 2.0, 2.0)).real_coordinates(
         component_shape=(3,)
@@ -409,10 +416,10 @@ def test_periodic_les_restriction_and_guard_reject_without_advancing():
     np.testing.assert_array_equal(rejected.candidate_state, state)
 
 
-def test_periodic_les_guard_reuses_first_nonlinear_stage():
+def test_periodic_les_guard_reuses_first_nonlinear_stage() -> None:
     calls = []
 
-    def forcing(time, state, args):
+    def forcing(time: Any, state: Any, args: Any) -> Any:
         del time, args
         calls.append(None)
         return jnp.zeros_like(state)
@@ -446,7 +453,7 @@ def test_periodic_les_guard_reuses_first_nonlinear_stage():
     )
 
 
-def test_periodic_les_eager_jit_and_jvp_are_finite_and_consistent():
+def test_periodic_les_eager_jit_and_jvp_are_finite_and_consistent() -> None:
     space = _space(count=5)
     compiled = _compiled(space)
     state = compiled.project_state(_velocity(space))

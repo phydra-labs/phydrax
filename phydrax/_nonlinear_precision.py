@@ -121,7 +121,8 @@ def _residual_components(
 def _residual_precision(component: ComponentContract, /) -> ComponentPrecisionContract:
     precision = component.model_contract.precision
     # `_residual_components` rejects residual-defining components without one.
-    assert precision is not None
+    if not (precision is not None):
+        raise RuntimeError("Internal invariant failed: precision is not None.")
     return precision
 
 

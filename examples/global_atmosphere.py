@@ -6,6 +6,7 @@ JAX_ENABLE_X64=1 python examples/global_atmosphere.py --moist --steps 2
 """
 
 import argparse
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -24,7 +25,7 @@ from phydrax.applications.geophysics import HybridPressureCoordinate
 from phydrax.discretization import SphericalSpectralPlan
 
 
-def run(*, moist=False, interactive=False, steps=2):
+def run(*, moist: Any = False, interactive: Any = False, steps: Any = 2) -> Any:
     space = SphericalSpectralPlan(4, sampling="gl").prepare(radius=6.371e6)
     vertical = HybridPressureCoordinate([0.1, 0.05, 0.0], [0.0, 0.5, 1.0])
     processes = (
@@ -104,9 +105,11 @@ def run(*, moist=False, interactive=False, steps=2):
         if not interactive
         else float(
             jnp.mean(
+                # ty: ignore[unresolved-attribute]
                 processes.surface_physics.temperature(
                     continuation.state.surface_water,
                     continuation.state.surface_energy,
+                    # ty: ignore[invalid-argument-type]
                     processes.thermodynamics,
                 )
             )

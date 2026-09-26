@@ -4,7 +4,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_mean_attraction_preserves_empirical_mean_and_contracts_deviations():
+def test_mean_attraction_preserves_empirical_mean_and_contracts_deviations() -> None:
     initial = jnp.asarray([[-1.0], [0.0], [2.0], [3.0]])
     times = jnp.linspace(0.0, 1.0, 11)
     problem = phx.solver.InteractingParticleProblem(
@@ -27,7 +27,7 @@ def test_mean_attraction_preserves_empirical_mean_and_contracts_deviations():
     assert mean_field.num_particles == 4
 
 
-def test_idiosyncratic_particle_noise_replays_independent_driver_components():
+def test_idiosyncratic_particle_noise_replays_independent_driver_components() -> None:
     initial = jnp.asarray([[-0.3], [0.2], [0.7]])
     times = jnp.asarray([0.0, 0.25, 0.5])
     realization = phx.stochastic.WienerRealization(
@@ -68,7 +68,7 @@ def test_idiosyncratic_particle_noise_replays_independent_driver_components():
     assert trajectory.realizations == (realization,)
 
 
-def test_common_noise_translates_population_without_changing_pairwise_offsets():
+def test_common_noise_translates_population_without_changing_pairwise_offsets() -> None:
     initial = jnp.asarray([[-1.0], [0.5], [2.0]])
     times = jnp.linspace(0.0, 0.4, 5)
     common = phx.stochastic.WienerRealization(

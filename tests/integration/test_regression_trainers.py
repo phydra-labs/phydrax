@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -17,7 +20,7 @@ def _make_regression_solver(seed: int, *, scan: bool = False) -> FunctionalSolve
     )
 
     @geom.Function("x")
-    def target(x):
+    def target(x: Any) -> Any:
         return x[0] + 2.0 * x[1]
 
     xs = jnp.linspace(-1.0, 1.0, 6)
@@ -38,7 +41,7 @@ def _make_regression_solver(seed: int, *, scan: bool = False) -> FunctionalSolve
     return FunctionalSolver(functions={"u": u}, terms=[term])
 
 
-def test_regression_2d_optax():
+def test_regression_2d_optax() -> None:
     solver = _make_regression_solver(seed=0)
     init_loss = solver.loss(key=jr.key(0))
 
@@ -53,7 +56,7 @@ def test_regression_2d_optax():
     assert final_loss < init_loss
 
 
-def test_regression_2d_optax_scan():
+def test_regression_2d_optax_scan() -> None:
     solver = _make_regression_solver(seed=3, scan=True)
     init_loss = solver.loss(key=jr.key(0))
 
@@ -68,7 +71,7 @@ def test_regression_2d_optax_scan():
     assert final_loss < init_loss
 
 
-def test_regression_2d_native_evolution():
+def test_regression_2d_native_evolution() -> None:
     solver = _make_regression_solver(seed=1)
     init_loss = solver.loss(key=jr.key(0))
     algorithm = phx.optim.OpenEvolutionStrategy(
@@ -88,7 +91,7 @@ def test_regression_2d_native_evolution():
     assert final_loss < init_loss
 
 
-def test_regression_2d_optax_lbfgs_linesearch():
+def test_regression_2d_optax_lbfgs_linesearch() -> None:
     solver = _make_regression_solver(seed=2)
     init_loss = solver.loss(key=jr.key(0))
 

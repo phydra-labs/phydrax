@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -9,7 +12,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_parameter_space_bijectors_density_and_gradient_are_consistent():
+def test_parameter_space_bijectors_density_and_gradient_are_consistent() -> None:
     initial = {
         "bounded": jnp.asarray(0.0),
         "free": jnp.asarray([-0.25, 0.5]),
@@ -60,7 +63,7 @@ def test_parameter_space_bijectors_density_and_gradient_are_consistent():
     )
 
 
-def test_parameter_subspace_reconstructs_only_explicitly_selected_leaves():
+def test_parameter_subspace_reconstructs_only_explicitly_selected_leaves() -> None:
     tree = {
         "feature": {"weight": jnp.arange(6.0).reshape(2, 3)},
         "last": {"bias": jnp.asarray([0.5]), "weight": jnp.ones((3, 1))},
@@ -86,12 +89,12 @@ def test_parameter_subspace_reconstructs_only_explicitly_selected_leaves():
     assert jnp.array_equal(rebuilt["last"]["weight"], tree["last"]["weight"] + 2.0)
 
 
-def test_supervised_likelihood_exposes_fixed_observations_and_log_probabilities():
+def test_supervised_likelihood_exposes_fixed_observations_and_log_probabilities() -> None:
     rows = jnp.linspace(0.0, 1.0, 6)[:, None]
     domain = phx.domain.DatasetDomain(rows)
 
     @domain.Function("data")
-    def field(row):
+    def field(row: Any) -> Any:
         return 1.5 + 2.0 * row[0]
 
     targets = 1.5 + 2.0 * rows[:, 0]

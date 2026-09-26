@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -40,12 +41,12 @@ from phydrax.operators.quantum.lattice import (
 jax.config.update("jax_enable_x64", True)
 
 
-def _matrix(operator):
+def _matrix(operator: Any) -> Any:
     identity = jnp.eye(operator.source.size, dtype=jnp.complex128)
     return jnp.stack(tuple(operator.mv(column) for column in identity), axis=1)
 
 
-def _ring():
+def _ring() -> Any:
     site_count = 3
     spaces = tuple(LocalSpacePlan.spin(f"s{index}", 1) for index in range(site_count))
     raising = np.asarray(((0.0, 0.0), (1.0, 0.0)))

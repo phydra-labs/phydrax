@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 from io import BytesIO
+from typing import Any
 
 import h5py
 import jax.numpy as jnp
@@ -14,7 +16,7 @@ import pytest
 import phydrax as phx
 
 
-def _geometry_and_conditions():
+def _geometry_and_conditions() -> Any:
     detector = phx.applications.detector
     conditions = detector.DetectorConditions(
         magnetic_field=jnp.zeros(3),
@@ -47,7 +49,7 @@ def _geometry_and_conditions():
     return conditions, geometry
 
 
-def test_calorimeter_energy_ledger_keeps_dead_and_unknown_leakage_distinct():
+def test_calorimeter_energy_ledger_keeps_dead_and_unknown_leakage_distinct() -> None:
     detector = phx.applications.detector
     conditions, geometry = _geometry_and_conditions()
     hits = detector.SensitiveHitBank(
@@ -77,7 +79,7 @@ def test_calorimeter_energy_ledger_keeps_dead_and_unknown_leakage_distinct():
     assert jnp.isnan(truth.leakage_energy[0])
 
 
-def test_calorimeter_response_and_observables_are_conditioned_on_live_cells():
+def test_calorimeter_response_and_observables_are_conditioned_on_live_cells() -> None:
     detector = phx.applications.detector
     conditions, geometry = _geometry_and_conditions()
     hits = detector.SensitiveHitBank(
@@ -144,7 +146,7 @@ def test_calorimeter_response_and_observables_are_conditioned_on_live_cells():
         detector.calorimetry.reconstruct_calorimeter_clusters(clustering, response)
 
 
-def test_corpus_split_and_sparse_velocity_preserve_geometry_support():
+def test_corpus_split_and_sparse_velocity_preserve_geometry_support() -> None:
     detector = phx.applications.detector
     _, geometry = _geometry_and_conditions()
     payload = b"calorimeter-corpus"
@@ -195,7 +197,7 @@ def test_corpus_split_and_sparse_velocity_preserve_geometry_support():
     assert velocity[1] == 0.0
 
 
-def test_fixed_association_track_fit_recovers_observable_trajectory():
+def test_fixed_association_track_fit_recovers_observable_trajectory() -> None:
     detector = phx.applications.detector
     times = jnp.asarray([0.0, 1.0, 2.0])
     intercept = jnp.asarray([1.0, -2.0, 0.5])
@@ -240,7 +242,7 @@ def test_fixed_association_track_fit_recovers_observable_trajectory():
     np.testing.assert_allclose(particles.energies[0, 0], 4.0 * gamma, rtol=1e-12)
 
 
-def test_detector_conditions_identity_and_energy_loss_are_enforced():
+def test_detector_conditions_identity_and_energy_loss_are_enforced() -> None:
     detector = phx.applications.detector
     conditions, _ = _geometry_and_conditions()
     digits = detector.DigitBank(
@@ -298,7 +300,7 @@ def test_detector_conditions_identity_and_energy_loss_are_enforced():
     np.testing.assert_allclose(final_energy, 5.0 - distance, rtol=1e-6)
 
 
-def test_weighted_analysis_retains_negative_bins_and_nested_cutflow():
+def test_weighted_analysis_retains_negative_bins_and_nested_cutflow() -> None:
     analysis = phx.applications.collider_analysis
     weights = phx.particle_physics.EventWeightSet(
         jnp.asarray([[1.0], [-2.0], [0.5]]),
@@ -323,7 +325,7 @@ def test_weighted_analysis_retains_negative_bins_and_nested_cutflow():
     assert jnp.allclose(cutflow.sum_weights, jnp.asarray([-1.0, 1.0]))
 
 
-def test_calochallenge_profile_admits_pinned_resident_hdf5_arrays():
+def test_calochallenge_profile_admits_pinned_resident_hdf5_arrays() -> None:
     _, geometry = _geometry_and_conditions()
     stream = BytesIO()
     with h5py.File(stream, "w") as handle:
@@ -363,7 +365,7 @@ def test_calochallenge_profile_admits_pinned_resident_hdf5_arrays():
     assert jnp.allclose(imported.showers[:, 0], imported.incident_energies)
 
 
-def test_likelihood_and_hepdata_adapters_preserve_admitted_bin_semantics():
+def test_likelihood_and_hepdata_adapters_preserve_admitted_bin_semantics() -> None:
     analysis = phx.applications.collider_analysis
     likelihood = analysis.BinnedLikelihoodPlan(
         jnp.asarray([10.0, 20.0]),

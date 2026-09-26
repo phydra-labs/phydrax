@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from phydrax.geometry.simplicial import AffineSimplexMap
 
 
-def test_affine_tetrahedron_maps_values_gradients_and_orientation():
+def test_affine_tetrahedron_maps_values_gradients_and_orientation() -> None:
     vertices = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -32,7 +32,7 @@ def test_affine_tetrahedron_maps_values_gradients_and_orientation():
     assert jnp.allclose(simplex.evidence.measure, 4.0)
 
 
-def test_embedded_triangle_and_degenerate_simplex_report_geometry_evidence():
+def test_embedded_triangle_and_degenerate_simplex_report_geometry_evidence() -> None:
     triangle = AffineSimplexMap(
         jnp.asarray(
             (
@@ -53,7 +53,7 @@ def test_embedded_triangle_and_degenerate_simplex_report_geometry_evidence():
     assert not bool(degenerate.evidence.successful)
 
 
-def test_indexed_affine_simplex_operations_select_without_cross_product():
+def test_indexed_affine_simplex_operations_select_without_cross_product() -> None:
     vertices = jnp.asarray(
         (
             ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),

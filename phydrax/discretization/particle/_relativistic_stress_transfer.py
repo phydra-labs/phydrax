@@ -868,7 +868,10 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
         )
         target_measure = self.transfer.target_measure
         # deposit_content above already rejected non-materialized target measures.
-        assert isinstance(target_measure, DiscreteMeasure)
+        if not (isinstance(target_measure, DiscreteMeasure)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(target_measure, DiscreteMeasure)."
+            )
         coordinate_measure = target_measure.weights.reshape(
             self.transfer.target_shape
         ).astype(energy.dtype)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,21 +17,21 @@ import phydrax as phx
 cpfem = phx.applications.crystal_plasticity
 
 
-def _slip_xy():
+def _slip_xy() -> Any:
     return cpfem.CrystalSlipSystem(
         jnp.asarray((1.0, 0.0, 0.0)),
         jnp.asarray((0.0, 1.0, 0.0)),
     )
 
 
-def _slip_yz():
+def _slip_yz() -> Any:
     return cpfem.CrystalSlipSystem(
         jnp.asarray((0.0, 1.0, 0.0)),
         jnp.asarray((0.0, 0.0, 1.0)),
     )
 
 
-def _model(*systems, maximum_slip_increment=0.2):
+def _model(*systems: Any, maximum_slip_increment: Any = 0.2) -> Any:
     return cpfem.CrystalPlasticityModel(
         systems or (_slip_xy(),),
         cpfem.CrystalPlasticityParameters(
@@ -43,7 +46,7 @@ def _model(*systems, maximum_slip_increment=0.2):
     )
 
 
-def _rotation_z():
+def _rotation_z() -> Any:
     return jnp.asarray(
         (
             (0.0, -1.0, 0.0),
@@ -53,11 +56,11 @@ def _rotation_z():
     )
 
 
-def _simple_shear(amount=0.4):
+def _simple_shear(amount: Any = 0.4) -> Any:
     return jnp.eye(3).at[0, 1].set(amount)
 
 
-def _two_block_discretization():
+def _two_block_discretization() -> Any:
     points = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -95,7 +98,7 @@ def _two_block_discretization():
     ).prepare()
 
 
-def _one_block_two_cell_discretization():
+def _one_block_two_cell_discretization() -> Any:
     points = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -125,7 +128,7 @@ def _one_block_two_cell_discretization():
     ).prepare()
 
 
-def _two_phase_route(discretization, *, bound=0.2):
+def _two_phase_route(discretization: Any, *, bound: Any = 0.2) -> Any:
     one_slip = _model(_slip_xy(), maximum_slip_increment=bound)
     two_slip = _model(_slip_xy(), _slip_yz(), maximum_slip_increment=bound)
     return cpfem.CrystalPlasticityRoute(
@@ -138,7 +141,7 @@ def _two_phase_route(discretization, *, bound=0.2):
     )
 
 
-def test_state_initialization_and_packing_are_exact_and_slip_local():
+def test_state_initialization_and_packing_are_exact_and_slip_local() -> None:
     model = _model(_slip_xy(), _slip_yz())
     state = model.initial_state()
     packed = state.pack()
@@ -154,7 +157,7 @@ def test_state_initialization_and_packing_are_exact_and_slip_local():
         cpfem.CrystalPlasticityState.unpack(packed[:-1], model.slip_count)
 
 
-def test_slip_systems_and_orientations_require_finite_proper_geometry():
+def test_slip_systems_and_orientations_require_finite_proper_geometry() -> None:
     with pytest.raises(ValueError, match="nonzero"):
         cpfem.CrystalSlipSystem(jnp.zeros(3), jnp.asarray((0.0, 1.0, 0.0)))
     with pytest.raises(ValueError, match="orthogonal"):
@@ -178,7 +181,7 @@ def test_slip_systems_and_orientations_require_finite_proper_geometry():
     assert bool(rotated.accepted)
 
 
-def test_elastic_dilatation_preserves_plastic_volume_and_energy_stress_relation():
+def test_elastic_dilatation_preserves_plastic_volume_and_energy_stress_relation() -> None:
     model = _model()
     state = model.initial_state()
     deformation = 1.04 * jnp.eye(3)
@@ -199,7 +202,9 @@ def test_elastic_dilatation_preserves_plastic_volume_and_energy_stress_relation(
     )
 
 
-def test_active_slip_has_hardening_storage_and_nonnegative_incremental_dissipation():
+def test_active_slip_has_hardening_storage_and_nonnegative_incremental_dissipation() -> (
+    None
+):
     model = _model()
     state = model.initial_state()
     update = model.update(_simple_shear(), state, jnp.eye(3), 0.1)
@@ -218,7 +223,9 @@ def test_active_slip_has_hardening_storage_and_nonnegative_incremental_dissipati
     assert update.elastic_determinant > 0.0
 
 
-def test_implicit_root_has_one_finite_jvp_consistent_with_directional_difference():
+def test_implicit_root_has_one_finite_jvp_consistent_with_directional_difference() -> (
+    None
+):
     model = _model()
     state = model.initial_state()
     deformation = _simple_shear(0.3)
@@ -247,7 +254,7 @@ def test_implicit_root_has_one_finite_jvp_consistent_with_directional_difference
     )
 
 
-def test_update_vmaps_and_jits_dynamic_rotation_and_step_inputs():
+def test_update_vmaps_and_jits_dynamic_rotation_and_step_inputs() -> None:
     model = _model()
     state = model.initial_state()
     rotation = _rotation_z()
@@ -257,7 +264,7 @@ def test_update_vmaps_and_jits_dynamic_rotation_and_step_inputs():
     step_sizes = jnp.asarray((0.1, 0.1))
 
     @jax.jit
-    def batched_update(values, frames, steps):
+    def batched_update(values: Any, frames: Any, steps: Any) -> Any:
         return jax.vmap(
             lambda value, frame, step: model.update(value, state, frame, step).first_piola
         )(values, frames, steps)
@@ -271,7 +278,9 @@ def test_update_vmaps_and_jits_dynamic_rotation_and_step_inputs():
     )
 
 
-def test_spatial_objectivity_and_crystal_frame_covariance_hold_for_two_orientations():
+def test_spatial_objectivity_and_crystal_frame_covariance_hold_for_two_orientations() -> (
+    None
+):
     model = _model()
     state = model.initial_state()
     deformation = _simple_shear(0.35)
@@ -312,7 +321,7 @@ def test_spatial_objectivity_and_crystal_frame_covariance_hold_for_two_orientati
     )
 
 
-def test_multiblock_route_keeps_ragged_states_and_shared_routing():
+def test_multiblock_route_keeps_ragged_states_and_shared_routing() -> None:
     discretization = _two_block_discretization()
     route = _two_phase_route(discretization)
     transaction = route.initialize()
@@ -340,7 +349,7 @@ def test_multiblock_route_keeps_ragged_states_and_shared_routing():
     route.validate(auxiliary.trial_state)
 
 
-def test_form_residual_and_auxiliary_use_same_nonsymmetric_gradient():
+def test_form_residual_and_auxiliary_use_same_nonsymmetric_gradient() -> None:
     discretization = _two_block_discretization()
     route = _two_phase_route(discretization)
     transaction = route.initialize()
@@ -353,6 +362,7 @@ def test_form_residual_and_auxiliary_use_same_nonsymmetric_gradient():
     weights = jnp.full((1, quadrature_count), 1.0 / quadrature_count)
     test_gradients = jnp.zeros((1, quadrature_count, 1, 3))
     test_gradients = test_gradients.at[..., 1].set(1.0)
+    # ty: ignore[unresolved-attribute]
     local_residual = form.actions[0].kernel(
         (jnp.zeros((1, quadrature_count, 3)),),
         gradients,
@@ -379,6 +389,7 @@ def test_form_residual_and_auxiliary_use_same_nonsymmetric_gradient():
     displacement = (
         discretization.dof_maps[0].dof_coordinates @ (deformation - jnp.eye(3)).T
     )
+    # ty: ignore[call-non-callable]
     auxiliary = form.auxiliary_evaluator(displacement, None)
     trial = auxiliary.trial_state.state(route.site_ids[0]).trial
     np.testing.assert_allclose(
@@ -389,7 +400,7 @@ def test_form_residual_and_auxiliary_use_same_nonsymmetric_gradient():
     )
 
 
-def test_constrained_cpfem_auxiliary_uses_expanded_equilibrium_field():
+def test_constrained_cpfem_auxiliary_uses_expanded_equilibrium_field() -> None:
     discretization = _two_block_discretization()
     route = _two_phase_route(discretization)
     transaction = route.initialize()
@@ -413,10 +424,11 @@ def test_constrained_cpfem_auxiliary_uses_expanded_equilibrium_field():
     assert bool(auxiliary.valid)
     route.validate(auxiliary.trial_state)
     for site, shape in zip(route.site_ids, route.state_shapes, strict=True):
+        # ty: ignore[unresolved-attribute]
         assert auxiliary.trial_state.state(site).trial.shape == shape
 
 
-def test_route_supports_exact_texture_fields_with_two_orientations():
+def test_route_supports_exact_texture_fields_with_two_orientations() -> None:
     discretization = _one_block_two_cell_discretization()
     model = _model()
     quadrature_count = discretization.block_geometries[0][0].physical_weights.shape[1]
@@ -435,6 +447,7 @@ def test_route_supports_exact_texture_fields_with_two_orientations():
     form = cpfem.cpfem_equilibrium_form(discretization, "u", route, transaction, 0.1)
     displacement_gradient = _simple_shear(0.35) - jnp.eye(3)
     displacement = discretization.dof_maps[0].dof_coordinates @ displacement_gradient.T
+    # ty: ignore[call-non-callable]
     auxiliary = form.auxiliary_evaluator(displacement, None)
     trial = auxiliary.trial_state.state(route.site_ids[0]).trial
     assert bool(auxiliary.valid)
@@ -456,7 +469,7 @@ def test_route_supports_exact_texture_fields_with_two_orientations():
         )
 
 
-def test_global_rejection_requests_cutback_and_rolls_back_every_route():
+def test_global_rejection_requests_cutback_and_rolls_back_every_route() -> None:
     discretization = _two_block_discretization()
     route = _two_phase_route(discretization, bound=1.0e-6)
     transaction = route.initialize()
@@ -464,6 +477,7 @@ def test_global_rejection_requests_cutback_and_rolls_back_every_route():
     deformation = _simple_shear(0.4)
     displacement_gradient = deformation - jnp.eye(3)
     displacement = discretization.dof_maps[0].dof_coordinates @ displacement_gradient.T
+    # ty: ignore[call-non-callable]
     auxiliary = form.auxiliary_evaluator(displacement, None)
 
     assert bool(auxiliary.successful)
@@ -481,7 +495,7 @@ def test_global_rejection_requests_cutback_and_rolls_back_every_route():
         assert after.state_version == before.state_version
 
 
-def test_route_rejects_overlap_gap_and_foreign_checkpoint_or_layout():
+def test_route_rejects_overlap_gap_and_foreign_checkpoint_or_layout() -> None:
     discretization = _two_block_discretization()
     model = _model()
     with pytest.raises(ValueError, match="overlap"):
@@ -539,7 +553,7 @@ def test_route_rejects_overlap_gap_and_foreign_checkpoint_or_layout():
         route.restore(bad_checkpoint)
 
 
-def test_convergence_and_admissibility_are_distinct_cutback_decisions():
+def test_convergence_and_admissibility_are_distinct_cutback_decisions() -> None:
     model = _model(maximum_slip_increment=1.0e-6)
     update = model.update(_simple_shear(0.4), model.initial_state(), jnp.eye(3), 0.1)
 

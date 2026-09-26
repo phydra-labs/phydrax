@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -16,7 +18,7 @@ NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
 )
 
 
-def _cosmology_context():
+def _cosmology_context() -> Any:
     cosmology = phx.applications.cosmology
     scale = cosmology.CosmologyScaleContract(
         cosmology.CODE_COSMOLOGY_SCALE.length_unit,
@@ -38,7 +40,7 @@ def _cosmology_context():
     return scale, background, provenance
 
 
-def test_cosmology_scale_units_round_trip_and_reject_cross_reference_conversion():
+def test_cosmology_scale_units_round_trip_and_reject_cross_reference_conversion() -> None:
     cosmology = phx.applications.cosmology
     scale = cosmology.CODE_COSMOLOGY_SCALE
     assert cosmology.CosmologyScaleContract is phx.DimensionalScaleContract
@@ -64,6 +66,7 @@ def test_cosmology_scale_units_round_trip_and_reject_cross_reference_conversion(
     with pytest.raises(ValueError, match="shared reference system"):
         phx.units.conversion_factor(phx.units.METER, scale.length_unit)
     with pytest.raises(TypeError, match="UnitDefinition"):
+        # ty: ignore[invalid-argument-type]
         cosmology.CosmologyScaleContract("L", "M", "T")
     with pytest.raises(ValueError, match="length, mass, and time dimensions"):
         cosmology.CosmologyScaleContract(
@@ -79,7 +82,7 @@ def test_cosmology_scale_units_round_trip_and_reject_cross_reference_conversion(
         )
 
 
-def test_early_universe_and_boltzmann_closure():
+def test_early_universe_and_boltzmann_closure() -> None:
     cosmology = phx.applications.cosmology
     scale, background, provenance = _cosmology_context()
     relic = cosmology.RelicBackgroundPlan(1.0).evaluate(jnp.asarray([0.5, 1.0]))
@@ -105,7 +108,7 @@ def test_early_universe_and_boltzmann_closure():
     )
 
 
-def test_nonlinear_lensing_and_compact_object_closure():
+def test_nonlinear_lensing_and_compact_object_closure() -> None:
     cosmology = phx.applications.cosmology
     multiplicity = cosmology.HaloMassFunctionPlan().multiplicity(jnp.asarray([0.5, 1.0]))
     assert bool(jnp.all(multiplicity > 0.0))
@@ -130,13 +133,15 @@ def test_nonlinear_lensing_and_compact_object_closure():
 cosmology = phx.applications.cosmology
 
 
-def test_physical_dependency_projection_checks_only_shared_parameters():
+def test_physical_dependency_projection_checks_only_shared_parameters() -> None:
     first = cosmology.CosmologyPhysicalState(
+        # ty: ignore[invalid-argument-type]
         [70.0, 0.3, 2.1e-9],
         ("hubble_constant", "matter_density", "primordial_amplitude"),
         "scale",
     )
     second = cosmology.CosmologyPhysicalState(
+        # ty: ignore[invalid-argument-type]
         [70.0, 0.3, 3.0e-9],
         ("hubble_constant", "matter_density", "primordial_amplitude"),
         "scale",
@@ -160,7 +165,7 @@ def test_physical_dependency_projection_checks_only_shared_parameters():
     assert first.content_id() != second.content_id()
 
 
-def test_artifact_envelope_has_content_identity():
+def test_artifact_envelope_has_content_identity() -> None:
     artifact = cosmology.ScientificArtifactEnvelope(
         artifact_kind="fixture",
         content_digest="abc123",
@@ -174,7 +179,7 @@ def test_artifact_envelope_has_content_identity():
     assert artifact.artifact_id
 
 
-def test_product_contract_meet_keeps_owned_model_parameters():
+def test_product_contract_meet_keeps_owned_model_parameters() -> None:
     constant = phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT)
     combined = NATIVE_DIFFERENTIATION.meet(constant)
     assert combined.supported_surfaces == (phx.DerivativeSurface.MODEL_PARAMETER,)
@@ -182,7 +187,7 @@ def test_product_contract_meet_keeps_owned_model_parameters():
     assert combined.regularity is None
 
 
-def test_shared_observation_and_correlated_gaussian_are_differentiable():
+def test_shared_observation_and_correlated_gaussian_are_differentiable() -> None:
     source = cosmology.CoordinateLayout(("P0:k0", "P2:k0", "P4:k0"))
     target = cosmology.CoordinateLayout(("d0", "d1"))
     matrix = jnp.asarray([[1.0, 0.5, 0.0], [0.0, 0.25, 1.0]])
@@ -192,7 +197,7 @@ def test_shared_observation_and_correlated_gaussian_are_differentiable():
         jnp.asarray([2.0, 1.0]), observation, covariance
     )
 
-    def log_probability(amplitude):
+    def log_probability(amplitude: Any) -> Any:
         theory = cosmology.TheoryVector(
             amplitude * jnp.asarray([1.0, 2.0, 0.5]), source, "theory-content"
         )

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -19,7 +20,7 @@ from phydrax.discretization import (
 )
 
 
-def _material(activation):
+def _material(activation: Any) -> Any:
     fibers = continuum.UniformFiberArchitecturePlan("qualification-x-fibers").prepare(
         jnp.asarray((1.0, 0.0, 0.0))
     )
@@ -30,7 +31,7 @@ def _material(activation):
     )
 
 
-def qualify():
+def qualify() -> Any:
     material = _material(0.7)
     deformation = jnp.asarray(((1.03, 0.02, 0.0), (0.0, 0.99, 0.01), (0.0, 0.0, 0.981)))
     rate = jnp.asarray(((0.01, 0.002, 0.0), (0.0, -0.004, 0.0), (0.0, 0.0, -0.006)))
@@ -124,7 +125,7 @@ def qualify():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Qualify the source-complete skeletal GASAM continuum route."
     )

@@ -304,7 +304,8 @@ class RegionalDoseResult:
         if self.asset.field.values.shape != (len(targets),):
             raise ValueError("Regional dose values do not match target_region_ids.")
         metadata = self.asset.metadata
-        assert metadata is not None
+        if not (metadata is not None):
+            raise RuntimeError("Internal invariant failed: metadata is not None.")
         if (
             table != self.evidence.kernel_id
             or self.evidence.mode != "regional-s-value"
@@ -329,7 +330,8 @@ class RegionalDoseResult:
     @property
     def valid_mask(self) -> np.ndarray:
         mask = self.asset.field.valid_mask
-        assert mask is not None
+        if not (mask is not None):
+            raise RuntimeError("Internal invariant failed: mask is not None.")
         return mask
 
 
@@ -395,7 +397,8 @@ class RegionalSValuePlan:
             raise ValueError("Regional activity does not use the plan source support.")
         scale = float(conversion_factor(field_.quantity.unit, BECQUEREL_SECOND))
         valid_mask = field_.valid_mask
-        assert valid_mask is not None
+        if not (valid_mask is not None):
+            raise RuntimeError("Internal invariant failed: valid_mask is not None.")
         evaluation = self.prepare().evaluate(
             np.asarray(field_.values) * scale, valid_mask
         )
@@ -640,7 +643,8 @@ class SpatialDoseResult:
         if self.asset.field.uncertainty is not None:
             raise ValueError("Spatial dose uncertainty must not be fabricated.")
         metadata = self.asset.metadata
-        assert metadata is not None
+        if not (metadata is not None):
+            raise RuntimeError("Internal invariant failed: metadata is not None.")
         if (
             kernel != self.evidence.kernel_id
             or self.evidence.mode != "spatial-s-value"
@@ -665,7 +669,8 @@ class SpatialDoseResult:
     @property
     def valid_mask(self) -> np.ndarray:
         mask = self.asset.field.valid_mask
-        assert mask is not None
+        if not (mask is not None):
+            raise RuntimeError("Internal invariant failed: mask is not None.")
         return mask
 
 
@@ -731,7 +736,8 @@ class SpatialSValueConvolutionPlan:
         )
         prepared = self.prepare()
         valid_mask = field_.valid_mask
-        assert valid_mask is not None
+        if not (valid_mask is not None):
+            raise RuntimeError("Internal invariant failed: valid_mask is not None.")
         evaluation = prepared.evaluate(np.asarray(field_.values) * scale, valid_mask)
         values = np.asarray(evaluation.dose_gy)
         valid = np.asarray(evaluation.valid)

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -21,7 +23,7 @@ from benchmarks._runtime import capture_environment
 cosmology = phx.applications.cosmology
 
 
-def _particle_mesh(particles, grid_count):
+def _particle_mesh(particles: Any, grid_count: Any) -> Any:
     axes = tuple(
         phx.discretization.UniformCellAxisSpec(grid_count, periodic=True)
         for _ in range(3)
@@ -62,7 +64,7 @@ def _particle_mesh(particles, grid_count):
     return kdk, cosmology.CosmologicalParticleMeshPlan(kdk, gravity, (0.5, 0.51))
 
 
-def _case(particle_count: int, grid_count: int, repetitions: int):
+def _case(particle_count: int, grid_count: int, repetitions: int) -> Any:
     indices = jnp.arange(particle_count, dtype=jnp.float64)
     positions = jnp.stack(
         (
@@ -150,7 +152,7 @@ def _case(particle_count: int, grid_count: int, repetitions: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--particle-counts", nargs="+", type=int, default=[16, 32, 64])
     parser.add_argument("--grid-count", type=int, default=8)

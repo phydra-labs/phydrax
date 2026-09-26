@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_cpfem_identity_update_is_objective_and_admissible():
+def test_cpfem_identity_update_is_objective_and_admissible() -> None:
     cpfem = phx.applications.crystal_plasticity
     model = cpfem.CrystalPlasticityModel(
         (
@@ -26,7 +26,7 @@ def test_cpfem_identity_update_is_objective_and_admissible():
     assert jnp.allclose(jnp.linalg.det(result.state.plastic_deformation), 1.0)
 
 
-def test_contact_route_keys_persist_through_accepted_commit():
+def test_contact_route_keys_persist_through_accepted_commit() -> None:
     contact = phx.applications.contact
     collision = phx.discretization.contact
     source = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
@@ -103,7 +103,7 @@ def test_contact_route_keys_persist_through_accepted_commit():
     assert transaction.rollback() is accepted
 
 
-def test_diffuse_fracture_history_promotes_only_an_accepted_transaction():
+def test_diffuse_fracture_history_promotes_only_an_accepted_transaction() -> None:
     fracture = phx.applications.fracture
     history = fracture.PhaseFieldHistoryState(
         jnp.zeros((2, 1)),

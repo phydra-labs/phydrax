@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,7 +11,7 @@ import phydrax as phx
 class _Hydrogenic(eqx.Module):
     alpha: jax.Array = phx.parameter_field()
 
-    def __call__(self, electrons):
+    def __call__(self, electrons: Any) -> Any:
         radius = jnp.sqrt(jnp.sum(electrons[0] ** 2))
         return phx.operators.LogAmplitude(-self.alpha * radius)
 
@@ -17,7 +19,7 @@ class _Hydrogenic(eqx.Module):
 class _TwoScaleHydrogenic(eqx.Module):
     alpha: jax.Array = phx.parameter_field()
 
-    def __call__(self, electrons):
+    def __call__(self, electrons: Any) -> Any:
         radius = jnp.sqrt(jnp.sum(electrons[0] ** 2))
         return phx.operators.LogAmplitude(
             -self.alpha[0] * radius - self.alpha[1] * radius**2
@@ -28,11 +30,11 @@ class _FailedLocalOperator(phx.operators.AbstractLocalQuantumOperator):
     configuration_shape: tuple[int, int] = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.configuration_shape = (1, 3)
         self.operator_id = "failed-electronic-local"
 
-    def estimate(self, model, configurations, /):
+    def estimate(self, model: Any, configurations: Any, /) -> Any:
         del model
         shape = configurations.shape[:-2]
         return phx.operators.LocalOperatorEstimate(
@@ -51,7 +53,7 @@ class _FailedLocalOperator(phx.operators.AbstractLocalQuantumOperator):
         )
 
 
-def _atom(charges, positions, *, name):
+def _atom(charges: Any, positions: Any, *, name: Any) -> Any:
     scale = phx.atomistic.AtomisticScaleContract(phx.units.BOHR, phx.units.HARTREE)
     return phx.atomistic.AtomicStructure(
         jnp.asarray(charges, dtype=jnp.int32),
@@ -62,7 +64,7 @@ def _atom(charges, positions, *, name):
     )
 
 
-def _hydrogen_problem(*, alpha=0.8, chains=8):
+def _hydrogen_problem(*, alpha: Any = 0.8, chains: Any = 8) -> Any:
     atom = _atom([1], [[0.0, 0.0, 0.0]], name="H")
     model = _Hydrogenic(jnp.asarray(alpha, dtype=jnp.float64))
     operator = phx.operators.ElectronicCoulombHamiltonian(atom, 1)
@@ -77,7 +79,7 @@ def _hydrogen_problem(*, alpha=0.8, chains=8):
     )
 
 
-def _policy(iterations):
+def _policy(iterations: Any) -> Any:
     return phx.solver.VariationalMonteCarloPolicy(
         num_iterations=iterations,
         draws_per_iteration=8,
@@ -92,7 +94,7 @@ def _policy(iterations):
     )
 
 
-def test_hydrogen_vmc_replay_persistence_diagnostics_and_training():
+def test_hydrogen_vmc_replay_persistence_diagnostics_and_training() -> None:
     problem = _hydrogen_problem()
     policy = _policy(2)
     first = phx.solver.solve_variational_monte_carlo(problem, policy, key=jr.key(123))
@@ -112,7 +114,9 @@ def test_hydrogen_vmc_replay_persistence_diagnostics_and_training():
     )
 
 
-def test_electronic_vmc_checkpoint_restart_matches_persistent_continuation(tmp_path):
+def test_electronic_vmc_checkpoint_restart_matches_persistent_continuation(
+    tmp_path: Any,
+) -> None:
     problem = _hydrogen_problem()
     one_step = _policy(1)
     uninterrupted = phx.solver.solve_variational_monte_carlo(
@@ -138,7 +142,7 @@ def test_electronic_vmc_checkpoint_restart_matches_persistent_continuation(tmp_p
     )
 
 
-def test_small_helium_and_hydrogen_molecule_ferminet_vmc_smoke():
+def test_small_helium_and_hydrogen_molecule_ferminet_vmc_smoke() -> None:
     cases = (
         (_atom([2], [[0.0, 0.0, 0.0]], name="He"), 2, 1),
         (
@@ -192,7 +196,7 @@ def test_small_helium_and_hydrogen_molecule_ferminet_vmc_smoke():
         assert result.final_estimate.local.method_id.startswith("electronic-kinetic")
 
 
-def test_failed_local_and_linear_actions_record_without_applying_updates():
+def test_failed_local_and_linear_actions_record_without_applying_updates() -> None:
     baseline = _hydrogen_problem(chains=4)
     failed_local = phx.solver.VariationalMonteCarloProblem(
         baseline.model,

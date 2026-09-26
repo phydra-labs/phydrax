@@ -1,5 +1,7 @@
 """Two-cell conservative unsaturated infiltration with implicit sensitivity."""
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -44,7 +46,7 @@ def main() -> None:
     )
     initial = plan.initialize(-2.0e4)
 
-    def final_mass(injection):
+    def final_mass(injection: Any) -> Any:
         result = plan.step(initial, 5.0, source_kg_s=jnp.asarray((injection, 0.0)))
         return jnp.sum(result.state.water_mass_kg)
 

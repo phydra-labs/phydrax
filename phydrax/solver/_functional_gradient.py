@@ -529,7 +529,8 @@ class _ConflictFreeOptaxRule(AbstractKernelUpdateRule):
                 components, gradients, result, self.alignment
             )
             # init() always carries statistics when an alignment policy is set.
-            assert statistics is not None
+            if not (statistics is not None):
+                raise RuntimeError("Internal invariant failed: statistics is not None.")
             statistics = statistics.update(
                 result,
                 gradient_conflict=gradient_conflict,
@@ -712,13 +713,19 @@ def _prepared_native_state(
     parameters = state.parameters
     if route.least_squares is not None:
         # _functional_update_rule builds the kernel rule from this same route.
-        assert isinstance(rule, LeastSquaresUpdateRule)
+        if not (isinstance(rule, LeastSquaresUpdateRule)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(rule, LeastSquaresUpdateRule)."
+            )
         residual = rule.residual(state.model_state, kernel.fixed, payload)
         return eqx.filter_jit(route.least_squares.prepare_state)(residual, parameters)
     composite = route.composite
     if composite is not None:
         # _functional_update_rule builds the kernel rule from this same route.
-        assert isinstance(rule, CompositeLeastSquaresUpdateRule)
+        if not (isinstance(rule, CompositeLeastSquaresUpdateRule)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(rule, CompositeLeastSquaresUpdateRule)."
+            )
         problem = rule.problem(state.model_state, kernel.fixed, payload)
         return eqx.filter_jit(
             lambda parameters_: composite.prepare_state(problem, parameters_, args=None)
@@ -1950,7 +1957,10 @@ def solve_gradient(
                         ]
                         values_arr = jnp.asarray(values_arr, dtype=jnp.float64)
                     # The single-microstep branch above always prepares an update.
-                    assert prepared is not None
+                    if not (prepared is not None):
+                        raise RuntimeError(
+                            "Internal invariant failed: prepared is not None."
+                        )
                     active_term_count = len(prepared.terms)
                     train_term_values = _expanded_train_terms(
                         values_arr[:active_term_count],

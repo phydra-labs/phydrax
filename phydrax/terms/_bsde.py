@@ -25,7 +25,7 @@ from ..stochastic._bsde import (
     BSDEQuadrature,
     evaluate_bsde,
 )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 class BSDETerm(AbstractSamplingTerm):
@@ -66,18 +66,15 @@ class BSDETerm(AbstractSamplingTerm):
             raise TypeError("problem must be a BSDEProblem.")
         if not isinstance(value_name, str) or not value_name:
             raise ValueError("value_name must be a non-empty string.")
-        if control_mode not in ("explicit", "autodiff"):
-            raise ValueError("control_mode must be 'explicit' or 'autodiff'.")
+        control_mode = parse(control_mode, BSDEControlMode, "control_mode")
         if control_mode == "explicit" and (
             not isinstance(control_name, str) or not control_name
         ):
             raise ValueError("Explicit control requires a non-empty control_name.")
         if control_mode == "autodiff" and control_name is not None:
             raise ValueError("Autodiff control does not accept control_name.")
-        if mode not in ("terminal", "local", "global", "joint"):
-            raise ValueError("Unknown BSDE objective mode.")
-        if quadrature not in ("left", "trapezoid"):
-            raise ValueError("Unknown BSDE quadrature.")
+        mode = parse(mode, BSDEObjectiveMode, "mode")
+        quadrature = parse(quadrature, BSDEQuadrature, "quadrature")
         if sampling_mode not in ("resample", "fixed"):
             raise ValueError("sampling_mode must be 'resample' or 'fixed'.")
         if fixed_paths is not None and not isinstance(fixed_paths, BSDEPathBatch):

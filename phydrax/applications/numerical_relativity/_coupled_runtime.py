@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
+from ...typing import parse
 from ._matter_coupling import (
     CoupledBudget,
     CoupledStageAddress,
@@ -268,8 +269,7 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
             raise TypeError("policy must be MatterCouplingPolicy.")
         if not isinstance(topology_id, str) or not topology_id:
             raise ValueError("topology_id must be non-empty.")
-        if matter_kind not in ("grhd", "grmhd", "grrmhd"):
-            raise ValueError("matter_kind must be 'grhd', 'grmhd', or 'grrmhd'.")
+        matter_kind = parse(matter_kind, RelativisticMatterKind, "matter_kind")
         if not isinstance(z4c_runtime_id, str) or not z4c_runtime_id:
             raise ValueError("z4c_runtime_id must be non-empty.")
         if not isinstance(matter_runtime_id, str) or not matter_runtime_id:

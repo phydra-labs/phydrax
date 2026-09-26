@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 
@@ -17,7 +19,7 @@ from phydrax.applications import spin_foam, spin_network
 from phydrax.operators.quantum.lattice import SU2SectorResourcePolicy
 
 
-def benchmark_case(twice_spin: int, quadrature_order: int):
+def benchmark_case(twice_spin: int, quadrature_order: int) -> Any:
     resources = SU2SectorResourcePolicy(
         maximum_product_dimension=100_000,
         maximum_sector_dimension=10_000,

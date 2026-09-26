@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +14,7 @@ import phydrax as phx
 from phydrax.solver._neural_galerkin import _NeuralGalerkinVectorField
 
 
-def _growth_problem():
+def _growth_problem() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     component = domain.component()
     batch = component.sample(
@@ -43,12 +46,12 @@ def _growth_problem():
     ],
     ids=["gram", "rectangular", "rectangular-undamped"],
 )
-def test_certified_backsolve_gradient_matches_recursive_checkpoint(tangent):
+def test_certified_backsolve_gradient_matches_recursive_checkpoint(tangent: Any) -> None:
     problem = _growth_problem()
     time = jnp.asarray(0.0)
     initial = problem.parameter_subspace.pack()
 
-    def rate_gradient(mode):
+    def rate_gradient(mode: Any) -> Any:
         field = _NeuralGalerkinVectorField(
             problem,
             tangent,

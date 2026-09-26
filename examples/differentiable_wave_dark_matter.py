@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def build_workflow():
+def build_workflow() -> Any:
     cosmology = phx.applications.cosmology
     shape = (12, 12, 12)
     space = phx.discretization.TensorSpectralPlan(

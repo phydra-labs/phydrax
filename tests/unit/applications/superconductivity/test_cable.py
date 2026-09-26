@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _manifest():
+def _manifest() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "superconducting-material",
         checksum_algorithm="sha256",
@@ -26,7 +29,7 @@ def _manifest():
     )
 
 
-def _plan():
+def _plan() -> Any:
     material = phx.equations.SuperconductingMaterialLawPlan(
         jnp.asarray((2.0, 10.0, 19.0)),
         jnp.asarray((0.0, 5.0)),
@@ -58,7 +61,7 @@ def _plan():
     )
 
 
-def test_cable_current_sharing_joule_heat_and_energy_ledgers_close():
+def test_cable_current_sharing_joule_heat_and_energy_ledgers_close() -> None:
     plan = _plan()
     state = plan.initialize(150.0, jnp.full((3,), 4.0), jnp.full((3,), 4.0))
     result = plan.advance(state, 1.0e-6, 0.0)
@@ -77,7 +80,7 @@ def test_cable_current_sharing_joule_heat_and_energy_ledgers_close():
     np.testing.assert_allclose(result.evidence.thermal_energy_residual, 0.0, atol=1e-7)
 
 
-def test_invalid_cable_step_rolls_back_circuit_and_thermal_state():
+def test_invalid_cable_step_rolls_back_circuit_and_thermal_state() -> None:
     plan = _plan()
     state = plan.initialize(50.0, jnp.full((3,), 4.0), jnp.full((3,), 4.0))
     result = plan.advance(state, -1.0e-3, 0.0)

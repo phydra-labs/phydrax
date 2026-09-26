@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import get_args
 
 import equinox as eqx
 
@@ -49,7 +50,7 @@ class PreconditionerProperties(StrictModule):
         if unknown:
             names = ", ".join(sorted(unknown))
             raise ValueError(f"Unknown preconditioner-property evidence keys: {names}.")
-        valid = {"unknown", "construction", "transformed", "verified", "asserted"}
+        valid = frozenset(get_args(PropertyEvidence))
         if any(value not in valid for value in supplied.values()):
             raise ValueError("Unknown preconditioner-property evidence.")
         if any(not claims[name] for name in supplied):

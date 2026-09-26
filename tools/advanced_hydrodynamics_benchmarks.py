@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -16,7 +17,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _graph(shape, *, capillary, wave):
+def _graph(shape: Any, *, capillary: Any, wave: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(shape[0], periodic=True),
@@ -60,7 +61,7 @@ def _graph(shape, *, capillary, wave):
     ), continuation
 
 
-def _measure_graph(shape, repeats, *, capillary, wave):
+def _measure_graph(shape: Any, repeats: Any, *, capillary: Any, wave: Any) -> Any:
     method, state = _graph(shape, capillary=capillary, wave=wave)
     dt = jnp.asarray(1.0e-4 if (capillary or wave) else 1.0e-3)
     step = eqx.filter_jit(method.step)
@@ -92,7 +93,7 @@ def _measure_graph(shape, repeats, *, capillary, wave):
     }
 
 
-def _measure_two_phase(repeats):
+def _measure_two_phase(repeats: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8, periodic=True),
@@ -142,7 +143,7 @@ def _measure_two_phase(repeats):
     }
 
 
-def _measure_passive_tracer(repeats):
+def _measure_passive_tracer(repeats: Any) -> Any:
     shape = (64, 64)
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -183,7 +184,7 @@ def _measure_passive_tracer(repeats):
     jax.block_until_ready(result.values)
     execution = (time.perf_counter() - started) / repeats
 
-    def objective(tracer):
+    def objective(tracer: Any) -> Any:
         return jnp.sum(transport.advance(tracer, velocity, dt).values ** 2)
 
     gradient = eqx.filter_jit(jax.grad(objective))
@@ -211,7 +212,7 @@ def _measure_passive_tracer(repeats):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shape", default="4,4,3")
     parser.add_argument("--repeats", type=int, default=2)

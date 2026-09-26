@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -9,7 +11,7 @@ import phydrax as phx
 mn = phx.applications.solid_mechanics.member_network
 
 
-def _epochs(count: int):
+def _epochs(count: int) -> Any:
     epoch = jnp.zeros((count,), dtype=jnp.int32)
     return {
         "accepted": jnp.ones((count,), dtype="bool"),
@@ -21,7 +23,7 @@ def _epochs(count: int):
     }
 
 
-def test_conservative_and_damped_accepted_histories_close_independent_terms():
+def test_conservative_and_damped_accepted_histories_close_independent_terms() -> None:
     conservative = mn.member_energy_work_evidence(
         jnp.asarray((0.5, 0.25, 0.0)),
         jnp.asarray((0.5, 0.75, 1.0)),
@@ -62,7 +64,7 @@ def test_conservative_and_damped_accepted_histories_close_independent_terms():
     assert inelastic.material_contact_work[0] == pytest.approx(1.0)
 
 
-def test_energy_ledger_detects_wrong_external_work_sign_and_refines():
+def test_energy_ledger_detects_wrong_external_work_sign_and_refines() -> None:
     correct = mn.member_energy_work_evidence(
         jnp.asarray((0.0, 1.0)),
         jnp.zeros((2,)),
@@ -83,7 +85,7 @@ def test_energy_ledger_detects_wrong_external_work_sign_and_refines():
     assert not wrong_sign.balanced
     assert wrong_sign.algorithmic_defect[0] == pytest.approx(2.0)
 
-    def left_rule(step):
+    def left_rule(step: Any) -> Any:
         times = jnp.arange(0.0, 0.4 + 0.5 * step, step)
         kinetic = 0.5 * jnp.exp(-2.0 * times)
         damping = step * jnp.exp(-2.0 * times[:-1])
@@ -112,7 +114,7 @@ def test_energy_ledger_detects_wrong_external_work_sign_and_refines():
         "mode_epoch",
     ),
 )
-def test_energy_evidence_is_unavailable_across_epoch_switches(epoch_name):
+def test_energy_evidence_is_unavailable_across_epoch_switches(epoch_name: Any) -> None:
     epochs = _epochs(3)
     epochs[epoch_name] = jnp.asarray((0, 0, 1), dtype=jnp.int32)
     evidence = mn.member_energy_work_evidence(
@@ -129,7 +131,7 @@ def test_energy_evidence_is_unavailable_across_epoch_switches(epoch_name):
     assert not evidence.epoch_consistent[-1]
 
 
-def test_energy_evidence_rejects_unaccepted_history_samples():
+def test_energy_evidence_rejects_unaccepted_history_samples() -> None:
     epochs = _epochs(2)
     epochs["accepted"] = jnp.asarray((True, False))
     evidence = mn.member_energy_work_evidence(
@@ -144,7 +146,7 @@ def test_energy_evidence_rejects_unaccepted_history_samples():
     assert not evidence.balanced
 
 
-def test_outgoing_work_requires_an_explicit_traction_velocity_port():
+def test_outgoing_work_requires_an_explicit_traction_velocity_port() -> None:
     port = mn.TractionVelocityPortHistory(
         jnp.ones((1, 1, 1)),
         jnp.ones((1, 1, 1)),

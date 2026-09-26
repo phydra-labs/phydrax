@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -52,12 +55,12 @@ def _points_on_time(time: TimeInterval, ts: jnp.ndarray) -> PointBatch:
     return PointBatch(points=points, structure=structure)
 
 
-def test_enforce_dirichlet_enforces_values_on_boundary():
+def test_enforce_dirichlet_enforces_values_on_boundary() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0]
 
     u_enforced = enforce_dirichlet(u, component, target=2.0)
@@ -66,7 +69,7 @@ def test_enforce_dirichlet_enforces_values_on_boundary():
     assert jnp.allclose(out, 2.0)
 
 
-def test_direct_boundary_enforcers_reject_filtered_components():
+def test_direct_boundary_enforcers_reject_filtered_components() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
@@ -76,11 +79,11 @@ def test_direct_boundary_enforcers_reject_filtered_components():
     )
 
     @domain.Function("x", "t")
-    def scalar(x, t):
+    def scalar(x: Any, t: Any) -> Any:
         return x[0] + t
 
     @domain.Function("x", "t")
-    def vector(x, t):
+    def vector(x: Any, t: Any) -> Any:
         return jnp.array([x[0] + t])
 
     builders = (
@@ -112,12 +115,12 @@ def test_direct_boundary_enforcers_reject_filtered_components():
         enforce_dirichlet(scalar, globally_filtered)
 
 
-def test_enforce_neumann_enforces_normal_derivative_on_boundary():
+def test_enforce_neumann_enforces_normal_derivative_on_boundary() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0]
 
     u_enforced = enforce_neumann(u, component, target=0.0)
@@ -129,12 +132,12 @@ def test_enforce_neumann_enforces_normal_derivative_on_boundary():
     assert jnp.allclose(out, 0.0, atol=1e-5)
 
 
-def test_enforce_neumann_rejects_coord_separable_evaluation():
+def test_enforce_neumann_rejects_coord_separable_evaluation() -> None:
     geom = Interval1d(0.0, 1.0)
     boundary = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0]
 
     u_enforced = enforce_neumann(u, boundary, target=0.0)
@@ -146,12 +149,12 @@ def test_enforce_neumann_rejects_coord_separable_evaluation():
         _ = u_enforced(batch)
 
 
-def test_enforce_robin_rejects_coord_separable_evaluation():
+def test_enforce_robin_rejects_coord_separable_evaluation() -> None:
     geom = Interval1d(0.0, 1.0)
     boundary = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0]
 
     u_enforced = enforce_robin(
@@ -169,12 +172,12 @@ def test_enforce_robin_rejects_coord_separable_evaluation():
         _ = u_enforced(batch)
 
 
-def test_enforce_traction_rejects_coord_separable_evaluation():
+def test_enforce_traction_rejects_coord_separable_evaluation() -> None:
     geom = Interval1d(0.0, 1.0)
     boundary = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.asarray([x[0]], dtype="float64")
 
     u_enforced = enforce_traction(
@@ -192,7 +195,7 @@ def test_enforce_traction_rejects_coord_separable_evaluation():
         _ = u_enforced(batch)
 
 
-def test_enforce_sommerfeld_rejects_coord_separable_evaluation():
+def test_enforce_sommerfeld_rejects_coord_separable_evaluation() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
@@ -200,7 +203,7 @@ def test_enforce_sommerfeld_rejects_coord_separable_evaluation():
     boundary = domain.component({"x": Boundary()})
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + t
 
     u_enforced = enforce_sommerfeld(
@@ -224,13 +227,13 @@ def test_enforce_sommerfeld_rejects_coord_separable_evaluation():
         _ = u_enforced(batch)
 
 
-def test_enforce_blend_combines_subset_pieces_without_leakage():
+def test_enforce_blend_combines_subset_pieces_without_leakage() -> None:
     geom = Interval1d(0.0, 1.0)
 
-    def left_where(x):
+    def left_where(x: Any) -> Any:
         return x[0] < 0.5
 
-    def right_where(x):
+    def right_where(x: Any) -> Any:
         return x[0] >= 0.5
 
     base = geom.Function()(0.0)
@@ -253,17 +256,17 @@ def test_enforce_blend_combines_subset_pieces_without_leakage():
     assert jnp.allclose(out[1], 2.0, atol=1e-3)
 
 
-def test_enforce_blend_coord_separable_spacetime_runs():
+def test_enforce_blend_coord_separable_spacetime_runs() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + t
 
-    def left_where(x):
+    def left_where(x: Any) -> Any:
         return x[0] < 0.5
 
-    def right_where(x):
+    def right_where(x: Any) -> Any:
         return x[0] >= 0.5
 
     left_component = domain.component({"x": Boundary()}, where={"x": left_where})
@@ -290,7 +293,7 @@ def test_enforce_blend_coord_separable_spacetime_runs():
     assert jnp.all(jnp.isfinite(out))
 
 
-def test_enforce_initial_rational_gate_bounded_fixed_start_value_only():
+def test_enforce_initial_rational_gate_bounded_fixed_start_value_only() -> None:
     time = TimeInterval(0.0, 2.0)
     component = time.component({"t": FixedStart()})
 
@@ -303,12 +306,12 @@ def test_enforce_initial_rational_gate_bounded_fixed_start_value_only():
     assert float(out[1]) < 1.0
 
 
-def test_enforce_initial_rational_gate_enforces_first_derivative_fixed_start():
+def test_enforce_initial_rational_gate_enforces_first_derivative_fixed_start() -> None:
     time = TimeInterval(0.0, 2.0)
     component = time.component({"t": FixedStart()})
 
     @time.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return 1.0 + t
 
     u_enforced = enforce_initial(
@@ -332,7 +335,7 @@ def test_enforce_initial_rational_gate_enforces_first_derivative_fixed_start():
     assert float(out_end) <= float(raw_end) + 1e-10
 
 
-def test_enforce_initial_rational_gate_bounded_fixed_end_value_only():
+def test_enforce_initial_rational_gate_bounded_fixed_end_value_only() -> None:
     time = TimeInterval(0.0, 2.0)
     component = time.component({"t": FixedEnd()})
 
@@ -345,12 +348,12 @@ def test_enforce_initial_rational_gate_bounded_fixed_end_value_only():
     assert float(out[1]) < 1.0
 
 
-def test_enforce_dirichlet_scalar_var_supports_coord_separable_sampling():
+def test_enforce_dirichlet_scalar_var_supports_coord_separable_sampling() -> None:
     time = TimeInterval(0.0, 2.0)
     component = time.component({"t": FixedStart()})
 
     @time.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         if isinstance(t, tuple):
             return 1.0 + t[0]
         return 1.0 + t
@@ -362,7 +365,7 @@ def test_enforce_dirichlet_scalar_var_supports_coord_separable_sampling():
     assert jnp.all(jnp.isfinite(out))
 
 
-def test_enforce_initial_supports_coord_separable_sampling():
+def test_enforce_initial_supports_coord_separable_sampling() -> None:
     time = TimeInterval(0.0, 2.0)
     component = time.component({"t": FixedStart()})
 
@@ -374,12 +377,12 @@ def test_enforce_initial_supports_coord_separable_sampling():
     assert jnp.all(jnp.isfinite(out))
 
 
-def test_enforce_dirichlet_uses_dimensionless_geometry_gate():
+def test_enforce_dirichlet_uses_dimensionless_geometry_gate() -> None:
     geom = Interval1d(0.0, 100.0)
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         del x
         return jnp.asarray(1.0)
 
@@ -401,9 +404,9 @@ def test_enforce_dirichlet_uses_dimensionless_geometry_gate():
     ((0.0, 0.5), (0.6, 0.5), (0.5, 0.0), (0.5, 1.0)),
 )
 def test_enforcement_gate_rejects_invalid_profile_fractions(
-    saturation_fraction,
-    linear_fraction,
-):
+    saturation_fraction: Any,
+    linear_fraction: Any,
+) -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
 
@@ -415,16 +418,16 @@ def test_enforcement_gate_rejects_invalid_profile_fractions(
         )
 
 
-def test_interval_derivative_ansatze_are_continuous_at_midpoint():
+def test_interval_derivative_ansatze_are_continuous_at_midpoint() -> None:
     geom = Interval1d(0.0, 1.0)
     boundary = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def scalar(x):
+    def scalar(x: Any) -> Any:
         return x[0]
 
     @geom.Function("x")
-    def displacement(x):
+    def displacement(x: Any) -> Any:
         return jnp.asarray([x[0]])
 
     neumann = enforce_neumann(scalar, boundary, target=0.0)
@@ -448,7 +451,7 @@ def test_interval_derivative_ansatze_are_continuous_at_midpoint():
     spacetime_boundary = domain.component({"x": Boundary()})
 
     @domain.Function("x", "t")
-    def wave(x, t):
+    def wave(x: Any, t: Any) -> Any:
         return x[0] + t
 
     sommerfeld = enforce_sommerfeld(
@@ -474,12 +477,12 @@ def test_interval_derivative_ansatze_are_continuous_at_midpoint():
         assert jnp.allclose(profile[1], 0.5 * (profile[0] + profile[2]), atol=1e-8)
 
 
-def test_interval_nonzero_neumann_and_robin_targets_are_exact():
+def test_interval_nonzero_neumann_and_robin_targets_are_exact() -> None:
     geom = Interval1d(0.0, 1.0)
     boundary = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2
 
     normal = boundary.normal(var="x")

@@ -30,6 +30,7 @@ from ...discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ...discretization.spectral._space import TensorSpectralDiscretization
 from ...qualification import ReferenceArtifactManifest
 from ...stochastic._random_field import GaussianCoefficientRealization
+from ...typing import parse
 from ...units import derived_unit, DIMENSIONLESS, UnitDefinition
 from ._background import FLRWBackground
 from ._closure import CosmologyRealizationSignature
@@ -645,8 +646,7 @@ class ComponentTransferMatrixProduct(StrictModule):
             or scale.scale_id != realization.scale_id
         ):
             raise ValueError("Component transfer scale identities disagree.")
-        if gauge not in ("synchronous", "newtonian", "gauge-invariant"):
-            raise ValueError("Unknown component transfer gauge.")
+        gauge = parse(gauge, TransferGauge, "gauge")
         normalization_ = str(normalization).strip()
         if not normalization_:
             raise ValueError("Component transfer normalization must be non-empty.")

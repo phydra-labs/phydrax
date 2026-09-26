@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,25 +14,34 @@ class QuadraticFreeEnergy(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, stiffness, offset):
+    def __init__(self, stiffness: Any, offset: Any) -> None:
         self.stiffness = jnp.asarray(stiffness)
         self.offset = jnp.asarray(offset)
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, value, /, *, key=None):
+    def __call__(self, value: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.asarray([0.5 * self.stiffness * value[0] ** 2 + self.offset])
 
 
 units = phx.atomistic.AtomisticUnitSystem.reduced()
 system = phx.atomistic.AtomisticSystemPlan(
-    [10, 20], [1, 1], [1.0, 1.0], units, atom_type_ids=[0, 0]
+    # ty: ignore[invalid-argument-type]
+    [10, 20],
+    # ty: ignore[invalid-argument-type]
+    [1, 1],
+    # ty: ignore[invalid-argument-type]
+    [1.0, 1.0],
+    units,
+    # ty: ignore[invalid-argument-type]
+    atom_type_ids=[0, 0],
 ).prepare()
 neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
     system.particles
 )
 potential = phx.atomistic.AtomisticPotentialProgram(
+    # ty: ignore[invalid-argument-type]
     [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
 ).prepare(system)
 dynamics = phx.atomistic.AtomisticDynamicsPlan(
@@ -56,6 +67,7 @@ plan = phx.atomistic.sampling.LearnedFreeEnergyBiasPlan(
     variables,
     (QuadraticFreeEnergy(1.0, 2.0), QuadraticFreeEnergy(1.0, -3.0)),
     model_ids=("quadratic-a", "quadratic-b"),
+    # ty: ignore[invalid-argument-type]
     reference=[1.0],
     trusted_uncertainty=1.0e-8,
     rejected_uncertainty=0.5,

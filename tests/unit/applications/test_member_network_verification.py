@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -11,7 +13,7 @@ sm = phx.applications.solid_mechanics
 mn = sm.member_network
 
 
-def _axial_network():
+def _axial_network() -> Any:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1),), dtype=jnp.int32),
         2,
@@ -29,19 +31,21 @@ def _axial_network():
         compression_allowable=20.0,
     )
     section = mn.BeamSection(1.0, 1.0, 1.0, 0.5, 1.0, 1.0)
+    # ty: ignore[invalid-argument-type]
     properties = mn.MemberPropertyMap((material,), (section,), (0,), (0,))
     reference = mn.MemberReferenceState(structure, positions)
     dofs = mn.MemberDOFLayout(
         structure, rotation_constrained=jnp.ones((2, 1), dtype="bool")
     )
     definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
+    # ty: ignore[invalid-argument-type]
     assembly = mn.MemberNetworkAssembly((mn.AxialMemberBlock((0,)),))
     problem = mn.MemberNetworkProblem(definition, assembly)
     initial = mn.MemberKinematics(positions, jnp.zeros((2, 1)))
     return structure, definition, problem, initial
 
 
-def _inputs(structure, definition, load):
+def _inputs(structure: Any, definition: Any, load: Any) -> Any:
     return mn.MemberNetworkInputs(
         structure.prescribed_values(definition.reference.positions),
         definition.dofs.prescribed_rotations(definition.reference.rotation_vectors),
@@ -51,7 +55,7 @@ def _inputs(structure, definition, load):
     )
 
 
-def _axial_modal_network(*, repeated: bool = False):
+def _axial_modal_network(*, repeated: bool = False) -> Any:
     if repeated:
         edges = jnp.asarray(((0, 1), (0, 2)), dtype=jnp.int32)
         node_count = 3
@@ -72,7 +76,9 @@ def _axial_modal_network(*, repeated: bool = False):
     properties = mn.MemberPropertyMap(
         (material,),
         (mn.AxialSection(1.0),),
+        # ty: ignore[invalid-argument-type]
         (0,) * edges.shape[0],
+        # ty: ignore[invalid-argument-type]
         (0,) * edges.shape[0],
     )
     reference = mn.MemberReferenceState(structure, positions)
@@ -96,7 +102,7 @@ def _axial_modal_network(*, repeated: bool = False):
     return problem, inputs, initial
 
 
-def test_local_and_generalized_buckling_match_closed_forms():
+def test_local_and_generalized_buckling_match_closed_forms() -> None:
     structure, definition, _, _ = _axial_network()
     local = mn.local_euler_buckling(
         definition,
@@ -119,7 +125,7 @@ def test_local_and_generalized_buckling_match_closed_forms():
     assert jnp.allclose(linear.load_factors, 5.0)
 
 
-def test_tangent_stability_and_continuation_are_native():
+def test_tangent_stability_and_continuation_are_native() -> None:
     structure, definition, problem, initial = _axial_network()
     inputs = _inputs(structure, definition, 5.0)
     result = mn.member_network_equilibrium(problem, inputs, initial)
@@ -137,7 +143,7 @@ def test_tangent_stability_and_continuation_are_native():
     assert continuation.problem_id.endswith("load-continuation")
 
 
-def test_tangent_stability_cannot_mix_equilibrium_and_independent_inputs():
+def test_tangent_stability_cannot_mix_equilibrium_and_independent_inputs() -> None:
     structure, definition, problem, initial = _axial_network()
     accepted_inputs = _inputs(structure, definition, 5.0)
     equilibrium = mn.member_network_equilibrium(
@@ -152,10 +158,11 @@ def test_tangent_stability_cannot_mix_equilibrium_and_independent_inputs():
     )
     assert jnp.array_equal(equilibrium.inputs.rest_lengths, accepted_inputs.rest_lengths)
     with pytest.raises(TypeError):
+        # ty: ignore[too-many-positional-arguments]
         mn.tangent_stability(problem, mismatched_inputs, equilibrium)
 
 
-def test_modal_stability_handles_rigid_modes_and_rejects_nonpositive_mass():
+def test_modal_stability_handles_rigid_modes_and_rejects_nonpositive_mass() -> None:
     problem, inputs, initial = _axial_modal_network()
     equilibrium = mn.member_network_equilibrium(
         problem,
@@ -179,6 +186,7 @@ def test_modal_stability_handles_rigid_modes_and_rejects_nonpositive_mass():
     assert modal.modal_valid
     assert modal.mode_gap_valid
     assert modal.mode_derivatives_available
+    # ty: ignore[not-subscriptable]
     assert modal.angular_frequencies[0] == pytest.approx(0.0, abs=1.0e-8)
     assert modal.eigen_residual < 1.0e-8
     assert modal.mass_orthogonality_error < 1.0e-8
@@ -196,7 +204,7 @@ def test_modal_stability_handles_rigid_modes_and_rejects_nonpositive_mass():
         invalid.eigenvalues.block_until_ready()
 
 
-def test_modal_tracking_marks_low_overlap_and_crossings_ambiguous():
+def test_modal_tracking_marks_low_overlap_and_crossings_ambiguous() -> None:
     problem, inputs, initial = _axial_modal_network()
     equilibrium = mn.member_network_equilibrium(
         problem,
@@ -249,7 +257,7 @@ def test_modal_tracking_marks_low_overlap_and_crossings_ambiguous():
     assert not crossing.modal_valid
 
 
-def test_tangent_stability_does_not_certify_an_unaccepted_equilibrium():
+def test_tangent_stability_does_not_certify_an_unaccepted_equilibrium() -> None:
     structure, definition, problem, initial = _axial_network()
     inputs = _inputs(structure, definition, 5.0)
     equilibrium = mn.member_network_equilibrium(problem, inputs, initial)
@@ -268,19 +276,21 @@ def test_tangent_stability_does_not_certify_an_unaccepted_equilibrium():
     assert not stability.modal_valid
 
 
-def test_construction_sequence_transfers_state_and_load_operations():
+def test_construction_sequence_transfers_state_and_load_operations() -> None:
     structure, definition, problem, initial = _axial_network()
     empty = _inputs(structure, definition, 0.0)
     loaded = _inputs(structure, definition, 5.0)
     stage_one = mn.ConstructionStage(
         problem,
         empty,
+        # ty: ignore[invalid-argument-type]
         (mn.InstallationRule.DECLARED_STRESS_FREE_LENGTH,),
         stage_id="install",
     )
     stage_two = mn.ConstructionStage(
         problem,
         loaded,
+        # ty: ignore[invalid-argument-type]
         (mn.InstallationRule.DECLARED_STRESS_FREE_LENGTH,),
         load_operation=mn.LoadOperation.ADD,
         stage_id="load",
@@ -298,7 +308,7 @@ def test_construction_sequence_transfers_state_and_load_operations():
     assert result.checkpoint.completed_stage == 1
 
 
-def test_sizing_catalog_and_verification_report_governing_evidence():
+def test_sizing_catalog_and_verification_report_governing_evidence() -> None:
     structure, definition, problem, initial = _axial_network()
     inputs = _inputs(structure, definition, 5.0)
     equilibrium = mn.member_network_equilibrium(problem, inputs, initial)

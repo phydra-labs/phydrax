@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -10,7 +13,7 @@ import phydrax.ml.interop._onnx as onnx_module
 from phydrax._model import ModelBinding
 
 
-def _fitted_ridge():
+def _fitted_ridge() -> Any:
     features = jnp.asarray(
         [
             [-1.0, 0.5],
@@ -24,13 +27,13 @@ def _fitted_ridge():
 
 
 def test_save_ml_onnx_infers_pointwise_vectorization_and_validation_inputs(
-    monkeypatch, tmp_path
-):
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     model = _fitted_ridge()
     calls = []
     sentinel = object()
 
-    def fake_save_onnx(exported_model, path, **kwargs):
+    def fake_save_onnx(exported_model: Any, path: Any, **kwargs: Any) -> Any:
         calls.append((exported_model, path, kwargs))
         return sentinel
 
@@ -60,7 +63,7 @@ def test_save_ml_onnx_infers_pointwise_vectorization_and_validation_inputs(
     ]
 
 
-def test_save_ml_onnx_rejects_axis_batched_model(monkeypatch, tmp_path):
+def test_save_ml_onnx_rejects_axis_batched_model(monkeypatch: Any, tmp_path: Any) -> None:
     model = _fitted_ridge()
     monkeypatch.setattr(type(model), "_input_binding", ModelBinding.axis())
 

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -13,14 +15,16 @@ class _Residual(phx.rom.AbstractResidualProvider):
     support_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
-    def __init__(self, state_space):
+    def __init__(self, state_space: Any) -> None:
         self.state_space = state_space
         self.residual_space = phx.linalg.DualSpace(state_space)
         self.residual_id = "quadratic-residual"
         self.support_id = "fixed-support"
         self.geometry_id = "fixed-geometry"
 
-    def residual(self, coordinate, state, state_rate, inputs, /):
+    def residual(
+        self, coordinate: Any, state: Any, state_rate: Any, inputs: Any, /
+    ) -> Any:
         del coordinate, state_rate, inputs
         return jnp.asarray([state[0] ** 2, state[1] ** 2, state[0] + state[1]])
 
@@ -32,7 +36,7 @@ class _StageResidual(phx.rom.AbstractStageResidualProvider):
     support_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
-    def __init__(self, state_space):
+    def __init__(self, state_space: Any) -> None:
         self.state_space = state_space
         self.residual_space = phx.linalg.DualSpace(state_space)
         self.residual_id = "manufactured-stage-residual"
@@ -41,13 +45,13 @@ class _StageResidual(phx.rom.AbstractStageResidualProvider):
 
     def residual(
         self,
-        source_coordinate,
-        target_coordinate,
-        source_state,
-        target_state,
-        inputs,
+        source_coordinate: Any,
+        target_coordinate: Any,
+        source_state: Any,
+        target_state: Any,
+        inputs: Any,
         /,
-    ):
+    ) -> Any:
         del inputs
         step = target_coordinate - source_coordinate
         return target_state - source_state - step * jnp.asarray([1.0, 2.0, 0.0])
@@ -58,12 +62,12 @@ class _SampledNonlinear(phx.rom.AbstractSampledNonlinearProvider):
     support_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.provider_id = "sampled-quadratic"
         self.support_id = "fixed-support"
         self.geometry_id = "fixed-geometry"
 
-    def evaluate_selected(self, state, node_indices, inputs, /):
+    def evaluate_selected(self, state: Any, node_indices: Any, inputs: Any, /) -> Any:
         del inputs
         values = jnp.asarray([state[0] ** 2, state[1] ** 2, 0.0])
         return values[node_indices]
@@ -74,21 +78,21 @@ class _SampledStage(phx.rom.AbstractSampledStageResidualProvider):
     support_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.provider_id = "sampled-stage"
         self.support_id = "fixed-support"
         self.geometry_id = "fixed-geometry"
 
     def evaluate_selected(
         self,
-        source_coordinate,
-        target_coordinate,
-        source_state,
-        target_state,
-        node_indices,
-        inputs,
+        source_coordinate: Any,
+        target_coordinate: Any,
+        source_state: Any,
+        target_state: Any,
+        node_indices: Any,
+        inputs: Any,
         /,
-    ):
+    ) -> Any:
         del inputs
         step = target_coordinate - source_coordinate
         residual = target_state - source_state - step * jnp.asarray([1.0, 2.0, 0.0])
@@ -102,19 +106,19 @@ class _Elements(phx.rom.AbstractElementResidualProvider):
     geometry_id: str = eqx.field(static=True)
     contributions: jnp.ndarray
 
-    def __init__(self, reduction_id, contributions):
+    def __init__(self, reduction_id: Any, contributions: Any) -> None:
         self.provider_id = "manufactured-elements"
         self.reduction_id = reduction_id
         self.support_id = "fixed-support"
         self.geometry_id = "fixed-geometry"
         self.contributions = jnp.asarray(contributions)
 
-    def evaluate_elements(self, state, element_indices, inputs, /):
+    def evaluate_elements(self, state: Any, element_indices: Any, inputs: Any, /) -> Any:
         del state, inputs
         return self.contributions[element_indices]
 
 
-def _reduction():
+def _reduction() -> Any:
     full = phx.linalg.ArraySpace((3,), dtype=jnp.float64, space_id="nonlinear-full")
     basis = phx.rom.ReducedBasisArtifact(
         phx.linalg.LinearSubspace(
@@ -133,7 +137,7 @@ def _reduction():
     return full, phx.rom.trial_test_reduction_from_bases(basis)
 
 
-def _residual_basis(full, role, source):
+def _residual_basis(full: Any, role: Any, source: Any) -> Any:
     dual = phx.linalg.DualSpace(full)
     return phx.rom.ReducedBasisArtifact(
         phx.linalg.LinearSubspace(
@@ -151,7 +155,7 @@ def _residual_basis(full, role, source):
     )
 
 
-def test_full_galerkin_and_deim_agree_on_collateral_span():
+def test_full_galerkin_and_deim_agree_on_collateral_span() -> None:
     full, reduction = _reduction()
     state = jnp.asarray([2.0, 3.0, 0.0], dtype=jnp.float64)
     galerkin = phx.rom.FullResidualGalerkin(reduction, _Residual(full))
@@ -167,7 +171,7 @@ def test_full_galerkin_and_deim_agree_on_collateral_span():
     assert deim.node_indices.size == 2
 
 
-def test_lspg_and_gnat_solve_same_time_discrete_residual():
+def test_lspg_and_gnat_solve_same_time_discrete_residual() -> None:
     full, reduction = _reduction()
     stage = _StageResidual(full)
     lspg = phx.rom.ReducedLSPGProblem(reduction, stage)
@@ -201,7 +205,7 @@ def test_lspg_and_gnat_solve_same_time_discrete_residual():
     )
 
 
-def test_ecsw_selects_nonnegative_element_quadrature_and_reproduces_target():
+def test_ecsw_selects_nonnegative_element_quadrature_and_reproduces_target() -> None:
     _, reduction = _reduction()
     training_contributions = jnp.asarray(
         [
@@ -233,7 +237,7 @@ def test_ecsw_selects_nonnegative_element_quadrature_and_reproduces_target():
     np.testing.assert_allclose(result, np.asarray([0.0, 8.0]), atol=1e-5)
 
 
-def test_thin_gnat_rejects_nonintegral_duplicate_and_out_of_range_nodes():
+def test_thin_gnat_rejects_nonintegral_duplicate_and_out_of_range_nodes() -> None:
     full, _ = _reduction()
     residual = _residual_basis(full, "residual", "thin-gnat-snapshots")
     metric = jnp.eye(3, dtype=jnp.float64)

@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint
 from ..._interpolation import apply_gather_stencil, GatherStencil, InterpolationResult
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._core import DiscretizationCapability, PreparationReport, resolved_identifier
 from .._measure import DiscreteMeasure
 from .._tensor_entities import TensorEntityLayout
@@ -210,8 +211,7 @@ class ParticleGridSplatPlan(StrictModule, NonTrainableState):
         budget_ = ParticleGridSplatBudget() if budget is None else budget
         if not isinstance(assignment_, AbstractStructuredSplatAssignment):
             raise TypeError("assignment must be AbstractStructuredSplatAssignment.")
-        if boundary not in ("reject", "drop"):
-            raise ValueError("boundary must be 'reject' or 'drop'.")
+        boundary = parse(boundary, SplatBoundaryPolicy, "boundary")
         if not isinstance(execution_, SplatExecutionPolicy):
             raise TypeError("execution must be SplatExecutionPolicy.")
         if not isinstance(precision_, ParticlePrecisionPolicy):

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -23,7 +26,7 @@ from phydrax.optics.wave._statistical_ao import (
 )
 
 
-def _periodic_space(count=32, extent=8.0):
+def _periodic_space(count: Any = 32, extent: Any = 8.0) -> Any:
     grid = TensorGridPlan(
         (
             UniformAxisSpec(count, endpoint=False, periodic=True),
@@ -34,7 +37,7 @@ def _periodic_space(count=32, extent=8.0):
     return PlaneFieldSpace(grid, RigidFrame.identity(3), "periodic-cell")
 
 
-def _prepared_screen(count=32):
+def _prepared_screen(count: Any = 32) -> Any:
     return VonKarmanPhaseScreenPlan(
         _periodic_space(count),
         0.2,
@@ -43,7 +46,7 @@ def _prepared_screen(count=32):
     ).prepare()
 
 
-def test_von_karman_preparation_has_nonnegative_decaying_psd_and_no_piston():
+def test_von_karman_preparation_has_nonnegative_decaying_psd_and_no_piston() -> None:
     prepared = _prepared_screen()
     psd = prepared.power_spectral_density
 
@@ -54,7 +57,7 @@ def test_von_karman_preparation_has_nonnegative_decaying_psd_and_no_piston():
     assert float(prepared.predicted_variance) > 0.0
 
 
-def test_phase_screen_is_hermitian_reproducible_and_parseval_consistent():
+def test_phase_screen_is_hermitian_reproducible_and_parseval_consistent() -> None:
     prepared = _prepared_screen()
     key = jax.random.key(17)
     first = sample_von_karman_phase_screen(prepared, key)
@@ -71,7 +74,7 @@ def test_phase_screen_is_hermitian_reproducible_and_parseval_consistent():
     assert bool(first.valid)
 
 
-def test_phase_screen_ensemble_covariance_matches_prepared_spectrum():
+def test_phase_screen_ensemble_covariance_matches_prepared_spectrum() -> None:
     prepared = _prepared_screen(count=24)
     keys = jax.random.split(jax.random.key(29), 96)
     samples = jax.vmap(lambda key: sample_von_karman_phase_screen(prepared, key).phase)(
@@ -87,7 +90,7 @@ def test_phase_screen_ensemble_covariance_matches_prepared_spectrum():
     np.testing.assert_allclose(empirical_lag, covariance[1, 0], rtol=0.3)
 
 
-def test_exact_spectral_frozen_flow_matches_one_cell_periodic_shift():
+def test_exact_spectral_frozen_flow_matches_one_cell_periodic_shift() -> None:
     prepared = _prepared_screen()
     original = sample_von_karman_phase_screen(prepared, jax.random.key(3))
     velocity = jnp.asarray((prepared.spacings[0], 0.0))
@@ -107,13 +110,14 @@ def test_exact_spectral_frozen_flow_matches_one_cell_periodic_shift():
     assert bool(translated.valid)
 
 
-def _layered_atmosphere():
+def _layered_atmosphere() -> Any:
     screen = VonKarmanPhaseScreenPlan(_periodic_space(), 0.18, 20.0)
     return LayeredAtmosphere(
         (
             AtmosphericLayer(
                 screen,
                 0.0,
+                # ty: ignore[invalid-argument-type]
                 (3.0, 0.0),
                 0.6,
                 layer_id="ground",
@@ -121,6 +125,7 @@ def _layered_atmosphere():
             AtmosphericLayer(
                 screen,
                 8000.0,
+                # ty: ignore[invalid-argument-type]
                 (-1.0, 4.0),
                 0.4,
                 layer_id="high",
@@ -129,7 +134,7 @@ def _layered_atmosphere():
     ).prepare()
 
 
-def test_layered_atmosphere_sampling_preserves_records_and_is_reproducible():
+def test_layered_atmosphere_sampling_preserves_records_and_is_reproducible() -> None:
     atmosphere = _layered_atmosphere()
     first = atmosphere.sample(jax.random.key(41))
     repeated = atmosphere.sample(jax.random.key(41))
@@ -153,7 +158,7 @@ def test_layered_atmosphere_sampling_preserves_records_and_is_reproducible():
     assert bool(first.valid)
 
 
-def test_statistical_ao_residual_psd_and_error_budget_close_exactly():
+def test_statistical_ao_residual_psd_and_error_budget_close_exactly() -> None:
     atmosphere = _layered_atmosphere()
     residual = StatisticalResidualAOPlan(
         0.6,
@@ -185,7 +190,7 @@ def test_statistical_ao_residual_psd_and_error_budget_close_exactly():
     assert bool(residual.valid)
 
 
-def test_perfect_statistical_correction_has_zero_residual_psd():
+def test_perfect_statistical_correction_has_zero_residual_psd() -> None:
     atmosphere = _layered_atmosphere()
     residual = StatisticalResidualAOPlan(
         100.0,
@@ -198,7 +203,7 @@ def test_perfect_statistical_correction_has_zero_residual_psd():
     assert float(residual.error_budget.atmospheric_variance) > 0.0
 
 
-def test_long_exposure_otf_is_normalized_and_reduced_away_from_origin():
+def test_long_exposure_otf_is_normalized_and_reduced_away_from_origin() -> None:
     atmosphere = _layered_atmosphere()
     residual = StatisticalResidualAOPlan(
         0.35,

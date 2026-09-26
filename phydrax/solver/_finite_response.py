@@ -31,6 +31,7 @@ from ..tensor_network._mpo import (
     compress_mps,
     scale_mpo,
 )
+from ..typing import parse
 from ._dmrg import (
     FiniteDMRGPolicy,
     FiniteDMRGProblem,
@@ -214,8 +215,7 @@ class FiniteResponsePolicy(StrictModule):
         state_elements = int(maximum_state_elements)
         if not isfinite(step) or step <= 0.0 or count < 1 or bond < 1:
             raise ValueError("Response step, count, and bond capacity are invalid.")
-        if tdvp_algorithm not in ("one-site", "two-site"):
-            raise ValueError("tdvp_algorithm must be one-site or two-site.")
+        tdvp_algorithm = parse(tdvp_algorithm, FiniteTDVPAlgorithm, "tdvp_algorithm")
         if (
             not isfinite(damping_)
             or damping_ < 0.0

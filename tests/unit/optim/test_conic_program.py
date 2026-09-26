@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 pytest.importorskip("clarabel")
 
 
-def _policy():
+def _policy() -> Any:
     return phx.optim.ConvexSolvePolicy(
         phx.optim.ClarabelInteriorPoint(presolve=False),
         termination=phx.optim.ConvexTermination(
@@ -23,7 +26,7 @@ def _policy():
     )
 
 
-def test_clarabel_solves_active_second_order_cone_program():
+def test_clarabel_solves_active_second_order_cone_program() -> None:
     problem = phx.optim.ConicProgram(
         jnp.eye(2),
         jnp.asarray([-2.0, 0.0]),
@@ -41,7 +44,7 @@ def test_clarabel_solves_active_second_order_cone_program():
     assert result.provenance.backend == "clarabel"
 
 
-def test_clarabel_projects_advanced_cones_in_native_coordinates():
+def test_clarabel_projects_advanced_cones_in_native_coordinates() -> None:
     psd = phx.optim.PositiveSemidefiniteCone(2)
     cases = (
         (psd, psd.pack(jnp.asarray([[1.0, 2.0], [2.0, -1.0]])), 1e-7),
@@ -72,7 +75,7 @@ def test_clarabel_projects_advanced_cones_in_native_coordinates():
         assert result.kkt_residual_norm < 5e-7
 
 
-def test_clarabel_preserves_qp_user_constraint_axes():
+def test_clarabel_preserves_qp_user_constraint_axes() -> None:
     problem = phx.optim.QuadraticProgram(
         jnp.eye(2),
         jnp.zeros(2),
@@ -93,8 +96,8 @@ def test_clarabel_preserves_qp_user_constraint_axes():
     assert result.status == phx.optim.ConvexProgramStatus.OPTIMAL
 
 
-def test_clarabel_prepared_refresh_reuses_provider_structure():
-    def problem(linear):
+def test_clarabel_prepared_refresh_reuses_provider_structure() -> None:
+    def problem(linear: Any) -> Any:
         return phx.optim.ConicProgram(
             jnp.eye(2),
             jnp.asarray(linear),
@@ -117,8 +120,8 @@ def test_clarabel_prepared_refresh_reuses_provider_structure():
     assert execution.result.provenance.numeric_version == 1
 
 
-def test_fixed_bound_roles_participate_in_conic_structure_identity():
-    def problem(lower, upper):
+def test_fixed_bound_roles_participate_in_conic_structure_identity() -> None:
+    def problem(lower: Any, upper: Any) -> Any:
         return phx.optim.ConicProgram(
             jnp.ones((1, 1)),
             jnp.zeros(1),
@@ -138,7 +141,7 @@ def test_fixed_bound_roles_participate_in_conic_structure_identity():
         phx.optim.refresh_convex_program(prepared, interval)
 
 
-def test_clarabel_maps_rotated_cone_and_native_bounds():
+def test_clarabel_maps_rotated_cone_and_native_bounds() -> None:
     problem = phx.optim.ConicProgram(
         jnp.eye(1),
         jnp.asarray([-3.0]),
@@ -163,7 +166,7 @@ def test_clarabel_maps_rotated_cone_and_native_bounds():
     np.testing.assert_allclose(result.complementarity_gap, expected_gap, atol=1e-12)
 
 
-def test_clarabel_infeasibility_requires_independent_dual_ray():
+def test_clarabel_infeasibility_requires_independent_dual_ray() -> None:
     problem = phx.optim.ConicProgram(
         None,
         jnp.zeros(1),
@@ -179,7 +182,7 @@ def test_clarabel_infeasibility_requires_independent_dual_ray():
     assert result.certificate.dual_ray_residual_norm < 1e-7
 
 
-def test_clarabel_preserves_program_batches():
+def test_clarabel_preserves_program_batches() -> None:
     problem = phx.optim.ConicProgram(
         jnp.broadcast_to(jnp.eye(1), (2, 1, 1)),
         jnp.asarray([[-1.0], [-2.0]]),

@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _context():
+def _context() -> Any:
     astro = phx.applications.astrodynamics
     return astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),
@@ -13,7 +15,7 @@ def _context():
     )
 
 
-def _provenance(context):
+def _provenance(context: Any) -> Any:
     astro = phx.applications.astrodynamics
     return astro.AstrodynamicsDataProvenance(
         producer="test",
@@ -28,7 +30,7 @@ def _provenance(context):
     )
 
 
-def test_time_eop_frame_and_ephemeris_closure(tmp_path):
+def test_time_eop_frame_and_ephemeris_closure(tmp_path: Any) -> None:
     astro = phx.applications.astrodynamics
     context = _context()
     provenance = _provenance(context)
@@ -61,10 +63,12 @@ def test_time_eop_frame_and_ephemeris_closure(tmp_path):
         eop.rotation_gcrs_to_itrs @ eop.rotation_gcrs_to_itrs.T, jnp.eye(3), atol=1e-12
     )
 
+    # ty: ignore[invalid-argument-type]
     catalog = astro.CelestialBodyCatalog(("body",), [1.0], [1.0], context)
     coefficients = jnp.zeros((1, 1, 3, 3))
     coefficients = coefficients.at[0, 0, 0, 0].set(0.5)
     coefficients = coefficients.at[0, 0, 0, 1].set(0.5)
+    # ty: ignore[invalid-argument-type]
     ephemeris = astro.ChebyshevEphemeris([0.0, 1.0], coefficients, catalog, provenance)
     sample = ephemeris.evaluate(0.25, 0)
     assert bool(sample.valid)
@@ -72,7 +76,7 @@ def test_time_eop_frame_and_ephemeris_closure(tmp_path):
     np.testing.assert_allclose(sample.state.velocity[0], 1.0, atol=1e-12)
 
 
-def test_gravity_ias15_and_hierarchy_closure():
+def test_gravity_ias15_and_hierarchy_closure() -> None:
     astro = phx.applications.astrodynamics
     context = _context()
     provenance = _provenance(context)

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -8,7 +10,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _case(*, geometry_ad="piecewise"):
+def _case(*, geometry_ad: Any = "piecewise") -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4, periodic=True),),
         axis_names=("x",),
@@ -42,7 +44,7 @@ def _case(*, geometry_ad="piecewise"):
     return plan, target_positions, target
 
 
-def test_exact_particle_realization_has_zero_residual_and_conserves_mass():
+def test_exact_particle_realization_has_zero_residual_and_conserves_mass() -> None:
     plan, target_positions, target = _case()
     result = plan.evaluate(target_positions)
     assert bool(result.successful)
@@ -53,7 +55,7 @@ def test_exact_particle_realization_has_zero_residual_and_conserves_mass():
     assert result.captured_fraction_minimum == 1.0
 
 
-def test_inverse_objective_gradient_and_sensitivity_are_finite():
+def test_inverse_objective_gradient_and_sensitivity_are_finite() -> None:
     plan, _, _ = _case()
     positions = jnp.asarray([[0.2], [0.7]])
     value, gradient = plan.value_and_gradient(positions)
@@ -65,7 +67,7 @@ def test_inverse_objective_gradient_and_sensitivity_are_finite():
     assert report.jvp_residual < 1e-4
 
 
-def test_periodic_parameterization_and_optimizer_descent():
+def test_periodic_parameterization_and_optimizer_descent() -> None:
     plan, _, _ = _case()
     wrapped = plan.positions(jnp.asarray([[1.2], [-0.3]]))
     np.testing.assert_allclose(wrapped, [[0.2], [0.7]])
@@ -81,6 +83,6 @@ def test_periodic_parameterization_and_optimizer_descent():
     assert bool(plan.evaluate(result.parameters).successful)
 
 
-def test_frozen_geometry_is_rejected():
+def test_frozen_geometry_is_rejected() -> None:
     with pytest.raises(ValueError, match="piecewise"):
         _case(geometry_ad="frozen")

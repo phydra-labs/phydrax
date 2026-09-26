@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import optax
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_soap_preconditioner_respects_axis_resource_bounds():
+def test_soap_preconditioner_respects_axis_resource_bounds() -> None:
     parameters = {
         "matrix": jnp.zeros((2, 3), dtype=jnp.float64),
         "scalar": jnp.asarray(1.0),
@@ -19,6 +21,7 @@ def test_soap_preconditioner_respects_axis_resource_bounds():
     )
     state = transformation.init(parameters)
 
+    # ty: ignore[unresolved-attribute]
     matrix = state.covariance["matrix"].matrices
     assert matrix[0].shape == (2, 2)
     assert matrix[0].dtype == jnp.float32
@@ -26,12 +29,15 @@ def test_soap_preconditioner_respects_axis_resource_bounds():
     low_precision_state = phx.optim.scale_by_soap().init(
         jnp.zeros((2, 2), dtype=jnp.float16)
     )
+    # ty: ignore[unresolved-attribute]
     assert low_precision_state.covariance.matrices[0].dtype == jnp.float32
+    # ty: ignore[unresolved-attribute]
     assert state.covariance["scalar"].matrices == ()
+    # ty: ignore[unresolved-attribute]
     assert state.covariance["vector"].matrices == (None,)
 
 
-def test_soap_vector_path_matches_sign_normalization_after_basis_warmup():
+def test_soap_vector_path_matches_sign_normalization_after_basis_warmup() -> None:
     parameters = jnp.asarray([1.0, -2.0])
     gradients = jnp.asarray([2.0, -4.0])
     optimizer = phx.optim.soap(
@@ -46,12 +52,15 @@ def test_soap_vector_path_matches_sign_normalization_after_basis_warmup():
     warmup, state = optimizer.update(gradients, state, parameters)
     updates, state = optimizer.update(gradients, state, parameters)
 
+    # ty: ignore[unresolved-attribute]
     assert state.count == 2
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(warmup, jnp.zeros_like(parameters))
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(updates, jnp.asarray([-0.1, 0.1]), atol=1e-10)
 
 
-def test_soap_weight_decay_starts_after_basis_warmup():
+def test_soap_weight_decay_starts_after_basis_warmup() -> None:
     parameters = jnp.asarray([2.0, -4.0])
     gradients = jnp.zeros_like(parameters)
     optimizer = phx.optim.soap(
@@ -65,11 +74,13 @@ def test_soap_weight_decay_starts_after_basis_warmup():
     warmup, state = optimizer.update(gradients, state, parameters)
     updates, _ = optimizer.update(gradients, state, parameters)
 
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(warmup, jnp.zeros_like(parameters))
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(updates, -0.05 * parameters)
 
 
-def test_soap_schedule_counts_effective_parameter_updates():
+def test_soap_schedule_counts_effective_parameter_updates() -> None:
     parameters = jnp.asarray([1.0])
     gradients = jnp.asarray([2.0])
     optimizer = phx.optim.soap(
@@ -84,11 +95,13 @@ def test_soap_schedule_counts_effective_parameter_updates():
     first, state = optimizer.update(gradients, state, parameters)
     second, _ = optimizer.update(gradients, state, parameters)
 
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(first, -0.1)
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(second, -0.2)
 
 
-def test_soap_mixed_preconditioner_dtype_is_jittable_and_orthogonal():
+def test_soap_mixed_preconditioner_dtype_is_jittable_and_orthogonal() -> None:
     parameters = jnp.asarray(
         [[1.0, -2.0], [0.5, 3.0]],
         dtype=jnp.float64,
@@ -106,7 +119,7 @@ def test_soap_mixed_preconditioner_dtype_is_jittable_and_orthogonal():
     state = transformation.init(parameters)
 
     @jax.jit
-    def step(current_state):
+    def step(current_state: Any) -> Any:
         return transformation.update(gradients, current_state, parameters)
 
     warmup, state = step(state)
@@ -119,7 +132,7 @@ def test_soap_mixed_preconditioner_dtype_is_jittable_and_orthogonal():
         assert jnp.allclose(basis.T @ basis, jnp.eye(2), atol=2e-5)
 
 
-def test_soap_decreases_dense_quadratic_under_jit_scan():
+def test_soap_decreases_dense_quadratic_under_jit_scan() -> None:
     initial = jnp.asarray([[3.0, -2.0], [1.0, 4.0]])
     target = jnp.asarray([[0.5, 1.0], [-1.0, 0.25]])
     optimizer = phx.optim.soap(
@@ -130,7 +143,7 @@ def test_soap_decreases_dense_quadratic_under_jit_scan():
     )
     state = optimizer.init(initial)
 
-    def body(carry, _):
+    def body(carry: Any, _: Any) -> Any:
         parameters, optimizer_state = carry
         gradients = 2.0 * (parameters - target)
         updates, optimizer_state = optimizer.update(
@@ -149,7 +162,7 @@ def test_soap_decreases_dense_quadratic_under_jit_scan():
     assert final_loss < 0.1 * initial_loss
 
 
-def test_soap_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
+def test_soap_checkpoint_resume_matches_uninterrupted_steps(tmp_path: Any) -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(2.0)
     component = domain.component()
@@ -195,9 +208,12 @@ def test_soap_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         training=phx.solver.FunctionalTrainingPlan(),
     )
 
+    # ty: ignore[unresolved-attribute]
     assert isinstance(resumed.training_state.kernel_state.rule_state, phx.optim.SOAPState)
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         resumed.training_state.current_functions["u"].func(),
+        # ty: ignore[unresolved-attribute]
         uninterrupted.training_state.current_functions["u"].func(),
     )
 
@@ -209,7 +225,7 @@ def test_soap_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
         jnp.asarray([1.0 + 1.0j], dtype=jnp.complex64),
     ),
 )
-def test_soap_rejects_nonreal_parameter_coordinates(parameters):
+def test_soap_rejects_nonreal_parameter_coordinates(parameters: Any) -> None:
     with pytest.raises(TypeError, match="real floating-point"):
         phx.optim.soap().init(parameters)
 
@@ -226,6 +242,6 @@ def test_soap_rejects_nonreal_parameter_coordinates(parameters):
         ({"preconditioner_dtype": jnp.float16}, "preconditioner_dtype"),
     ),
 )
-def test_soap_rejects_invalid_configuration(kwargs, message):
+def test_soap_rejects_invalid_configuration(kwargs: Any, message: Any) -> None:
     with pytest.raises(ValueError, match=message):
         phx.optim.soap(**kwargs)

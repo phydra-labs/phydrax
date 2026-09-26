@@ -51,7 +51,7 @@ def _validate_common(
     support_reduction: OperatorSupportReduction,
     case_reduction: OperatorCaseReduction,
     zero_measure: OperatorZeroMeasure,
-) -> None:
+) -> tuple[OperatorSupportReduction, OperatorCaseReduction, OperatorZeroMeasure]:
     if not name:
         raise ValueError("Operator classification loss names must be non-empty.")
     if not jnp.isfinite(weight) or weight < 0.0:
@@ -64,9 +64,11 @@ def _validate_common(
         raise ValueError("prediction_field must be non-empty or None.")
     if target_field is not None and not target_field:
         raise ValueError("target_field must be non-empty or None.")
-    parse(support_reduction, OperatorSupportReduction, "support_reduction")
-    parse(case_reduction, OperatorCaseReduction, "case_reduction")
-    parse(zero_measure, OperatorZeroMeasure, "zero_measure")
+    return (
+        parse(support_reduction, OperatorSupportReduction, "support_reduction"),
+        parse(case_reduction, OperatorCaseReduction, "case_reduction"),
+        parse(zero_measure, OperatorZeroMeasure, "zero_measure"),
+    )
 
 
 def _resolve_fields(
@@ -280,7 +282,10 @@ class OperatorClassificationNLL(AbstractOperatorLossTerm):
     zero_measure: OperatorZeroMeasure = "error"
 
     def __post_init__(self) -> None:
-        _validate_common(**self.__dict__)
+        support, case, zero = _validate_common(**self.__dict__)
+        object.__setattr__(self, "support_reduction", support)
+        object.__setattr__(self, "case_reduction", case)
+        object.__setattr__(self, "zero_measure", zero)
         if self.classification.target != "hard":
             raise ValueError("OperatorClassificationNLL requires hard targets.")
 
@@ -329,7 +334,10 @@ class OperatorSoftClassificationLoss(AbstractOperatorLossTerm):
     zero_measure: OperatorZeroMeasure = "error"
 
     def __post_init__(self) -> None:
-        _validate_common(**self.__dict__)
+        support, case, zero = _validate_common(**self.__dict__)
+        object.__setattr__(self, "support_reduction", support)
+        object.__setattr__(self, "case_reduction", case)
+        object.__setattr__(self, "zero_measure", zero)
         if self.classification.target != "soft":
             raise ValueError("OperatorSoftClassificationLoss requires soft targets.")
 
@@ -383,7 +391,7 @@ class OperatorFocalClassificationLoss(AbstractOperatorLossTerm):
     alpha: float | tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
-        _validate_common(
+        support, case, zero = _validate_common(
             name=self.name,
             weight=self.weight,
             classification=self.classification,
@@ -393,6 +401,9 @@ class OperatorFocalClassificationLoss(AbstractOperatorLossTerm):
             case_reduction=self.case_reduction,
             zero_measure=self.zero_measure,
         )
+        object.__setattr__(self, "support_reduction", support)
+        object.__setattr__(self, "case_reduction", case)
+        object.__setattr__(self, "zero_measure", zero)
         if self.classification.target != "hard":
             raise ValueError("OperatorFocalClassificationLoss requires hard targets.")
         if self.classification.kind == "ordinal":
@@ -531,7 +542,7 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
     beta: float = 0.5
 
     def __post_init__(self) -> None:
-        _validate_common(
+        support, case, zero = _validate_common(
             name=self.name,
             weight=self.weight,
             classification=self.classification,
@@ -541,6 +552,9 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
             case_reduction=self.case_reduction,
             zero_measure=self.zero_measure,
         )
+        object.__setattr__(self, "support_reduction", support)
+        object.__setattr__(self, "case_reduction", case)
+        object.__setattr__(self, "zero_measure", zero)
         object.__setattr__(
             self, "overlap", parse(self.overlap, OperatorOverlapKind, "overlap")
         )

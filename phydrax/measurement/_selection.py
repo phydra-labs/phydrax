@@ -125,7 +125,8 @@ def _slice_support(
     if isinstance(support, PointSampleSupport):
         active_mask = support.active_mask
         # PointSampleSupport.__post_init__ always materializes active_mask.
-        assert active_mask is not None
+        if not (active_mask is not None):
+            raise RuntimeError("Internal invariant failed: active_mask is not None.")
         return PointSampleSupport(
             support.points[selection],
             support.sample_ids[selection],
@@ -139,7 +140,10 @@ def _slice_support(
     if isinstance(support, RaySampleSupport):
         active_mask, near, far = support.active_mask, support.near, support.far
         # RaySampleSupport.__post_init__ always materializes active_mask, near and far.
-        assert active_mask is not None and near is not None and far is not None
+        if not (active_mask is not None and near is not None and (far is not None)):
+            raise RuntimeError(
+                "Internal invariant failed: active_mask is not None and near is not None and (far is not None)."
+            )
         return RaySampleSupport(
             support.origins[selection],
             support.directions[selection],

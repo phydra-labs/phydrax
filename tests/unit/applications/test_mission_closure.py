@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _context():
+def _context() -> Any:
     astro = phx.applications.astrodynamics
     return astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),
@@ -14,7 +16,7 @@ def _context():
     )
 
 
-def _provenance(context):
+def _provenance(context: Any) -> Any:
     return phx.applications.astrodynamics.AstrodynamicsDataProvenance(
         producer="test",
         producer_version="1",
@@ -28,7 +30,7 @@ def _provenance(context):
     )
 
 
-def test_coupled_vehicle_and_tracking_closure():
+def test_coupled_vehicle_and_tracking_closure() -> None:
     astro = phx.applications.astrodynamics
     context = _context()
     configuration = astro.VehicleConfiguration(
@@ -41,7 +43,7 @@ def test_coupled_vehicle_and_tracking_closure():
         context,
     )
 
-    def zero_effector(time, state, command):
+    def zero_effector(time: Any, state: Any, command: Any) -> Any:
         del time, command
         return astro.VehicleEffectorEvaluation(
             jnp.zeros(3),
@@ -110,7 +112,7 @@ def test_coupled_vehicle_and_tracking_closure():
         astro.TrackingObservationPlan(stations, bad_schedule)
 
 
-def test_variational_od_and_mission_closure():
+def test_variational_od_and_mission_closure() -> None:
     astro = phx.applications.astrodynamics
     variational = astro.VariationalPropagationPlan(
         lambda t, x, p, args: p[0] * x,
@@ -137,7 +139,7 @@ def test_variational_od_and_mission_closure():
     assert bool(access.visible)
 
 
-def test_mission_geometry_covariance_and_od_controls_reject_invalid_inputs():
+def test_mission_geometry_covariance_and_od_controls_reject_invalid_inputs() -> None:
     astro = phx.applications.astrodynamics
     access = astro.AccessPlan().evaluate(
         jnp.asarray([1.0, 0.0, 0.0]),

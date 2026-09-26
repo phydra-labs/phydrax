@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -5,7 +7,7 @@ import phydrax as phx
 from phydrax._numerics import SmolyakIndexSet
 
 
-def test_cid02_signed_estimators_preserve_sign_and_neyman_allocation():
+def test_cid02_signed_estimators_preserve_sign_and_neyman_allocation() -> None:
     estimator = phx.integration.AdaptiveStratifiedEstimator(jnp.asarray([0.5, 0.5]))
     allocation = estimator.next_allocation(jnp.asarray([1.0, 16.0]), 20)
     assert int(allocation[1]) > int(allocation[0])
@@ -13,7 +15,7 @@ def test_cid02_signed_estimators_preserve_sign_and_neyman_allocation():
     assert value == 0.0
 
 
-def test_cid04_bounded_breakpoint_discovery_reports_jump():
+def test_cid04_bounded_breakpoint_discovery_reports_jump() -> None:
     plan = phx.integration.BreakpointDiscoveryPlan(
         33, 4, 3, jump_threshold=3.0, defect_threshold=3.0
     )
@@ -27,11 +29,11 @@ def test_cid04_bounded_breakpoint_discovery_reports_jump():
     assert float(jnp.min(jnp.abs(evidence.points[evidence.active] - 0.2))) < 0.1
 
 
-def test_breakpoint_discovery_budget_refuses_before_callback():
+def test_breakpoint_discovery_budget_refuses_before_callback() -> None:
     domain = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
     calls = 0
 
-    def callback(x):
+    def callback(x: Any) -> Any:
         nonlocal calls
         calls += 1
         return x
@@ -53,13 +55,13 @@ def test_breakpoint_discovery_budget_refuses_before_callback():
     assert calls == 0
 
 
-def test_cid05_sparse_frontier_tracks_admissible_neighbors():
+def test_cid05_sparse_frontier_tracks_admissible_neighbors() -> None:
     index_set = SmolyakIndexSet(2, ((0, 0), (1, 0)))
     assert index_set.frontier().candidates == ((0, 1), (2, 0))
     assert index_set.add((0, 1)).indices == ((0, 0), (0, 1), (1, 0))
 
 
-def test_cid07_declared_quantile_transport_round_trip_and_empirical_rejection():
+def test_cid07_declared_quantile_transport_round_trip_and_empirical_rejection() -> None:
     normal = phx.domain.ProbabilityDomain(phx.uq.Normal(1.0, 2.0), label="z")
     reference = jnp.asarray([-1.0, 0.0, 1.0])
     physical = normal.reference_transport.from_reference(reference)

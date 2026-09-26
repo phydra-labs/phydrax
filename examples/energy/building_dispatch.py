@@ -8,6 +8,7 @@ import csv
 import io
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -38,7 +39,7 @@ CONDUCTANCE = 60.0  # Envelope sensible conductance, W/K.
 COP = 3.0
 
 
-def synthetic_epw_24h():
+def synthetic_epw_24h() -> Any:
     """Independently authored winter day, not measured weather or an engine output."""
     output = io.StringIO()
     rows = csv.writer(output, lineterminator="\n")
@@ -111,7 +112,7 @@ def synthetic_epw_24h():
     return output.getvalue()
 
 
-def watts_to_rate(watts, carrier, time_unit):
+def watts_to_rate(watts: Any, carrier: Any, time_unit: Any) -> Any:
     """W -> energy-carrier amount / chronology time, with dimension checking."""
     return (
         np.asarray(watts)
@@ -120,7 +121,7 @@ def watts_to_rate(watts, carrier, time_unit):
     )
 
 
-def rate_to_watts(rate, carrier, time_unit):
+def rate_to_watts(rate: Any, carrier: Any, time_unit: Any) -> Any:
     return (
         np.asarray(rate)
         * float(conversion_factor(carrier.unit, JOULE))
@@ -128,7 +129,7 @@ def rate_to_watts(rate, carrier, time_unit):
     )
 
 
-def make_dispatch_system(heat_W, electric_W, duration_s):
+def make_dispatch_system(heat_W: Any, electric_W: Any, duration_s: Any) -> Any:
     heat = np.asarray(heat_W, dtype="float64")
     electric = np.asarray(electric_W, dtype="float64")
     duration = np.asarray(duration_s, dtype="float64")
@@ -190,7 +191,9 @@ def make_dispatch_system(heat_W, electric_W, duration_s):
     )
 
 
-def replay_dispatch_heat(spec, plan, expected_heat_W, *, tolerance_W=0.01):
+def replay_dispatch_heat(
+    spec: Any, plan: Any, expected_heat_W: Any, *, tolerance_W: Any = 0.01
+) -> Any:
     """Independent domain replay AND the cross-domain delivery boundary audit."""
     replay = ep.replay_energy_system(spec, plan, atol=1e-7, rtol=1e-7)
     if not replay.successful:
@@ -214,7 +217,9 @@ def replay_dispatch_heat(spec, plan, expected_heat_W, *, tolerance_W=0.01):
     return replay, delivered
 
 
-def run_building_dispatch(output_dir, *, epw_path=None, intervals=4, execution=None):
+def run_building_dispatch(
+    output_dir: Any, *, epw_path: Any = None, intervals: Any = 4, execution: Any = None
+) -> Any:
     """Execute 2--4 hourly intervals; return real native results and archived arrays.
 
     EPW ending observations are held over their preceding intervals by an explicit
@@ -224,6 +229,7 @@ def run_building_dispatch(output_dir, *, epw_path=None, intervals=4, execution=N
     """
     if intervals not in (2, 3, 4):
         raise ValueError("Choose 2, 3 or 4 intervals for this bounded workflow.")
+    # ty: ignore[unresolved-attribute]
     if not jax.config.x64_enabled:
         raise ValueError("This qualification requires JAX_ENABLE_X64=1.")
     execution = execution_identity() if execution is None else execution
@@ -515,7 +521,7 @@ def run_building_dispatch(output_dir, *, epw_path=None, intervals=4, execution=N
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("energy-results/building"))
     parser.add_argument("--epw", type=Path)

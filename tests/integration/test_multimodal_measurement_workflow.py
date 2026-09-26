@@ -3,7 +3,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_ct_and_mri_predictions_compare_in_native_measurement_spaces():
+def test_ct_and_mri_predictions_compare_in_native_measurement_spaces() -> None:
     contract = phx.SpatialCoordinateContract(
         phx.units.METER, coordinate_system="cartesian", reference_frame="scanner"
     )
@@ -18,7 +18,9 @@ def test_ct_and_mri_predictions_compare_in_native_measurement_spaces():
     transform = phx.imaging.tomography.VoxelXRayTransformPlan(
         support,
         (2, 1, 1),
+        # ty: ignore[invalid-argument-type]
         (0, 0, 0),
+        # ty: ignore[invalid-argument-type]
         (1, 1, 1),
         support.rays.coordinate_contract,
     )

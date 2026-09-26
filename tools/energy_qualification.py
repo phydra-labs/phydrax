@@ -11,6 +11,7 @@ import time
 import traceback
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -39,7 +40,7 @@ SCENARIOS = (
 EXTERNAL = frozenset(("energyplus", "radiance", "fmi", "helics", "opendss"))
 
 
-def artifact_record(artifact):
+def artifact_record(artifact: Any) -> Any:
     return {
         "artifact_kind": artifact.artifact_kind,
         "content_digest": artifact.content_digest,
@@ -55,7 +56,7 @@ def artifact_record(artifact):
     }
 
 
-def run_fmi_reference(path, sha256, version, license_id):
+def run_fmi_reference(path: Any, sha256: Any, version: Any, license_id: Any) -> Any:
     """The original accumulator specimen only; not a generic FMU acceptance claim."""
     from phydrax.interchange.fmi import FMICoSimulationSession
 
@@ -120,7 +121,7 @@ def run_fmi_reference(path, sha256, version, license_id):
     }
 
 
-def run_helics_reference(version, license_id):
+def run_helics_reference(version: Any, license_id: Any) -> Any:
     from phydrax.interchange.helics import HelicsChannel, HelicsValueSession
 
     channel = HelicsChannel("energy-qualification/power", "double", "W")
@@ -165,7 +166,8 @@ def run_helics_reference(version, license_id):
     }
 
 
-def run_opendss_reference(version, license_id):
+def run_opendss_reference(version: Any, license_id: Any) -> Any:
+    # ty: ignore[unresolved-import]
     from phydrax.interchange.energy_runtime import run_opendss
 
     commands = (
@@ -210,7 +212,7 @@ def run_opendss_reference(version, license_id):
     }
 
 
-def run_scenario(name, args, execution):
+def run_scenario(name: Any, args: Any, execution: Any) -> Any:
     output = args.output / name
     if name == "building-dispatch":
         result = run_building_dispatch(
@@ -293,7 +295,7 @@ def run_scenario(name, args, execution):
     raise ValueError(name)
 
 
-def qualify(args):
+def qualify(args: Any) -> Any:
     """Return existing native evidence objects plus raw observed metric records."""
     selected = tuple(args.scenario or ("building-dispatch", "power-fault"))
     if len(set(selected)) != len(selected):
@@ -336,6 +338,7 @@ def qualify(args):
                 "traceback": traceback.format_exc(),
                 "scope": "selected scenario failed; no replacement or retry",
             }
+        # ty: ignore[invalid-assignment]
         row["elapsed_seconds"] = time.perf_counter() - started
         raw = np.frombuffer(json_bytes(row), dtype=np.uint8)
         raw_id = identity(row)
@@ -355,6 +358,7 @@ def qualify(args):
             raise RuntimeError("Qualification metric archive failed exact reopen.")
         kind = "reference" if name in EXTERNAL else "scientific"
         criterion = name + ":predeclared-physical-acceptance"
+        # ty: ignore[missing-argument]
         item = QualificationEvidence(
             kind,
             "passed" if row["passed"] else "failed",
@@ -372,6 +376,7 @@ def qualify(args):
                 if execution["environment"]["jax_enable_x64"]
                 else "float32"
             ),
+            # ty: ignore[invalid-argument-type]
             reduction=row["scope"],
             replay_id=row.get("result_archive_id", raw_id),
             criteria_ids=(criterion,),
@@ -438,7 +443,7 @@ def qualify(args):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", action="append", choices=SCENARIOS)
     parser.add_argument(

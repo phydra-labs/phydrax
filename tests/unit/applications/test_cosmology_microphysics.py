@@ -7,7 +7,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def test_primordial_microphysics_conserves_nuclei_charge_and_updates_energy():
+def test_primordial_microphysics_conserves_nuclei_charge_and_updates_energy() -> None:
     artifact = cosmology.ScientificArtifactEnvelope(
         artifact_kind="primordial-rate-table",
         content_digest="fixture-rates",
@@ -24,12 +24,17 @@ def test_primordial_microphysics_conserves_nuclei_charge_and_updates_energy():
     rates = rates.at[8].set(2.0e-3)
     rates = rates.at[9].set(1.0e-4)
     rates = rates.at[10].set(2.0e-4)
+    # ty: ignore[invalid-argument-type]
     table = cosmology.PrimordialRateTable([0.1, 1.0, 10.0], [0.5, 1.0], rates, artifact)
     plan = cosmology.PrimordialMicrophysicsPlan(
         table, maximum_iterations=12, tolerance=1.0e-9
     )
     species = cosmology.PrimordialSpeciesState(
-        [[0.9, 0.1, 0.09, 0.01, 0.0, 0.11]], [1.0], 0.5
+        # ty: ignore[invalid-argument-type]
+        [[0.9, 0.1, 0.09, 0.01, 0.0, 0.11]],
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        0.5,
     )
     result = plan.advance(species, 0.01)
     assert bool(result.successful)

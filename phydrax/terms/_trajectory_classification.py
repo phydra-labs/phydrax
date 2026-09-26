@@ -1009,16 +1009,10 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
             raise TypeError(
                 "RaggedTimeSeriesClassificationTerm requires a trajectory dataset domain."
             )
-        if selection not in (
-            "observation_uniform",
-            "case_uniform",
-            "case_time_uniform",
-        ):
-            raise ValueError(
-                "selection must be 'observation_uniform', 'case_uniform', or 'case_time_uniform'."
-            )
-        if interpolation not in ("nearest", "linear"):
-            raise ValueError("interpolation must be either 'nearest' or 'linear'.")
+        selection = parse(selection, RaggedTimeSeriesSampling, "selection")
+        interpolation = parse(
+            interpolation, RaggedTimeSeriesInterpolation, "interpolation"
+        )
 
         objective_ = _normalize_objective(objective)
         class_count = _classification_size(target_schema)

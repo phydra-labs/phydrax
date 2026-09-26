@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -12,13 +15,13 @@ from phydrax.domain import DomainFunction, TimeInterval
 from phydrax.operators.differential import directional_derivative
 
 
-def test_directional_derivative_scalar_point():
+def test_directional_derivative_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, 0.0]))
@@ -29,13 +32,13 @@ def test_directional_derivative_scalar_point():
     assert jnp.allclose(out, 4.0)
 
 
-def test_directional_derivative_vector_point():
+def test_directional_derivative_vector_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, 1.0]))
@@ -46,13 +49,13 @@ def test_directional_derivative_vector_point():
     assert jnp.allclose(out, jnp.array([4.0, 6.0]))
 
 
-def test_directional_derivative_direction_is_function():
+def test_directional_derivative_direction_is_function() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     v = geom.Function("x")(lambda x: x)
@@ -63,14 +66,14 @@ def test_directional_derivative_direction_is_function():
     assert jnp.allclose(out, 26.0)
 
 
-def test_directional_derivative_spacetime_broadcasts_over_t(sample_batch):
+def test_directional_derivative_spacetime_broadcasts_over_t(sample_batch: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def f(x, t):
+    def f(x: Any, t: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + t
 
     v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, 0.0]))
@@ -84,7 +87,7 @@ def test_directional_derivative_spacetime_broadcasts_over_t(sample_batch):
     assert jnp.allclose(out, 2.0 * x[..., 0:1])
 
 
-def test_directional_derivative_coord_separable(sample_grid):
+def test_directional_derivative_coord_separable(sample_grid: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -92,7 +95,7 @@ def test_directional_derivative_coord_separable(sample_grid):
     batch = sample_grid(component, {"x": (5, 4)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         x, y = x
         return x**2 + y**2
 
@@ -106,7 +109,7 @@ def test_directional_derivative_coord_separable(sample_grid):
     assert jnp.allclose(out, 2.0 * X, atol=1e-6)
 
 
-def test_directional_derivative_preserves_metadata():
+def test_directional_derivative_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -115,13 +118,13 @@ def test_directional_derivative_preserves_metadata():
     assert directional_derivative(u, v).metadata == u.metadata
 
 
-def test_directional_derivative_ad_engine_jvp_matches_default():
+def test_directional_derivative_ad_engine_jvp_matches_default() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + x[0] * x[1]
 
     v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, -0.25]))
@@ -133,13 +136,13 @@ def test_directional_derivative_ad_engine_jvp_matches_default():
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
 
 
-def test_directional_derivative_ad_engine_requires_ad_backend():
+def test_directional_derivative_ad_engine_requires_ad_backend() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, 0.0]))

@@ -6,7 +6,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def main():
+def main() -> None:
     graph = phx.pgm.ising_factor_graph(
         jnp.asarray([0.2, -0.1, 0.05, 0.0]),
         jnp.asarray([[0, 1], [1, 2], [2, 3]]),
@@ -89,12 +89,15 @@ def main():
 
     print("exact log normalizer:", float(exact.log_normalizer))
     print("elimination log normalizer:", float(eliminated.log_normalizer))
+    # ty: ignore[unresolved-attribute]
     print("sum-product log normalizer:", float(sum_result.log_normalizer))
     print("exact MAP:", exact.map_assignment)
+    # ty: ignore[unresolved-attribute]
     print("max-product MAP:", max_result.map_assignment)
     print("exact spin means:", jnp.asarray(exact_means))
     print("sampled spin means:", jnp.asarray(sampled_means))
     print("normalized-law samples:", normalized_law.sample(jr.key(29), (3,)))
+    # ty: ignore[not-subscriptable]
     print("online state means:", online.reduction["mean"])
     print("maximum R-hat:", float(gibbs.diagnostics.max_rhat))
 

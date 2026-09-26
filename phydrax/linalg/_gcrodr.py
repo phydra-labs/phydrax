@@ -15,6 +15,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._iteration import IterationPlan
+from ..typing import parse
 from ._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from ._plans import LinearSolvePlan
 from ._policies import FGMRES, GMRES, LinearSolveControl, LinearSolvePolicy, RankPolicy
@@ -1046,8 +1047,7 @@ def _validate_extraction(value: str, /) -> RecyclingExtraction:
 
 
 def _validate_refresh(value: str, /) -> RecyclingRefresh:
-    if value not in ("reuse-source", "rebuild"):
-        raise ValueError("refresh must be 'reuse-source' or 'rebuild'.")
+    value = parse(value, RecyclingRefresh, "value")
     return value
 
 

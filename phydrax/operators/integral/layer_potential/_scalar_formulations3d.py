@@ -27,6 +27,7 @@ from ....linalg import (
     OperatorProperties,
 )
 from ....linalg._operators import _AbstractCostedLinearOperator
+from ....typing import parse
 from ._scalar_calderon3d import ScalarCalderonDP0Galerkin3D
 from ._scalar_trace import ScalarTraceSide3D, UnsupportedScalarBoundarySpaceError
 
@@ -494,8 +495,7 @@ def scalar_robin_mixed_formulation_3d(
     use the named compatibility/gauge formulation instead.
     """
     prepared = _checked(calderon)
-    if side not in ("interior", "exterior"):
-        raise ValueError("Robin/mixed side must be 'interior' or 'exterior'.")
+    side = parse(side, ScalarTraceSide3D, "side")
 
     def coefficient(value: ArrayLike, name: str, /) -> Array:
         result = jnp.asarray(value, dtype=prepared.space.dtype)

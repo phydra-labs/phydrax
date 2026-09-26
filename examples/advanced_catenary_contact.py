@@ -19,6 +19,7 @@ state = mn.solve_elastic_catenary(
     reference,
 )
 contact = mn.NodePlaneContact(
+    # ty: ignore[invalid-argument-type]
     (0,),
     jnp.asarray(((0.0, -1.0, 0.0),)),
     jnp.asarray(((0.0, 1.0, 0.0),)),

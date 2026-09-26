@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -55,7 +57,7 @@ def _compiler_record(compiled: object, /) -> dict[str, object]:
     return asdict(evidence)
 
 
-def _measure(function, arguments: tuple[object, ...], repeats: int, /):
+def _measure(function: Any, arguments: tuple[object, ...], repeats: int, /) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: eqx.filter_jit(function).lower(*arguments),
         lambda lowered: lowered.compile(),

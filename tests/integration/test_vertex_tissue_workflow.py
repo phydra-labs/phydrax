@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -21,7 +23,7 @@ from phydrax.applications.cellular_mechanics._vertex_tissue import (
 _SQUARE = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
 
 
-def _two_triangle_plan(*, flipped: bool = False, remove_first: bool = False):
+def _two_triangle_plan(*, flipped: bool = False, remove_first: bool = False) -> Any:
     if flipped:
         edge_vertices = jnp.asarray(((0, 1), (1, 2), (2, 3), (3, 0), (1, 3)))
         cell_edges = jnp.asarray(((1, 2, 4), (4, 3, 0)))
@@ -74,7 +76,7 @@ def _two_triangle_plan(*, flipped: bool = False, remove_first: bool = False):
     )
 
 
-def _t1_plan(*, exchanged: bool):
+def _t1_plan(*, exchanged: bool) -> Any:
     old_positions = jnp.asarray(
         (
             (-1.0, 1.0),
@@ -196,7 +198,7 @@ def _t1_plan(*, exchanged: bool):
     return plan, positions
 
 
-def _division_plan(*, divided: bool):
+def _division_plan(*, divided: bool) -> Any:
     if divided:
         edge_ids = jnp.arange(5)
         edge_vertices = jnp.asarray(((0, 1), (1, 2), (2, 3), (3, 0), (0, 2)))
@@ -240,7 +242,7 @@ def _division_plan(*, divided: bool):
     )
 
 
-def _division_with_neighbor(*, divided: bool):
+def _division_with_neighbor(*, divided: bool) -> Any:
     positions = jnp.asarray(
         (
             (0.0, 0.0),
@@ -333,7 +335,14 @@ def _division_with_neighbor(*, divided: bool):
     return plan, positions
 
 
-def _evaluate_event(source, state, kind, target, transfer, positions=_SQUARE):
+def _evaluate_event(
+    source: Any,
+    state: Any,
+    kind: Any,
+    target: Any,
+    transfer: Any,
+    positions: Any = _SQUARE,
+) -> Any:
     event = VertexTissueTopologyEvent(
         kind, source.prepared_id, target, positions, transfer
     )
@@ -342,7 +351,7 @@ def _evaluate_event(source, state, kind, target, transfer, positions=_SQUARE):
     return candidate, evaluation
 
 
-def test_t1_commits_only_a_four_cell_neighbor_exchange():
+def test_t1_commits_only_a_four_cell_neighbor_exchange() -> None:
     source_plan, source_positions = _t1_plan(exchanged=False)
     target_plan, target_positions = _t1_plan(exchanged=True)
     source = source_plan.prepare(source_positions)
@@ -363,7 +372,7 @@ def test_t1_commits_only_a_four_cell_neighbor_exchange():
     assert jnp.array_equal(result.state.cell_fields, state.cell_fields)
 
 
-def test_t3_commits_a_vertex_edge_rearrangement_but_is_not_mislabeled_t1():
+def test_t3_commits_a_vertex_edge_rearrangement_but_is_not_mislabeled_t1() -> None:
     source = _two_triangle_plan().prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
     target = _two_triangle_plan(flipped=True)
@@ -383,7 +392,7 @@ def test_t3_commits_a_vertex_edge_rearrangement_but_is_not_mislabeled_t1():
     ).committed
 
 
-def test_t3_rejects_identifier_only_relabeling():
+def test_t3_rejects_identifier_only_relabeling() -> None:
     source = _two_triangle_plan().prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
     plan = source.plan
@@ -418,7 +427,7 @@ def test_t3_rejects_identifier_only_relabeling():
     ).committed
 
 
-def test_candidate_is_bound_to_exact_source_state_and_commit_epoch():
+def test_candidate_is_bound_to_exact_source_state_and_commit_epoch() -> None:
     source_plan = _two_triangle_plan()
     source = source_plan.prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
@@ -463,7 +472,9 @@ def test_candidate_is_bound_to_exact_source_state_and_commit_epoch():
         VertexTissueEventKind.APOPTOSIS,
     ),
 )
-def test_removal_events_redistribute_conserved_field_and_preserve_survivor_lineage(kind):
+def test_removal_events_redistribute_conserved_field_and_preserve_survivor_lineage(
+    kind: Any,
+) -> None:
     source = _two_triangle_plan().prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
     target = _two_triangle_plan(remove_first=True)
@@ -484,7 +495,7 @@ def test_removal_events_redistribute_conserved_field_and_preserve_survivor_linea
     assert result.prepared.plan.cell_parent_ids[1] == 11
 
 
-def test_division_records_parent_generation_and_splits_conserved_field():
+def test_division_records_parent_generation_and_splits_conserved_field() -> None:
     source = _division_plan(divided=False).prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((10.0,), (0.0,))))
     target = _division_plan(divided=True)
@@ -506,7 +517,7 @@ def test_division_records_parent_generation_and_splits_conserved_field():
     assert result.prepared.plan.cell_generation[1] == 1
 
 
-def test_division_rejects_transfer_from_a_cell_other_than_declared_parent():
+def test_division_rejects_transfer_from_a_cell_other_than_declared_parent() -> None:
     source_plan, positions = _division_with_neighbor(divided=False)
     target_plan, _ = _division_with_neighbor(divided=True)
     source = source_plan.prepare(positions)
@@ -533,7 +544,7 @@ def test_division_rejects_transfer_from_a_cell_other_than_declared_parent():
     assert not result.committed
 
 
-def test_inactive_cell_fields_and_rates_cannot_be_accepted():
+def test_inactive_cell_fields_and_rates_cannot_be_accepted() -> None:
     plan = _division_plan(divided=False)
     tissue = plan.prepare(_SQUARE)
     with pytest.raises(ValueError, match="Inactive cell field"):
@@ -557,7 +568,7 @@ def test_inactive_cell_fields_and_rates_cannot_be_accepted():
     assert jnp.array_equal(step.state.cell_fields, state.cell_fields)
 
 
-def test_failed_quality_guard_and_explicit_rollback_leave_epoch_unchanged():
+def test_failed_quality_guard_and_explicit_rollback_leave_epoch_unchanged() -> None:
     source = _two_triangle_plan().prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
     target = _two_triangle_plan(flipped=True)
@@ -582,7 +593,7 @@ def test_failed_quality_guard_and_explicit_rollback_leave_epoch_unchanged():
     assert rolled_back.prepared.prepared_id == source.prepared_id
 
 
-def test_capacity_change_is_rejected_before_topology_commit():
+def test_capacity_change_is_rejected_before_topology_commit() -> None:
     source = _two_triangle_plan().prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
     target = polygonal_vertex_tissue_plan(
@@ -614,7 +625,7 @@ def test_capacity_change_is_rejected_before_topology_commit():
     assert result.prepared.prepared_id == source.prepared_id
 
 
-def _tetrahedron_epoch(*, transitioned: bool):
+def _tetrahedron_epoch(*, transitioned: bool) -> Any:
     positions = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -649,7 +660,9 @@ def _tetrahedron_epoch(*, transitioned: bool):
     return plan, positions
 
 
-def test_three_dimensional_edge_transition_cannot_be_mislabeled_as_face_transition():
+def test_three_dimensional_edge_transition_cannot_be_mislabeled_as_face_transition() -> (
+    None
+):
     source_plan, positions = _tetrahedron_epoch(transitioned=False)
     target_plan, _ = _tetrahedron_epoch(transitioned=True)
     source = source_plan.prepare(positions)

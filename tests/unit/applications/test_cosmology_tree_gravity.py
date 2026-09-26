@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +11,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _direct(positions, masses, softening):
+def _direct(positions: Any, masses: Any, softening: Any) -> Any:
     displacement = positions[None, :, :] - positions[:, None, :]
     squared = jnp.sum(displacement**2, axis=-1) + softening**2
     mask = ~jnp.eye(positions.shape[0], dtype="bool")
@@ -23,7 +25,7 @@ def _direct(positions, masses, softening):
     )
 
 
-def test_octree_barnes_hut_fmm_and_treepm_are_finite():
+def test_octree_barnes_hut_fmm_and_treepm_are_finite() -> None:
     positions = jnp.asarray(
         [
             [0.1, 0.1, 0.1],
@@ -72,7 +74,7 @@ def test_octree_barnes_hut_fmm_and_treepm_are_finite():
     assert bool(calibration.successful)
 
 
-def test_cartesian_fmm_operators_complete_all_six_passes():
+def test_cartesian_fmm_operators_complete_all_six_passes() -> None:
     space = cosmology.CartesianExpansionSpace(1)
     operators = cosmology.CartesianFMMOperators(space, 1.0, 0.01)
     positions = jnp.asarray([[0.1, 0.0, 0.0], [0.2, 0.0, 0.0]])
@@ -88,7 +90,7 @@ def test_cartesian_fmm_operators_complete_all_six_passes():
     assert jnp.all(jnp.isfinite(direct))
 
 
-def test_high_order_plane_fmm_converges_and_reports_resources():
+def test_high_order_plane_fmm_converges_and_reports_resources() -> None:
     positions = jnp.asarray(
         [
             [0.08, 0.10, 0.12],
@@ -133,7 +135,7 @@ def test_high_order_plane_fmm_converges_and_reports_resources():
     assert errors[2] < 5.0e-2
 
 
-def test_plane_fmm_capacity_failure_is_fail_closed():
+def test_plane_fmm_capacity_failure_is_fail_closed() -> None:
     positions = jnp.asarray(
         [
             [0.1, 0.1, 0.1],
@@ -162,7 +164,7 @@ def test_plane_fmm_capacity_failure_is_fail_closed():
     np.testing.assert_array_equal(result.acceleration, 0.0)
 
 
-def test_treepm_cartesian_fmm_short_range_matches_split_reference():
+def test_treepm_cartesian_fmm_short_range_matches_split_reference() -> None:
     positions = jnp.asarray(
         [
             [0.10, 0.10, 0.10],
@@ -226,7 +228,7 @@ def test_treepm_cartesian_fmm_short_range_matches_split_reference():
     assert bool(calibration.successful)
 
 
-def test_treepm_rejects_full_range_cartesian_fmm():
+def test_treepm_rejects_full_range_cartesian_fmm() -> None:
     split = cosmology.TreePMSplitPolicy(0.1, 0.5, "treepm-fmm-reject")
     full_range = cosmology.UniformFMMPlan(
         1.0,
@@ -237,7 +239,7 @@ def test_treepm_rejects_full_range_cartesian_fmm():
         cosmology.TreePMPlan(full_range, split)
 
 
-def test_distributed_particle_layout_assigns_key_ranges():
+def test_distributed_particle_layout_assigns_key_ranges() -> None:
     layout = cosmology.DistributedParticleLayout(
         2, 16, jnp.asarray([0, 32, 64], dtype=jnp.uint32)
     )

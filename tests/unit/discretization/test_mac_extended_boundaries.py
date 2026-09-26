@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _operators(*, periodic_x=True, count=6):
+def _operators(*, periodic_x: Any = True, count: Any = 6) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(count, periodic=periodic_x),
@@ -21,10 +24,10 @@ def _operators(*, periodic_x=True, count=6):
     return finite_volume, phx.discretization.MACOperatorPlan(finite_volume).prepare()
 
 
-def test_time_dependent_wall_provider_enforces_value_and_rate():
+def test_time_dependent_wall_provider_enforces_value_and_rate() -> None:
     _, operators = _operators()
 
-    def controlled_wall(time, _coordinates, amplitude):
+    def controlled_wall(time: Any, _coordinates: Any, amplitude: Any) -> Any:
         value = jnp.asarray([amplitude * jnp.sin(time), 0.0])
         rate = jnp.asarray([amplitude * jnp.cos(time), 0.0])
         return value, rate
@@ -63,7 +66,7 @@ def test_time_dependent_wall_provider_enforces_value_and_rate():
     assert jnp.isfinite(gradient)
 
 
-def test_pressure_outlet_removes_pressure_gauge_and_accepts_inflow_flux():
+def test_pressure_outlet_removes_pressure_gauge_and_accepts_inflow_flux() -> None:
     finite_volume, operators = _operators(periodic_x=False)
     zero = phx.discretization.MACBoundaryProvider(jnp.zeros(2))
     boundaries = phx.discretization.MACBoundaryPlan(

@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _annulus_complex():
+def _annulus_complex() -> Any:
     outer = np.asarray([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
     vertices = np.concatenate((outer, 0.4 * outer), axis=0)
     faces = np.asarray(
@@ -19,13 +22,13 @@ def _annulus_complex():
     return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
 
 
-def _packed_columns(complex_ir, degree, columns):
+def _packed_columns(complex_ir: Any, degree: Any, columns: Any) -> Any:
     packed = jnp.zeros((columns.shape[1], complex_ir.num_cells), dtype=columns.dtype)
     start = complex_ir.cell_offsets[degree]
     return packed.at[:, start : start + columns.shape[0]].set(columns.T)
 
 
-def test_hodge_sectors_span_cochains_and_satisfy_differential_invariants():
+def test_hodge_sectors_span_cochains_and_satisfy_differential_invariants() -> None:
     complex_ir = _annulus_complex()
     spectra = phx.graph.cochain_hodge_sector_spectra(complex_ir, 1)
 
@@ -64,7 +67,7 @@ def test_hodge_sectors_span_cochains_and_satisfy_differential_invariants():
     assert jnp.allclose(harmonic_codifferential, 0.0, atol=1e-8)
 
 
-def _hodge_kernel(spectra):
+def _hodge_kernel(spectra: Any) -> Any:
     return phx.kernels.CochainHodgeSpectralKernel(
         spectra,
         harmonic_multiplier=phx.kernels.HeatSpectralMultiplier(0.0),
@@ -76,7 +79,7 @@ def _hodge_kernel(spectra):
     )
 
 
-def test_hodge_sector_covariance_is_orientation_conjugate_and_finite_feature():
+def test_hodge_sector_covariance_is_orientation_conjugate_and_finite_feature() -> None:
     complex_ir = _annulus_complex()
     spectra = phx.graph.cochain_hodge_sector_spectra(complex_ir, 1)
     kernel = _hodge_kernel(spectra)
@@ -108,7 +111,7 @@ def test_hodge_sector_covariance_is_orientation_conjugate_and_finite_feature():
     )
 
 
-def test_hodge_sector_sum_reuses_weight_space_gp_inference():
+def test_hodge_sector_sum_reuses_weight_space_gp_inference() -> None:
     complex_ir = _annulus_complex()
     kernel = _hodge_kernel(phx.graph.cochain_hodge_sector_spectra(complex_ir, 1))
     entities = jnp.tile(complex_ir.cell_entities(1), 2)

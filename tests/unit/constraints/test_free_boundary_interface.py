@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -12,7 +15,7 @@ from phydrax._doc import DOC_KEY0
 from phydrax._frozendict import frozendict
 
 
-def test_interface_feature_lift_encodes_normalized_distance_cusp_and_side():
+def test_interface_feature_lift_encodes_normalized_distance_cusp_and_side() -> None:
     lift = phx.nn.layers.InterfaceFeatureLift(
         lambda point: 3.0 * point[0],
         2,
@@ -31,7 +34,7 @@ def test_interface_feature_lift_encodes_normalized_distance_cusp_and_side():
     assert 0.5 < features[4] < 1.0
 
 
-def test_exact_stefan_interface_condition_factories_have_zero_residual():
+def test_exact_stefan_interface_condition_factories_have_zero_residual() -> None:
     spatial = phx.domain.GeometryDomain(
         phx.geometry.Rectangle(center=(0.75, 0.0), size=(1.5, 1.0)).compile()
     )
@@ -39,16 +42,16 @@ def test_exact_stefan_interface_condition_factories_have_zero_residual():
     component = domain.component()
 
     @domain.Function("x", "t")
-    def inside(point, time):
+    def inside(point: Any, time: Any) -> Any:
         return jnp.exp(time + 0.5 - point[0]) - 1.0
 
     @domain.Function("x", "t")
-    def outside(point, time):
+    def outside(point: Any, time: Any) -> float:
         del point, time
         return 0.0
 
     @domain.Function("x", "t")
-    def level_set(point, time):
+    def level_set(point: Any, time: Any) -> Any:
         return point[0] - time - 0.5
 
     condition = phx.conditions.free_boundary.StefanBalance(
@@ -75,24 +78,25 @@ def test_exact_stefan_interface_condition_factories_have_zero_residual():
     np.testing.assert_allclose(residual(batch).data, 0.0, atol=1.0e-12)
 
 
-def test_causal_schedule_and_narrow_band_policy_retain_interface_points():
+def test_causal_schedule_and_narrow_band_policy_retain_interface_points() -> None:
     schedule = phx.sampling.collocation.CausalTimeSlabSchedule(
         (0.0, 0.5, 1.0),
         overlap_fraction=0.2,
         causal_strength=2.0,
     )
     weights = schedule.causal_weights(jnp.asarray((0.25, 4.0)))
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(weights, (1.0, jnp.exp(-0.5)), atol=1.0e-14)
     assert bool(schedule.active(jnp.asarray(0.45), 1))
 
     domain = phx.domain.Interval1d(-1.0, 1.0)
 
     @domain.Function("x")
-    def level_set(point):
+    def level_set(point: Any) -> Any:
         return point[0]
 
     @domain.Function("x")
-    def residual_coordinate(point):
+    def residual_coordinate(point: Any) -> Any:
         return 0.01 * point[0] ** 2
 
     base = phx.sampling.collocation.R3(
@@ -136,15 +140,15 @@ def test_causal_schedule_and_narrow_band_policy_retain_interface_points():
     assert jnp.sum(jnp.abs(coordinates) < 0.2) >= 8
 
 
-def test_narrow_band_policy_honors_abstract_default_collocation_key():
+def test_narrow_band_policy_honors_abstract_default_collocation_key() -> None:
     domain = phx.domain.Interval1d(-1.0, 1.0)
 
     @domain.Function("x")
-    def level_set(point):
+    def level_set(point: Any) -> Any:
         return point[0]
 
     @domain.Function("x")
-    def residual_coordinate(point):
+    def residual_coordinate(point: Any) -> Any:
         return 0.01 * point[0] ** 2
 
     policy = phx.sampling.collocation.NarrowBandCollocationPolicy(

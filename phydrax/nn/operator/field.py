@@ -85,16 +85,11 @@ class OperatorFieldSpec(StrictModule):
                 resolved_representation = "generic_channels"
         else:
             resolved_representation = representation
-        if resolved_representation not in (
-            "generic_channels",
-            "scalar",
-            "pseudoscalar",
-            "vector",
-            "covector",
-            "tensor",
-            "clifford_multivector",
-        ):
-            raise ValueError("Unknown operator field representation.")
+        resolved_representation = parse(
+            resolved_representation,
+            OperatorFieldRepresentation,
+            "resolved_representation",
+        )
         names = tuple(str(value) for value in component_names)
         if names and (len(names) != channel_count or len(set(names)) != len(names)):
             raise ValueError("component_names must uniquely name every field channel.")

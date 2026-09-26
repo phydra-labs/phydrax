@@ -2,18 +2,21 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _interval():
+def _interval() -> Any:
     start = phx.measurement.OperationalCoordinate("collider", {"run": 7, "lb": 0})
     end = phx.measurement.OperationalCoordinate("collider", {"run": 7, "lb": 10})
     return phx.measurement.OperationalInterval(start, end)
 
 
-def _run_context():
+def _run_context() -> Any:
     interval = _interval()
     coordinate = phx.measurement.OperationalCoordinate("collider", {"run": 7, "lb": 3})
     payload = phx.measurement.ConditionPayloadReference(
@@ -68,7 +71,7 @@ def _run_context():
     )
 
 
-def _event_plan():
+def _event_plan() -> Any:
     catalog = phx.particle_physics.ParticleCatalogReference(
         source_id="pdg-test",
         provider_release="test",
@@ -87,7 +90,7 @@ def _event_plan():
     )
 
 
-def test_host_event_pack_unpack_preserves_graph_and_reports_attribute_loss():
+def test_host_event_pack_unpack_preserves_graph_and_reports_attribute_loss() -> None:
     pp = phx.particle_physics
     event = pp.HostEventRecord(
         9,
@@ -140,7 +143,7 @@ def test_host_event_pack_unpack_preserves_graph_and_reports_attribute_loss():
     assert tuple(value.particle_id for value in unpacked[0].particles) == (10, 20, 30)
 
 
-def test_conditions_normalization_and_systematics_remain_distinct():
+def test_conditions_normalization_and_systematics_remain_distinct() -> None:
     context = _run_context()
     assert context.scientifically_admitted
     first = phx.particle_physics.ProcessNormalization(
@@ -178,7 +181,7 @@ def test_conditions_normalization_and_systematics_remain_distinct():
     )
 
 
-def test_shared_binned_statistics_fit_and_governed_profile():
+def test_shared_binned_statistics_fit_and_governed_profile() -> None:
     stats = phx.particle_physics.statistics
     parameter = stats.StatisticalParameter(
         "signal-strength",
@@ -239,7 +242,7 @@ def test_shared_binned_statistics_fit_and_governed_profile():
     assert bundle.support.capability == "hep.statistical-model"
 
 
-def test_distributed_preservation_bundle_is_content_addressed_and_read_only():
+def test_distributed_preservation_bundle_is_content_addressed_and_read_only() -> None:
     hep_io = phx.interchange.hep
     replica = hep_io.HEPFileReplica(
         "file.root",

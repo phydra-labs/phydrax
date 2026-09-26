@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -13,7 +16,9 @@ from phydrax.finance.qualification import (
 )
 
 
-def test_finance_archive_preserves_named_physical_arrays_replay_and_support(tmp_path):
+def test_finance_archive_preserves_named_physical_arrays_replay_and_support(
+    tmp_path: Any,
+) -> None:
     arrays = {
         "present_value": np.asarray((10.5, 4.25)),
         "valid": np.asarray((True, True)),
@@ -47,7 +52,7 @@ def test_finance_archive_preserves_named_physical_arrays_replay_and_support(tmp_
     np.testing.assert_array_equal(reopened.arrays["valid"], arrays["valid"])
 
 
-def test_result_manifest_requires_explicit_units_for_every_array():
+def test_result_manifest_requires_explicit_units_for_every_array() -> None:
     with pytest.raises(ValueError, match="cover every physical result array"):
         finance_result_manifest(
             "result-a",

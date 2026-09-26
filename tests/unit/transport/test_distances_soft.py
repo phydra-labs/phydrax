@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_exact_weighted_univariate_wasserstein_matches_quantile_integral():
+def test_exact_weighted_univariate_wasserstein_matches_quantile_integral() -> None:
     source = jnp.asarray([0.0, 10.0])
     target = jnp.asarray([2.0, 8.0])
     source_weights = jnp.asarray([0.75, 0.25])
@@ -37,7 +40,7 @@ def test_exact_weighted_univariate_wasserstein_matches_quantile_integral():
     assert jnp.allclose(distance_l2, jnp.sqrt(19.0))
 
 
-def test_univariate_distance_handles_duplicates_zero_mass_and_permutations():
+def test_univariate_distance_handles_duplicates_zero_mass_and_permutations() -> None:
     source = jnp.asarray([2.0, 0.0, 2.0, 7.0])
     source_weights = jnp.asarray([0.25, 0.5, 0.25, 0.0])
     target = jnp.asarray([1.0, 3.0])
@@ -70,7 +73,7 @@ def test_univariate_distance_handles_duplicates_zero_mass_and_permutations():
         phx.transport.wasserstein_distance_1d(source, target, p=0.5)
 
 
-def test_univariate_and_sliced_distances_are_differentiable_away_from_ties():
+def test_univariate_and_sliced_distances_are_differentiable_away_from_ties() -> None:
     source = jnp.asarray([-1.0, 0.2, 2.0])
     target = jnp.asarray([-0.4, 0.9, 2.6])
     gradient = jax.grad(
@@ -90,7 +93,7 @@ def test_univariate_and_sliced_distances_are_differentiable_away_from_ties():
     assert jnp.all(jnp.isfinite(sliced_gradient))
 
 
-def test_sliced_wasserstein_reports_projection_level_structure_and_replay():
+def test_sliced_wasserstein_reports_projection_level_structure_and_replay() -> None:
     source = jnp.asarray([[0.0, 0.0], [1.0, 0.0]])
     target = source + jnp.asarray([1.0, 2.0])
     explicit = phx.transport.sliced_wasserstein_distance(
@@ -123,7 +126,7 @@ def test_sliced_wasserstein_reports_projection_level_structure_and_replay():
         phx.transport.sliced_wasserstein_distance(source, target)
 
 
-def test_soft_sort_rank_and_payload_restoration_approach_hard_order():
+def test_soft_sort_rank_and_payload_restoration_approach_hard_order() -> None:
     values = jnp.asarray([3.0, 1.0, 4.0, 2.0])
     payload = jnp.asarray([30.0, 10.0, 40.0, 20.0])
     sorted_values = phx.transport.soft_sort(values, epsilon=0.02)
@@ -141,7 +144,7 @@ def test_soft_sort_rank_and_payload_restoration_approach_hard_order():
     assert jnp.allclose(jnp.sum(ranks), 6.0, atol=1e-8)
 
 
-def test_soft_topk_masks_and_values_have_explicit_boundary_behavior():
+def test_soft_topk_masks_and_values_have_explicit_boundary_behavior() -> None:
     values = jnp.asarray([3.0, 1.0, 4.0, 2.0])
     mask = phx.transport.soft_topk_mask(values, 2, epsilon=0.02)
     top_values = phx.transport.soft_topk_values(values, 2, epsilon=0.02)
@@ -159,7 +162,7 @@ def test_soft_topk_masks_and_values_have_explicit_boundary_behavior():
         phx.transport.soft_topk_mask(values, 5)
 
 
-def test_soft_quantiles_preserve_caller_order_endpoints_and_named_dimensions():
+def test_soft_quantiles_preserve_caller_order_endpoints_and_named_dimensions() -> None:
     values = jnp.asarray([[3.0, 1.0, 2.0], [5.0, -1.0, 1.0]])
     quantiles = phx.transport.soft_quantile(
         values,
@@ -184,7 +187,7 @@ def test_soft_quantiles_preserve_caller_order_endpoints_and_named_dimensions():
     assert named.shape == (2, 2)
 
 
-def test_soft_quantile_normalization_quantization_and_gradients_are_finite():
+def test_soft_quantile_normalization_quantization_and_gradients_are_finite() -> None:
     values = jnp.asarray([3.0, 1.0, 2.0, 4.0])
     reference = jnp.asarray([-2.0, -1.0, 1.0, 2.0])
     normalized = phx.transport.soft_quantile_normalize(
@@ -204,7 +207,9 @@ def test_soft_quantile_normalization_quantization_and_gradients_are_finite():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_soft_order_transport_exposes_solver_diagnostics_and_rejects_bad_weights():
+def test_soft_order_transport_exposes_solver_diagnostics_and_rejects_bad_weights() -> (
+    None
+):
     result = phx.transport.soft_order_transport(
         jnp.asarray([3.0, 1.0, 2.0]),
         weights=jnp.asarray([0.2, 0.3, 0.5]),
@@ -235,8 +240,8 @@ def test_soft_order_transport_exposes_solver_diagnostics_and_rejects_bad_weights
     ids=("sort", "rank", "quantile", "topk"),
 )
 def test_soft_order_operators_compose_with_forward_reverse_and_batch_transforms(
-    operator,
-):
+    operator: Any,
+) -> None:
     values = jnp.asarray([-1.3, 0.2, 2.1, 0.8])
     direction = jnp.asarray([0.3, -0.5, 0.2, 0.7])
     eager = operator(values)
@@ -254,7 +259,9 @@ def test_soft_order_operators_compose_with_forward_reverse_and_batch_transforms(
     assert batched.shape == (2,) + jnp.shape(eager)
 
 
-def test_soft_order_has_finite_symmetric_second_derivatives_and_tie_sensitivities():
+def test_soft_order_has_finite_symmetric_second_derivatives_and_tie_sensitivities() -> (
+    None
+):
     values = jnp.asarray([-1.1, 0.4, 1.7, 3.2])
     hessian = jax.hessian(
         lambda candidate: jnp.sum(phx.transport.soft_sort(candidate, epsilon=0.15) ** 2)
@@ -279,7 +286,7 @@ def test_soft_order_has_finite_symmetric_second_derivatives_and_tie_sensitivitie
     assert jnp.allclose(tied_gradient[0], tied_gradient[1], atol=1e-10)
 
 
-def test_soft_order_preserves_order_invariances_and_coupling_mass():
+def test_soft_order_preserves_order_invariances_and_coupling_mass() -> None:
     values = jnp.asarray([3.0, -1.0, 2.0, 0.5])
     permutation = jnp.asarray([2, 0, 3, 1])
     ordered = phx.transport.soft_sort(values, epsilon=0.15)
@@ -328,7 +335,7 @@ def test_soft_order_preserves_order_invariances_and_coupling_mass():
     assert jnp.allclose(jnp.sum(weights * weighted_mask), 0.5, atol=1e-8)
 
 
-def test_soft_order_weighted_named_and_blockwise_paths_share_one_contract():
+def test_soft_order_weighted_named_and_blockwise_paths_share_one_contract() -> None:
     values = jnp.asarray([[3.0, 1.0, 4.0, 2.0], [0.5, -2.0, 1.5, 3.0]])
     field = cx.AxisArray(values, dims=("case", "sample"))
     named = phx.transport.soft_sort(field, axis="sample", epsilon=0.2)
@@ -396,7 +403,7 @@ def test_soft_order_weighted_named_and_blockwise_paths_share_one_contract():
     assert jnp.all(jnp.isfinite(weight_gradient))
 
 
-def test_soft_order_provenance_and_explicit_solver_precedence_are_visible():
+def test_soft_order_provenance_and_explicit_solver_precedence_are_visible() -> None:
     solver = phx.transport.Sinkhorn(
         0.3,
         max_iterations=300,

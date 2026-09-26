@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _problem(initial=1.0, batch=False):
+def _problem(initial: Any = 1.0, batch: Any = False) -> Any:
     horizon = 3
     prefix = (2,) if batch else ()
     dynamics = jnp.broadcast_to(jnp.ones((horizon, 1, 1)), prefix + (horizon, 1, 1))
@@ -33,7 +36,7 @@ def _problem(initial=1.0, batch=False):
     )
 
 
-def test_structural_sparse_control_operators_match_dense_compilation():
+def test_structural_sparse_control_operators_match_dense_compilation() -> None:
     dense = phx.control.compile_linear_quadratic_control(_problem())
     sparse = phx.control.compile_linear_quadratic_control(
         _problem(),
@@ -44,41 +47,51 @@ def test_structural_sparse_control_operators_match_dense_compilation():
     assert isinstance(sparse.program, phx.optim.ConicProgram)
     assert sparse.program.quadratic_is_sparse
     assert sparse.program.constraint_is_sparse
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         sparse.program.quadratic.as_dense(),
         dense.program.quadratic,
         atol=1e-12,
     )
+    # ty: ignore[unresolved-attribute]
     constraints = sparse.program.constraint_matrix.as_dense()
     equalities = sparse.constraint_layout.num_equalities
     np.testing.assert_allclose(
         constraints[:equalities],
+        # ty: ignore[unresolved-attribute]
         dense.program.equality_matrix,
         atol=1e-12,
     )
     np.testing.assert_allclose(
         constraints[equalities:],
+        # ty: ignore[unresolved-attribute]
         dense.program.inequality_matrix[..., : dense.program.num_user_inequalities, :],
         atol=1e-12,
     )
     assert sparse.bound_layout.control_lower_slices
 
 
-def test_sparse_control_compilation_preserves_shared_case_batches():
+def test_sparse_control_compilation_preserves_shared_case_batches() -> None:
     compilation = phx.control.compile_linear_quadratic_control(
         _problem(batch=True),
         compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
     )
 
     quadratic = compilation.program.quadratic
+    # ty: ignore[unresolved-attribute]
     constraints = compilation.program.constraint_matrix
+    # ty: ignore[unresolved-attribute]
     assert quadratic.batch_shape == (2,)
+    # ty: ignore[unresolved-attribute]
     assert constraints.batch_shape == (2,)
+    # ty: ignore[unresolved-attribute]
     assert quadratic.sparse_storage().batch_shape == (2,)
+    # ty: ignore[unresolved-attribute]
     assert constraints.sparse_storage().batch_shape == (2,)
 
 
-def test_sparse_prepared_control_refresh_and_solution_match_dense():
+def test_sparse_prepared_control_refresh_and_solution_match_dense() -> None:
     compilation_policy = phx.control.LinearControlCompilationPolicy("sparse")
     prepared = phx.control.prepare_linear_quadratic_control(
         _problem(),

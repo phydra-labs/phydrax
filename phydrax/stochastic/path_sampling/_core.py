@@ -131,7 +131,8 @@ class StateRegionPlan(StrictModule, NonTrainableState):
         if self.kind == "predicate":
             predicate = self.predicate
             # The constructor requires a callable predicate for predicate regions.
-            assert predicate is not None
+            if not (predicate is not None):
+                raise RuntimeError("Internal invariant failed: predicate is not None.")
             result = jnp.asarray(predicate(value))
             if result.dtype != jnp.bool_:
                 raise TypeError("Region predicates must return Boolean masks.")

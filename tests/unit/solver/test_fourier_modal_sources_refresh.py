@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +12,7 @@ from phydrax.discretization.spectral import BrillouinZonePlan, LatticeHarmonicPl
 from phydrax.solver.maxwell import fourier_modal as fm
 
 
-def _source_problem():
+def _source_problem() -> Any:
     harmonics = LatticeHarmonicPlan.parallelogramic((1,), (3,)).prepare(
         jnp.asarray(((1.0, 0.0),))
     )
@@ -366,7 +368,7 @@ def test_traced_equal_independent_materials_keep_independent_gradients() -> None
     )
     vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="gradient-vacuum")
 
-    def objective(first, second):
+    def objective(first: Any, second: Any) -> Any:
         layers = (
             fm.FourierModalLayer(
                 fm.FrequencyMaxwellMaterial(first, material_id="first-slot"),
@@ -391,7 +393,9 @@ def test_traced_equal_independent_materials_keep_independent_gradients() -> None
         )
         prepared = fm.prepare_fourier_modal_maxwell(problem)
         return jnp.imag(
+            # ty: ignore[unresolved-attribute]
             prepared.elements[0].operator.matrix[2, 1]
+            # ty: ignore[unresolved-attribute]
             + prepared.elements[1].operator.matrix[2, 1]
         )
 
@@ -415,7 +419,7 @@ def test_unequal_traced_values_cannot_reuse_one_material_slot() -> None:
     vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="traced-vacuum")
 
     @jax.jit
-    def prepare_entry(first, second):
+    def prepare_entry(first: Any, second: Any) -> Any:
         layers = tuple(
             fm.FourierModalLayer(
                 fm.FrequencyMaxwellMaterial(value, material_id="shared-slot"),
@@ -434,6 +438,7 @@ def test_unequal_traced_values_cannot_reuse_one_material_slot() -> None:
             fm.HomogeneousMaxwellPort(vacuum, port_id="right"),
         )
         prepared = fm.prepare_fourier_modal_maxwell(problem)
+        # ty: ignore[unresolved-attribute]
         return prepared.elements[1].operator.matrix[2, 1]
 
     with pytest.raises(

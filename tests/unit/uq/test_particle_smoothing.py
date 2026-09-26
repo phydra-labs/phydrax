@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,7 +9,9 @@ import pytest
 import phydrax as phx
 
 
-def _problem(*, num_steps=3, transition_value=0.8, has_density=True):
+def _problem(
+    *, num_steps: Any = 3, transition_value: Any = 0.8, has_density: Any = True
+) -> Any:
     times = jnp.linspace(0.5, 0.5 * num_steps, num_steps)
     values = jnp.linspace(0.4, 1.2, num_steps)[:, None]
     observations = phx.stochastic.ObservationSequence(
@@ -51,7 +55,7 @@ def _problem(*, num_steps=3, transition_value=0.8, has_density=True):
     )
 
 
-def _masked_case_problem():
+def _masked_case_problem() -> Any:
     times = jnp.asarray([[0.5, 1.0, 1.5], [0.5, 1.0, 1.5]])
     values = jnp.asarray([[[0.2], [0.5], [0.9]], [[-0.1], [0.3], [0.0]]])
     step_valid = jnp.asarray([[True, True, True], [True, True, False]])
@@ -105,7 +109,7 @@ def _masked_case_problem():
     )
 
 
-def _initial_pair_probabilities(result, smoother):
+def _initial_pair_probabilities(result: Any, smoother: Any) -> Any:
     count = result.num_particles
     initial_particles = jnp.stack(
         [
@@ -155,7 +159,7 @@ def _initial_pair_probabilities(result, smoother):
     )
 
 
-def _fixed_smoothing_transition_objective(value, result, smoother):
+def _fixed_smoothing_transition_objective(value: Any, result: Any, smoother: Any) -> Any:
     transition = eqx.tree_at(
         lambda kernel: kernel.parameterization.transition,
         result.problem.model.transition,
@@ -191,7 +195,7 @@ def _fixed_smoothing_transition_objective(value, result, smoother):
 
 
 @pytest.mark.parametrize("method", ["systematic", "multinomial"])
-def test_resampling_ancestry_is_the_exact_post_resampling_genealogy(method):
+def test_resampling_ancestry_is_the_exact_post_resampling_genealogy(method: Any) -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(1),
         _problem(),
@@ -225,7 +229,7 @@ def test_resampling_ancestry_is_the_exact_post_resampling_genealogy(method):
     assert smoother.ancestry_gradient == "stop"
 
 
-def test_no_resampling_paths_keep_identity_genealogy():
+def test_no_resampling_paths_keep_identity_genealogy() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(2),
         _problem(),
@@ -256,7 +260,7 @@ def test_no_resampling_paths_keep_identity_genealogy():
         assert jnp.any(candidate)
 
 
-def test_backward_probabilities_match_direct_enumeration():
+def test_backward_probabilities_match_direct_enumeration() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(4),
         _problem(),
@@ -302,7 +306,7 @@ def test_backward_probabilities_match_direct_enumeration():
     assert simulation.ancestry_gradient == "stop"
 
 
-def test_full_smoothing_is_not_the_fixed_lag_zero_approximation():
+def test_full_smoothing_is_not_the_fixed_lag_zero_approximation() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(6),
         _problem(),
@@ -318,7 +322,7 @@ def test_full_smoothing_is_not_the_fixed_lag_zero_approximation():
     assert full.method_id == "full-particle-ancestry"
 
 
-def test_density_methods_reject_density_free_transitions_without_fallback():
+def test_density_methods_reject_density_free_transitions_without_fallback() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(7),
         _problem(has_density=False),
@@ -336,7 +340,7 @@ def test_density_methods_reject_density_free_transitions_without_fallback():
         phx.uq.sample_particle_backward_paths(jr.key(8), result)
 
 
-def test_particle_fisher_score_matches_fixed_smoothing_finite_difference():
+def test_particle_fisher_score_matches_fixed_smoothing_finite_difference() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(9),
         _problem(transition_value=0.8),
@@ -346,7 +350,7 @@ def test_particle_fisher_score_matches_fixed_smoothing_finite_difference():
     smoother = phx.uq.particle_backward_smoother(result)
     score = phx.uq.particle_fisher_score(smoother)
 
-    def fixed_smoothing_objective(value):
+    def fixed_smoothing_objective(value: Any) -> Any:
         return _fixed_smoothing_transition_objective(value, result, smoother)
 
     automatic = score.transition_score.parameterization.transition[0, 0]
@@ -361,7 +365,7 @@ def test_particle_fisher_score_matches_fixed_smoothing_finite_difference():
     assert jnp.all(jnp.linalg.eigvalsh(fisher.information) >= -1e-8)
 
 
-def test_one_observation_fisher_score_counts_initial_transition_once():
+def test_one_observation_fisher_score_counts_initial_transition_once() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(91),
         _problem(num_steps=1, transition_value=0.8),
@@ -393,7 +397,7 @@ class _ScaledRandomWalk(phx.stochastic.AbstractTransitionKernel):
     approximation_id: str = eqx.field(static=True)
     has_log_density: bool = eqx.field(static=True)
 
-    def __init__(self, coefficient, noise_scale):
+    def __init__(self, coefficient: Any, noise_scale: Any) -> None:
         self.coefficient = jnp.asarray(coefficient)
         self.noise_scale = jnp.asarray(noise_scale)
         self.state_shape = (1,)
@@ -401,7 +405,7 @@ class _ScaledRandomWalk(phx.stochastic.AbstractTransitionKernel):
         self.approximation_id = "exact"
         self.has_log_density = True
 
-    def sample(self, key, state, t0, t1, context, /):
+    def sample(self, key: Any, state: Any, t0: Any, t1: Any, context: Any, /) -> Any:
         del t0, t1, context
         values = self.coefficient * state + self.noise_scale * jr.normal(
             key, jnp.shape(state), dtype=state.dtype
@@ -415,7 +419,9 @@ class _ScaledRandomWalk(phx.stochastic.AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, context, /):
+    def log_prob(
+        self, next_state: Any, state: Any, t0: Any, t1: Any, context: Any, /
+    ) -> Any:
         del t0, t1, context
         residual = (next_state - self.coefficient * state) / self.noise_scale
         return jnp.sum(
@@ -424,7 +430,7 @@ class _ScaledRandomWalk(phx.stochastic.AbstractTransitionKernel):
         )
 
 
-def test_particle_fisher_score_excludes_fixed_transition_leaves():
+def test_particle_fisher_score_excludes_fixed_transition_leaves() -> None:
     problem = _problem()
     walk = phx.stochastic.StateSpaceModel(
         problem.model.prior,
@@ -450,7 +456,7 @@ def test_particle_fisher_score_excludes_fixed_transition_leaves():
     assert jnp.all(jnp.isfinite(score.flat_score))
 
 
-def test_zero_mass_singular_transition_pairs_have_finite_fisher_score():
+def test_zero_mass_singular_transition_pairs_have_finite_fisher_score() -> None:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[0.4], [0.8]]),
@@ -502,10 +508,10 @@ def test_zero_mass_singular_transition_pairs_have_finite_fisher_score():
     assert jnp.all(jnp.isfinite(score.case_scores))
 
 
-def test_full_genealogy_stays_invalid_after_filter_failure():
+def test_full_genealogy_stays_invalid_after_filter_failure() -> None:
     base = _problem()
 
-    def fail_middle_step(key, state, t0, t1, context):
+    def fail_middle_step(key: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         del key, t0, context
         return jnp.where(t1 == 1.0, jnp.full_like(state, jnp.nan), state)
 
@@ -539,7 +545,7 @@ def test_full_genealogy_stays_invalid_after_filter_failure():
     assert not jnp.any(smoother.valid)
 
 
-def test_checkpoint_resume_preserves_next_ancestry(tmp_path):
+def test_checkpoint_resume_preserves_next_ancestry(tmp_path: Any) -> None:
     problem = _problem()
     state = phx.uq.initialize_particle_filter(
         jr.key(10),
@@ -566,7 +572,7 @@ def test_checkpoint_resume_preserves_next_ancestry(tmp_path):
     assert jnp.array_equal(direct_state.root_key, resumed_state.root_key)
 
 
-def test_masks_cases_provenance_and_result_export(tmp_path):
+def test_masks_cases_provenance_and_result_export(tmp_path: Any) -> None:
     problem = _masked_case_problem()
     result = phx.uq.bootstrap_particle_filter(
         jr.key(11),
@@ -608,7 +614,7 @@ def test_masks_cases_provenance_and_result_export(tmp_path):
     )
 
 
-def test_resampling_indices_have_zero_forward_sensitivity():
+def test_resampling_indices_have_zero_forward_sensitivity() -> None:
     weights = jnp.log(jnp.asarray([0.6, 0.3, 0.1]))
     for method in ("systematic", "multinomial"):
         _, tangent = jax.jvp(

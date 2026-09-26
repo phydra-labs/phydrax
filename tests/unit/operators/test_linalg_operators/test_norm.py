@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -11,13 +14,13 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.linalg import norm
 
 
-def test_norm_simple_vector_function():
+def test_norm_simple_vector_function() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0], x[1]])
 
     norm_u = norm(u)
@@ -28,13 +31,13 @@ def test_norm_simple_vector_function():
     assert jnp.allclose(result, expected)
 
 
-def test_norm_custom_order():
+def test_norm_custom_order() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0], x[1]])
 
     norm_u = norm(u, order=1)
@@ -45,13 +48,13 @@ def test_norm_custom_order():
     assert jnp.allclose(result, expected)
 
 
-def test_norm_time_dependent_function():
+def test_norm_time_dependent_function() -> None:
     dom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     ) @ TimeInterval(0.0, 2.0)
 
     @dom.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return jnp.array([x[0] * t, x[1] * t])
 
     norm_u = norm(u)
@@ -67,13 +70,13 @@ def test_norm_time_dependent_function():
     assert jnp.allclose(result, expected)
 
 
-def test_norm_complex_function():
+def test_norm_complex_function() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0], 1j * x[1]])
 
     norm_u = norm(u)
@@ -84,7 +87,7 @@ def test_norm_complex_function():
     assert jnp.allclose(result, expected)
 
 
-def test_norm_preserves_metadata():
+def test_norm_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )

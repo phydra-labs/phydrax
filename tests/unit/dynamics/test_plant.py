@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -40,7 +43,7 @@ class _MixedPlant(AbstractDiscretePlant):
     require_finite_parameters: bool = eqx.field(static=True)
     reset_successful: jax.Array
 
-    def __init__(self, reset_successful):
+    def __init__(self, reset_successful: Any) -> None:
         fallback = {
             "active": jnp.asarray(False),
             "count": jnp.asarray(-1, dtype=jnp.int32),
@@ -73,13 +76,13 @@ class _MixedPlant(AbstractDiscretePlant):
 
     def propose_reset(
         self,
-        keys,
-        parameters,
+        keys: Any,
+        parameters: Any,
         /,
         *,
-        case_shape,
-        initial_time,
-    ):
+        case_shape: Any,
+        initial_time: Any,
+    ) -> Any:
         del keys, initial_time
         count = jnp.arange(case_shape[0], dtype=jnp.int32)
         q = parameters["scale"] * jnp.stack(
@@ -101,7 +104,9 @@ class _MixedPlant(AbstractDiscretePlant):
             {"reset_norm": jnp.linalg.norm(q, axis=-1)},
         )
 
-    def propose_step(self, context, source, commands, parameters, keys, /):
+    def propose_step(
+        self, context: Any, source: Any, commands: Any, parameters: Any, keys: Any, /
+    ) -> Any:
         del context, keys
         assert commands is not None
         successful = commands[:, 0] >= 0.0
@@ -126,7 +131,7 @@ class _MixedPlant(AbstractDiscretePlant):
         )
 
 
-def _parameters(plant):
+def _parameters(plant: Any) -> Any:
     return PlantParameters(
         {"scale": jnp.asarray(2.0, dtype=jnp.float32)},
         plant.parameter_schema.schema_id,
@@ -134,11 +139,11 @@ def _parameters(plant):
     )
 
 
-def _keys(count=3):
+def _keys(count: Any = 3) -> Any:
     return jax.random.split(jax.random.key(7), count)
 
 
-def _allclose_tree(actual, expected):
+def _allclose_tree(actual: Any, expected: Any) -> None:
     actual_leaves = jax.tree_util.tree_leaves(actual)
     expected_leaves = jax.tree_util.tree_leaves(expected)
     assert len(actual_leaves) == len(expected_leaves)
@@ -152,7 +157,7 @@ def _allclose_tree(actual, expected):
         np.testing.assert_array_equal(actual_leaf, expected_leaf)
 
 
-def test_mixed_pytree_reset_and_step_roll_back_every_failed_case_atomically():
+def test_mixed_pytree_reset_and_step_roll_back_every_failed_case_atomically() -> None:
     plant = _MixedPlant(jnp.asarray([True, False, True]))
     keys = _keys()
     reset = plant.reset(keys, _parameters(plant), case_shape=(3,), initial_time=0.25)
@@ -203,7 +208,7 @@ def test_mixed_pytree_reset_and_step_roll_back_every_failed_case_atomically():
     np.testing.assert_array_equal(step.candidate_state.step_index, [1, 1, 1])
 
 
-def test_state_parameter_and_executable_identity_mismatches_are_rejected():
+def test_state_parameter_and_executable_identity_mismatches_are_rejected() -> None:
     plant = _MixedPlant(jnp.ones((3,), dtype="bool"))
     parameters = _parameters(plant)
     state = plant.reset(_keys(), parameters, case_shape=(3,)).accepted_state
@@ -271,7 +276,7 @@ def test_state_parameter_and_executable_identity_mismatches_are_rejected():
         plant.step(context, state, commands, stale_parameters)
 
 
-def test_nonfinite_control_is_casewise_failure_and_schema_mismatch_is_rejected():
+def test_nonfinite_control_is_casewise_failure_and_schema_mismatch_is_rejected() -> None:
     plant = _MixedPlant(jnp.ones((3,), dtype="bool"))
     parameters = _parameters(plant)
     state = plant.reset(_keys(), parameters, case_shape=(3,)).accepted_state
@@ -294,11 +299,11 @@ def test_nonfinite_control_is_casewise_failure_and_schema_mismatch_is_rejected()
         plant.step(context, state, commands.astype(jnp.float16), parameters)
 
 
-def test_array_discrete_system_adapter_has_legacy_transition_parity():
+def test_array_discrete_system_adapter_has_legacy_transition_parity() -> None:
     layout = StateLayout((2,))
     input_layout = InputLayout((2,), roles="control")
 
-    def transition(context, state, inputs, args):
+    def transition(context: Any, state: Any, inputs: Any, args: Any) -> Any:
         candidate = state + context.duration * (inputs + args["bias"])
         return DiscreteTransitionResult(
             candidate,
@@ -365,7 +370,7 @@ def test_array_discrete_system_adapter_has_legacy_transition_parity():
     assert int(adapted.status) == int(legacy.status)
 
 
-def test_checkpoint_restore_and_first_replay_digest_mismatch_are_exact():
+def test_checkpoint_restore_and_first_replay_digest_mismatch_are_exact() -> None:
     plant = _MixedPlant(jnp.ones((3,), dtype="bool"))
     parameters = _parameters(plant)
     initial = plant.reset(_keys(), parameters, case_shape=(3,)).accepted_state

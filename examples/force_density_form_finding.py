@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -21,7 +24,7 @@ loads = jnp.asarray(((0.0, 0.0), (0.0, -1.0), (0.0, 0.0)))
 prescribed = structure.prescribed_values(reference)
 
 
-def solve(sign_mode, force_density):
+def solve(sign_mode: Any, force_density: Any) -> Any:
     problem = fd.ForceDensityProblem(
         structure,
         sign_mode=sign_mode,

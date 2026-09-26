@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -18,7 +21,7 @@ from phydrax.control.stochastic._evaluation import (
 from phydrax.dynamics import TimeGrid
 
 
-def _paths(states, actions, noise, *, clusters=None):
+def _paths(states: Any, actions: Any, noise: Any, *, clusters: Any = None) -> Any:
     states = jnp.asarray(states, dtype="float64")
     actions = jnp.asarray(actions, dtype="float64")
     noise = jnp.asarray(noise, dtype="float64")
@@ -62,7 +65,7 @@ def _paths(states, actions, noise, *, clusters=None):
     )
 
 
-def _problem(noise_size, action_gradients):
+def _problem(noise_size: Any, action_gradients: Any) -> Any:
     grid = TimeGrid(jnp.asarray([0.0, 1.0]), time_id="game-smp-grid")
     partition = PlayerControlPartition(("row", "column"), (1, 1))
     zero_state = lambda context, state, action, args: jnp.zeros((1,))
@@ -87,7 +90,9 @@ def _problem(noise_size, action_gradients):
     )
 
 
-def _evaluate(problem, paths, labels, *, sample_role="holdout", **kwargs):
+def _evaluate(
+    problem: Any, paths: Any, labels: Any, *, sample_role: Any = "holdout", **kwargs: Any
+) -> Any:
     count = paths.path_count
     adjoints = (
         jnp.zeros((count, 2, 1)),
@@ -112,7 +117,7 @@ def _evaluate(problem, paths, labels, *, sample_role="holdout", **kwargs):
     )
 
 
-def test_game_smp_retains_only_each_players_owned_action_rows():
+def test_game_smp_retains_only_each_players_owned_action_rows() -> None:
     paths = _paths(
         states=[[[0.0], [0.0]]],
         actions=[[[0.0, 0.0]]],
@@ -148,8 +153,8 @@ def test_game_smp_retains_only_each_players_owned_action_rows():
 
 @pytest.mark.parametrize("sample_role", ["training", "holdout"])
 def test_zero_empirical_game_smp_residual_does_not_claim_open_loop_nash(
-    sample_role,
-):
+    sample_role: Any,
+) -> None:
     paths = _paths(
         states=[[[0.0], [0.0]], [[0.0], [0.0]]],
         actions=[[[0.0, 0.0]], [[0.0, 0.0]]],
@@ -185,7 +190,7 @@ def test_zero_empirical_game_smp_residual_does_not_claim_open_loop_nash(
     assert not result.markov_perfect_claim
 
 
-def test_game_smp_preserves_common_private_information_and_cluster_evidence():
+def test_game_smp_preserves_common_private_information_and_cluster_evidence() -> None:
     paths = _paths(
         states=[
             [[0.0], [0.0]],

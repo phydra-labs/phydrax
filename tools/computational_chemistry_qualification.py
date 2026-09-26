@@ -8,6 +8,7 @@ import argparse
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -16,14 +17,17 @@ import phydrax as phx
 from benchmarks._runtime import capture_environment
 
 
-def qualification():
+def qualification() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     equilibrium = np.asarray([[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]])
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [8, 1, 1],
         equilibrium + 0.02,
+        # ty: ignore[invalid-argument-type]
         [15.999, 1.008, 1.008],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[5, 7, 11],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -31,7 +35,7 @@ def qualification():
     )
     stiffness = 2.0
 
-    def surface_evaluator(positions, _cell):
+    def surface_evaluator(positions: Any, _cell: Any) -> Any:
         coordinate = jnp.asarray(positions)
         delta = coordinate - jnp.asarray(equilibrium)
         return phx.chemistry.PotentialEnergySurfaceEvaluation(
@@ -103,7 +107,7 @@ def qualification():
     )
     charges = np.asarray([-0.8, 0.4, 0.4])
 
-    def electronic(plan, positions, cell):
+    def electronic(plan: Any, positions: Any, cell: Any) -> Any:
         del cell
         coordinate = np.asarray(positions)
         delta = coordinate - equilibrium
@@ -185,7 +189,7 @@ def qualification():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",

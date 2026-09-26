@@ -233,11 +233,17 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
         reflected = jnp.zeros(state.active_mask.shape, dtype=jnp.bool_)
         if self.boundary == "periodic":
             # Bounded boundary policies validate both bounds at construction.
-            assert self.lower is not None and self.upper is not None
+            if not (self.lower is not None and self.upper is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: self.lower is not None and self.upper is not None."
+                )
             width = self.upper - self.lower
             candidate = self.lower + jnp.mod(candidate - self.lower, width)
         elif self.boundary == "reflect":
-            assert self.lower is not None and self.upper is not None
+            if not (self.lower is not None and self.upper is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: self.lower is not None and self.upper is not None."
+                )
             width = self.upper - self.lower
             folded = jnp.mod(candidate - self.lower, 2.0 * width)
             reflected = jnp.any(
@@ -249,7 +255,10 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
                 2.0 * width - folded,
             )
         elif self.boundary == "absorb":
-            assert self.lower is not None and self.upper is not None
+            if not (self.lower is not None and self.upper is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: self.lower is not None and self.upper is not None."
+                )
             absorbed = jnp.any(
                 (candidate < self.lower) | (candidate > self.upper), axis=-1
             )

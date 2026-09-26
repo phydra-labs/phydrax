@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -12,13 +13,13 @@ import phydrax as phx
 from examples.differentiable_cosmological_particle_mesh import build_workflow
 
 
-def _block(tree) -> None:
+def _block(tree: Any) -> None:
     for leaf in jax.tree.leaves(tree):
         if isinstance(leaf, jax.Array):
             leaf.block_until_ready()
 
 
-def _timed(function, *args):
+def _timed(function: Any, *args: Any) -> Any:
     start = time.perf_counter()
     value = function(*args)
     _block(value)
@@ -50,7 +51,7 @@ def main() -> None:
     evolved, rollout_compile = _timed(rollout_function, initial.state)
     _, rollout_steady = _timed(rollout_function, initial.state)
 
-    def statistic(amplitude):
+    def statistic(amplitude: Any) -> Any:
         values = power.power_values * (amplitude / 1.0e-7)
         scaled = phx.applications.cosmology.MatterPowerTable(
             power.scale_factors,

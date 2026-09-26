@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -14,7 +17,7 @@ from phydrax.applications.battery._properties import (
 )
 
 
-def _table(values=(1.0, 2.0, 4.0), *, source_mask=None):
+def _table(values: Any = (1.0, 2.0, 4.0), *, source_mask: Any = None) -> Any:
     return TabulatedPropertyLaw(
         jnp.asarray((0.0, 0.5, 1.0)),
         jnp.asarray(values),
@@ -28,7 +31,7 @@ def _table(values=(1.0, 2.0, 4.0), *, source_mask=None):
     )
 
 
-def test_tabulated_property_reports_bounds_and_strict_support():
+def test_tabulated_property_reports_bounds_and_strict_support() -> None:
     law = _table()
     result = law.evaluate(jnp.asarray((-0.1, 0.25, 1.1)))
     np.testing.assert_array_equal(result.support, np.asarray((False, True, False)))
@@ -41,17 +44,17 @@ def test_tabulated_property_reports_bounds_and_strict_support():
     np.testing.assert_allclose(masked_result.values, 0.0)
 
 
-def test_property_value_bounds_fail_closed():
+def test_property_value_bounds_fail_closed() -> None:
     with pytest.raises(Exception, match="outside declared value bounds"):
         _table(values=(1.0, 6.0, 4.0))
     with pytest.raises(ValueError, match="at least two active"):
         _table(source_mask=(True, False, False))
 
 
-def test_property_jvp_tracks_dynamic_values_and_query():
+def test_property_jvp_tracks_dynamic_values_and_query() -> None:
     nodes = jnp.asarray((0.0, 0.5, 1.0))
 
-    def evaluate(values, query):
+    def evaluate(values: Any, query: Any) -> Any:
         law = TabulatedPropertyLaw(
             nodes,
             values,
@@ -73,7 +76,7 @@ def test_property_jvp_tracks_dynamic_values_and_query():
     np.testing.assert_allclose(tangent, 0.7)
 
 
-def test_constant_and_tabulated_laws_have_static_jit_shapes():
+def test_constant_and_tabulated_laws_have_static_jit_shapes() -> None:
     constant = ConstantPropertyLaw(
         jnp.asarray(2.0),
         jnp.asarray((250.0, 350.0)),
@@ -94,14 +97,14 @@ def test_constant_and_tabulated_laws_have_static_jit_shapes():
     np.testing.assert_allclose(constant.evaluate(300.0, derivative_order=1).values, 0.0)
 
 
-def test_concentration_temperature_law_support_constant_special_case_and_jvp():
+def test_concentration_temperature_law_support_constant_special_case_and_jvp() -> None:
     concentration_nodes = jnp.asarray((500.0, 1000.0, 1500.0))
     temperature_nodes = jnp.asarray((280.0, 300.0, 320.0))
     concentration_scale = (concentration_nodes - 1000.0) / 1000.0
     temperature_scale = (temperature_nodes - 300.0) / 20.0
     values = 2.0 + concentration_scale[:, None] + 0.5 * temperature_scale[None, :]
 
-    def evaluate(table, concentration, temperature):
+    def evaluate(table: Any, concentration: Any, temperature: Any) -> Any:
         law = ConcentrationTemperaturePropertyLaw(
             concentration_nodes,
             temperature_nodes,
@@ -159,21 +162,28 @@ def test_concentration_temperature_law_support_constant_special_case_and_jvp():
     np.testing.assert_array_equal(constant_result.support, True)
 
 
-def test_concentration_temperature_law_requires_complete_bounded_support():
+def test_concentration_temperature_law_requires_complete_bounded_support() -> None:
     with pytest.raises(ValueError, match="complete active cell"):
         ConcentrationTemperaturePropertyLaw(
+            # ty: ignore[invalid-argument-type]
             (500.0, 1000.0),
+            # ty: ignore[invalid-argument-type]
             (280.0, 320.0),
+            # ty: ignore[invalid-argument-type]
             ((1.0, 1.0), (1.0, 1.0)),
+            # ty: ignore[invalid-argument-type]
             source_mask=((True, False), (True, True)),
             quantity="electrolyte-conductivity",
             value_unit="S/m",
             source_id="test:no-complete-cell",
         )
     law = ConcentrationTemperaturePropertyLaw(
+        # ty: ignore[invalid-argument-type]
         (500.0, 1000.0, 1500.0),
+        # ty: ignore[invalid-argument-type]
         (280.0, 300.0, 320.0),
         jnp.ones((3, 3)),
+        # ty: ignore[invalid-argument-type]
         source_mask=(
             (True, True, False),
             (True, True, False),

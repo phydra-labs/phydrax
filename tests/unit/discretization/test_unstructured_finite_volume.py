@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
 import subprocess
 import sys
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,7 +15,7 @@ import pytest
 import phydrax as phx
 
 
-def _polygon_centroid(vertices):
+def _polygon_centroid(vertices: Any) -> Any:
     points = np.asarray(vertices)
     following = np.roll(points, -1, axis=0)
     cross = points[:, 0] * following[:, 1] - following[:, 0] * points[:, 1]
@@ -22,7 +24,7 @@ def _polygon_centroid(vertices):
     return area, center
 
 
-def test_mixed_triangle_quadrilateral_geometry_has_one_exact_cell_complex():
+def test_mixed_triangle_quadrilateral_geometry_has_one_exact_cell_complex() -> None:
     vertices = np.asarray(
         (
             (0.0, 0.0),
@@ -65,7 +67,7 @@ def test_mixed_triangle_quadrilateral_geometry_has_one_exact_cell_complex():
     assert jnp.sum(shared) == 2
 
 
-def test_skewed_quadrilateral_uses_mapped_area_and_physical_centroid():
+def test_skewed_quadrilateral_uses_mapped_area_and_physical_centroid() -> None:
     vertices = np.asarray(((0.0, 0.0), (2.0, 0.0), (1.5, 1.0), (0.0, 1.0)))
     expected_area, expected_center = _polygon_centroid(vertices)
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
@@ -95,7 +97,7 @@ def test_skewed_quadrilateral_uses_mapped_area_and_physical_centroid():
         np.asarray(((0.0, 0.0), (1.0, 0.0), (0.2, 0.2), (0.0, 1.0))),
     ),
 )
-def test_invalid_bilinear_quadrilaterals_are_rejected(vertices):
+def test_invalid_bilinear_quadrilaterals_are_rejected(vertices: Any) -> None:
     with pytest.raises(ValueError, match="Quadrilateral"):
         phx.discretization.UnstructuredFiniteVolumePlan(
             vertices,
@@ -103,7 +105,7 @@ def test_invalid_bilinear_quadrilaterals_are_rejected(vertices):
         )
 
 
-def test_tetrahedral_geometry_has_exact_chain_orientation_and_face_closure():
+def test_tetrahedral_geometry_has_exact_chain_orientation_and_face_closure() -> None:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -145,7 +147,7 @@ def test_tetrahedral_geometry_has_exact_chain_orientation_and_face_closure():
     assert jnp.sum(shared) == 1
 
 
-def test_tetrahedral_orientation_is_normalized_but_degeneracy_is_rejected():
+def test_tetrahedral_orientation_is_normalized_but_degeneracy_is_rejected() -> None:
     vertices = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -165,7 +167,9 @@ def test_tetrahedral_orientation_is_normalized_but_degeneracy_is_rejected():
         )
 
 
-def test_global_ids_are_lossless_or_rejected_for_the_active_jax_width(tmp_path):
+def test_global_ids_are_lossless_or_rejected_for_the_active_jax_width(
+    tmp_path: Any,
+) -> None:
     vertices = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     quadrilaterals = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
     int32_max = np.iinfo(np.int32).max
@@ -267,7 +271,7 @@ else:
     )
 
 
-def test_tetrahedral_face_quadrature_is_degree_four_exact():
+def test_tetrahedral_face_quadrature_is_degree_four_exact() -> None:
     vertices = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -282,6 +286,7 @@ def test_tetrahedral_face_quadrature_is_degree_four_exact():
     )
     assert static_metrics.face_blocks[0].layout.quadrature_count == 6
 
+    # ty: ignore[unresolved-attribute]
     faces = np.asarray(discretization.connectivity.faces)
     face = int(np.flatnonzero(np.all(faces == (0, 1, 2), axis=1))[0])
     points = np.asarray(discretization.face_quadrature_points[face])
@@ -299,7 +304,7 @@ def test_tetrahedral_face_quadrature_is_degree_four_exact():
             np.testing.assert_allclose(observed, expected, rtol=2e-13, atol=2e-14)
 
 
-def test_tetrahedral_face_quadrature_commutes_with_rotation_and_scale():
+def test_tetrahedral_face_quadrature_commutes_with_rotation_and_scale() -> None:
     vertices = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -348,7 +353,7 @@ def test_tetrahedral_face_quadrature_commutes_with_rotation_and_scale():
     )
 
 
-def test_moving_tetrahedral_quadrature_matches_static_six_point_rule():
+def test_moving_tetrahedral_quadrature_matches_static_six_point_rule() -> None:
     vertices = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -358,7 +363,7 @@ def test_moving_tetrahedral_quadrature_matches_static_six_point_rule():
     reference = plan.prepare()
     velocity = jnp.asarray((0.3, -0.2, 0.1))
 
-    def translation(time, initial_vertices, args):
+    def translation(time: Any, initial_vertices: Any, args: Any) -> Any:
         del args
         return initial_vertices + time * velocity
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ from phydrax.discretization.spatial import (
 )
 
 
-def _refined_pair():
+def _refined_pair() -> Any:
     plan = AdaptiveDyadicGridPlan(
         MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 3),
         cell_capacity=32,

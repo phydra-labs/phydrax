@@ -1,4 +1,5 @@
 from fractions import Fraction
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -42,20 +43,20 @@ INTENSITY = derived_unit("Jy/sr", ((JANSKY, 1), (STERADIAN, -1)))
 FREQUENCY = 230.0e9
 
 
-def test_jansky_has_exact_physical_si_contract():
+def test_jansky_has_exact_physical_si_contract() -> None:
     assert JANSKY.dimension == MASS / TIME**2
     assert JANSKY.scale_to_reference == Fraction(1, 10**26)
 
 
 def _image(
-    stokes,
-    coordinates,
-    solid_angle,
+    stokes: Any,
+    coordinates: Any,
+    solid_angle: Any,
     *,
-    source_id="synthetic-gr-image",
-    intensity_unit=INTENSITY,
-    flux_density_unit=FLUX_DENSITY,
-):
+    source_id: Any = "synthetic-gr-image",
+    intensity_unit: Any = INTENSITY,
+    flux_density_unit: Any = FLUX_DENSITY,
+) -> Any:
     shape = np.asarray(solid_angle).shape
     screen = GRImageScreen(
         coordinates,
@@ -79,11 +80,11 @@ def _image(
     )
 
 
-def _sampling(uv, pairs, station_ids):
+def _sampling(uv: Any, pairs: Any, station_ids: Any) -> Any:
     return VisibilitySampling(uv, pairs, FREQUENCY, station_ids)
 
 
-def test_direct_point_source_has_exact_flux_and_fourier_phase():
+def test_direct_point_source_has_exact_flux_and_fourier_phase() -> None:
     position = np.asarray([0.125, -0.25])
     solid_angle = np.asarray([[0.2]])
     flux = 3.5
@@ -103,7 +104,7 @@ def test_direct_point_source_has_exact_flux_and_fourier_phase():
     assert result.parent_product_ids == (image.content_id,)
 
 
-def test_direct_centered_gaussian_matches_analytic_fourier_transform():
+def test_direct_centered_gaussian_matches_analytic_fourier_transform() -> None:
     sigma = 0.02
     flux = 2.75
     axis = np.linspace(-0.2, 0.2, 201)
@@ -126,7 +127,7 @@ def test_direct_centered_gaussian_matches_analytic_fourier_transform():
     np.testing.assert_allclose(result.total_intensity.imag, 0.0, atol=1.0e-6)
 
 
-def _closure_fixture():
+def _closure_fixture() -> Any:
     station_ids = ("A", "B", "C", "D")
     pairs = np.asarray(
         [
@@ -163,7 +164,7 @@ def _closure_fixture():
     return data, topology
 
 
-def test_bispectrum_and_closures_are_exact_and_station_gain_invariant():
+def test_bispectrum_and_closures_are_exact_and_station_gain_invariant() -> None:
     data, topology = _closure_fixture()
     result = closure_products(data, topology)
     intensity = np.asarray(data.total_intensity)
@@ -200,7 +201,7 @@ def test_bispectrum_and_closures_are_exact_and_station_gain_invariant():
     assert bool(result.amplitude_physically_valid[0])
 
 
-def test_zero_visibility_has_explicit_safe_failure_status():
+def test_zero_visibility_has_explicit_safe_failure_status() -> None:
     data, topology = _closure_fixture()
     values = np.asarray(data.visibilities).copy()
     values[0, 0] = 0.0
@@ -225,7 +226,7 @@ def test_zero_visibility_has_explicit_safe_failure_status():
     assert bool(jnp.all(jnp.isfinite(result.bispectrum)))
 
 
-def test_polarization_products_use_physical_stokes_correlations_and_safe_ratios():
+def test_polarization_products_use_physical_stokes_correlations_and_safe_ratios() -> None:
     sampling = _sampling([[0.0, 0.0]], [[0, 1]], ("A", "B"))
     values = np.asarray([[2.0], [0.5], [0.25], [0.1]], dtype="complex128")
     data = StokesVisibilityData(
@@ -262,7 +263,7 @@ def test_polarization_products_use_physical_stokes_correlations_and_safe_ratios(
     np.testing.assert_array_equal(undefined.fractional_circular_polarization, 0.0)
 
 
-def test_content_identities_bind_units_provenance_and_fixed_topology():
+def test_content_identities_bind_units_provenance_and_fixed_topology() -> None:
     coordinates = np.zeros((1, 1, 2))
     stokes = np.asarray([[[1.0]], [[0.0]], [[0.0]], [[0.0]]])
     image = _image(stokes, coordinates, np.ones((1, 1)))
@@ -306,7 +307,7 @@ def test_content_identities_bind_units_provenance_and_fixed_topology():
     assert visibility.content_id != changed_topology.content_id
 
 
-def test_fits_and_uvfits_neutral_payloads_round_trip_without_rendering_state():
+def test_fits_and_uvfits_neutral_payloads_round_trip_without_rendering_state() -> None:
     position = np.asarray([[[0.1, -0.2]]])
     stokes = np.asarray([[[2.0]], [[0.2]], [[0.1]], [[0.0]]])
     image = _image(stokes, position, np.asarray([[0.5]]))

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -14,7 +16,7 @@ from _runtime import capture_environment, logical_array_bytes, measure_repeated
 import phydrax as phx
 
 
-def _problem(sites: int):
+def _problem(sites: int) -> Any:
     identity = jnp.eye(2, dtype=jnp.complex128)
     pauli_x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     pauli_z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
@@ -37,7 +39,7 @@ def _problem(sites: int):
     return state, hamiltonian
 
 
-def _case(sites: int, bond: int, repeats: int):
+def _case(sites: int, bond: int, repeats: int) -> Any:
     state, hamiltonian = _problem(sites)
     dmrg_problem = phx.solver.FiniteDMRGProblem(state, hamiltonian)
     dmrg_policy = phx.solver.FiniteDMRGPolicy(

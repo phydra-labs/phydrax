@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax._bvh import (
@@ -13,7 +15,7 @@ from phydrax._bvh import (
 )
 
 
-def _candidate_sets(indices, valid):
+def _candidate_sets(indices: Any, valid: Any) -> Any:
     return tuple(
         frozenset(int(value) for value in row[row_valid])
         for row, row_valid in zip(indices, valid, strict=True)
@@ -25,6 +27,7 @@ def test_packed_bvh_query_chunks_preserve_candidates_and_completeness() -> None:
         (jnp.arange(8, dtype="float64"), jnp.zeros(8), jnp.zeros(8)), axis=-1
     )
     upper = lower + jnp.asarray((0.75, 1.0, 1.0))
+    # ty: ignore[invalid-argument-type]
     bvh = build_packed_bvh(lower, upper, 0.5 * (lower + upper), leaf_size=2)
     points = jnp.asarray(((0.25, 0.5, 0.5), (3.25, 0.5, 0.5), (7.25, 0.5, 0.5)))
 
@@ -49,6 +52,7 @@ def test_packed_bvh_query_chunks_preserve_candidates_and_completeness() -> None:
 def test_packed_bvh_ray_chunks_preserve_candidates() -> None:
     lower = jnp.asarray(((0.0, -1.0, -1.0), (2.0, -1.0, -1.0)))
     upper = jnp.asarray(((1.0, 1.0, 1.0), (3.0, 1.0, 1.0)))
+    # ty: ignore[invalid-argument-type]
     bvh = build_packed_bvh(lower, upper, 0.5 * (lower + upper), leaf_size=1)
     origins = jnp.asarray(((-1.0, 0.0, 0.0), (1.5, 0.0, 0.0)))
     directions = jnp.asarray(((1.0, 0.0, 0.0), (1.0, 0.0, 0.0)))

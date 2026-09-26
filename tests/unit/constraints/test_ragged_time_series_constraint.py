@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -10,7 +13,7 @@ from phydrax.domain import SampleLayout, TrajectoryDatasetDomain
 from phydrax.terms import RaggedTimeSeriesDataTerm
 
 
-def _make_domain_and_values():
+def _make_domain_and_values() -> Any:
     inputs = jnp.asarray([[0.0], [1.0], [2.0]])
     lengths = jnp.asarray([2, 4, 3])
     domain = TrajectoryDatasetDomain(inputs, lengths, dt=0.5)
@@ -19,11 +22,11 @@ def _make_domain_and_values():
     return domain, values
 
 
-def test_ragged_time_series_data_constraint_matches_exact_observations():
+def test_ragged_time_series_data_constraint_matches_exact_observations() -> None:
     domain, values = _make_domain_and_values()
 
     @domain.Function("data", "t")
-    def exact(data, t):
+    def exact(data: Any, t: Any) -> Any:
         return data[0] + t
 
     constraint = RaggedTimeSeriesDataTerm(
@@ -45,11 +48,11 @@ def test_ragged_time_series_data_constraint_matches_exact_observations():
     assert jnp.allclose(metrics["data_rmse"], 0.0)
 
 
-def test_ragged_time_series_data_constraint_linear_interpolation():
+def test_ragged_time_series_data_constraint_linear_interpolation() -> None:
     domain, values = _make_domain_and_values()
 
     @domain.Function("data", "t")
-    def exact(data, t):
+    def exact(data: Any, t: Any) -> Any:
         return data[0] + t
 
     constraint = RaggedTimeSeriesDataTerm(
@@ -67,12 +70,12 @@ def test_ragged_time_series_data_constraint_linear_interpolation():
     assert jnp.allclose(loss, 0.0, atol=1e-12)
 
 
-def test_ragged_time_series_data_constraint_vector_targets():
+def test_ragged_time_series_data_constraint_vector_targets() -> None:
     domain, scalar_values = _make_domain_and_values()
     values = jnp.stack((scalar_values, 2.0 * scalar_values), axis=-1)
 
     @domain.Function("data", "t")
-    def exact(data, t):
+    def exact(data: Any, t: Any) -> Any:
         y = data[0] + t
         return jnp.asarray([y, 2.0 * y])
 
@@ -90,7 +93,7 @@ def test_ragged_time_series_data_constraint_vector_targets():
     assert jnp.allclose(metrics["data_accuracy"], 1.0)
 
 
-def test_ragged_time_series_data_constraint_samples_only_case_subset():
+def test_ragged_time_series_data_constraint_samples_only_case_subset() -> None:
     domain, values = _make_domain_and_values()
     allowed = jnp.asarray([1, 2], dtype=jnp.int32)
     constraint = RaggedTimeSeriesDataTerm(
@@ -106,7 +109,7 @@ def test_ragged_time_series_data_constraint_samples_only_case_subset():
     assert jnp.all(jnp.isin(batch.case_indices, allowed))
 
 
-def test_ragged_time_series_case_uniform_samples_only_case_subset():
+def test_ragged_time_series_case_uniform_samples_only_case_subset() -> None:
     domain, values = _make_domain_and_values()
     allowed = jnp.asarray([2], dtype=jnp.int32)
     constraint = RaggedTimeSeriesDataTerm(
@@ -122,11 +125,11 @@ def test_ragged_time_series_case_uniform_samples_only_case_subset():
     assert jnp.all(batch.case_indices == 2)
 
 
-def test_ragged_time_series_data_constraint_penalizes_wrong_function():
+def test_ragged_time_series_data_constraint_penalizes_wrong_function() -> None:
     domain, values = _make_domain_and_values()
 
     @domain.Function("data", "t")
-    def wrong(data, t):
+    def wrong(data: Any, t: Any) -> float:
         del data, t
         return 0.0
 

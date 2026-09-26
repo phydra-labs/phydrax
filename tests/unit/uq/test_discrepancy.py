@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,14 +14,14 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_discrepancy_thresholds_reject_nonfinite_improvements():
+def test_discrepancy_thresholds_reject_nonfinite_improvements() -> None:
     with pytest.raises(ValueError, match="finite"):
         phx.uq.DiscrepancyIdentifiabilityThresholds(min_nll_improvement=jnp.nan)
     with pytest.raises(ValueError, match="finite"):
         phx.uq.DiscrepancyIdentifiabilityThresholds(min_crps_improvement=jnp.inf)
 
 
-def test_exact_gp_discrepancy_marginalizes_and_conditions_coherent_functions():
+def test_exact_gp_discrepancy_marginalizes_and_conditions_coherent_functions() -> None:
     observation_x = jnp.linspace(0.0, 1.0, 9)
     physical_mean = 2.0 * observation_x
     discrepancy = 0.15 * jnp.sin(2.0 * jnp.pi * observation_x)
@@ -72,7 +75,7 @@ def test_exact_gp_discrepancy_marginalizes_and_conditions_coherent_functions():
     assert jnp.sqrt(jnp.mean((conditioned.mean - expected_discrepancy) ** 2)) < 0.02
 
 
-def test_gp_discrepancy_improves_a_misspecified_physical_model():
+def test_gp_discrepancy_improves_a_misspecified_physical_model() -> None:
     truth = lambda x: 4.0 * 0.5 * x * (1.0 - x) + 0.03 * jnp.sin(2.0 * jnp.pi * x)
     observation_x = jnp.linspace(0.0, 1.0, 15)
     base_at_observations = 4.0 * 0.5 * observation_x * (1.0 - observation_x)
@@ -102,7 +105,7 @@ def test_gp_discrepancy_improves_a_misspecified_physical_model():
     assert corrected_rmse < 0.1 * base_rmse
 
 
-def test_gp_discrepancy_rejects_misaligned_scalar_observations():
+def test_gp_discrepancy_rejects_misaligned_scalar_observations() -> None:
     with pytest.raises(ValueError, match="align"):
         phx.uq.ExactGaussianProcessDiscrepancy(
             jnp.linspace(0.0, 1.0, 4),
@@ -115,7 +118,7 @@ def test_gp_discrepancy_rejects_misaligned_scalar_observations():
         )
 
 
-def test_exact_scalar_gp_supports_path_valued_kernel_inputs():
+def test_exact_scalar_gp_supports_path_valued_kernel_inputs() -> None:
     observation_paths = jnp.cumsum(
         jr.normal(jr.key(30), (7, 5, 2)) * 0.25,
         axis=1,
@@ -161,7 +164,7 @@ def test_exact_scalar_gp_supports_path_valued_kernel_inputs():
     assert jnp.all(conditioned.variance >= 0.0)
 
 
-def test_sparse_scalar_gp_supports_different_path_design_lengths():
+def test_sparse_scalar_gp_supports_different_path_design_lengths() -> None:
     observation_paths = jnp.cumsum(
         jr.normal(jr.key(40), (8, 6, 2)) * 0.2,
         axis=1,
@@ -209,12 +212,14 @@ def test_sparse_scalar_gp_supports_different_path_design_lengths():
     assert jnp.all(conditioned.variance >= 0.0)
 
 
-def test_path_valued_gp_likelihood_is_differentiable_and_functional_gp_rejects_it():
+def test_path_valued_gp_likelihood_is_differentiable_and_functional_gp_rejects_it() -> (
+    None
+):
     paths = jnp.cumsum(jr.normal(jr.key(50), (5, 4, 2)) * 0.15, axis=1)
     observations = paths[:, -1, 0]
     model = phx.uq.ExactGaussianProcessDiscrepancy(paths, observations)
 
-    def objective(scale):
+    def objective(scale: Any) -> Any:
         state = phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.SignaturePDEKernel(
                 phx.kernels.ScaleKernel(phx.kernels.LinearKernel(), scale),

@@ -504,7 +504,10 @@ class OptaxUpdateRule(AbstractKernelUpdateRule):
         if self.reevaluates_objective:
             optimizer = self.optimizer
             # The constructor admits reevaluation only for extra-args transformations.
-            assert isinstance(optimizer, optax.GradientTransformationExtraArgs)
+            if not (isinstance(optimizer, optax.GradientTransformationExtraArgs)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(optimizer, optax.GradientTransformationExtraArgs)."
+                )
             updates, next_state = optimizer.update(
                 gradients,
                 rule_state,

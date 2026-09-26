@@ -7,7 +7,7 @@ from tools.holomorphic_expansion_benchmarks import (
 )
 
 
-def test_holomorphic_expansion_benchmark_contract():
+def test_holomorphic_expansion_benchmark_contract() -> None:
     result = run_holomorphic_expansion_benchmarks()
     assert result["kind"] == "holomorphic-expansion-benchmark"
     assert result["passed"]

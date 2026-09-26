@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,9 @@ import pytest
 import phydrax as phx
 
 
-def _compiled(count=8, *, forcing=None, forcing_id=None, viscosity=0.01):
+def _compiled(
+    count: Any = 8, *, forcing: Any = None, forcing_id: Any = None, viscosity: Any = 0.01
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(count, periodic=True),
@@ -37,7 +42,7 @@ def _compiled(count=8, *, forcing=None, forcing_id=None, viscosity=0.01):
     return finite_volume, operators, compiled
 
 
-def _taylor_green(discretization):
+def _taylor_green(discretization: Any) -> Any:
     x_faces = discretization.face_centers[0]
     y_faces = discretization.face_centers[1]
     return (
@@ -46,7 +51,7 @@ def _taylor_green(discretization):
     )
 
 
-def test_mac_compiler_projects_packs_and_diagnoses_physical_velocity():
+def test_mac_compiler_projects_packs_and_diagnoses_physical_velocity() -> None:
     discretization, operators, compiled = _compiled()
     velocity = _taylor_green(discretization)
     state = compiled.project_state(velocity)
@@ -69,7 +74,7 @@ def test_mac_compiler_projects_packs_and_diagnoses_physical_velocity():
     )
 
 
-def test_mac_compiler_advances_one_projected_ssprk_step():
+def test_mac_compiler_advances_one_projected_ssprk_step() -> None:
     discretization, operators, compiled = _compiled()
     state = compiled.project_state(_taylor_green(discretization))
     method = phx.solver.SSPRK33FixedStepMethod(compiled)
@@ -88,8 +93,8 @@ def test_mac_compiler_advances_one_projected_ssprk_step():
     assert jnp.linalg.norm(result.accepted_state - state) > 0.0
 
 
-def test_mac_compiler_short_horizon_forcing_gradient_is_finite():
-    def forcing(_time, velocity, amplitude):
+def test_mac_compiler_short_horizon_forcing_gradient_is_finite() -> None:
+    def forcing(_time: Any, velocity: Any, amplitude: Any) -> Any:
         return (jnp.ones_like(velocity[0]) * amplitude, jnp.zeros_like(velocity[1]))
 
     discretization, _, compiled = _compiled(
@@ -100,7 +105,7 @@ def test_mac_compiler_short_horizon_forcing_gradient_is_finite():
     state = compiled.project_state(_taylor_green(discretization))
     method = phx.solver.SSPRK33FixedStepMethod(compiled)
 
-    def terminal_energy(amplitude):
+    def terminal_energy(amplitude: Any) -> Any:
         result = method.step(
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0.0),
@@ -116,7 +121,7 @@ def test_mac_compiler_short_horizon_forcing_gradient_is_finite():
     assert jnp.isfinite(gradient)
 
 
-def test_mac_compiler_rejects_nonunit_density_projection():
+def test_mac_compiler_rejects_nonunit_density_projection() -> None:
     discretization, operators, compiled = _compiled()
     projection = phx.solver.MACPressureProjectionPlan(operators, density=2.0)
 
@@ -132,7 +137,7 @@ def test_mac_compiler_rejects_nonunit_density_projection():
     )
 
 
-def test_bounded_mac_compiler_preserves_exact_couette_equilibrium():
+def test_bounded_mac_compiler_preserves_exact_couette_equilibrium() -> None:
     count = 8
     grid = phx.discretization.TensorGridPlan(
         (
@@ -178,6 +183,7 @@ def test_bounded_mac_compiler_preserves_exact_couette_equilibrium():
         jnp.zeros(finite_volume.face_layouts[1].shape),
     )
     state = compiled.project_state(velocity)
+    # ty: ignore[invalid-argument-type]
     rate = compiled(0.0, state, None)
     diagnostics = compiled.diagnostics(0.0, state)
 

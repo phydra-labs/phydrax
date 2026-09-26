@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,7 +24,7 @@ from phydrax.ml.outliers import (
 )
 
 
-def _features():
+def _features() -> Any:
     return jnp.array(
         [
             [-1.8, -0.4],
@@ -36,7 +39,7 @@ def _features():
     )
 
 
-def _recipes_and_models():
+def _recipes_and_models() -> Any:
     return [
         (
             CovarianceOutlierRecipe(contamination=0.25, shrinkage=0.1),
@@ -63,8 +66,8 @@ def _recipes_and_models():
 
 @pytest.mark.parametrize("recipe,model_type,hyper_gradient", _recipes_and_models())
 def test_continuous_outlier_models_have_score_prediction_membership_and_frozen_execution_contracts(
-    recipe, model_type, hyper_gradient
-):
+    recipe: Any, model_type: Any, hyper_gradient: Any
+) -> None:
     features = _features()
     result = recipe.fit_batch(MLBatch(features))
     model = result.as_trainable()
@@ -97,7 +100,9 @@ def test_continuous_outlier_models_have_score_prediction_membership_and_frozen_e
     assert "predict" in contract.nondifferentiable_outputs
 
 
-def test_outlier_case_sample_feature_target_axes_masks_and_statistical_weight_policy():
+def test_outlier_case_sample_feature_target_axes_masks_and_statistical_weight_policy() -> (
+    None
+):
     base = _features()
     features = jnp.stack((base, base * jnp.array([1.1, 0.9])), axis=0)
     targets = jnp.stack(
@@ -114,7 +119,9 @@ def test_outlier_case_sample_feature_target_axes_masks_and_statistical_weight_po
     )
     recipe = CovarianceOutlierRecipe(contamination=0.25, shrinkage=0.1)
 
+    # ty: ignore[invalid-argument-type]
     first = recipe.fit_batch(MLBatch(features, targets, measure_weight=1.0, **common))
+    # ty: ignore[invalid-argument-type]
     second = recipe.fit_batch(MLBatch(features, targets, measure_weight=100.0, **common))
     model = first.as_trainable()
     active = sample_mask.at[2].set(False)
@@ -123,22 +130,28 @@ def test_outlier_case_sample_feature_target_axes_masks_and_statistical_weight_po
         effective_weights[None, :, None] * features, axis=1
     ) / jnp.sum(effective_weights)
 
+    # ty: ignore[unresolved-attribute]
     assert model.case_shape == (2,)
+    # ty: ignore[unresolved-attribute]
     assert model.location.shape == (2, 2)
+    # ty: ignore[unresolved-attribute]
     assert model.precision.shape == (2, 2, 2)
     assert model(features[:, :3]).shape == (2, 3)
     assert model(jnp.array([0.2, -0.1])).shape == (2,)
     assert first.diagnostics.effective_samples.shape == (2,)
     assert jnp.array_equal(first.diagnostics.effective_samples, jnp.array([6, 6]))
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.location, expected_location)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.location, second.as_trainable().location)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.precision, second.as_trainable().precision)
 
 
 @pytest.mark.parametrize("recipe,model_type,hyper_gradient", _recipes_and_models())
 def test_continuous_outlier_prediction_parameter_fit_feature_and_fit_weight_gradients(
-    recipe, model_type, hyper_gradient
-):
+    recipe: Any, model_type: Any, hyper_gradient: Any
+) -> None:
     del model_type, hyper_gradient
     features = _features()
     weights = jnp.array([1.0, 1.3, 0.8, 1.5, 1.1, 0.9, 1.4, 1.05])
@@ -154,11 +167,11 @@ def test_continuous_outlier_prediction_parameter_fit_feature_and_fit_weight_grad
         if eqx.is_inexact_array(leaf)
     ]
 
-    def feature_loss(value):
+    def feature_loss(value: Any) -> Any:
         fitted = recipe.fit_batch(MLBatch(value, sample_weight=weights)).as_trainable()
         return fitted(point)
 
-    def weight_loss(value):
+    def weight_loss(value: Any) -> Any:
         fitted = recipe.fit_batch(MLBatch(features, sample_weight=value)).as_trainable()
         return fitted(point)
 
@@ -174,7 +187,7 @@ def test_continuous_outlier_prediction_parameter_fit_feature_and_fit_weight_grad
     assert jnp.all(jnp.isfinite(weight_gradient))
 
 
-def test_continuous_outlier_scores_are_jittable_and_vmappable():
+def test_continuous_outlier_scores_are_jittable_and_vmappable() -> None:
     features = _features()
     points = jnp.array([[-0.2, 0.1], [0.8, -0.4], [3.0, 2.5]])
 
@@ -185,7 +198,7 @@ def test_continuous_outlier_scores_are_jittable_and_vmappable():
         assert jnp.all(jnp.isfinite(jax.jit(model)(points)))
 
 
-def test_continuous_outliers_support_complex_geometry_with_real_scores():
+def test_continuous_outliers_support_complex_geometry_with_real_scores() -> None:
     base = _features()
     complex_features = base + 1j * jnp.flip(base, axis=-1) * 0.2
     point = jnp.array([0.2 + 0.1j, -0.3 + 0.05j])
@@ -198,7 +211,7 @@ def test_continuous_outliers_support_complex_geometry_with_real_scores():
         assert jnp.isfinite(score)
 
 
-def test_sparse_outlier_features_are_explicitly_rejected():
+def test_sparse_outlier_features_are_explicitly_rejected() -> None:
     dense = _features()
     sparse = SparseFeatures(
         dense,
@@ -211,7 +224,7 @@ def test_sparse_outlier_features_are_explicitly_rejected():
             recipe.fit_batch(MLBatch(sparse))
 
 
-def test_continuous_outlier_invalid_statuses_are_declared_values():
+def test_continuous_outlier_invalid_statuses_are_declared_values() -> None:
     features = _features()
     insufficient_mask = jnp.array([True, True, False, False, False, False, False, False])
     insufficient = CovarianceOutlierRecipe(contamination=0.25).fit_batch(

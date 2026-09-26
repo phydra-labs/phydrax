@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -34,7 +35,7 @@ def _band_pattern(size: int, *, symmetric: bool = False) -> phx.sparse.SparsePat
     )
 
 
-def _band_vector_function(value, arguments):
+def _band_vector_function(value: Any, arguments: Any) -> Any:
     return jnp.asarray(
         [
             value[0] ** 2 + arguments[0] * value[1],
@@ -45,7 +46,7 @@ def _band_vector_function(value, arguments):
     )
 
 
-def _band_scalar_function(value, arguments):
+def _band_scalar_function(value: Any, arguments: Any) -> Any:
     return (
         value[0] ** 2
         + arguments[0] * value[0] * value[1]
@@ -57,7 +58,7 @@ def _band_scalar_function(value, arguments):
     )
 
 
-def test_sparse_pattern_canonicalization_identity_and_roundtrip():
+def test_sparse_pattern_canonicalization_identity_and_roundtrip() -> None:
     first = phx.sparse.SparsePattern.from_coo(
         jnp.asarray([2, 0, 1, 0, 2, 0]),
         jnp.asarray([1, 0, 1, 2, 1, 2]),
@@ -99,7 +100,7 @@ def test_sparse_pattern_canonicalization_identity_and_roundtrip():
         phx.sparse.SparsePattern.from_dict(invalid_shape)
 
 
-def test_sparse_pattern_rejects_invalid_coordinates_and_symmetry():
+def test_sparse_pattern_rejects_invalid_coordinates_and_symmetry() -> None:
     with pytest.raises(ValueError, match="equal shape"):
         phx.sparse.SparsePattern.from_coo([0], [0, 1], (2, 2))
     with pytest.raises(TypeError, match="integer dtype"):
@@ -120,7 +121,7 @@ def test_sparse_pattern_rejects_invalid_coordinates_and_symmetry():
         phx.sparse.SparsePattern.from_coo([0, 1], [0, 0], (2, 2), symmetric=True)
 
 
-def test_native_coloring_is_deterministic_valid_and_portable():
+def test_native_coloring_is_deterministic_valid_and_portable() -> None:
     pattern = _band_pattern(5)
     first = phx.sparse.compile_sparse_jacobian(
         lambda value, _: value,
@@ -164,7 +165,7 @@ def test_native_coloring_is_deterministic_valid_and_portable():
         phx.sparse.SparseColoring.from_dict(invalid_color)
 
 
-def test_native_jacobian_modes_chunking_jit_vmap_and_gradients():
+def test_native_jacobian_modes_chunking_jit_vmap_and_gradients() -> None:
     space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
     point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
     arguments = jnp.asarray([1.3, -0.8])
@@ -218,7 +219,7 @@ def test_native_jacobian_modes_chunking_jit_vmap_and_gradients():
         assert jnp.all(jnp.isfinite(argument_gradient))
 
 
-def test_python_and_numpy_scalar_arguments_remain_dynamic():
+def test_python_and_numpy_scalar_arguments_remain_dynamic() -> None:
     space = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
     point = jnp.asarray([1.5, -0.5])
     pattern = phx.sparse.SparsePattern.from_coo([0, 1], [0, 1], (2, 2))
@@ -244,7 +245,7 @@ def test_python_and_numpy_scalar_arguments_remain_dynamic():
     assert jnp.isfinite(argument_gradient)
 
 
-def test_rectangular_pytree_jacobian_preserves_coordinate_semantics():
+def test_rectangular_pytree_jacobian_preserves_coordinate_semantics() -> None:
     source = phx.linalg.PyTreeSpace(
         {
             "field": jnp.zeros((2,), dtype=jnp.float64),
@@ -257,7 +258,7 @@ def test_rectangular_pytree_jacobian_preserves_coordinate_semantics():
         "parameter": jnp.asarray(0.5),
     }
 
-    def function(value, scale):
+    def function(value: Any, scale: Any) -> Any:
         return jnp.asarray(
             [
                 scale * value["field"][0],
@@ -289,13 +290,13 @@ def test_rectangular_pytree_jacobian_preserves_coordinate_semantics():
     )
 
 
-def test_empty_and_dense_patterns_remain_valid():
+def test_empty_and_dense_patterns_remain_valid() -> None:
     space = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
     point = jnp.asarray([1.0, 2.0, 3.0])
     empty = phx.sparse.SparsePattern.from_coo([], [], (3, 3))
     traces = []
 
-    def zero_function(value, _):
+    def zero_function(value: Any, _: Any) -> Any:
         traces.append(None)
         return jnp.zeros_like(value)
 
@@ -338,7 +339,7 @@ def test_empty_and_dense_patterns_remain_valid():
     )
 
 
-def test_native_hessian_modes_match_dense_and_remain_differentiable():
+def test_native_hessian_modes_match_dense_and_remain_differentiable() -> None:
     space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
     point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
     arguments = jnp.asarray([1.3, -0.8])
@@ -368,7 +369,7 @@ def test_native_hessian_modes_match_dense_and_remain_differentiable():
         assert jnp.all(jnp.isfinite(third_order))
 
 
-def test_structural_compilation_normalizes_then_evaluates_natively():
+def test_structural_compilation_normalizes_then_evaluates_natively() -> None:
     space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
     point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
     arguments = jnp.asarray([1.3, -0.8])
@@ -390,7 +391,7 @@ def test_structural_compilation_normalizes_then_evaluates_natively():
     )
 
 
-def test_auto_and_native_known_pattern_plans_agree():
+def test_auto_and_native_known_pattern_plans_agree() -> None:
     space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
     point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
     arguments = jnp.asarray([1.3, -0.8])
@@ -420,7 +421,7 @@ def test_auto_and_native_known_pattern_plans_agree():
     assert compiled.num_colors <= native.num_colors
 
 
-def test_structural_scalar_dot_respects_contracted_axis_permutations():
+def test_structural_scalar_dot_respects_contracted_axis_permutations() -> None:
     source = phx.linalg.ArraySpace((2, 3), dtype=jnp.float64)
     target = phx.linalg.ArraySpace((), dtype=jnp.float64)
     point = jnp.arange(6.0, dtype=jnp.float64).reshape((2, 3))
@@ -433,7 +434,7 @@ def test_structural_scalar_dot_respects_contracted_axis_permutations():
         dtype=jnp.float64,
     )
 
-    def contracted(value, _):
+    def contracted(value: Any, _: Any) -> Any:
         return jax.lax.dot_general(
             value,
             constant,
@@ -452,12 +453,12 @@ def test_structural_scalar_dot_respects_contracted_axis_permutations():
     assert jnp.array_equal(plan.operator(point).as_dense(), expected)
 
 
-def test_structural_dynamic_slice_clamps_resolved_starts():
+def test_structural_dynamic_slice_clamps_resolved_starts() -> None:
     source = phx.linalg.ArraySpace((5,), dtype=jnp.float64)
     target = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
     point = jnp.arange(5.0, dtype=jnp.float64)
 
-    def sliced(value, _):
+    def sliced(value: Any, _: Any) -> Any:
         return jax.lax.dynamic_slice(value, (4,), (3,))
 
     plan = phx.sparse.compile_sparse_jacobian(
@@ -472,7 +473,7 @@ def test_structural_dynamic_slice_clamps_resolved_starts():
     assert jnp.array_equal(plan.operator(point).as_dense(), expected)
 
 
-def test_sparse_derivative_contract_rejections_are_explicit():
+def test_sparse_derivative_contract_rejections_are_explicit() -> None:
     space = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
     point = jnp.asarray([1.0, 2.0])
     pattern = phx.sparse.SparsePattern.from_coo([0, 1], [0, 1], (2, 2))
@@ -519,11 +520,11 @@ def test_sparse_derivative_contract_rejections_are_explicit():
         )
 
 
-def test_matrix_free_verification_detects_missing_structure():
+def test_matrix_free_verification_detects_missing_structure() -> None:
     space = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
     point = jnp.asarray([0.7, -1.2, 0.4])
 
-    def function(value, _):
+    def function(value: Any, _: Any) -> Any:
         return jnp.asarray([value[0] + value[1], value[1] * value[2], value[2] ** 2])
 
     complete = phx.sparse.SparsePattern.from_coo([0, 0, 1, 1, 2], [0, 1, 1, 2, 2], (3, 3))
@@ -563,7 +564,7 @@ def test_matrix_free_verification_detects_missing_structure():
     assert float(rejected.maximum_absolute_error) > 0.0
 
 
-def test_sparse_derivatives_participate_in_shared_linear_solves():
+def test_sparse_derivatives_participate_in_shared_linear_solves() -> None:
     source = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
     target = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
     point = jnp.asarray([0.2, -0.5])
@@ -639,7 +640,7 @@ def test_sparse_derivatives_participate_in_shared_linear_solves():
     )
 
 
-def test_import_boundary_and_provider_neutral_public_api():
+def test_import_boundary_and_provider_neutral_public_api() -> None:
     result = subprocess.run(
         [
             sys.executable,

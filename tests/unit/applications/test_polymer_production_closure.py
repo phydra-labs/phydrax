@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +11,7 @@ from phydrax.applications.polymer_liquids import (
 )
 
 
-def _supported_regime():
+def _supported_regime() -> Any:
     return prod.PolymerProductionRegime(
         "hard-sphere-colloid",
         "none",
@@ -19,7 +21,7 @@ def _supported_regime():
     )
 
 
-def test_exact_support_matrix_admits_only_declared_regimes():
+def test_exact_support_matrix_admits_only_declared_regimes() -> None:
     supported = prod.decide_polymer_production_regime(_supported_regime())
     assert supported.supported
     assert supported.require_supported() is supported.regime
@@ -39,7 +41,7 @@ def test_exact_support_matrix_admits_only_declared_regimes():
         excluded.require_supported()
 
 
-def test_entanglement_adapter_parameterizes_named_tube_models():
+def test_entanglement_adapter_parameterizes_named_tube_models() -> None:
     result = ent.estimate_entanglement(
         ent.EntanglementEstimatorPlan(
             1.0,
@@ -48,6 +50,7 @@ def test_entanglement_adapter_parameterizes_named_tube_models():
             minimum_frames=8,
             maximum_relative_standard_error=1.0e-10,
         ),
+        # ty: ignore[invalid-argument-type]
         [20, 20],
         jnp.full((8, 2), 40.0),
         jnp.full((8, 2), 20.0),
@@ -59,7 +62,7 @@ def test_entanglement_adapter_parameterizes_named_tube_models():
     np.testing.assert_allclose(de.plateau_modulus, result.plateau_modulus)
 
 
-def test_primitive_path_contacts_seed_particle_slip_springs():
+def test_primitive_path_contacts_seed_particle_slip_springs() -> None:
     positions = jnp.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [1.0, 2.0, 0.0]]
     )
@@ -120,7 +123,7 @@ def test_primitive_path_contacts_seed_particle_slip_springs():
     assert plan.maximum_springs == 1
 
 
-def test_composite_checkpoint_roundtrip_and_replay(tmp_path):
+def test_composite_checkpoint_roundtrip_and_replay(tmp_path: Any) -> None:
     glamm = rep.GLAMMPlan(3, 1.0e-3, 1.0, 10.0, 1.0, contour_diffusivity=0.0)
     component = glamm.initialize()
     plan = prod.CompositePolymerCheckpointPlan(
@@ -143,7 +146,7 @@ def test_composite_checkpoint_roundtrip_and_replay(tmp_path):
     assert evidence.identical
 
 
-def test_qualification_campaign_is_fail_closed_and_evidence_bearing():
+def test_qualification_campaign_is_fail_closed_and_evidence_bearing() -> None:
     cases = prod.default_polymer_qualification_cases()
     campaign = prod.PolymerQualificationCampaignPlan(_supported_regime(), cases)
     observations = {case.name: case.reference for case in cases}
@@ -155,7 +158,7 @@ def test_qualification_campaign_is_fail_closed_and_evidence_bearing():
     assert not failed.qualified
 
 
-def test_bounded_production_smoke_closes_all_gates():
+def test_bounded_production_smoke_closes_all_gates() -> None:
     result = prod.run_polymer_production_smoke()
     assert result.successful
     assert bool(jnp.all(result.gate_passed))

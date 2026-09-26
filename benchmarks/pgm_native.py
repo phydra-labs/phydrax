@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -15,7 +17,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def _measure(function, *arguments, repeats):
+def _measure(function: Any, *arguments: Any, repeats: Any) -> Any:
     start = time.perf_counter()
     first = function(*arguments)
     jax.block_until_ready(first)
@@ -30,7 +32,7 @@ def _measure(function, *arguments, repeats):
     return result, first_seconds, steady_seconds
 
 
-def _grid_edges(side):
+def _grid_edges(side: Any) -> Any:
     senders = []
     receivers = []
     for row in range(side):
@@ -45,7 +47,7 @@ def _grid_edges(side):
     return jnp.stack([jnp.asarray(senders), jnp.asarray(receivers)], axis=-1)
 
 
-def run(*, side, bp_steps, chains, repeats):
+def run(*, side: Any, bp_steps: Any, chains: Any, repeats: Any) -> Any:
     variables = side * side
     edges = _grid_edges(side)
     graph = phx.pgm.ising_factor_graph(
@@ -182,7 +184,7 @@ def run(*, side, bp_steps, chains, repeats):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Benchmark native factor-graph inference."
     )

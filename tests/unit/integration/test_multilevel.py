@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _hierarchy():
+def _hierarchy() -> Any:
     levels = []
     for index, step in enumerate((0.25, 0.125, 0.0625)):
         levels.append(
@@ -34,10 +37,10 @@ def _hierarchy():
     )
 
 
-def _target(*, failures=False):
+def _target(*, failures: Any = False) -> Any:
     hierarchy = _hierarchy()
 
-    def sampler(level_index, sample_indices, key):
+    def sampler(level_index: Any, sample_indices: Any, key: Any) -> Any:
         keys = jax.vmap(lambda index: jr.fold_in(key, index))(sample_indices)
         normal = jax.vmap(jr.normal)(keys)
         fine_step = hierarchy.levels[level_index].resolutions[0]
@@ -70,7 +73,7 @@ def _target(*, failures=False):
     )
 
 
-def test_fixed_mlmc_runs_through_canonical_integration_dispatch():
+def test_fixed_mlmc_runs_through_canonical_integration_dispatch() -> None:
     target = _target()
     plan = phx.integration.MultilevelMonteCarloPlan(
         samples_per_level=(4096, 2048, 1024),
@@ -99,7 +102,7 @@ def test_fixed_mlmc_runs_through_canonical_integration_dispatch():
     assert estimate.diagnostics.mean_costs[2] > estimate.diagnostics.mean_costs[1]
 
 
-def test_adaptive_mlmc_allocates_by_variance_and_cost():
+def test_adaptive_mlmc_allocates_by_variance_and_cost() -> None:
     target = _target()
     plan = phx.integration.MultilevelMonteCarloPlan(
         initial_samples=32,
@@ -123,7 +126,7 @@ def test_adaptive_mlmc_allocates_by_variance_and_cost():
     assert estimate.diagnostics.weak_convergence_order > 0.0
 
 
-def test_failed_pairs_are_masked_and_replaced_by_new_prefix_indices():
+def test_failed_pairs_are_masked_and_replaced_by_new_prefix_indices() -> None:
     target = _target(failures=True)
     plan = phx.integration.MultilevelMonteCarloPlan(
         samples_per_level=(64, 64, 64),
@@ -145,7 +148,7 @@ def test_failed_pairs_are_masked_and_replaced_by_new_prefix_indices():
     assert jnp.all(estimate.diagnostics.failed_counts > 0)
 
 
-def test_checkpoint_resume_is_bitwise_prefix_stable(tmp_path):
+def test_checkpoint_resume_is_bitwise_prefix_stable(tmp_path: Any) -> None:
     target = _target()
     plan = phx.integration.MultilevelMonteCarloPlan(
         samples_per_level=(64, 64, 64),
@@ -191,7 +194,7 @@ def test_checkpoint_resume_is_bitwise_prefix_stable(tmp_path):
     )
 
 
-def test_multilevel_result_archive_is_checked_and_read_only(tmp_path):
+def test_multilevel_result_archive_is_checked_and_read_only(tmp_path: Any) -> None:
     estimate = phx.integration.integrate(
         lambda samples, level: samples,
         _target(),
@@ -214,7 +217,9 @@ def test_multilevel_result_archive_is_checked_and_read_only(tmp_path):
         archive.array("missing")
 
 
-def test_mlmc_precision_ledger_and_archive_preserve_numerical_contract(tmp_path):
+def test_mlmc_precision_ledger_and_archive_preserve_numerical_contract(
+    tmp_path: Any,
+) -> None:
     precision = phx.integration.IntegrationPrecisionPolicy(
         evaluation_dtype="float32",
         accumulation_dtype="float64",
@@ -235,11 +240,13 @@ def test_mlmc_precision_ledger_and_archive_preserve_numerical_contract(tmp_path)
     ledger = estimate.diagnostics.error_ledger
 
     assert estimate.value.dtype == jnp.float32
+    # ty: ignore[unresolved-attribute]
     assert estimate.error_estimate.dtype == jnp.float64
     assert estimate.diagnostics.correction_means[0].dtype == jnp.float64
     assert ledger.roundoff_error.dtype == jnp.float64
     assert ledger.roundoff_error > 0.0
     assert ledger.spatial_error is None
+    # ty: ignore[unresolved-attribute]
     assert estimate.precision_evidence.evidence_id
 
     path = phx.integration.write_multilevel_result(
@@ -248,15 +255,16 @@ def test_mlmc_precision_ledger_and_archive_preserve_numerical_contract(tmp_path)
     )
     archive = phx.integration.read_multilevel_result(path)
     assert archive.metadata["precision_evidence"]["evidence_id"] == (
+        # ty: ignore[unresolved-attribute]
         estimate.precision_evidence.evidence_id
     )
     assert archive.array("ledger/roundoff_error").dtype == np.float64
 
 
-def test_mlmc_invalid_sample_exhaustion_returns_status_instead_of_raising():
+def test_mlmc_invalid_sample_exhaustion_returns_status_instead_of_raising() -> None:
     hierarchy = _hierarchy()
 
-    def sampler(level_index, sample_indices, key):
+    def sampler(level_index: Any, sample_indices: Any, key: Any) -> Any:
         del key
         fine = jnp.zeros(sample_indices.shape)
         coarse = None if level_index == 0 else jnp.zeros(sample_indices.shape)
@@ -299,7 +307,7 @@ def test_mlmc_invalid_sample_exhaustion_returns_status_instead_of_raising():
     assert jnp.array_equal(estimate.diagnostics.sample_counts, jnp.zeros(3))
 
 
-def test_mlmc_resume_at_max_rounds_performs_no_extra_sampling():
+def test_mlmc_resume_at_max_rounds_performs_no_extra_sampling() -> None:
     plan = phx.integration.MultilevelMonteCarloPlan(
         samples_per_level=(8, 8, 8),
         batch_size=2,

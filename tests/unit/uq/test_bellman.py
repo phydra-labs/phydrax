@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -7,8 +9,12 @@ import phydrax as phx
 
 
 def _scalar_linear_problem(
-    *, values=None, mask=None, step_valid=None, problem_id="scalar"
-):
+    *,
+    values: Any = None,
+    mask: Any = None,
+    step_valid: Any = None,
+    problem_id: Any = "scalar",
+) -> Any:
     if values is None:
         values = jnp.asarray([[0.4], [-0.2]])
     observations = phx.stochastic.ObservationSequence(
@@ -50,7 +56,7 @@ def _scalar_linear_problem(
     )
 
 
-def _time_varying_masked_problem():
+def _time_varying_masked_problem() -> Any:
     times = jnp.asarray([[0.4, 0.9, 1.5], [0.4, 0.9, 0.9]])
     values = jnp.asarray(
         [
@@ -109,12 +115,12 @@ def _time_varying_masked_problem():
     )
 
 
-def _poisson_problem():
+def _poisson_problem() -> Any:
     base = _scalar_linear_problem(
         values=jnp.asarray([[3.0], [2.0]]), problem_id="poisson"
     )
 
-    def log_prob(value, state, time, mask, context):
+    def log_prob(value: Any, state: Any, time: Any, mask: Any, context: Any) -> Any:
         del time, context
         terms = (
             value * state[0] - jnp.exp(state[0]) - jax.scipy.special.gammaln(value + 1.0)
@@ -145,17 +151,17 @@ def _poisson_problem():
     )
 
 
-def _state_dependent_transition_problem():
+def _state_dependent_transition_problem() -> Any:
     beta = 0.4
 
-    def variance(state):
+    def variance(state: Any) -> Any:
         return jnp.exp(beta * state[0])
 
-    def sample(key, state, t0, t1, context):
+    def sample(key: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         del t0, t1, context
         return state + jnp.sqrt(variance(state)) * jr.normal(key, state.shape)
 
-    def log_prob(next_state, state, t0, t1, context):
+    def log_prob(next_state: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         del t0, t1, context
         residual = next_state[0] - state[0]
         q = variance(state)
@@ -196,7 +202,7 @@ def _state_dependent_transition_problem():
     )
 
 
-def _nonconcave_observation_problem():
+def _nonconcave_observation_problem() -> Any:
     base = _scalar_linear_problem(
         values=jnp.asarray([[1.0], [1.0]]), problem_id="curvature"
     )
@@ -213,7 +219,7 @@ def _nonconcave_observation_problem():
         process_id="nonconcave-process",
     )
 
-    def log_prob(value, state, time, mask, context):
+    def log_prob(value: Any, state: Any, time: Any, mask: Any, context: Any) -> Any:
         del time, context
         residual = value - state[0] ** 2
         terms = -0.5 * (residual**2 + jnp.log(2.0 * jnp.pi))
@@ -242,7 +248,7 @@ def _nonconcave_observation_problem():
     )
 
 
-def test_linear_gaussian_exact_limit_matches_kalman_and_rts_with_masks():
+def test_linear_gaussian_exact_limit_matches_kalman_and_rts_with_masks() -> None:
     problem = _time_varying_masked_problem()
     bellman = phx.uq.bellman_filter(problem, method="analytic")
     kalman = phx.uq.kalman_filter(problem, method="sequential")
@@ -267,7 +273,7 @@ def test_linear_gaussian_exact_limit_matches_kalman_and_rts_with_masks():
     assert jnp.all(bellman.successful)
 
 
-def test_forced_optimization_matches_the_exact_linear_gaussian_engine():
+def test_forced_optimization_matches_the_exact_linear_gaussian_engine() -> None:
     problem = _scalar_linear_problem()
     exact = phx.uq.bellman_filter(problem, method="analytic")
     optimized = phx.uq.bellman_filter(problem, method="optimization")
@@ -286,7 +292,7 @@ def test_forced_optimization_matches_the_exact_linear_gaussian_engine():
     )
 
 
-def test_streaming_steps_reproduce_batch_histories():
+def test_streaming_steps_reproduce_batch_histories() -> None:
     problem = _scalar_linear_problem()
     batch = phx.uq.bellman_filter(problem)
     state = phx.uq.initialize_bellman_filter(problem)
@@ -304,7 +310,7 @@ def test_streaming_steps_reproduce_batch_histories():
     )
 
 
-def test_poisson_update_solves_stationarity_and_reports_observed_curvature():
+def test_poisson_update_solves_stationarity_and_reports_observed_curvature() -> None:
     result = phx.uq.bellman_filter(_poisson_problem(), method="optimization")
     mode = result.filtered_modes[..., 0]
     predicted_mode = result.predicted_modes[..., 0]
@@ -321,7 +327,9 @@ def test_poisson_update_solves_stationarity_and_reports_observed_curvature():
     assert jnp.all(result.successful)
 
 
-def test_normalized_state_dependent_transition_uses_log_determinant_and_schur_profile():
+def test_normalized_state_dependent_transition_uses_log_determinant_and_schur_profile() -> (
+    None
+):
     problem = _state_dependent_transition_problem()
     result = phx.uq.bellman_filter(problem, method="optimization")
     joint_mode = jnp.concatenate(
@@ -330,7 +338,7 @@ def test_normalized_state_dependent_transition_uses_log_determinant_and_schur_pr
     previous_information = jnp.eye(1)
     context = problem.step_context(0, 0)
 
-    def objective(joint):
+    def objective(joint: Any) -> Any:
         previous = joint[:1]
         current = joint[1:]
         return (
@@ -350,7 +358,7 @@ def test_normalized_state_dependent_transition_uses_log_determinant_and_schur_pr
     assert result.incremental_pseudo_log_likelihood[0] == 0.0
 
 
-def test_curvature_failure_is_visible_and_declared_damping_repairs_it():
+def test_curvature_failure_is_visible_and_declared_damping_repairs_it() -> None:
     problem = _nonconcave_observation_problem()
     failed = phx.uq.bellman_filter(problem, method="optimization")
     damped = phx.uq.bellman_filter(problem, method="optimization", curvature_damping=2.0)
@@ -362,7 +370,7 @@ def test_curvature_failure_is_visible_and_declared_damping_repairs_it():
     assert jnp.all(jnp.linalg.eigvalsh(damped.filtered_information) > 0.0)
 
 
-def test_solver_failure_freezes_state_and_dimension_and_density_guards_reject():
+def test_solver_failure_freezes_state_and_dimension_and_density_guards_reject() -> None:
     problem = _scalar_linear_problem()
     failed = phx.uq.bellman_filter(problem, method="optimization", optimizer_max_steps=1)
 
@@ -392,8 +400,8 @@ def test_solver_failure_freezes_state_and_dimension_and_density_guards_reject():
         phx.uq.bellman_filter(no_density, method="optimization")
 
 
-def test_bellman_pseudo_likelihood_gradient_matches_central_difference():
-    def objective(value):
+def test_bellman_pseudo_likelihood_gradient_matches_central_difference() -> None:
+    def objective(value: Any) -> Any:
         problem = _scalar_linear_problem(
             values=jnp.asarray([[value], [-0.2]]), problem_id="gradient"
         )

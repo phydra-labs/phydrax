@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -29,11 +32,11 @@ from tools.global_feedback_qualification import make_model
 
 
 @pytest.fixture(scope="module")
-def space():
+def space() -> Any:
     return SphericalSpectralPlan(3, sampling="gl").prepare(radius=6.371e6)
 
 
-def boundary(*, capacity=2e6, solar=1361.0, p2=0.0):
+def boundary(*, capacity: Any = 2e6, solar: Any = 1361.0, p2: Any = 0.0) -> Any:
     thermo = MoistThermodynamicPlan()
     optics = ColumnOpticalProperties(
         shortwave_absorption=(1e-5, 0.001, 0.01, 0.01),
@@ -50,7 +53,7 @@ def boundary(*, capacity=2e6, solar=1361.0, p2=0.0):
     )
 
 
-def model_at(space, surface):
+def model_at(space: Any, surface: Any) -> Any:
     return GlobalPrimitiveEquationPlan(
         space,
         HybridPressureCoordinate([0.1, 0.0], [0.0, 1.0]),
@@ -64,7 +67,7 @@ def model_at(space, surface):
     ).prepare()
 
 
-def initialize(model, *, water=1000.0, temperature=290.0):
+def initialize(model: Any, *, water: Any = 1000.0, temperature: Any = 290.0) -> Any:
     return model.initialize(
         temperature=280.0,
         vapor=0.002,
@@ -75,7 +78,7 @@ def initialize(model, *, water=1000.0, temperature=290.0):
     )
 
 
-def test_current_slab_controls_both_water_and_heat_and_pressure(space):
+def test_current_slab_controls_both_water_and_heat_and_pressure(space: Any) -> None:
     model = model_at(space, boundary())
     cold, warm = (
         initialize(model, temperature=280.0),
@@ -102,7 +105,9 @@ def test_current_slab_controls_both_water_and_heat_and_pressure(space):
         np.testing.assert_allclose(after[:2], before[:2], rtol=2e-13)
 
 
-def test_solar_flux_is_latitude_dependent_normalized_and_radiatively_closed(space):
+def test_solar_flux_is_latitude_dependent_normalized_and_radiatively_closed(
+    space: Any,
+) -> None:
     model = model_at(space, boundary(p2=-0.48))
     initial = initialize(model)
     solar = initial.held_forcing.solar_down
@@ -133,7 +138,9 @@ def test_solar_flux_is_latitude_dependent_normalized_and_radiatively_closed(spac
     np.testing.assert_allclose(initial.held_forcing.equilibrium_temperature, 260.0)
 
 
-def test_donor_enthalpy_and_mechanical_work_close_instantaneous_global_energy(space):
+def test_donor_enthalpy_and_mechanical_work_close_instantaneous_global_energy(
+    space: Any,
+) -> None:
     model = model_at(space, boundary())
     initial = model.initialize(
         temperature=280.0,
@@ -153,7 +160,7 @@ def test_donor_enthalpy_and_mechanical_work_close_instantaneous_global_energy(sp
     np.testing.assert_allclose(process.energy_power / area, 0.0, atol=2e-8)
 
 
-def test_slab_capacity_changes_integrated_sst_response(space):
+def test_slab_capacity_changes_integrated_sst_response(space: Any) -> None:
     models = (
         model_at(space, boundary(capacity=2e6)),
         model_at(space, boundary(capacity=2e7)),
@@ -172,7 +179,7 @@ def test_slab_capacity_changes_integrated_sst_response(space):
     assert abs(changes[0]) > 2 * abs(changes[1])
 
 
-def test_surface_depletion_rejects_every_coupled_inventory_atomically(space):
+def test_surface_depletion_rejects_every_coupled_inventory_atomically(space: Any) -> None:
     model = model_at(space, boundary())
     initial = initialize(model, water=1e-12)
     result = eqx.filter_jit(model.advance)(initial)
@@ -189,7 +196,9 @@ def test_surface_depletion_rejects_every_coupled_inventory_atomically(space):
         np.testing.assert_array_equal(got, want)
 
 
-def test_native_restart_is_bitwise_and_rejects_changed_numeric_physics(space, tmp_path):
+def test_native_restart_is_bitwise_and_rejects_changed_numeric_physics(
+    space: Any, tmp_path: Any
+) -> None:
     model = model_at(space, boundary())
     initial = initialize(model)
     advance = eqx.filter_jit(model.advance)
@@ -213,7 +222,7 @@ def test_native_restart_is_bitwise_and_rejects_changed_numeric_physics(space, tm
             read_global_atmosphere_checkpoint(path, changed, initial)
 
 
-def test_interactive_boundary_cannot_double_own_prescribed_fluxes():
+def test_interactive_boundary_cannot_double_own_prescribed_fluxes() -> None:
     surface = boundary()
     for overlap in (
         {"evaporation_flux": 1e-5},
@@ -225,11 +234,14 @@ def test_interactive_boundary_cannot_double_own_prescribed_fluxes():
             GlobalAtmosphereProcesses(
                 thermodynamics=surface.slab.thermodynamics,
                 surface_physics=surface,
+                # ty: ignore[invalid-argument-type]
                 **overlap,
             )
 
 
-def test_global_flux_preconditioning_reduces_actual_boundary_residuals(space):
+def test_global_flux_preconditioning_reduces_actual_boundary_residuals(
+    space: Any,
+) -> None:
     model = model_at(space, boundary(capacity=2e7, p2=-0.48))
     initial = initialize(model, temperature=290.0)
     initial_residual, initial_valid = global_flux_residuals(model, initial)
@@ -255,7 +267,7 @@ def test_global_flux_preconditioning_reduces_actual_boundary_residuals(space):
     assert float(jnp.max(jnp.abs(model.reconstruct(rate.temperature)))) > 0
 
 
-def test_failed_global_flux_preconditioning_is_atomic(space):
+def test_failed_global_flux_preconditioning_is_atomic(space: Any) -> None:
     model = model_at(space, boundary(capacity=2e7, p2=-0.48))
     initial = initialize(model, temperature=290.0)
     result = precondition_global_fluxes(
@@ -277,7 +289,7 @@ def test_failed_global_flux_preconditioning_is_atomic(space):
     )
 
 
-def test_interventions_share_baseline_preconditioned_physical_initial_state():
+def test_interventions_share_baseline_preconditioned_physical_initial_state() -> None:
     baseline_model, baseline, baseline_evidence = make_model(
         scenario="baseline",
         bandlimit=3,

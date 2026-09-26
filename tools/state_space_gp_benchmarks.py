@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import median
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -51,7 +52,9 @@ class StateSpaceGaussianProcessBenchmarkRecord:
     valid: bool
 
 
-def _dense_gp(kernel, train_times, train_values, query_times, noise_scale):
+def _dense_gp(
+    kernel: Any, train_times: Any, train_values: Any, query_times: Any, noise_scale: Any
+) -> Any:
     covariance = kernel.matrix(train_times, train_times)
     covariance = covariance + noise_scale**2 * jnp.eye(
         train_times.size, dtype=covariance.dtype
@@ -59,7 +62,7 @@ def _dense_gp(kernel, train_times, train_values, query_times, noise_scale):
     factor = jnp.linalg.cholesky(covariance)
     policy = phx.linalg.LinearSolvePolicy(phx.linalg.DenseCholesky())
 
-    def solve(right_hand_side):
+    def solve(right_hand_side: Any) -> Any:
         operator = phx.linalg.DenseLinearOperator(
             covariance,
             properties=phx.linalg.OperatorProperties(
@@ -94,14 +97,16 @@ def _dense_gp(kernel, train_times, train_values, query_times, noise_scale):
     return factor, log_marginal_likelihood, posterior_mean, posterior_variance
 
 
-def _compile(function, *arguments, **keywords):
+def _compile(function: Any, *arguments: Any, **keywords: Any) -> Any:
     started = perf_counter()
     compiled = function.lower(*arguments, **keywords).compile()
     elapsed = perf_counter() - started
     return compiled, elapsed
 
 
-def _execution_seconds(function, *arguments, repeats, **keywords):
+def _execution_seconds(
+    function: Any, *arguments: Any, repeats: Any, **keywords: Any
+) -> Any:
     samples = []
     value = None
     for _ in range(repeats):
@@ -112,7 +117,7 @@ def _execution_seconds(function, *arguments, repeats, **keywords):
     return value, float(median(samples))
 
 
-def _retained_storage(value, /) -> tuple[int, int]:
+def _retained_storage(value: Any, /) -> tuple[int, int]:
     """Count each retained JAX array object once, including all nested results."""
     identities: set[int] = set()
     elements = 0
@@ -125,13 +130,13 @@ def _retained_storage(value, /) -> tuple[int, int]:
     return elements, bytes_
 
 
-def _scaling_slope(sizes, values):
+def _scaling_slope(sizes: Any, values: Any) -> Any:
     coordinates = np.log(np.asarray(sizes, dtype="float64"))
     measurements = np.log(np.asarray(values, dtype="float64"))
     return float(np.polyfit(coordinates, measurements, 1)[0])
 
 
-def _summaries(records):
+def _summaries(records: Any) -> Any:
     sizes = [record.training_size for record in records]
     return {
         "record_count": len(records),
@@ -163,7 +168,7 @@ def _summaries(records):
     }
 
 
-def _gate(summary):
+def _gate(summary: Any) -> Any:
     checks = {
         "all_state_space_results_valid": summary["all_valid"],
         "log_marginal_likelihood_absolute_error_at_most_2e-4": (
@@ -192,7 +197,7 @@ def _gate(summary):
     return {"checks": checks, "passed": all(checks.values())}
 
 
-def _source_provenance():
+def _source_provenance() -> Any:
     root = Path(__file__).resolve().parents[1]
     revision = subprocess.run(
         ("git", "rev-parse", "HEAD"),
@@ -219,9 +224,9 @@ def _source_provenance():
 
 def run_state_space_gp_benchmarks(
     *,
-    sizes=(128, 256, 512, 1024, 2048),
-    repeats=5,
-):
+    sizes: Any = (128, 256, 512, 1024, 2048),
+    repeats: Any = 5,
+) -> Any:
     resolved_sizes = tuple(sizes)
     if len(resolved_sizes) < 3 or any(size <= 0 for size in resolved_sizes):
         raise ValueError("sizes must contain at least three positive schedule sizes.")
@@ -346,6 +351,7 @@ def run_state_space_gp_benchmarks(
             "jax": jax.__version__,
             "backend": jax.default_backend(),
             "device": jax.devices()[0].device_kind,
+            # ty: ignore[unresolved-attribute]
             "x64": bool(jax.config.x64_enabled),
         },
         "source_provenance": _source_provenance(),
@@ -355,7 +361,7 @@ def run_state_space_gp_benchmarks(
     }
 
 
-def _parser():
+def _parser() -> Any:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--repeats", type=int, default=5)

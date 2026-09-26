@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _full_support(chart, support_id):
+def _full_support(chart: Any, support_id: Any) -> Any:
     return phx.metrix.ChartSupport(
         chart,
         lambda point: jnp.all(jnp.isfinite(point), axis=-1),
@@ -17,7 +20,7 @@ def _full_support(chart, support_id):
     )
 
 
-def _quadratic_geometry():
+def _quadratic_geometry() -> Any:
     diagonal = jnp.asarray([2.0, 4.0])
     primal_chart = phx.metrix.CoordinateChart("quadratic-primal", ("x", "y"))
     dual_chart = phx.metrix.CoordinateChart("quadratic-dual", ("u", "v"))
@@ -34,7 +37,7 @@ def _quadratic_geometry():
     )
 
 
-def _negative_entropy_geometry(dimension=3):
+def _negative_entropy_geometry(dimension: Any = 3) -> Any:
     primal_chart = phx.metrix.CoordinateChart(
         "positive-primal",
         tuple(f"x{index}" for index in range(dimension)),
@@ -60,7 +63,7 @@ def _negative_entropy_geometry(dimension=3):
     )
 
 
-def test_quadratic_legendre_geometry_matches_closed_form_with_batches():
+def test_quadratic_legendre_geometry_matches_closed_form_with_batches() -> None:
     geometry = _quadratic_geometry()
     diagonal = jnp.asarray([2.0, 4.0])
     left = jnp.asarray([[0.4, -0.7], [1.2, 0.3]])
@@ -85,7 +88,7 @@ def test_quadratic_legendre_geometry_matches_closed_form_with_batches():
     assert jnp.allclose(geometry.fenchel_young_gap(left, dual), 0.0)
 
 
-def test_information_operators_propagate_compute_precision_and_evidence():
+def test_information_operators_propagate_compute_precision_and_evidence() -> None:
     geometry = _quadratic_geometry()
     point = jnp.asarray([0.4, -0.7], dtype=jnp.float32)
     vector = jnp.ones((2,), dtype=jnp.float32)
@@ -124,7 +127,7 @@ def test_information_operators_propagate_compute_precision_and_evidence():
             assert operator.precision_evidence.provider == "phydrax-geometry"
 
 
-def test_legendre_validation_keeps_storage_and_compute_precision_distinct():
+def test_legendre_validation_keeps_storage_and_compute_precision_distinct() -> None:
     geometry = _quadratic_geometry()
     points = jnp.asarray([[0.4, -0.7], [1.2, 0.3]], dtype=jnp.float32)
     with jax.enable_x64():
@@ -153,7 +156,9 @@ def test_legendre_validation_keeps_storage_and_compute_precision_distinct():
     assert dict(report.metric_validation.precision_evidence.observed) == expected
 
 
-def test_negative_entropy_divergence_and_dual_translation_are_exact_and_jittable():
+def test_negative_entropy_divergence_and_dual_translation_are_exact_and_jittable() -> (
+    None
+):
     geometry = _negative_entropy_geometry()
     left = jnp.asarray([0.3, 1.4, 2.2])
     right = jnp.asarray([0.7, 0.8, 1.1])
@@ -175,7 +180,9 @@ def test_negative_entropy_divergence_and_dual_translation_are_exact_and_jittable
     assert jnp.allclose(jacobian, jnp.diag(jnp.exp(displacement)))
 
 
-def test_legendre_geometry_validation_certifies_roundtrips_and_rejects_wrong_inverse():
+def test_legendre_geometry_validation_certifies_roundtrips_and_rejects_wrong_inverse() -> (
+    None
+):
     geometry = _quadratic_geometry()
     primal = jnp.asarray([[0.3, -0.4], [1.1, 0.8]])
     dual = geometry.dual_coordinates(primal)
@@ -212,7 +219,7 @@ def test_legendre_geometry_validation_certifies_roundtrips_and_rejects_wrong_inv
         phx.metrix.validate_legendre_geometry(wrong, primal)
 
 
-def test_legendre_validation_rejects_inverse_outputs_outside_primal_support():
+def test_legendre_validation_rejects_inverse_outputs_outside_primal_support() -> None:
     primal_chart = phx.metrix.CoordinateChart("positive-quadratic-primal", ("x",))
     dual_chart = phx.metrix.CoordinateChart("positive-quadratic-dual", ("u",))
     geometry = phx.metrix.LegendreGeometry(
@@ -244,7 +251,7 @@ def test_legendre_validation_rejects_inverse_outputs_outside_primal_support():
         geometry.inverse_dual_coordinates(negative_dual)
 
 
-def test_legendre_geometry_rejects_domains_shapes_and_chart_mismatches():
+def test_legendre_geometry_rejects_domains_shapes_and_chart_mismatches() -> None:
     geometry = _negative_entropy_geometry()
     with pytest.raises(Exception, match="outside Legendre primal support"):
         geometry.dual_coordinates(jnp.asarray([0.4, 0.0, 0.8]))
@@ -273,7 +280,7 @@ def test_legendre_geometry_rejects_domains_shapes_and_chart_mismatches():
         )
 
 
-def test_legendre_validation_reports_nonconvex_metric_without_global_claims():
+def test_legendre_validation_reports_nonconvex_metric_without_global_claims() -> None:
     primal_chart = phx.metrix.CoordinateChart("nonconvex-primal", ("x",))
     dual_chart = phx.metrix.CoordinateChart("nonconvex-dual", ("u",))
     geometry = phx.metrix.LegendreGeometry(

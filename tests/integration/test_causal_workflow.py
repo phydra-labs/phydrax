@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_causal_interventions_use_native_uq_batch_selection():
+def test_causal_interventions_use_native_uq_batch_selection() -> None:
     schema = phx.causal.CausalSchema(
         (phx.causal.CausalVariable(name="action", scale=phx.causal.VariableScale.BINARY),)
     )

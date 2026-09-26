@@ -261,8 +261,8 @@ line-length = 90
 exclude = [".*"]
 
 [tool.ruff.lint]
-# ANN0/ANN2 require every package function, method, and nested helper to annotate
-# all parameters and its return type.
+# ANN0/ANN2 require every first-party function, method, and nested helper to
+# annotate all parameters and its return type.
 select = [
   "E",
   "F",
@@ -321,12 +321,9 @@ fixable = ["F401", "F841", "I001", "RUF100"]
 "phydrax/ein/__init__.py" = ["TID251"]
 "phydrax/tensor_network/_contraction.py" = ["TID251"]
 "phydrax/tensor_network/_schedule.py" = ["TID251"]
-"benchmarks/**/*.py" = ["TID251", "ANN"]
-"tests/**/*.py" = ["TID251", "ANN"]
-"tools/**/*.py" = ["TID251", "ANN"]
-"examples/**/*.py" = ["ANN"]
-"docs/**/*.py" = ["ANN"]
-"mkdocstrings_setup.py" = ["ANN"]
+"benchmarks/**/*.py" = ["TID251"]
+"tests/**/*.py" = ["TID251"]
+"tools/**/*.py" = ["TID251"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -340,7 +337,14 @@ max-line-length = 90
 python-version = "3.11"
 
 [tool.ty.src]
-include = ["phydrax"]
+include = [
+  "phydrax",
+  "tests",
+  "tools",
+  "benchmarks",
+  "examples",
+  "mkdocstrings_setup.py",
+]
 
 [tool.ty.analysis]
 # Only `ty: ignore[rule]` suppresses a diagnostic.

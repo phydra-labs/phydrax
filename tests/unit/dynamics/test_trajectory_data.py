@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _ragged_data():
+def _ragged_data() -> Any:
     coordinates = jnp.asarray([[0.0, 0.2, 0.7, 1.1, 1.6], [0.0, 0.4, 1.0, 1.0, 1.0]])
     states = coordinates[..., None] ** 2
     sample_valid = jnp.asarray(
@@ -34,7 +37,7 @@ def _ragged_data():
     )
 
 
-def test_trajectory_data_preserves_padding_resets_and_case_axes():
+def test_trajectory_data_preserves_padding_resets_and_case_axes() -> None:
     data = _ragged_data()
 
     assert data.case_shape == (2,)
@@ -49,7 +52,7 @@ def test_trajectory_data_preserves_padding_resets_and_case_axes():
     )
 
 
-def test_trajectory_data_rejects_cross_reset_transition_marked_valid():
+def test_trajectory_data_rejects_cross_reset_transition_marked_valid() -> None:
     with pytest.raises((eqx.EquinoxRuntimeError, ValueError), match="reset"):
         phx.dynamics.TrajectoryData(
             jnp.arange(4.0),
@@ -61,7 +64,7 @@ def test_trajectory_data_rejects_cross_reset_transition_marked_valid():
         )
 
 
-def test_delay_embedding_never_crosses_a_reset():
+def test_delay_embedding_never_crosses_a_reset() -> None:
     coordinates = jnp.arange(7.0)
     data = phx.dynamics.TrajectoryData(
         coordinates,
@@ -88,7 +91,7 @@ def test_delay_embedding_never_crosses_a_reset():
     )
 
 
-def test_evolution_adapter_retains_system_layout_and_provenance():
+def test_evolution_adapter_retains_system_layout_and_provenance() -> None:
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: state + args,
         state_layout=phx.dynamics.StateLayout((1,), component_names=("population",)),
@@ -112,7 +115,7 @@ def test_evolution_adapter_retains_system_layout_and_provenance():
     assert data.source_id == f"evolution:{trajectory.evolution_id}"
 
 
-def test_memory_solution_adapter_preserves_delay_masks_and_solver_identity():
+def test_memory_solution_adapter_preserves_delay_masks_and_solver_identity() -> None:
     solution = phx.solver.MemoryEquationSolution(
         times=jnp.asarray([0.0, 0.25, 0.5, 0.75]),
         states=jnp.asarray([[1.0], [0.9], [0.82], [0.75]]),
@@ -136,8 +139,10 @@ def test_memory_solution_adapter_preserves_delay_masks_and_solver_identity():
     np.testing.assert_array_equal(np.asarray(data.transition_valid), [True, True, False])
 
 
-def test_fixed_step_adapter_requires_declared_projection_and_retained_trajectory():
-    def step(step_index, time, state, step_size, args):
+def test_fixed_step_adapter_requires_declared_projection_and_retained_trajectory() -> (
+    None
+):
+    def step(step_index: Any, time: Any, state: Any, step_size: Any, args: Any) -> Any:
         del step_index, time, step_size, args
         candidate = state + 1.0
         return phx.solver.FixedStepResult(
@@ -187,7 +192,7 @@ def test_fixed_step_adapter_requires_declared_projection_and_retained_trajectory
         )
 
 
-def test_autonomous_trajectory_rejects_orphan_input_metadata():
+def test_autonomous_trajectory_rejects_orphan_input_metadata() -> None:
     layout = phx.dynamics.StateLayout((1,))
     coordinates = jnp.asarray([0.0, 1.0])
     states = jnp.asarray([[0.0], [1.0]])
@@ -210,7 +215,7 @@ def test_autonomous_trajectory_rejects_orphan_input_metadata():
         )
 
 
-def test_default_dataset_identity_includes_numeric_content_and_axis_semantics():
+def test_default_dataset_identity_includes_numeric_content_and_axis_semantics() -> None:
     layout = phx.dynamics.StateLayout((1,))
     first = phx.dynamics.TrajectoryData(
         jnp.asarray([0.0, 1.0]),

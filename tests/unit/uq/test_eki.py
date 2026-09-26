@@ -14,7 +14,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _linear_problem():
+def _linear_problem() -> Any:
     design = jnp.asarray(
         [
             [1.0, 0.3],
@@ -42,7 +42,7 @@ def _linear_problem():
     return problem, mean, covariance
 
 
-def test_tempered_eki_matches_linear_gaussian_mean_covariance_and_replays():
+def test_tempered_eki_matches_linear_gaussian_mean_covariance_and_replays() -> None:
     problem, exact_mean, exact_covariance = _linear_problem()
     settings: dict[str, Any] = {
         "key": jr.key(950),
@@ -77,17 +77,18 @@ def test_tempered_eki_matches_linear_gaussian_mean_covariance_and_replays():
     assert prediction.samples.shape == (512, 3)
 
 
-def test_eki_respects_bijectors_custom_initial_ensembles_and_no_reverse_mode():
+def test_eki_respects_bijectors_custom_initial_ensembles_and_no_reverse_mode() -> None:
     @jax.custom_vjp
-    def forward(value):
+    def forward(value: Any) -> Any:
         return jnp.asarray([value, 0.5 * value])
 
-    def forward_fwd(value):
+    def forward_fwd(value: Any) -> Any:
         return forward(value), None
 
-    def forward_bwd(residual, cotangent):
+    def forward_bwd(residual: Any, cotangent: Any) -> None:
         raise AssertionError("EKI requested a reverse-mode derivative")
 
+    # ty: ignore[invalid-argument-type]
     forward.defvjp(forward_fwd, forward_bwd)
     space = phx.uq.ParameterSpace(
         jnp.log(jnp.asarray(1.0)),
@@ -116,7 +117,7 @@ def test_eki_respects_bijectors_custom_initial_ensembles_and_no_reverse_mode():
     assert jnp.mean(result.ensemble) == pytest.approx(2.0, abs=0.12)
 
 
-def test_eki_reports_collapse_and_rejects_invalid_residuals_and_configuration():
+def test_eki_reports_collapse_and_rejects_invalid_residuals_and_configuration() -> None:
     problem, _, _ = _linear_problem()
     collapsed = phx.uq.fit_eki(
         problem,
@@ -166,15 +167,15 @@ class _ObservedCoefficients(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, coefficients):
+    def __init__(self, coefficients: Any) -> None:
         self.coefficients = jnp.asarray(coefficients)
         self.in_size = 2
         self.out_size = 3
 
-    def __call__(self, design, /, *, key=None):
+    def __call__(self, design: Any, /, *, key: Any = None) -> Any:
         return design @ self.coefficients
 
-    def model_execution_contract(self):
+    def model_execution_contract(self) -> Any:
         return phx.ModelExecutionContract(
             derivative=phx.DerivativeContract(route=phx.DerivativeRoute.STOPPED),
             execution=phx.ExecutionCapabilities("native-jax"),
@@ -182,11 +183,13 @@ class _ObservedCoefficients(phx.AbstractArrayModel):
         )
 
 
-def _observation_objective(accepted=True, accepted_results="reject-attempt"):
+def _observation_objective(
+    accepted: Any = True, accepted_results: Any = "reject-attempt"
+) -> Any:
     design = jnp.asarray([[1.0, 0.3], [-0.2, 1.2], [0.7, -0.4]])
     observations = jnp.asarray([0.5, -0.8, 0.9])
 
-    def measure(owner, case):
+    def measure(owner: Any, case: Any) -> Any:
         del case
         (design_, observations_), binding = owner
         return phx.solver.SolverCaseResult(
@@ -203,7 +206,7 @@ def _observation_objective(accepted=True, accepted_results="reject-attempt"):
     )
 
 
-def test_eki_consumes_a_solver_objective_likelihood_without_derivatives():
+def test_eki_consumes_a_solver_objective_likelihood_without_derivatives() -> None:
     _, exact_mean, exact_covariance = _linear_problem()
     tree = phx.bind_component(
         _ObservedCoefficients(jnp.zeros(2)), phx.ComponentAuthority.MODEL

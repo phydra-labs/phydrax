@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -24,7 +25,7 @@ from phydrax.qualification import ReferenceArtifactManifest
 cosmology = phx.applications.cosmology
 
 
-def _particle_mesh(particles):
+def _particle_mesh(particles: Any) -> Any:
     axes = tuple(
         phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(3)
     )
@@ -50,6 +51,7 @@ def _particle_mesh(particles):
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -66,7 +68,7 @@ def _particle_mesh(particles):
     )
 
 
-def _workflow():
+def _workflow() -> Any:
     capacity = 4
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray((101, 7, 83, 19)),
@@ -131,7 +133,9 @@ def _workflow():
     return rare, frequent, split, state
 
 
-def test_rare_and_frequent_angular_profiles_overlap_only_through_explicit_split_evidence():
+def test_rare_and_frequent_angular_profiles_overlap_only_through_explicit_split_evidence() -> (
+    None
+):
     rare, frequent, split, state = _workflow()
     physical_step = 1.0e-3
     rare_result = rare.collide(state, jr.key(1), 0, physical_step)
@@ -170,7 +174,9 @@ def test_rare_and_frequent_angular_profiles_overlap_only_through_explicit_split_
     assert rare.plan_id != frequent.plan_id
 
 
-def test_weighted_frequent_and_spherical_closures_remain_separate_successful_workflows():
+def test_weighted_frequent_and_spherical_closures_remain_separate_successful_workflows() -> (
+    None
+):
     rare, frequent, _, state = _workflow()
     collision = rare.collide(state, jr.key(11), 5, 1.0e-3)
     diffused = frequent.apply(collision.accepted_state, jr.key(12), 6, 1.0e-3)

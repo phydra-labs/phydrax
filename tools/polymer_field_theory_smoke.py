@@ -19,7 +19,9 @@ def main() -> int:
     )
     model = pft.IncompressibleGaussianMixturePlan(
         ("A", "B"),
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0], [0.0, 0.0]],
         (pft.PolymerComponentPlan("AB", architecture, 1.0, 10.0),),
     )

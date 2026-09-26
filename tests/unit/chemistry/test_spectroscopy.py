@@ -1,19 +1,24 @@
+from typing import Any
+
 import numpy as np
 
 import phydrax as phx
 
 
-def test_linear_dipole_surface_produces_finite_ir_line_strengths():
+def test_linear_dipole_surface_produces_finite_ir_line_strengths() -> None:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     positions = np.asarray(
         [[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]],
         dtype="float64",
     )
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [8, 1, 1],
         positions,
+        # ty: ignore[invalid-argument-type]
         [15.999, 1.008, 1.008],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[11, 12, 13],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -35,7 +40,7 @@ def test_linear_dipole_surface_produces_finite_ir_line_strengths():
     calculation = phx.chemistry.ElectronicCalculationPlan(system, state, model, request)
     charges = np.asarray([-0.8, 0.4, 0.4])
 
-    def electronic(plan, coordinate, cell):
+    def electronic(plan: Any, coordinate: Any, cell: Any) -> Any:
         del cell
         value = np.asarray(coordinate)
         delta = value - positions
@@ -63,7 +68,7 @@ def test_linear_dipole_surface_produces_finite_ir_line_strengths():
         electronic, "analytic-dipole-provider", capabilities
     ).prepare(calculation)
 
-    def harmonic(coordinate, _):
+    def harmonic(coordinate: Any, _: Any) -> Any:
         delta = np.asarray(coordinate) - positions
         return phx.chemistry.PotentialEnergySurfaceEvaluation(
             0.5 * np.sum(delta**2),

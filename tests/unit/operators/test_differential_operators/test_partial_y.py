@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -10,13 +13,13 @@ from phydrax._frozendict import frozendict
 from phydrax.operators.differential import partial_y
 
 
-def test_partial_y_point():
+def test_partial_y_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     py = partial_y(f)
@@ -25,7 +28,7 @@ def test_partial_y_point():
     assert jnp.allclose(out, 6.0)
 
 
-def test_partial_y_coord_separable(sample_grid):
+def test_partial_y_coord_separable(sample_grid: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -33,7 +36,7 @@ def test_partial_y_coord_separable(sample_grid):
     batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         x, y = x
         return x**2 + y**2
 
@@ -45,7 +48,7 @@ def test_partial_y_coord_separable(sample_grid):
     assert jnp.allclose(out, 2.0 * Y, atol=1e-6)
 
 
-def test_partial_y_preserves_metadata():
+def test_partial_y_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -23,7 +26,7 @@ from phydrax.ml.linear import (
 )
 
 
-def _online_data():
+def _online_data() -> Any:
     features = jnp.array(
         [
             [-2.0, 0.0, 1.0],
@@ -41,14 +44,14 @@ def _online_data():
     return features, regression, classification
 
 
-def _sparse(features):
+def _sparse(features: Any) -> Any:
     columns = jnp.argsort(jnp.where(features != 0.0, 0, 1), axis=-1)[:, :2]
     values = jnp.take_along_axis(features, columns, axis=-1)
     valid = jnp.take_along_axis(features != 0.0, columns, axis=-1)
     return SparseFeatures(values, columns, feature_count=features.shape[-1], valid=valid)
 
 
-def _assert_model_gradients(model, point):
+def _assert_model_gradients(model: Any, point: Any) -> None:
     input_gradient = jax.grad(lambda value: jnp.sum(jnp.square(model(value))))(point)
     coefficient_gradient = jax.grad(
         lambda value: jnp.sum(
@@ -65,7 +68,9 @@ def _assert_model_gradients(model, point):
     assert jnp.all(jnp.isfinite(intercept_gradient))
 
 
-def test_sgd_regression_multioutput_masks_weights_sparse_determinism_jit_and_gradients():
+def test_sgd_regression_multioutput_masks_weights_sparse_determinism_jit_and_gradients() -> (
+    None
+):
     features, targets, _ = _online_data()
     weights = jnp.linspace(0.5, 1.5, features.shape[0])
     recipe = SGDRegressorRecipe(
@@ -87,6 +92,7 @@ def test_sgd_regression_multioutput_masks_weights_sparse_determinism_jit_and_gra
     second = recipe.fit_batch(batch, key=jax.random.key(1))
     model = first.as_trainable()
     assert isinstance(model, SGDRegressorModel)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.coefficients, second.as_trainable().coefficients)
     assert model(features).shape == targets.shape
     assert jax.jit(model)(features).shape == targets.shape
@@ -100,7 +106,7 @@ def test_sgd_regression_multioutput_masks_weights_sparse_determinism_jit_and_gra
 
     base = SGDRegressorRecipe(learning_rate=1e-2, passes=2)
 
-    def fit_loss(x, y, sample_weight, learning_rate):
+    def fit_loss(x: Any, y: Any, sample_weight: Any, learning_rate: Any) -> Any:
         fitted = (
             eqx.tree_at(lambda item: item.learning_rate, base, learning_rate)
             .fit_batch(MLBatch(x, y, sample_weight=sample_weight), key=jax.random.key(3))
@@ -114,7 +120,9 @@ def test_sgd_regression_multioutput_masks_weights_sparse_determinism_jit_and_gra
     assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
 
 
-def test_sgd_classifier_losses_case_multilabel_probabilities_sparse_and_gradients():
+def test_sgd_classifier_losses_case_multilabel_probabilities_sparse_and_gradients() -> (
+    None
+):
     features, _, targets = _online_data()
     weights = jnp.linspace(0.7, 1.3, features.shape[0])
     for loss in ("logistic", "hinge"):
@@ -154,7 +162,7 @@ def test_sgd_classifier_losses_case_multilabel_probabilities_sparse_and_gradient
 
     base = SGDClassifierRecipe(loss="logistic", learning_rate=1e-2, passes=2)
 
-    def fit_loss(x, sample_weight, learning_rate):
+    def fit_loss(x: Any, sample_weight: Any, learning_rate: Any) -> Any:
         fitted = (
             eqx.tree_at(lambda item: item.learning_rate, base, learning_rate)
             .fit_batch(
@@ -170,7 +178,7 @@ def test_sgd_classifier_losses_case_multilabel_probabilities_sparse_and_gradient
     assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
 
 
-def test_perceptron_key_determinism_sparse_hard_outputs_and_unrolled_gradients():
+def test_perceptron_key_determinism_sparse_hard_outputs_and_unrolled_gradients() -> None:
     features, _, targets = _online_data()
     weights = jnp.linspace(0.5, 1.5, features.shape[0])
     recipe = PerceptronRecipe(learning_rate=0.5, passes=3)
@@ -184,6 +192,7 @@ def test_perceptron_key_determinism_sparse_hard_outputs_and_unrolled_gradients()
     )
     model = first.as_trainable()
     assert isinstance(model, PerceptronModel)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.coefficients, second.as_trainable().coefficients)
     assert model(features).shape == targets.shape
     assert model.predict(features).shape == targets.shape
@@ -201,7 +210,7 @@ def test_perceptron_key_determinism_sparse_hard_outputs_and_unrolled_gradients()
 
     base = PerceptronRecipe(learning_rate=0.5, passes=2)
 
-    def fit_loss(x, sample_weight, learning_rate):
+    def fit_loss(x: Any, sample_weight: Any, learning_rate: Any) -> Any:
         fitted = (
             eqx.tree_at(lambda item: item.learning_rate, base, learning_rate)
             .fit_batch(
@@ -219,8 +228,8 @@ def test_perceptron_key_determinism_sparse_hard_outputs_and_unrolled_gradients()
 
 @pytest.mark.parametrize("variant", ("pa1", "pa2"))
 def test_passive_aggressive_regression_and_classification_variants_sparse_and_gradients(
-    variant,
-):
+    variant: Any,
+) -> None:
     features, regression, classification = _online_data()
     scalar_targets = regression[:, 0]
     weights = jnp.linspace(0.8, 1.2, features.shape[0])
@@ -262,7 +271,7 @@ def test_passive_aggressive_regression_and_classification_variants_sparse_and_gr
     assert sparse_reg(_sparse(features)).shape == scalar_targets.shape
     assert sparse_cls(_sparse(features)).shape == classification.shape
 
-    def regression_loss(x, y, sample_weight, aggressiveness):
+    def regression_loss(x: Any, y: Any, sample_weight: Any, aggressiveness: Any) -> Any:
         fitted = (
             eqx.tree_at(lambda item: item.aggressiveness, reg_recipe, aggressiveness)
             .fit_batch(MLBatch(x, y, sample_weight=sample_weight), key=jax.random.key(15))
@@ -275,7 +284,7 @@ def test_passive_aggressive_regression_and_classification_variants_sparse_and_gr
     )
     assert all(jnp.all(jnp.isfinite(value)) for value in regression_gradients)
 
-    def classification_loss(x, sample_weight, aggressiveness):
+    def classification_loss(x: Any, sample_weight: Any, aggressiveness: Any) -> Any:
         fitted = (
             eqx.tree_at(lambda item: item.aggressiveness, cls_recipe, aggressiveness)
             .fit_batch(
@@ -292,7 +301,7 @@ def test_passive_aggressive_regression_and_classification_variants_sparse_and_gr
     assert all(jnp.all(jnp.isfinite(value)) for value in classification_gradients)
 
 
-def test_one_step_online_updates_match_weighted_equations():
+def test_one_step_online_updates_match_weighted_equations() -> None:
     features = jnp.array([[2.0]])
     weight = jnp.array([2.0])
     regression = (
@@ -300,7 +309,9 @@ def test_one_step_online_updates_match_weighted_equations():
         .fit_batch(MLBatch(features, jnp.array([3.0]), sample_weight=weight))
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(regression.coefficients, jnp.array([1.2]))
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(regression.intercept, 0.6)
 
     logistic = (
@@ -308,7 +319,9 @@ def test_one_step_online_updates_match_weighted_equations():
         .fit_batch(MLBatch(features, jnp.array([1]), sample_weight=weight))
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(logistic.coefficients, jnp.array([0.2]))
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(logistic.intercept, 0.1)
 
     perceptron = (
@@ -316,11 +329,13 @@ def test_one_step_online_updates_match_weighted_equations():
         .fit_batch(MLBatch(features, jnp.array([1]), sample_weight=weight))
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(perceptron.coefficients, jnp.array([2.0]))
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(perceptron.intercept, 1.0)
 
 
-def test_online_updates_ignore_zero_weight_samples_exactly():
+def test_online_updates_ignore_zero_weight_samples_exactly() -> None:
     features, regression, classification = _online_data()
     weights = jnp.ones((features.shape[0],)).at[2].set(0.0)
     changed_regression = regression.at[2].set(jnp.array([1e4, -1e4]))
@@ -331,7 +346,9 @@ def test_online_updates_ignore_zero_weight_samples_exactly():
     second_regression = reg_recipe.fit_batch(
         MLBatch(features, changed_regression, sample_weight=weights)
     ).as_trainable()
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(first_regression.coefficients, second_regression.coefficients)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(first_regression.intercept, second_regression.intercept)
 
     changed_classification = classification.at[2].set(1 - classification[2])
@@ -342,20 +359,25 @@ def test_online_updates_ignore_zero_weight_samples_exactly():
     second_classifier = classifier_recipe.fit_batch(
         MLBatch(features, changed_classification, sample_weight=weights)
     ).as_trainable()
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(first_classifier.coefficients, second_classifier.coefficients)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(first_classifier.intercept, second_classifier.intercept)
 
 
-def test_online_capacity_and_deterministic_no_shuffle_policy():
+def test_online_capacity_and_deterministic_no_shuffle_policy() -> None:
     features, regression, classification = _online_data()
     deterministic = SGDRegressorRecipe(passes=2, shuffle=False, fit_intercept=False)
     first = deterministic.fit_batch(MLBatch(features, regression)).as_trainable()
     second = deterministic.fit_batch(MLBatch(features, regression)).as_trainable()
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(first.coefficients, second.coefficients)
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(first.intercept == 0.0)
     with pytest.raises(ValueError, match="passes must be positive"):
         SGDRegressorRecipe(passes=0)
     with pytest.raises(ValueError, match="variant"):
+        # ty: ignore[invalid-argument-type]
         PassiveAggressiveClassifierRecipe(variant="invalid")
     invalid_targets = jnp.full((features.shape[0],), 2)
     invalid = SGDClassifierRecipe(passes=1, shuffle=False).fit_batch(

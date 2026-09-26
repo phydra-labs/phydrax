@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from phydrax.applications.skeletal_muscle.fatigue import (
@@ -14,7 +16,7 @@ from phydrax.applications.skeletal_muscle.fatigue import (
 )
 
 
-def _prepared():
+def _prepared() -> Any:
     return LiuBrownYue2002Plan(
         LiuBrownYue2002Parameters(
             fatigue_rate_per_s=0.0206,
@@ -25,13 +27,13 @@ def _prepared():
     ).prepare()
 
 
-def _fractions(state):
+def _fractions(state: Any) -> Any:
     return np.asarray(
         [state.uncommitted_fraction, state.active_fraction, state.fatigued_fraction]
     )
 
 
-def test_exact_steps_conserve_all_motor_unit_compartments():
+def test_exact_steps_conserve_all_motor_unit_compartments() -> None:
     prepared = _prepared()
     state = prepared.initialize()
     for _ in range(240):
@@ -46,7 +48,7 @@ def test_exact_steps_conserve_all_motor_unit_compartments():
     assert 0.0 < float(capacity.fatigued_fraction) < 1.0
 
 
-def test_zero_effort_recovery_transfers_fatigued_units_to_active_units():
+def test_zero_effort_recovery_transfers_fatigued_units_to_active_units() -> None:
     prepared = _prepared()
     state = prepared.initialize(
         uncommitted_fraction=0.0,
@@ -64,7 +66,7 @@ def test_zero_effort_recovery_transfers_fatigued_units_to_active_units():
     np.testing.assert_allclose(after.sum(), before.sum(), atol=2e-7)
 
 
-def test_invalid_brain_effort_rolls_back_every_compartment():
+def test_invalid_brain_effort_rolls_back_every_compartment() -> None:
     prepared = _prepared()
     state = prepared.initialize(
         uncommitted_fraction=0.5,
@@ -83,7 +85,7 @@ def test_invalid_brain_effort_rolls_back_every_compartment():
     assert int(rolled_back.step_index) == int(state.step_index)
 
 
-def test_piecewise_constant_update_agrees_with_small_step_limit():
+def test_piecewise_constant_update_agrees_with_small_step_limit() -> None:
     prepared = _prepared()
     single = prepared.initialize()
     single_candidate = prepared.evaluate(single, 0.7, 4.0)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -19,16 +22,16 @@ _COORDINATES = "(u,v,nθu,nθv)"
 
 
 def _map(
-    jacobian,
+    jacobian: Any,
     *,
-    input_reference=None,
-    output_reference=None,
-    input_frame="loop",
-    output_frame="loop",
-    source="resonator",
-    coordinate_convention=_COORDINATES,
-    valid=True,
-):
+    input_reference: Any = None,
+    output_reference: Any = None,
+    input_frame: Any = "loop",
+    output_frame: Any = "loop",
+    source: Any = "resonator",
+    coordinate_convention: Any = _COORDINATES,
+    valid: Any = True,
+) -> Any:
     zero = jnp.zeros((4,))
     return DifferentialRayMap(
         zero if input_reference is None else jnp.asarray(input_reference),
@@ -45,7 +48,7 @@ def _map(
     )
 
 
-def _stable_map(phases=(0.37, 0.71), curvatures=(1.4, 0.65)):
+def _stable_map(phases: Any = (0.37, 0.71), curvatures: Any = (1.4, 0.65)) -> Any:
     phase = jnp.asarray(phases)
     curvature = jnp.asarray(curvatures)
     cosine = jnp.diag(jnp.cos(phase))
@@ -60,14 +63,14 @@ def _stable_map(phases=(0.37, 0.71), curvatures=(1.4, 0.65)):
     )
 
 
-def _canonical_rotation(angle):
+def _canonical_rotation(angle: Any) -> Any:
     cosine, sine = jnp.cos(angle), jnp.sin(angle)
     transverse = jnp.asarray(((cosine, -sine), (sine, cosine)))
     zero = jnp.zeros((2, 2))
     return jnp.block([[transverse, zero], [zero, transverse]])
 
 
-def test_affine_map_composition_recovers_analytic_closed_orbit():
+def test_affine_map_composition_recovers_analytic_closed_orbit() -> None:
     first_jacobian = _stable_map(phases=(0.19, 0.31), curvatures=(1.2, 0.8))
     second_jacobian = _stable_map(phases=(0.23, 0.17), curvatures=(1.2, 0.8))
     round_trip = second_jacobian @ first_jacobian
@@ -106,7 +109,7 @@ def test_affine_map_composition_recovers_analytic_closed_orbit():
     assert float(result.evidence.closed_orbit_residual) < 1e-11
 
 
-def test_rotated_coupled_astigmatic_mode_is_positive_lagrangian_and_invariant():
+def test_rotated_coupled_astigmatic_mode_is_positive_lagrangian_and_invariant() -> None:
     uncoupled = _stable_map()
     rotation = _canonical_rotation(0.43)
     coupled = rotation @ uncoupled @ rotation.T
@@ -148,7 +151,7 @@ def test_rotated_coupled_astigmatic_mode_is_positive_lagrangian_and_invariant():
     assert float(mode.invariance_residual) < 3e-9
 
 
-def test_unstable_and_marginal_round_trips_are_explicit_and_have_no_mode():
+def test_unstable_and_marginal_round_trips_are_explicit_and_have_no_mode() -> None:
     unstable_jacobian = jnp.diag(jnp.asarray((1.4, 1.2, 1.0 / 1.4, 1.0 / 1.2)))
     unstable = prepare_paraxial_resonator(
         ParaxialResonatorPlan((_map(unstable_jacobian),))
@@ -167,7 +170,7 @@ def test_unstable_and_marginal_round_trips_are_explicit_and_have_no_mode():
     assert not bool(marginal.mode.valid)
 
 
-def test_singular_closed_orbit_and_nonsymplectic_maps_are_rejected():
+def test_singular_closed_orbit_and_nonsymplectic_maps_are_rejected() -> None:
     singular = prepare_paraxial_resonator(
         ParaxialResonatorPlan((_map(jnp.eye(4)),))
     ).execute()
@@ -181,7 +184,7 @@ def test_singular_closed_orbit_and_nonsymplectic_maps_are_rejected():
     assert not bool(nonsymplectic.successful)
 
 
-def test_nonfinite_round_trip_has_distinct_terminal_status():
+def test_nonfinite_round_trip_has_distinct_terminal_status() -> None:
     jacobian = _stable_map().at[0, 0].set(jnp.nan)
 
     result = prepare_paraxial_resonator(
@@ -208,7 +211,7 @@ def test_nonfinite_round_trip_has_distinct_terminal_status():
         (_map(jnp.eye(4), valid=False),),
     ),
 )
-def test_frame_coordinate_provenance_and_map_evidence_are_rejected(maps):
+def test_frame_coordinate_provenance_and_map_evidence_are_rejected(maps: Any) -> None:
     result = prepare_paraxial_resonator(ParaxialResonatorPlan(maps)).execute()
 
     assert int(result.status) == int(ParaxialResonatorStatus.INCOMPATIBLE_MAPS)

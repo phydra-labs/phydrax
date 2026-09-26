@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from math import prod
+from typing import Any
 
 import h5py
 import jax
@@ -21,7 +23,7 @@ from phydrax.solver._mac_sharp_interface import (
 )
 
 
-def _periodic_mac(count=6):
+def _periodic_mac(count: Any = 6) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(2)
@@ -34,7 +36,7 @@ def _periodic_mac(count=6):
     return finite_volume, operators, boundaries
 
 
-def _markers(position):
+def _markers(position: Any) -> Any:
     return phx.discretization.LagrangianMarkerSetPlan(
         jnp.arange(position.shape[0]),
         position,
@@ -47,8 +49,8 @@ def _markers(position):
     ("cubic-bspline", "peskin-four-point", "roma-three-point"),
 )
 def test_kernel_families_are_adjoint_deterministic_and_fixed_route_differentiable(
-    kernel_name,
-):
+    kernel_name: Any,
+) -> None:
     finite_volume, operators, _ = _periodic_mac()
     position = jnp.asarray([[0.31, 0.37], [0.97, 0.58]])
     markers = _markers(position)
@@ -69,7 +71,7 @@ def test_kernel_families_are_adjoint_deterministic_and_fixed_route_differentiabl
     second = transfer.spread(relation, force)
     diagnostics = transfer.diagnostics(relation, velocity, force)
 
-    def observable(value):
+    def observable(value: Any) -> Any:
         fixed = transfer.relation_on_routes(value, routes)
         return jnp.sum(transfer.gather(fixed, velocity) ** 2)
 
@@ -88,7 +90,7 @@ def test_kernel_families_are_adjoint_deterministic_and_fixed_route_differentiabl
     assert jnp.isfinite(tangent)
 
 
-def test_nonuniform_cartesian_transfer_reproduces_affine_velocity():
+def test_nonuniform_cartesian_transfer_reproduces_affine_velocity() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.NonuniformCellAxisSpec(
@@ -123,7 +125,7 @@ def test_nonuniform_cartesian_transfer_reproduces_affine_velocity():
     assert jnp.allclose(gathered, expected, atol=1.0e-10)
 
 
-def test_bounded_truncated_support_fails_closed():
+def test_bounded_truncated_support_fails_closed() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(6) for _ in range(2)),
         axis_names=("x", "y"),
@@ -142,7 +144,7 @@ def test_bounded_truncated_support_fails_closed():
     assert jnp.any(relation.support_truncated)
 
 
-def test_exact_coupling_honors_inflow_outflow_boundary_descriptor():
+def test_exact_coupling_honors_inflow_outflow_boundary_descriptor() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(5) for _ in range(2)),
         axis_names=("x", "y"),
@@ -214,7 +216,7 @@ def test_exact_coupling_honors_inflow_outflow_boundary_descriptor():
 
 
 @pytest.mark.parametrize("dimension", (2, 3))
-def test_nonzero_exact_core_qualifies_in_two_and_three_dimensions(dimension):
+def test_nonzero_exact_core_qualifies_in_two_and_three_dimensions(dimension: Any) -> None:
     names = tuple("xyz"[:dimension])
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -253,7 +255,7 @@ def test_nonzero_exact_core_qualifies_in_two_and_three_dimensions(dimension):
     assert jnp.linalg.norm(result.marker_slip) < 1.0e-8
 
 
-def test_composite_projection_enforces_compatible_constraint():
+def test_composite_projection_enforces_compatible_constraint() -> None:
     space = phx.linalg.ArraySpace((2,))
     identity = phx.linalg.FunctionLinearOperator(
         lambda value: value,
@@ -294,7 +296,7 @@ def test_composite_projection_enforces_compatible_constraint():
     assert result.divergence_norm < 1.0e-9
 
 
-def test_mapped_composite_and_distributed_transfers_preserve_virtual_work():
+def test_mapped_composite_and_distributed_transfers_preserve_virtual_work() -> None:
     finite_volume, operators, _ = _periodic_mac()
     position = jnp.asarray([[0.31, 0.37], [0.63, 0.58]])
     markers = _markers(position)
@@ -387,7 +389,7 @@ def test_mapped_composite_and_distributed_transfers_preserve_virtual_work():
     assert jnp.all(multi_rank.owner_mask(0) | multi_rank.owner_mask(1))
 
 
-def test_geometry_epochs_lubrication_and_qualification_contracts():
+def test_geometry_epochs_lubrication_and_qualification_contracts() -> None:
     atlas = phx.geometry.circle_boundary_atlas(
         jnp.asarray([0.5, 0.5]),
         jnp.asarray(0.2),
@@ -476,7 +478,7 @@ def test_geometry_epochs_lubrication_and_qualification_contracts():
     assert qualified.successful
 
 
-def test_periodic_dfib_preserves_divergence_free_no_slip_state():
+def test_periodic_dfib_preserves_divergence_free_no_slip_state() -> None:
     finite_volume, operators, boundaries = _periodic_mac(count=6)
     position = jnp.asarray([[0.31, 0.37], [0.63, 0.58]])
     markers = _markers(position)
@@ -507,7 +509,7 @@ def test_periodic_dfib_preserves_divergence_free_no_slip_state():
     assert result.slip_norm < 1.0e-9
 
 
-def test_deformable_contact_residual_uses_canonical_participant_transpose():
+def test_deformable_contact_residual_uses_canonical_participant_transpose() -> None:
     contact = phx.applications.contact
     collision = phx.discretization.contact
     query_space = phx.linalg.ArraySpace((1, 2), dtype=np.float64)
@@ -583,7 +585,9 @@ def test_deformable_contact_residual_uses_canonical_participant_transpose():
     assert residual.residual[0, 1] < 0.0
 
 
-def test_sharp_projection_and_variable_density_stage_inverse_preserve_zero_state():
+def test_sharp_projection_and_variable_density_stage_inverse_preserve_zero_state() -> (
+    None
+):
     finite_volume, operators, boundaries = _periodic_mac(count=4)
     zero = tuple(jnp.zeros(layout.shape) for layout in finite_volume.face_layouts)
     one = tuple(jnp.ones(layout.shape) for layout in finite_volume.face_layouts)
@@ -695,7 +699,7 @@ def test_sharp_projection_and_variable_density_stage_inverse_preserve_zero_state
     assert jnp.allclose(traction.force, jnp.asarray([-0.1, 0.0]))
 
 
-def test_overdamped_fib_matches_free_diffusion_covariance():
+def test_overdamped_fib_matches_free_diffusion_covariance() -> None:
     space = phx.linalg.ArraySpace((2048,))
     identity = phx.linalg.FunctionLinearOperator(
         lambda value: value,
@@ -734,7 +738,7 @@ def test_overdamped_fib_matches_free_diffusion_covariance():
     assert jnp.abs(variance - 2.0 * step) / (2.0 * step) < 0.15
 
 
-def test_marker_trajectory_rejects_nonfinite_accepted_state():
+def test_marker_trajectory_rejects_nonfinite_accepted_state() -> None:
     trajectory = phx.solver.MarkerFlowTrajectoryAdapter(
         lambda state, step, _event, _counter, _route: (
             jnp.asarray(jnp.nan),
@@ -756,7 +760,7 @@ def test_marker_trajectory_rejects_nonfinite_accepted_state():
     assert not trajectory.successful
 
 
-def test_stochastic_replay_checkpoint_and_output_are_reproducible(tmp_path):
+def test_stochastic_replay_checkpoint_and_output_are_reproducible(tmp_path: Any) -> None:
     space = phx.linalg.ArraySpace((2,))
     identity = phx.linalg.FunctionLinearOperator(
         lambda value: value,
@@ -814,6 +818,7 @@ def test_stochastic_replay_checkpoint_and_output_are_reproducible(tmp_path):
         jnp.asarray(0.0),
         record,
         lambda state, step, _event, _counter, _route: (
+            # ty: ignore[unsupported-operator]
             state + step,
             jnp.asarray(True),
             jnp.asarray(0, dtype=jnp.int32),
@@ -929,7 +934,9 @@ def test_stochastic_replay_checkpoint_and_output_are_reproducible(tmp_path):
     assert inertial.accepted
     assert replay.successful
     assert replay.time_match
+    # ty: ignore[invalid-argument-type]
     assert jnp.isclose(replay.state, 0.2)
+    # ty: ignore[not-subscriptable]
     assert jnp.array_equal(restored.fluid_state[0], payload.fluid_state[0])
     assert load.successful
     assert restriction.successful

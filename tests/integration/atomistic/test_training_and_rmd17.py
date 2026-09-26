@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -31,27 +33,30 @@ from phydrax.units import (
 SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
 
 
-def _execution(maximum_neighbors=3):
+def _execution(maximum_neighbors: Any = 3) -> Any:
     return AtomisticGraphExecutionPlan(
         maximum_neighbors,
         maximum_dense_atoms=256,
     )
 
 
-def _batch():
+def _batch() -> Any:
     return AtomisticBatch(
+        # ty: ignore[invalid-argument-type]
         [[1, 1], [1, 1], [1, 1]],
+        # ty: ignore[invalid-argument-type]
         [
             [[0.0, 0.0, 0.0], [0.7, 0.0, 0.0]],
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
             [[0.0, 0.0, 0.0], [1.3, 0.0, 0.0]],
         ],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]],
         SCALE,
     )
 
 
-def _potential(key):
+def _potential(key: Any) -> Any:
     return PaiNNPotential(
         SCALE,
         cutoff=2.0,
@@ -62,13 +67,13 @@ def _potential(key):
     )
 
 
-def _targets(batch):
+def _targets(batch: Any) -> Any:
     teacher = _potential(jr.key(91))
     prediction = energy_and_forces(teacher, batch, _execution())
     return prediction.energy, prediction.forces
 
 
-def _assert_trees_bitwise_equal(observed, expected):
+def _assert_trees_bitwise_equal(observed: Any, expected: Any) -> None:
     observed_leaves, observed_structure = jax.tree_util.tree_flatten(observed)
     expected_leaves, expected_structure = jax.tree_util.tree_flatten(expected)
     assert observed_structure == expected_structure
@@ -82,7 +87,9 @@ def _assert_trees_bitwise_equal(observed, expected):
 
 
 @pytest.mark.parametrize("target_kind", ["energy", "force", "joint"])
-def test_energy_force_and_joint_training_have_complete_decreasing_histories(target_kind):
+def test_energy_force_and_joint_training_have_complete_decreasing_histories(
+    target_kind: Any,
+) -> None:
     batch = _batch()
     energy, forces = _targets(batch)
     problem = AtomisticTrainingProblem(
@@ -113,7 +120,7 @@ def test_energy_force_and_joint_training_have_complete_decreasing_histories(targ
         np.testing.assert_allclose(result.energy_loss_history, 0.0)
 
 
-def test_normalization_is_fitted_only_from_training_targets():
+def test_normalization_is_fitted_only_from_training_targets() -> None:
     batch = _batch()
     energy, _ = _targets(batch)
     validation = batch.with_positions(batch.positions + 0.2)
@@ -141,7 +148,9 @@ def test_normalization_is_fitted_only_from_training_targets():
     assert first.normalization.fitted_from_problem_id == problem_a.problem_id
 
 
-def test_deterministic_continuation_matches_uninterrupted_training_and_selection():
+def test_deterministic_continuation_matches_uninterrupted_training_and_selection() -> (
+    None
+):
     batch = _batch()
     energy, _ = _targets(batch)
     problem = AtomisticTrainingProblem(batch, _execution(), training_energy=energy)
@@ -180,7 +189,7 @@ def test_deterministic_continuation_matches_uninterrupted_training_and_selection
     assert continued.result_id == uninterrupted.result_id
 
 
-def test_nonfinite_supervision_terminates_with_typed_status():
+def test_nonfinite_supervision_terminates_with_typed_status() -> None:
     batch = _batch()
     energy, _ = _targets(batch)
     problem = AtomisticTrainingProblem(
@@ -198,7 +207,7 @@ def test_nonfinite_supervision_terminates_with_typed_status():
     np.testing.assert_array_equal(result.validation_steps, [0])
 
 
-def test_iteration_session_receives_typed_training_lifecycle_events():
+def test_iteration_session_receives_typed_training_lifecycle_events() -> None:
     batch = _batch()
     energy, _ = _targets(batch)
     events = []
@@ -229,7 +238,7 @@ def test_iteration_session_receives_typed_training_lifecycle_events():
     ]
 
 
-def test_validation_masks_are_part_of_continuation_identity():
+def test_validation_masks_are_part_of_continuation_identity() -> None:
     batch = _batch()
     energy, _ = _targets(batch)
     first_problem = AtomisticTrainingProblem(
@@ -238,6 +247,7 @@ def test_validation_masks_are_part_of_continuation_identity():
         training_energy=energy,
         validation_batch=batch,
         validation_energy=energy,
+        # ty: ignore[invalid-argument-type]
         validation_energy_mask=[True, True, False],
     )
     changed_problem = AtomisticTrainingProblem(
@@ -246,6 +256,7 @@ def test_validation_masks_are_part_of_continuation_identity():
         training_energy=energy,
         validation_batch=batch,
         validation_energy=energy,
+        # ty: ignore[invalid-argument-type]
         validation_energy_mask=[True, False, True],
     )
     assert first_problem.problem_id != changed_problem.problem_id
@@ -263,7 +274,7 @@ def test_validation_masks_are_part_of_continuation_identity():
         )
 
 
-def test_masked_nonfinite_targets_are_inert_before_residual_squaring():
+def test_masked_nonfinite_targets_are_inert_before_residual_squaring() -> None:
     batch = _batch()
     energy, forces = _targets(batch)
     energy = energy.at[1].set(jnp.nan)
@@ -274,6 +285,7 @@ def test_masked_nonfinite_targets_are_inert_before_residual_squaring():
         _execution(),
         training_energy=energy,
         training_forces=forces,
+        # ty: ignore[invalid-argument-type]
         training_energy_mask=[True, False, True],
         training_force_mask=force_mask,
     )
@@ -286,7 +298,7 @@ def test_masked_nonfinite_targets_are_inert_before_residual_squaring():
     assert bool(jnp.all(jnp.isfinite(result.training_loss_history)))
 
 
-def test_training_reports_neighbor_overflow_without_nonfinite_conflation():
+def test_training_reports_neighbor_overflow_without_nonfinite_conflation() -> None:
     batch = _batch()
     energy, _ = _targets(batch)
     result = fit_atomistic_potential(
@@ -299,7 +311,9 @@ def test_training_reports_neighbor_overflow_without_nonfinite_conflation():
     assert result.training_loss_history.shape == (0,)
 
 
-def test_initial_model_is_selected_at_step_zero_and_trained_state_has_new_revision():
+def test_initial_model_is_selected_at_step_zero_and_trained_state_has_new_revision() -> (
+    None
+):
     batch = _batch()
     energy, _ = _targets(batch)
     initial = _potential(jr.key(44))
@@ -316,7 +330,9 @@ def test_initial_model_is_selected_at_step_zero_and_trained_state_has_new_revisi
     )
 
 
-def test_local_rmd17_parser_and_split_are_explicit_disjoint_and_reproducible(tmp_path):
+def test_local_rmd17_parser_and_split_are_explicit_disjoint_and_reproducible(
+    tmp_path: Any,
+) -> None:
     sample_count = 12
     atom_count = 3
     path = tmp_path / "rmd17_synthetic_layout.npz"
@@ -355,7 +371,7 @@ def test_local_rmd17_parser_and_split_are_explicit_disjoint_and_reproducible(tmp
     assert forces.shape == batch.positions.shape
 
 
-def test_rmd17_parser_rejects_nonfinite_or_unsupported_local_data(tmp_path):
+def test_rmd17_parser_rejects_nonfinite_or_unsupported_local_data(tmp_path: Any) -> None:
     path = tmp_path / "bad.npz"
     np.savez(
         path,
@@ -368,7 +384,9 @@ def test_rmd17_parser_rejects_nonfinite_or_unsupported_local_data(tmp_path):
         load_rmd17_npz(path)
 
 
-def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(tmp_path):
+def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(
+    tmp_path: Any,
+) -> None:
     sample_count = 5
     coordinates = np.asarray(
         [
@@ -387,7 +405,7 @@ def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(tmp_path):
     dataset = load_rmd17_npz(path, scale=AtomisticScaleContract(ANGSTROM, ELECTRONVOLT))
     batch, _, _ = dataset.take(np.arange(sample_count))
 
-    def potential(key):
+    def potential(key: Any) -> Any:
         return NequIPPotential(
             dataset.scale,
             cutoff=2.0,
@@ -422,12 +440,12 @@ def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(tmp_path):
 
 
 @pytest.mark.parametrize("continuation_family", ["painn", "nequip"])
-def test_training_rejects_cross_family_continuation(continuation_family):
+def test_training_rejects_cross_family_continuation(continuation_family: Any) -> None:
     batch = _batch()
     energy, _ = _targets(batch)
     problem = AtomisticTrainingProblem(batch, _execution(), training_energy=energy)
 
-    def nequip(key):
+    def nequip(key: Any) -> Any:
         return NequIPPotential(
             SCALE,
             cutoff=2.0,
@@ -457,7 +475,7 @@ def test_training_rejects_cross_family_continuation(continuation_family):
         )
 
 
-def test_training_rejects_same_family_continuation_with_changed_configuration():
+def test_training_rejects_same_family_continuation_with_changed_configuration() -> None:
     batch = _batch()
     energy, _ = _targets(batch)
     problem = AtomisticTrainingProblem(batch, _execution(), training_energy=energy)

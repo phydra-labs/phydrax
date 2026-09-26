@@ -191,7 +191,8 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
                     prepared_start = None
                 else:
                     # best_newton_internal is only recorded together with best.
-                    assert best is not None
+                    if not (best is not None):
+                        raise RuntimeError("Internal invariant failed: best is not None.")
                     prepared_start = _root_attempt_handoff(
                         method,
                         problem_,

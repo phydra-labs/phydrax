@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def test_map_periodic_orbit_dense_matrix_free_and_floquet_modes():
+def test_map_periodic_orbit_dense_matrix_free_and_floquet_modes() -> None:
     matrix = jnp.diag(jnp.asarray([1.2, 0.5, 0.2]))
     layout = phx.dynamics.StateLayout(
         (3,), component_names=("unstable", "stable", "strongly_stable")
@@ -58,10 +61,10 @@ def test_map_periodic_orbit_dense_matrix_free_and_floquet_modes():
     assert bool(leading.eigen_result.successful)
 
 
-def test_flow_multiple_shooting_and_floquet_neutral_mode():
+def test_flow_multiple_shooting_and_floquet_neutral_mode() -> None:
     layout = phx.dynamics.StateLayout((2,), component_names=("x", "y"))
 
-    def radial_cycle(time, state, args):
+    def radial_cycle(time: Any, state: Any, args: Any) -> Any:
         radius_squared = jnp.sum(state**2)
         growth = 1.0 - radius_squared
         return jnp.asarray(

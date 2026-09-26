@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -87,7 +89,7 @@ def _stage(
     /,
     *,
     started_at: int,
-):
+) -> Any:
     transaction = repository.begin(
         artifact,
         "writer-a",
@@ -614,11 +616,11 @@ def test_direct_restore_repartitions_without_execution_cache_or_global_gather() 
     output = {item.shard_id: bytearray(item.byte_count) for item in destinations}
     requested: list[int] = []
 
-    def read_range(chunk, offset: int, count: int) -> bytes:
+    def read_range(chunk: Any, offset: int, count: int) -> bytes:
         requested.append(count)
         return source_data[chunk.chunk_id][offset : offset + count]
 
-    def write_range(shard, offset: int, payload: bytes) -> None:
+    def write_range(shard: Any, offset: int, payload: bytes) -> None:
         output[shard.shard_id][offset : offset + len(payload)] = payload
 
     report = execute_direct_restore(plan, read_range, write_range)

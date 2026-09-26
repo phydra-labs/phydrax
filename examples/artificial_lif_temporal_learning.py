@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -53,7 +54,7 @@ def run_example(*, steps: int = 120) -> dict:
     student = phx.nn.models.RecurrentSequenceModel(student_cell)
     parameters, configuration = eqx.partition(student, eqx.is_inexact_array)
 
-    def scenario_loss(current, scenario, _args):
+    def scenario_loss(current: Any, scenario: Any, _args: Any) -> Any:
         model = eqx.combine(current, configuration)
         sequence = phx.nn.layers.RecurrentBatch(
             scenario["inputs"], jnp.ones((length,), dtype="bool"), time=nodes

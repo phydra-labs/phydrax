@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +15,9 @@ from phydrax.geometry import (
 )
 
 
-def test_batched_scaled_rays_return_physical_distance_and_normal_sign_independence():
+def test_batched_scaled_rays_return_physical_distance_and_normal_sign_independence() -> (
+    None
+):
     result = intersect_ray_plane(
         jnp.asarray(((0.0, 0.0, 0.0), (1.0, -2.0, 1.0))),
         jnp.asarray(((0.0, 0.0, 4.0), (0.0, 0.0, 2.0))),
@@ -26,7 +31,7 @@ def test_batched_scaled_rays_return_physical_distance_and_normal_sign_independen
     assert bool(jnp.all(result.status == int(RayIntersectionStatus.SUCCESS)))
 
 
-def test_degenerate_coplanar_parallel_behind_and_nonfinite_status_precedence():
+def test_degenerate_coplanar_parallel_behind_and_nonfinite_status_precedence() -> None:
     origins = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -84,7 +89,7 @@ def test_degenerate_coplanar_parallel_behind_and_nonfinite_status_precedence():
     assert int(coplanar.status) == int(RayIntersectionStatus.COPLANAR)
 
 
-def test_forward_tolerance_accepts_a_small_negative_signed_distance():
+def test_forward_tolerance_accepts_a_small_negative_signed_distance() -> None:
     result = intersect_ray_plane(
         jnp.asarray((0.0, 0.0, 5e-10)),
         jnp.asarray((0.0, 0.0, 3.0)),
@@ -97,8 +102,8 @@ def test_forward_tolerance_accepts_a_small_negative_signed_distance():
     np.testing.assert_allclose(result.distances, -5e-10, rtol=1e-6)
 
 
-def test_intersection_is_jittable_vmappable_and_differentiable_on_valid_branch():
-    def distance(origin_z):
+def test_intersection_is_jittable_vmappable_and_differentiable_on_valid_branch() -> None:
+    def distance(origin_z: Any) -> Any:
         return intersect_ray_plane(
             jnp.stack((0.2 * origin_z, jnp.zeros_like(origin_z), origin_z)),
             jnp.asarray((0.0, 0.0, 5.0)),

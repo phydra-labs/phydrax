@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _rollout_runtime(cells=12):
+def _rollout_runtime(cells: Any = 12) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cells, periodic=True),),
         axis_names=("x",),
@@ -31,7 +34,9 @@ def _rollout_runtime(cells=12):
         problem, discretization, method
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
-        dynamics, phx.discretization.FluxPositivityPlan()
+        # ty: ignore[invalid-argument-type]
+        dynamics,
+        phx.discretization.FluxPositivityPlan(),
     )
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.15, 1.0]), (cells, 3))
     initial = runtime.initialize_state(
@@ -42,7 +47,7 @@ def _rollout_runtime(cells=12):
     return runtime, initial
 
 
-def test_direct_ssprk_wrapper_matches_uncoupled_structured_runtime():
+def test_direct_ssprk_wrapper_matches_uncoupled_structured_runtime() -> None:
     runtime, initial = _rollout_runtime()
 
     direct = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(runtime.dynamics).advance(
@@ -63,7 +68,7 @@ def test_direct_ssprk_wrapper_matches_uncoupled_structured_runtime():
     np.testing.assert_allclose(direct.step_size, initial.step_size)
 
 
-def test_rollout_retention_policies_preserve_constant_state():
+def test_rollout_retention_policies_preserve_constant_state() -> None:
     runtime, initial = _rollout_runtime()
     mesh = phx.discretization.TemporalMesh.uniform(0.0, 0.006, 6, role="internal")
     trajectory = phx.solver.ScheduledFiniteVolumeRolloutPlan(
@@ -93,10 +98,11 @@ def test_rollout_retention_policies_preserve_constant_state():
     )
     np.testing.assert_allclose(trajectory.final_state.time, mesh.t1)
     assert jnp.all(trajectory.accepted)
+    # ty: ignore[unsupported-operator]
     assert jnp.all(trajectory.stability_margins > 0.0)
 
 
-def test_step_and_block_replay_match_full_rollout():
+def test_step_and_block_replay_match_full_rollout() -> None:
     runtime, initial = _rollout_runtime()
     mesh = phx.discretization.TemporalMesh.uniform(0.0, 0.004, 4, role="internal")
     full = phx.solver.ScheduledFiniteVolumeRolloutPlan(
@@ -129,7 +135,7 @@ def test_step_and_block_replay_match_full_rollout():
     )
 
 
-def test_prescribed_step_rejects_stability_clamp_and_retains_state():
+def test_prescribed_step_rejects_stability_clamp_and_retains_state() -> None:
     runtime, initial = _rollout_runtime()
     result = runtime.advance_prescribed(initial, 10.0)
 
@@ -144,7 +150,7 @@ def test_prescribed_step_rejects_stability_clamp_and_retains_state():
     )
 
 
-def test_rollout_gradient_report_matches_content_coordinate_jvp_and_vjp():
+def test_rollout_gradient_report_matches_content_coordinate_jvp_and_vjp() -> None:
     runtime, initial = _rollout_runtime(8)
     mesh = phx.discretization.TemporalMesh.uniform(0.0, 0.003, 3, role="internal")
     plan = phx.solver.ScheduledFiniteVolumeRolloutPlan(

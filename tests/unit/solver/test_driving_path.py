@@ -10,7 +10,7 @@ import phydrax as phx
 from phydrax._interpolation import BSplineGrid
 
 
-def test_declared_callable_path_has_closed_support_and_explicit_schedule():
+def test_declared_callable_path_has_closed_support_and_explicit_schedule() -> None:
     path = phx.solver.CallableDrivingPath(
         lambda time, side: jnp.stack((time**2, 3.0 * time)),
         lambda time, side: jnp.stack((2.0 * time, 3.0)),
@@ -38,7 +38,7 @@ def test_declared_callable_path_has_closed_support_and_explicit_schedule():
         path.evaluate(2.5)
 
 
-def test_piecewise_linear_fit_respects_irregular_masked_samples_and_knot_sides():
+def test_piecewise_linear_fit_respects_irregular_masked_samples_and_knot_sides() -> None:
     times = jnp.asarray([0.0, 0.25, 1.5, jnp.nan, jnp.nan])
     values = jnp.asarray([[0.0], [1.0], [2.0], [jnp.nan], [jnp.nan]])
     time_mask = jnp.asarray([True, True, True, False, False])
@@ -72,7 +72,7 @@ def test_piecewise_linear_fit_respects_irregular_masked_samples_and_knot_sides()
     assert jnp.allclose(diagnostics.maximum_residual, 0.0)
 
 
-def test_causal_backward_hermite_uses_backward_slopes_and_is_c1_at_knots():
+def test_causal_backward_hermite_uses_backward_slopes_and_is_c1_at_knots() -> None:
     times = jnp.asarray([0.0, 1.0, 3.0])
     values = jnp.asarray([0.0, 1.0, 5.0])
     mask = jnp.ones((3,), dtype="bool")
@@ -98,7 +98,7 @@ def test_causal_backward_hermite_uses_backward_slopes_and_is_c1_at_knots():
     assert jnp.allclose(diagnostics.maximum_residual, 0.0)
 
 
-def test_offline_natural_cubic_has_hand_computed_value_derivative_and_increment():
+def test_offline_natural_cubic_has_hand_computed_value_derivative_and_increment() -> None:
     times = jnp.asarray([0.0, 1.0, 2.0, 3.0])
     values = jnp.asarray([0.0, 1.0, 0.0, 1.0])
     mask = jnp.ones((4,), dtype="bool")
@@ -122,7 +122,9 @@ def test_offline_natural_cubic_has_hand_computed_value_derivative_and_increment(
     assert jnp.allclose(diagnostics.maximum_residual, 0.0)
 
 
-def test_fixed_bspline_has_exact_one_sided_derivatives_and_coefficient_gradients():
+def test_fixed_bspline_has_exact_one_sided_derivatives_and_coefficient_gradients() -> (
+    None
+):
     grid = BSplineGrid.open_uniform(1, 2, interval=(0.0, 2.0))
     coefficients = jnp.asarray([0.0, 1.0, 4.0])
     path = phx.solver.FixedBSplineDrivingPath(
@@ -156,7 +158,7 @@ def test_fixed_bspline_has_exact_one_sided_derivatives_and_coefficient_gradients
     assert fixed.grid is grid
 
 
-def test_sample_fits_reject_nonprefix_partial_insufficient_and_duplicate_inputs():
+def test_sample_fits_reject_nonprefix_partial_insufficient_and_duplicate_inputs() -> None:
     times = jnp.asarray([0.0, 1.0, 2.0, 3.0])
     values = jnp.arange(8.0).reshape((4, 2))
     valid = jnp.ones((4,), dtype="bool")
@@ -204,7 +206,7 @@ def test_sample_fits_reject_nonprefix_partial_insufficient_and_duplicate_inputs(
         )
 
 
-def test_fixed_bspline_rejects_value_discontinuities_and_nonfinite_coefficients():
+def test_fixed_bspline_rejects_value_discontinuities_and_nonfinite_coefficients() -> None:
     discontinuous_grid = BSplineGrid(
         jnp.asarray([0.0, 0.0, 1.0, 1.0, 2.0, 2.0]),
         1,
@@ -225,7 +227,7 @@ def test_fixed_bspline_rejects_value_discontinuities_and_nonfinite_coefficients(
         )
 
 
-def test_sampled_and_fixed_bspline_paths_reject_zero_sized_payload_dimensions():
+def test_sampled_and_fixed_bspline_paths_reject_zero_sized_payload_dimensions() -> None:
     with pytest.raises(ValueError, match="value_shape dimensions must be positive"):
         phx.solver.PiecewiseLinearDrivingPath(
             jnp.asarray([0.0, 1.0]),

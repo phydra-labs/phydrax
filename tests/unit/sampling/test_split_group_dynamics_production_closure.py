@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -27,13 +30,13 @@ from phydrax.sampling._split_group_dynamics import (
 )
 
 
-def _torus_target():
+def _torus_target() -> Any:
     geometry = FlatTorusStateGeometry(2.0 * jnp.pi)
 
-    def first(position):
+    def first(position: Any) -> Any:
         return -0.35 * jnp.sum(1.0 - jnp.cos(position))
 
-    def second(position):
+    def second(position: Any) -> Any:
         return -0.65 * jnp.sum(1.0 - jnp.cos(position))
 
     return SplitGroupTarget(
@@ -47,7 +50,9 @@ def _torus_target():
     )
 
 
-def _prepared(integrator="omelyan", dynamics="ghmc", persistence=0.4):
+def _prepared(
+    integrator: Any = "omelyan", dynamics: Any = "ghmc", persistence: Any = 0.4
+) -> Any:
     plan = SplitGroupDynamicsPlan(
         step_size=0.04,
         trajectory_steps=5,
@@ -59,7 +64,7 @@ def _prepared(integrator="omelyan", dynamics="ghmc", persistence=0.4):
     return prepare_split_group_dynamics(_torus_target(), plan)
 
 
-def test_leapfrog_and_omelyan_coefficients_are_palindromic():
+def test_leapfrog_and_omelyan_coefficients_are_palindromic() -> None:
     leapfrog = _prepared(integrator="leapfrog")
     omelyan = _prepared(integrator="omelyan")
 
@@ -71,7 +76,7 @@ def test_leapfrog_and_omelyan_coefficients_are_palindromic():
 
 
 @pytest.mark.parametrize("integrator", ["leapfrog", "omelyan"])
-def test_split_integrator_is_reversible_on_flat_torus(integrator):
+def test_split_integrator_is_reversible_on_flat_torus(integrator: Any) -> None:
     prepared = _prepared(integrator=integrator)
     state = initialize_split_group_dynamics_state(
         prepared,
@@ -99,7 +104,7 @@ def test_split_integrator_is_reversible_on_flat_torus(integrator):
     assert forward[4] and reverse[4]
 
 
-def test_generalized_hmc_uses_exact_target_correction_and_partial_refresh():
+def test_generalized_hmc_uses_exact_target_correction_and_partial_refresh() -> None:
     prepared = _prepared(persistence=0.6)
     state = initialize_split_group_dynamics_state(
         prepared,
@@ -117,7 +122,7 @@ def test_generalized_hmc_uses_exact_target_correction_and_partial_refresh():
     assert 0.0 <= result.evidence.acceptance_probability <= 1.0
 
 
-def test_finite_metric_adaptation_returns_rebound_frozen_production_state():
+def test_finite_metric_adaptation_returns_rebound_frozen_production_state() -> None:
     prepared = _prepared(integrator="leapfrog", persistence=0.0)
     state = initialize_split_group_dynamics_state(prepared, jnp.asarray([0.15, -0.2]))
     result = adapt_split_group_metric(
@@ -140,7 +145,7 @@ def test_finite_metric_adaptation_returns_rebound_frozen_production_state():
     assert result.state.prepared_id == result.prepared.prepared_id
 
 
-def test_transported_u_turn_uses_endpoint_velocities_in_one_tangent_space():
+def test_transported_u_turn_uses_endpoint_velocities_in_one_tangent_space() -> None:
     prepared = _prepared()
     forward = transported_group_u_turn(
         prepared,
@@ -162,7 +167,7 @@ def test_transported_u_turn_uses_endpoint_velocities_in_one_tangent_space():
     assert jnp.allclose(forward.displacement, jnp.asarray([0.5, 0.0]))
 
 
-def test_transported_group_nuts_has_finite_tree_and_detects_turning():
+def test_transported_group_nuts_has_finite_tree_and_detects_turning() -> None:
     prepared = _prepared(dynamics="nuts-reference", persistence=0.0)
     state = initialize_split_group_dynamics_state(prepared, jnp.asarray([2.6, -2.4]))
     result = split_group_transition(prepared, state, key=jax.random.key(23))
@@ -173,11 +178,13 @@ def test_transported_group_nuts_has_finite_tree_and_detects_turning():
     assert result.reference_measure == "flat-torus"
 
 
-def test_nuts_nonfinite_u_turn_evidence_is_a_divergence(monkeypatch):
+def test_nuts_nonfinite_u_turn_evidence_is_a_divergence(monkeypatch: Any) -> None:
     prepared = _prepared(dynamics="nuts-reference", persistence=0.0)
     state = initialize_split_group_dynamics_state(prepared, jnp.asarray([0.2, -0.1]))
 
-    def nonfinite_turn(_prepared, _left, _right, _left_p, _right_p):
+    def nonfinite_turn(
+        _prepared: Any, _left: Any, _right: Any, _left_p: Any, _right_p: Any
+    ) -> Any:
         tangent = jnp.zeros(prepared.target.local_coordinate_shape)
         return split_dynamics.TransportedUTurnEvidence(
             tangent,
@@ -204,7 +211,7 @@ def test_nuts_nonfinite_u_turn_evidence_is_a_divergence(monkeypatch):
     assert jnp.array_equal(result.state.position, state.position)
 
 
-def test_su_n_is_supported_and_noncompact_geometry_fails_before_execution():
+def test_su_n_is_supported_and_noncompact_geometry_fails_before_execution() -> None:
     group = SpecialUnitaryGroup(2)
     geometry = PointwiseStateGeometry(
         LieGroupStateGeometry(group),

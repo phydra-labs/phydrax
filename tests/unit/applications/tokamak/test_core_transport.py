@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -7,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _equilibrium():
+def _equilibrium() -> Any:
     count = 65
     r = np.linspace(1.0, 3.0, count)
     z = np.linspace(-1.0, 1.0, count)
@@ -42,7 +43,7 @@ def _equilibrium():
     )
 
 
-def _geometry():
+def _geometry() -> Any:
     return phx.applications.tokamak.FluxSurfacePlan(
         np.asarray([0.0, 0.25, 0.5, 0.75]),
         poloidal_count=64,
@@ -50,7 +51,7 @@ def _geometry():
     ).prepare(_equilibrium())
 
 
-def test_flux_surface_geometry_recovers_circular_torus_measures():
+def test_flux_surface_geometry_recovers_circular_torus_measures() -> None:
     geometry = _geometry()
     rho = geometry.rho_faces
     expected_volume = 2.0 * math.pi**2 * 2.0 * (0.8 * rho) ** 2
@@ -62,7 +63,7 @@ def test_flux_surface_geometry_recovers_circular_torus_measures():
     assert bool(geometry.prepare().evidence.successful)
 
 
-def test_core_transport_conserves_particles_and_energy_without_boundary_flux():
+def test_core_transport_conserves_particles_and_energy_without_boundary_flux() -> None:
     geometry = _geometry()
     prepared = phx.applications.tokamak.TokamakCoreTransportPlan(geometry, 1.0).prepare()
     cell_count = prepared.cell_count
@@ -102,7 +103,7 @@ def test_core_transport_conserves_particles_and_energy_without_boundary_flux():
     )
 
 
-def test_core_transport_is_differentiable_through_native_line_solve():
+def test_core_transport_is_differentiable_through_native_line_solve() -> None:
     prepared = phx.applications.tokamak.TokamakCoreTransportPlan(
         _geometry(), 1.0
     ).prepare()
@@ -116,7 +117,7 @@ def test_core_transport_is_differentiable_through_native_line_solve():
         jnp.zeros(count), jnp.zeros(count), jnp.zeros(count)
     )
 
-    def objective(interior_conductance):
+    def objective(interior_conductance: Any) -> Any:
         faces = jnp.zeros((count + 1,)).at[1:-1].set(interior_conductance)
         coefficients = phx.applications.tokamak.TokamakTransportCoefficients(
             faces, faces, faces

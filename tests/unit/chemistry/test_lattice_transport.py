@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 
 from phydrax.atomistic import AtomisticUnitSystem
@@ -11,7 +13,7 @@ from phydrax.chemistry.periodic._lattice_transport import (
 )
 
 
-def _ifc3(units, strength):
+def _ifc3(units: Any, strength: Any) -> Any:
     triplets = np.asarray(
         [
             (first, second, third)
@@ -40,25 +42,32 @@ def _ifc3(units, strength):
     )
 
 
-def _mode_vertices(ifc3, units):
+def _mode_vertices(ifc3: Any, units: Any) -> Any:
     return IFC3ModeVertexPlan(
         ifc3,
+        # ty: ignore[invalid-argument-type]
         [[0]],
         (1,),
+        # ty: ignore[invalid-argument-type]
         [[0.0]],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]],
+        # ty: ignore[invalid-argument-type]
         [np.eye(6)],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units,
         phonon_result_id="analytic-phonons",
     ).evaluate()
 
 
-def _rta(ifc3, units):
+def _rta(ifc3: Any, units: Any) -> Any:
     return ThreePhononRTAPlan(
         ifc3,
+        # ty: ignore[invalid-argument-type]
         [[0]],
         (1,),
+        # ty: ignore[invalid-argument-type]
         [1.0],
         0.02,
         1.0,
@@ -68,7 +77,7 @@ def _rta(ifc3, units):
     )
 
 
-def test_ifc3_to_three_phonon_rta_enforces_balance_and_ballistic_refusal():
+def test_ifc3_to_three_phonon_rta_enforces_balance_and_ballistic_refusal() -> None:
     units = AtomisticUnitSystem.reduced()
     ifc3 = _ifc3(units, 0.01)
     vertices = _mode_vertices(ifc3, units)

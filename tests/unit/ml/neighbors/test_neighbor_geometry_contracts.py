@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -16,7 +19,7 @@ from phydrax.ml.neighbors import (
 )
 
 
-def _cluster_data():
+def _cluster_data() -> Any:
     return jnp.array(
         [
             [-1.2, -0.8],
@@ -29,7 +32,7 @@ def _cluster_data():
     )
 
 
-def test_kernel_density_preserves_measure_weights_masks_chunking_and_gradients():
+def test_kernel_density_preserves_measure_weights_masks_chunking_and_gradients() -> None:
     features = _cluster_data()
     measure = jnp.array([1.0, 2.0, 1.0, 0.5, 1.5, 2.0])
     result = KernelDensityRecipe(0.45, weight_policy="measure").fit_batch(
@@ -43,8 +46,11 @@ def test_kernel_density_preserves_measure_weights_masks_chunking_and_gradients()
     query = jnp.array([[-1.0, -1.0], [0.0, 0.0], [1.0, 1.0]])
 
     assert model(query).shape == (3,)
+    # ty: ignore[unresolved-attribute]
     assert model.score_samples(query).shape == (3,)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(jnp.exp(model.score_samples(query)), model(query))
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model(query), model.predict_chunked(query, chunk_size=1))
     assert result.diagnostics.effective_samples == 5
     assert result.derivative_contract.route is DerivativeRoute.DIRECT
@@ -68,7 +74,7 @@ def test_kernel_density_preserves_measure_weights_masks_chunking_and_gradients()
     assert jnp.all(jnp.isfinite(feature_gradient))
 
 
-def test_local_outlier_factor_uses_chunked_weighted_geometry_and_hard_output():
+def test_local_outlier_factor_uses_chunked_weighted_geometry_and_hard_output() -> None:
     inliers = _cluster_data()
     features = jnp.concatenate((inliers, jnp.array([[5.0, 5.0]])), axis=0)
     weights = jnp.array([1.0, 2.0, 1.0, 1.0, 2.0, 1.0, 0.5])
@@ -76,18 +82,21 @@ def test_local_outlier_factor_uses_chunked_weighted_geometry_and_hard_output():
         MLBatch(features, sample_weight=weights)
     )
     model = result.as_trainable()
+    # ty: ignore[unresolved-attribute]
     scores = model.score_samples(features)
 
     assert scores.shape == (7,)
     assert scores[-1] > jnp.median(scores[:-1])
+    # ty: ignore[unresolved-attribute]
     assert model.predict(features, threshold=1.5).dtype == jnp.int32
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(scores, model.predict_chunked(features, chunk_size=3))
     assert result.diagnostics.method == "chunked-local-outlier-factor"
     assert "neighbor_indices" in result.derivative_contract.nondifferentiable_outputs
     assert "predict" in result.derivative_contract.nondifferentiable_outputs
 
 
-def test_nearest_centroid_probabilities_cases_masks_and_hard_contract():
+def test_nearest_centroid_probabilities_cases_masks_and_hard_contract() -> None:
     features = _cluster_data()
     labels = jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
     cases = jnp.stack((features, features + jnp.array([0.1, -0.2])), axis=0)
@@ -101,20 +110,23 @@ def test_nearest_centroid_probabilities_cases_masks_and_hard_contract():
         )
     )
     model = result.as_trainable()
+    # ty: ignore[unresolved-attribute]
     probability = model.predict_proba(cases[:, :2])
 
     assert probability.shape == (2, 2, 2)
     assert jnp.allclose(jnp.sum(probability, axis=-1), 1.0)
+    # ty: ignore[unresolved-attribute]
     assert model.predict(cases[:, :2]).dtype == jnp.int32
     assert "predict" in result.derivative_contract.nondifferentiable_outputs
     assert jnp.all(
         jnp.isfinite(
+            # ty: ignore[unresolved-attribute]
             jax.grad(lambda point: jnp.sum(model.predict_proba(point) ** 2))(cases[:, 0])
         )
     )
 
 
-def test_nca_embedding_geometry_unrolled_gradients_jit_and_vmap():
+def test_nca_embedding_geometry_unrolled_gradients_jit_and_vmap() -> None:
     features = _cluster_data()
     labels = jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
     recipe = NeighborhoodComponentsAnalysisRecipe(
@@ -129,7 +141,9 @@ def test_nca_embedding_geometry_unrolled_gradients_jit_and_vmap():
     embedded = model(features)
 
     assert embedded.shape == features.shape
+    # ty: ignore[unresolved-attribute]
     assert model.metric_matrix.shape == (2, 2)
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.linalg.eigvalsh(model.metric_matrix) >= -1e-6)
     assert jax.jit(model)(features).shape == features.shape
     assert jax.vmap(model)(features).shape == features.shape
@@ -149,7 +163,7 @@ def test_nca_embedding_geometry_unrolled_gradients_jit_and_vmap():
     assert jnp.all(jnp.isfinite(feature_gradient))
 
 
-def test_mahalanobis_unsupervised_and_supervised_whitening_geometry():
+def test_mahalanobis_unsupervised_and_supervised_whitening_geometry() -> None:
     features = _cluster_data()
     labels = jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
     unsupervised = MahalanobisMetricRecipe(ridge=1e-3).fit_batch(MLBatch(features))
@@ -161,12 +175,15 @@ def test_mahalanobis_unsupervised_and_supervised_whitening_geometry():
 
     assert unsupervised_model(features).shape == (6, 2)
     assert supervised_model(features).shape == (6, 1)
+    # ty: ignore[unresolved-attribute]
     assert unsupervised_model.metric_matrix.shape == (2, 2)
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.linalg.eigvalsh(unsupervised_model.metric_matrix) > 0.0)
     assert supervised.diagnostics.rank == 2
     assert supervised.derivative_contract.route is DerivativeRoute.SPECTRAL
     assert jnp.all(
         jnp.isfinite(
+            # ty: ignore[unresolved-attribute]
             jax.grad(lambda point: supervised_model.squared_distance(point, features[0]))(
                 features[-1]
             )

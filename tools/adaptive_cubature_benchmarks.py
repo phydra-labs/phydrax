@@ -117,7 +117,7 @@ def _device_peak_bytes() -> int | None:
 
 def _cubature_record(
     case: Case,
-    rule,
+    rule: Any,
     /,
     *,
     max_cells: int,
@@ -136,14 +136,14 @@ def _cubature_record(
     )
     precision = phx.integration.IntegrationPrecisionPolicy()
 
-    def solve(scale):
+    def solve(scale: Any) -> Any:
         return phx.integration.adaptive_cubature_callable(
             lambda points: scale * case.integrand(points),
             plan,
             precision=precision,
         )
 
-    def arrays(scale):
+    def arrays(scale: Any) -> Any:
         estimate = solve(scale)
         return (
             estimate.value,
@@ -203,7 +203,7 @@ def _cubature_record(
     }
 
 
-def _declared_problem(case: Case):
+def _declared_problem(case: Case) -> Any:
     labels = tuple(f"x{axis}" for axis in range(case.dimension))
     factors = tuple(phx.domain.ScalarInterval(-1.0, 1.0, label=label) for label in labels)
     domain = phx.domain.ProductDomain(*factors)

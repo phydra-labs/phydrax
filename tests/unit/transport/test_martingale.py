@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -6,7 +8,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _target(points, probabilities, provenance):
+def _target(points: Any, probabilities: Any, provenance: Any) -> Any:
     return phx.integration.discrete(
         jnp.asarray(points, dtype="float64"),
         cx.AxisArray(jnp.asarray(probabilities, dtype="float64"), dims=("atom",)),
@@ -16,7 +18,7 @@ def _target(points, probabilities, provenance):
     )
 
 
-def _transport(source, source_weights, target, target_weights):
+def _transport(source: Any, source_weights: Any, target: Any, target_weights: Any) -> Any:
     return phx.transport.discrete_problem(
         _target(source, source_weights, "source"),
         _target(target, target_weights, "target"),
@@ -26,7 +28,7 @@ def _transport(source, source_weights, target, target_weights):
     )
 
 
-def test_two_point_martingale_transport_has_exact_conditional_means_and_dual():
+def test_two_point_martingale_transport_has_exact_conditional_means_and_dual() -> None:
     base = _transport([-1.0, 1.0], [0.5, 0.5], [-2.0, 2.0], [0.5, 0.5])
     problem = phx.transport.MartingaleTransportProblem(base)
     result = phx.transport.solve_martingale_transport(problem)
@@ -42,7 +44,7 @@ def test_two_point_martingale_transport_has_exact_conditional_means_and_dual():
     assert result.dual.maximum_inequality_violation <= problem.constraint_tolerance
 
 
-def test_scalar_convex_order_failure_is_explicit_before_optimization():
+def test_scalar_convex_order_failure_is_explicit_before_optimization() -> None:
     base = _transport([-2.0, 2.0], [0.5, 0.5], [-1.0, 1.0], [0.5, 0.5])
     result = phx.transport.solve_martingale_transport(
         phx.transport.MartingaleTransportProblem(base)
@@ -58,7 +60,9 @@ def test_scalar_convex_order_failure_is_explicit_before_optimization():
     )
 
 
-def test_marginals_alone_cannot_hide_a_martingale_defect_or_relabel_classical_ot():
+def test_marginals_alone_cannot_hide_a_martingale_defect_or_relabel_classical_ot() -> (
+    None
+):
     base = _transport([-1.0, 1.0], [0.5, 0.5], [-1.0, 1.0], [0.5, 0.5])
     problem = phx.transport.MartingaleTransportProblem(base)
     swapped = jnp.asarray([[0.0, 0.5], [0.5, 0.0]])
@@ -72,14 +76,14 @@ def test_marginals_alone_cannot_hide_a_martingale_defect_or_relabel_classical_ot
         phx.transport.solve_martingale_transport(base)
 
 
-def _matrix_kernel(matrix):
+def _matrix_kernel(matrix: Any) -> Any:
     probabilities = jnp.asarray(matrix, dtype="float64")
 
-    def sample(key, state, _t0, _t1, _context):
+    def sample(key: Any, state: Any, _t0: Any, _t1: Any, _context: Any) -> Any:
         row = jnp.asarray(state, dtype=jnp.int32)
         return jr.categorical(key, jnp.log(probabilities[row])).astype("float64")
 
-    def log_prob(next_state, state, _t0, _t1, _context):
+    def log_prob(next_state: Any, state: Any, _t0: Any, _t1: Any, _context: Any) -> Any:
         row = jnp.asarray(state, dtype=jnp.int32)
         column = jnp.asarray(next_state, dtype=jnp.int32)
         value = probabilities[row, column]
@@ -94,7 +98,7 @@ def _matrix_kernel(matrix):
     )
 
 
-def test_martingale_schrodinger_bridge_recovers_endpoints_and_conditional_means():
+def test_martingale_schrodinger_bridge_recovers_endpoints_and_conditional_means() -> None:
     support = jnp.asarray([-1.0, 1.0])
     initial = _target([0.0, 1.0], [0.5, 0.5], "initial")
     terminal = _target([0.0, 1.0], [0.5, 0.5], "terminal")

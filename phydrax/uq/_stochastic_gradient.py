@@ -16,6 +16,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._minibatch_posterior import LikelihoodBatch, MinibatchPosteriorProblem
 from ._parameterized_state_space import ParameterizedStateSpaceProblem
 from ._particle import (
@@ -149,15 +150,12 @@ class ParticleGenealogicalGradientEstimator(AbstractStochasticGradientEstimator)
         count = int(num_particles)
         if count < 1:
             raise ValueError("num_particles must be positive.")
-        if resampling_method not in (
-            "systematic",
-            "stratified",
-            "multinomial",
-            "residual",
-        ):
-            raise ValueError("Unknown particle resampling method.")
-        if resampling_policy not in ("ess", "always", "never"):
-            raise ValueError("Unknown particle resampling policy.")
+        resampling_method = parse(
+            resampling_method, ResamplingMethod, "resampling_method"
+        )
+        resampling_policy = parse(
+            resampling_policy, ResamplingPolicy, "resampling_policy"
+        )
         threshold = float(resampling_threshold)
         if not 0.0 < threshold <= 1.0:
             raise ValueError("resampling_threshold must lie in (0, 1].")

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -14,13 +17,13 @@ import phydrax.axes as cx
 
 def _continuous_plan(
     *,
-    initial_live=32,
-    max_live=None,
-    max_dead_points=400,
-    max_likelihood_evaluations=8_000,
-    maximum_attempts=8,
-    rejection_fallback=False,
-):
+    initial_live: Any = 32,
+    max_live: Any = None,
+    max_dead_points: Any = 400,
+    max_likelihood_evaluations: Any = 8_000,
+    maximum_attempts: Any = 8,
+    rejection_fallback: Any = False,
+) -> Any:
     live_capacity = initial_live if max_live is None else max_live
     return phx.uq.NestedSamplingPlan(
         phx.uq.NestedSamplingCapacity(
@@ -42,7 +45,7 @@ def _continuous_plan(
 
 
 @pytest.fixture(scope="module")
-def gaussian_nested_result():
+def gaussian_nested_result() -> Any:
     observation = 1.2
     prior_scale = 2.0
     observation_scale = 0.5
@@ -51,7 +54,7 @@ def gaussian_nested_result():
         priors=phx.uq.Normal(0.0, prior_scale),
     )
 
-    def log_likelihood(value):
+    def log_likelihood(value: Any) -> Any:
         standardized = (value - observation) / observation_scale
         return (
             -0.5 * standardized**2
@@ -77,8 +80,8 @@ def gaussian_nested_result():
 
 
 def test_prepared_nested_sampling_recovers_gaussian_evidence_and_posterior(
-    gaussian_nested_result,
-):
+    gaussian_nested_result: Any,
+) -> None:
     result, observation, prior_scale, observation_scale = gaussian_nested_result
     evidence_truth = jsp.stats.norm.logpdf(
         observation,
@@ -103,8 +106,8 @@ def test_prepared_nested_sampling_recovers_gaussian_evidence_and_posterior(
 
 
 def test_nested_result_preserves_weighted_measure_and_resampling(
-    gaussian_nested_result,
-):
+    gaussian_nested_result: Any,
+) -> None:
     result = gaussian_nested_result[0]
     measure = result.posterior_measure()
     draws = result.resample_posterior(jr.key(18), num_samples=37)
@@ -119,7 +122,7 @@ def test_nested_result_preserves_weighted_measure_and_resampling(
     assert prediction.samples.data.shape == (result.num_samples, 2)
 
 
-def test_all_prepared_nested_kernels_dynamic_allocation_and_phantoms_execute():
+def test_all_prepared_nested_kernels_dynamic_allocation_and_phantoms_execute() -> None:
     support = jnp.asarray([0.0, 1.0])
     masses = jnp.asarray([0.4, 0.6])
     space = phx.uq.ParameterSpace(
@@ -131,7 +134,7 @@ def test_all_prepared_nested_kernels_dynamic_allocation_and_phantoms_execute():
         },
     )
 
-    def log_likelihood(value):
+    def log_likelihood(value: Any) -> Any:
         angular = jnp.mod(value["angle"] - 0.2 + jnp.pi, 2.0 * jnp.pi) - jnp.pi
         return -0.1 * (value["x"] - 0.4) ** 2 - 0.05 * angular**2 + 0.1 * value["finite"]
 
@@ -197,10 +200,12 @@ def test_all_prepared_nested_kernels_dynamic_allocation_and_phantoms_execute():
     assert result.num_samples == result.num_dead + result.num_live
 
 
-def test_nested_checkpoint_resume_restores_exact_full_prepared_state(tmp_path):
+def test_nested_checkpoint_resume_restores_exact_full_prepared_state(
+    tmp_path: Any,
+) -> None:
     prior_calls = []
 
-    def prior_position_sampler(key, count):
+    def prior_position_sampler(key: Any, count: Any) -> Any:
         prior_calls.append(count)
         return jr.normal(key, (count,))
 
@@ -226,11 +231,13 @@ def test_nested_checkpoint_resume_restores_exact_full_prepared_state(tmp_path):
         problem,
         checkpoint_path=checkpoint,
         checkpoint_every=5,
+        # ty: ignore[invalid-argument-type]
         **kwargs,
     )
     resumed = phx.uq.sample_nested(
         problem,
         resume_from=checkpoint,
+        # ty: ignore[invalid-argument-type]
         **kwargs,
     )
     assert prior_calls == [plan.initial_live]
@@ -260,13 +267,13 @@ def test_nested_checkpoint_resume_restores_exact_full_prepared_state(tmp_path):
         )
 
 
-def test_exact_rejection_is_only_an_explicit_failed_geometry_fallback():
+def test_exact_rejection_is_only_an_explicit_failed_geometry_fallback() -> None:
     problem = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(jnp.zeros(2), priors=phx.uq.Normal(0.0, 1.0)),
         lambda value: -0.5 * jnp.sum((value - jnp.asarray([0.5, -0.5])) ** 2),
     )
 
-    def plan(fallback):
+    def plan(fallback: Any) -> Any:
         return phx.uq.NestedSamplingPlan(
             phx.uq.NestedSamplingCapacity(
                 max_live=2,
@@ -305,7 +312,7 @@ def test_exact_rejection_is_only_an_explicit_failed_geometry_fallback():
     assert recovered.final_state.adaptation.fallback_draws > 0
 
 
-def test_nested_sampling_rejects_incomplete_prior_topology():
+def test_nested_sampling_rejects_incomplete_prior_topology() -> None:
     problem = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             {"x": jnp.asarray(0.0), "y": jnp.asarray(0.0)},
@@ -330,10 +337,10 @@ def test_nested_sampling_rejects_incomplete_prior_topology():
         phx.uq.sample_nested(problem, key=jr.key(32), plan=plan)
 
 
-def test_nested_sampling_rejects_nondeterministic_likelihood():
+def test_nested_sampling_rejects_nondeterministic_likelihood() -> None:
     calls = {"count": 0}
 
-    def changing_likelihood(_value):
+    def changing_likelihood(_value: Any) -> Any:
         calls["count"] += 1
         return jnp.asarray(calls["count"], dtype="float64")
 
@@ -354,7 +361,9 @@ def test_nested_sampling_rejects_nondeterministic_likelihood():
         )
 
 
-def test_nested_sampling_returns_explicit_status_when_every_live_point_is_zero_mass():
+def test_nested_sampling_returns_explicit_status_when_every_live_point_is_zero_mass() -> (
+    None
+):
     problem = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0)),
         lambda _value: -jnp.inf,
@@ -376,9 +385,9 @@ def test_nested_sampling_returns_explicit_status_when_every_live_point_is_zero_m
 
 
 def test_nested_result_exports_portable_weighted_record(
-    gaussian_nested_result,
-    tmp_path,
-):
+    gaussian_nested_result: Any,
+    tmp_path: Any,
+) -> None:
     result = gaussian_nested_result[0]
     destination = tmp_path / "nested.phxuq"
     phx.uq.export_result(result, destination)

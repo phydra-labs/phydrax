@@ -1061,7 +1061,10 @@ def _proximal_step(
         reference = state.extrapolated if method.accelerated else parameters
         if method.proximal_newton:
             # Only ProximalNewton declares proximal_newton; its proposal needs its controls.
-            assert isinstance(method, ProximalNewton)
+            if not (isinstance(method, ProximalNewton)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(method, ProximalNewton)."
+                )
             proposal = _proximal_newton_proposal(
                 method,
                 problem,

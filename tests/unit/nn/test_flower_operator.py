@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -9,7 +12,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def _axis(size=8):
+def _axis(size: Any = 8) -> Any:
     return phx.nn.operator.OperatorAxis(
         "x",
         jnp.arange(size, dtype="float64") / size,
@@ -18,7 +21,7 @@ def _axis(size=8):
     )
 
 
-def _conditioned_batch(values, conditions, *, query_mask=None):
+def _conditioned_batch(values: Any, conditions: Any, *, query_mask: Any = None) -> Any:
     values = jnp.asarray(values)
     conditions = jnp.asarray(conditions)
     case_axes = ("case",) if values.ndim == 2 else ()
@@ -39,7 +42,7 @@ def _conditioned_batch(values, conditions, *, query_mask=None):
     )
 
 
-def _conditioned_flower(key):
+def _conditioned_flower(key: Any) -> Any:
     return phx.nn.operator.architectures.Flower(
         in_channels="scalar",
         out_channels="scalar",
@@ -56,7 +59,7 @@ def _conditioned_flower(key):
     )
 
 
-def test_flower_routes_case_context_to_warp_and_preserves_case_isolation():
+def test_flower_routes_case_context_to_warp_and_preserves_case_isolation() -> None:
     model = _conditioned_flower(jr.key(0))
     nodes = _axis().nodes
     field = jnp.sin(2.0 * jnp.pi * nodes)
@@ -91,7 +94,7 @@ def test_flower_routes_case_context_to_warp_and_preserves_case_isolation():
     assert not jnp.allclose(output[0], output[1])
 
 
-def test_conditioned_flower_applies_query_masks_after_context_routing():
+def test_conditioned_flower_applies_query_masks_after_context_routing() -> None:
     model = _conditioned_flower(jr.key(1))
     values = jr.normal(jr.key(2), (2, 8))
     conditions = jnp.array([-0.5, 0.75])
@@ -110,7 +113,7 @@ def test_conditioned_flower_applies_query_masks_after_context_routing():
     assert jnp.array_equal(output[~query_mask], jnp.zeros((2,)))
 
 
-def test_flower_scalar_case_count_equal_to_grid_size_is_not_a_channel_axis():
+def test_flower_scalar_case_count_equal_to_grid_size_is_not_a_channel_axis() -> None:
     size = 8
     nodes = jnp.arange(size, dtype="float64") / size
     values = jr.normal(jr.key(3), (size, size))

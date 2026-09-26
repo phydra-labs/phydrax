@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,7 +19,7 @@ from phydrax.applications.semiconductor._thermal import (
 from phydrax.applications.semiconductor._thermodynamics import BandThermodynamics
 
 
-def _bands(statistics="boltzmann"):
+def _bands(statistics: Any = "boltzmann") -> Any:
     return BandThermodynamics(
         "synthetic parabolic energy fixture",
         conduction_band_edge=0.7 * Q,
@@ -32,10 +34,11 @@ def _bands(statistics="boltzmann"):
     )
 
 
-def test_lattice_capacity_is_energy_derivative_and_has_invertible_datum():
+def test_lattice_capacity_is_energy_derivative_and_has_invertible_datum() -> None:
     law = ConstantLatticeHeatCapacity(
         2e6,
         reference_temperature=300.0,
+        # ty: ignore[invalid-argument-type]
         temperature_range=(200.0, 900.0),
         provenance="synthetic constant-cv body",
     )
@@ -54,9 +57,10 @@ def test_lattice_capacity_is_energy_derivative_and_has_invertible_datum():
     )
 
 
-def test_thermal_boundary_is_passive_and_exactly_closes_reservoir_power():
+def test_thermal_boundary_is_passive_and_exactly_closes_reservoir_power() -> None:
     conductor = ThermalConductance(
         0.04,
+        # ty: ignore[invalid-argument-type]
         temperature_range=(200.0, 900.0),
         provenance="synthetic thermal-port conductance fixture",
     )
@@ -70,12 +74,13 @@ def test_thermal_boundary_is_passive_and_exactly_closes_reservoir_power():
     np.testing.assert_allclose(result.entropy_production[-1], 0.02)
 
 
-def test_degenerate_carrier_relaxation_uses_shared_energy_and_cancels_heat():
+def test_degenerate_carrier_relaxation_uses_shared_energy_and_cancels_heat() -> None:
     bands = _bands("fermi-dirac")
     law = CarrierEnergyRelaxation(
         bands,
         "electron",
         2e-12,
+        # ty: ignore[invalid-argument-type]
         temperature_range=(200.0, 1200.0),
         provenance="synthetic constant energy-relaxation time",
     )
@@ -97,11 +102,14 @@ def test_degenerate_carrier_relaxation_uses_shared_energy_and_cancels_heat():
 
 
 @pytest.mark.parametrize("carrier,charge_sign", [("electron", -1), ("hole", 1)])
-def test_carrier_face_energy_closes_band_work_and_gauge_change(carrier, charge_sign):
+def test_carrier_face_energy_closes_band_work_and_gauge_change(
+    carrier: Any, charge_sign: Any
+) -> None:
     transport = CarrierEnergyTransport(
         _bands(),
         carrier,
         0.5,
+        # ty: ignore[invalid-argument-type]
         temperature_range=(200.0, 1200.0),
         provenance="synthetic parabolic enthalpy/Fourier moment closure",
     )

@@ -14,7 +14,7 @@ class ComponentDim(pt.Dim):
     pass
 
 
-def test_scope_bindings_are_shared_across_checks_and_report_conflicts():
+def test_scope_bindings_are_shared_across_checks_and_report_conflicts() -> None:
     scope = pt.Scope()
     pt.parse(3, pt.Size[NodeDim], "count", scope=scope)
     pt.parse(jnp.zeros((3,)), pt.Float64[NodeDim], "values", scope=scope)
@@ -22,14 +22,14 @@ def test_scope_bindings_are_shared_across_checks_and_report_conflicts():
         pt.parse(jnp.zeros((4,)), pt.Float64[NodeDim], "other", scope=scope)
 
 
-def test_separate_scopes_are_independent():
+def test_separate_scopes_are_independent() -> None:
     first, second = pt.Scope(), pt.Scope()
     pt.parse(jnp.zeros((2,)), pt.Float64[NodeDim], "a", scope=first)
     pt.parse(jnp.zeros((5,)), pt.Float64[NodeDim], "b", scope=second)
     assert (first.size(NodeDim), second.size(NodeDim)) == (2, 5)
 
 
-def test_failed_union_alternatives_roll_back_every_binding():
+def test_failed_union_alternatives_roll_back_every_binding() -> None:
     scope = pt.Scope()
     union = pt.Float64[NodeDim, Literal[3]] | pt.Float64[ComponentDim, ComponentDim]
     pt.parse(jnp.zeros((2, 2)), union, "matrix", scope=scope)
@@ -38,9 +38,48 @@ def test_failed_union_alternatives_roll_back_every_binding():
         scope.size(NodeDim)
 
 
-def test_unbound_and_wrong_kind_lookups_are_refused():
+def test_failed_parse_rolls_back_every_new_binding() -> None:
+    scope = pt.Scope()
+    with pytest.raises(TypeError):
+        pt.parse(
+            jnp.ones((3,), dtype=jnp.int32),
+            pt.Float64[NodeDim],
+            "wrong_dtype",
+            scope=scope,
+        )
+    with pytest.raises(ValueError):
+        scope.size(NodeDim)
+
+    with pytest.raises(ValueError):
+        pt.parse(
+            (2, jnp.zeros((3,))),
+            tuple[pt.Size[NodeDim], pt.Float64[NodeDim]],
+            "late_failure",
+            scope=scope,
+        )
+    with pytest.raises(ValueError):
+        scope.size(NodeDim)
+
+
+def test_failed_parse_preserves_bindings_that_predate_the_operation() -> None:
+    scope = pt.Scope()
+    pt.parse(2, pt.Size[NodeDim], "count", scope=scope)
+
+    with pytest.raises(ValueError):
+        pt.parse(
+            (2, jnp.zeros((3,))),
+            tuple[pt.Size[NodeDim], pt.Float64[NodeDim]],
+            "late_failure",
+            scope=scope,
+        )
+
+    assert scope.size(NodeDim) == 2
+
+
+def test_unbound_and_wrong_kind_lookups_are_refused() -> None:
     scope = pt.Scope()
     with pytest.raises(ValueError):
         scope.size(NodeDim)
     with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
         scope.size(int)

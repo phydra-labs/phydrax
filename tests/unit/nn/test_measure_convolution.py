@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -17,7 +18,7 @@ _DIMENSION_NUMBERS = {
 }
 
 
-def _circular_reference(layer, values, mask, quadrature):
+def _circular_reference(layer: Any, values: Any, mask: Any, quadrature: Any) -> Any:
     sample_count = values.shape[0]
     kernel_count = layer.kernel_size[0]
     dilation = layer.dilation[0]
@@ -46,7 +47,9 @@ def _circular_reference(layer, values, mask, quadrature):
     ("spatial_ndim", "sample_shape"),
     ((1, (7,)), (2, (5, 6)), (3, (4, 5, 6))),
 )
-def test_uniform_full_measure_matches_ordinary_convolution(spatial_ndim, sample_shape):
+def test_uniform_full_measure_matches_ordinary_convolution(
+    spatial_ndim: Any, sample_shape: Any
+) -> None:
     layer = MeasureNormalizedConvND(
         spatial_ndim=spatial_ndim,
         in_channels=2,
@@ -65,11 +68,12 @@ def test_uniform_full_measure_matches_ordinary_convolution(spatial_ndim, sample_
         padding="SAME",
         dimension_numbers=_DIMENSION_NUMBERS[spatial_ndim],
     )
+    # ty: ignore[unresolved-attribute]
     expected = expected + layer.bias.astype(values.dtype)
     assert jnp.allclose(actual, expected, atol=2e-6, rtol=2e-6)
 
 
-def test_missing_observations_are_renormalized_without_nan_contamination():
+def test_missing_observations_are_renormalized_without_nan_contamination() -> None:
     layer = MeasureNormalizedConvND(
         spatial_ndim=1,
         in_channels=1,
@@ -89,7 +93,7 @@ def test_missing_observations_are_renormalized_without_nan_contamination():
     assert jnp.allclose(output, full_reference)
 
 
-def test_all_masked_stencils_and_invalid_targets_return_exact_zero():
+def test_all_masked_stencils_and_invalid_targets_return_exact_zero() -> None:
     layer = MeasureNormalizedConvND(
         spatial_ndim=2,
         in_channels=2,
@@ -117,7 +121,7 @@ def test_all_masked_stencils_and_invalid_targets_return_exact_zero():
     assert jnp.array_equal(output, jnp.zeros_like(output))
 
 
-def test_measure_convolution_has_finite_value_weight_and_quadrature_gradients():
+def test_measure_convolution_has_finite_value_weight_and_quadrature_gradients() -> None:
     layer = MeasureNormalizedConvND(
         spatial_ndim=1,
         in_channels=1,
@@ -151,7 +155,7 @@ def test_measure_convolution_has_finite_value_weight_and_quadrature_gradients():
     assert jnp.all(jnp.isfinite(quadrature_gradient))
 
 
-def test_measure_convolution_preserves_leading_case_axes():
+def test_measure_convolution_preserves_leading_case_axes() -> None:
     layer = MeasureNormalizedConvND(
         spatial_ndim=2,
         in_channels=1,
@@ -173,10 +177,10 @@ def test_measure_convolution_preserves_leading_case_axes():
     ((7, 3, 2), (4, 9, 3)),
 )
 def test_circular_measure_convolution_matches_modular_reference_with_large_halos(
-    sample_count,
-    kernel_size,
-    dilation,
-):
+    sample_count: Any,
+    kernel_size: Any,
+    dilation: Any,
+) -> None:
     layer = MeasureNormalizedConvND(
         spatial_ndim=1,
         in_channels=2,
@@ -205,7 +209,9 @@ def test_circular_measure_convolution_matches_modular_reference_with_large_halos
     assert jnp.allclose(actual, expected, atol=2e-6, rtol=2e-6)
 
 
-def test_circular_measure_convolution_owns_same_padding_and_odd_effective_kernels():
+def test_circular_measure_convolution_owns_same_padding_and_odd_effective_kernels() -> (
+    None
+):
     default = MeasureNormalizedConvND(
         spatial_ndim=1,
         in_channels=1,
@@ -245,7 +251,7 @@ def test_circular_measure_convolution_owns_same_padding_and_odd_effective_kernel
     assert dilated(jnp.ones((5, 1))).shape == (5, 1)
 
 
-def test_circular_measure_convolution_preserves_batch_axes_and_target_mask():
+def test_circular_measure_convolution_preserves_batch_axes_and_target_mask() -> None:
     layer = MeasureNormalizedConvND(
         spatial_ndim=2,
         in_channels=1,

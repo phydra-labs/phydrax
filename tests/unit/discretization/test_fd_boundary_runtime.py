@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_cell_centered_dirichlet_neumann_and_robin_ghost_relations():
+def test_cell_centered_dirichlet_neumann_and_robin_ghost_relations() -> None:
     values = jnp.asarray([1.0, 2.0, 3.0])
     dirichlet = phx.discretization.CellGhostBoundary(
         0,
@@ -53,7 +53,7 @@ def test_cell_centered_dirichlet_neumann_and_robin_ghost_relations():
     )
 
 
-def test_periodic_ghosts_wrap_without_physical_boundary_data():
+def test_periodic_ghosts_wrap_without_physical_boundary_data() -> None:
     runtime = phx.discretization.CellGhostBoundary(
         0,
         "periodic",
@@ -66,7 +66,7 @@ def test_periodic_ghosts_wrap_without_physical_boundary_data():
     assert jnp.allclose(result, jnp.asarray([3.0, 1.0, 2.0, 3.0, 1.0]))
 
 
-def test_nodal_runtime_sets_only_dirichlet_boundary_entities():
+def test_nodal_runtime_sets_only_dirichlet_boundary_entities() -> None:
     runtime = phx.discretization.NodalBoundaryRuntime(
         0,
         "dirichlet",
@@ -85,7 +85,7 @@ def test_nodal_runtime_sets_only_dirichlet_boundary_entities():
     assert jnp.allclose(result[-1], -1.0)
 
 
-def test_singular_robin_ghost_relation_is_rejected():
+def test_singular_robin_ghost_relation_is_rejected() -> None:
     with pytest.raises(ValueError, match="singular"):
         phx.discretization.CellGhostBoundary(
             0,

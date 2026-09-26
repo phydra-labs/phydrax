@@ -220,8 +220,14 @@ class OperatorBatchLoader:
             raise TypeError("dataset must be an OperatorDataset or OperatorCaseSource.")
         if isinstance(source, InMemoryOperatorCaseSource):
             source_dataset = source.dataset
-            assert source_dataset.case_mask is not None
-            assert source_dataset.case_log_weights is not None
+            if not (source_dataset.case_mask is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: source_dataset.case_mask is not None."
+                )
+            if not (source_dataset.case_log_weights is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: source_dataset.case_log_weights is not None."
+                )
             active_mass = source_dataset.case_mask & jnp.isfinite(
                 source_dataset.case_log_weights
             )
@@ -416,7 +422,10 @@ class OperatorBatchLoader:
         targets = selected.targets
         case_log_weights = selected.case_log_weights
         case_mask = selected.case_mask
-        assert case_log_weights is not None and case_mask is not None
+        if not (case_log_weights is not None and case_mask is not None):
+            raise RuntimeError(
+                "Internal invariant failed: case_log_weights is not None and case_mask is not None."
+            )
         if valid is not None:
             valid_mask = jnp.asarray(valid, dtype=jnp.bool_)
             if valid_mask.shape != jnp.asarray(case_mask).shape:

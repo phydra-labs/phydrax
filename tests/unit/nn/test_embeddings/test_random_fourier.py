@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +22,7 @@ from phydrax.nn.layers import (
 
 
 class TestRandomFourierFeatureEmbeddings:
-    def test_scalar_feature(self):
+    def test_scalar_feature(self) -> None:
         """Test with scalar feature input."""
         # Create embeddings for scalar input
         key = jr.key(0)
@@ -47,7 +50,7 @@ class TestRandomFourierFeatureEmbeddings:
 
         assert jnp.allclose(output, expected)
 
-    def test_vector_feature(self):
+    def test_vector_feature(self) -> None:
         """Test with vector feature input."""
         # Create embeddings for vector input
         key = jr.key(1)
@@ -76,7 +79,7 @@ class TestRandomFourierFeatureEmbeddings:
 
         assert jnp.allclose(output, expected)
 
-    def test_custom_mu_sigma(self):
+    def test_custom_mu_sigma(self) -> None:
         key = jr.key(2)
         in_size = 2
         out_size = 6
@@ -100,7 +103,7 @@ class TestRandomFourierFeatureEmbeddings:
         np.testing.assert_allclose(embeddings.embedding_matrix, expected_wavevectors)
         np.testing.assert_allclose(embeddings(x), expected)
 
-    def test_multiscale_embeddings(self):
+    def test_multiscale_embeddings(self) -> None:
         key = jr.key(3)
         in_size = 2
         out_size = 24
@@ -131,7 +134,7 @@ class TestRandomFourierFeatureEmbeddings:
         np.testing.assert_allclose(embeddings.embedding_matrix, expected_wavevectors)
         np.testing.assert_allclose(embeddings(x), expected)
 
-    def test_trainable(self):
+    def test_trainable(self) -> None:
         """Test that embedding matrix is trainable when specified."""
         # Create embeddings with trainable matrix
         key = jr.key(4)
@@ -148,7 +151,7 @@ class TestRandomFourierFeatureEmbeddings:
         assert embeddings.trainable is True
 
         # Define a simple loss function
-        def loss_fn(model, x, y):
+        def loss_fn(model: Any, x: Any, y: Any) -> Any:
             pred = model(x)
             return jnp.mean((pred - y) ** 2)
 
@@ -178,7 +181,7 @@ class TestRandomFourierFeatureEmbeddings:
             updated_model.embedding_matrix, embeddings.embedding_matrix
         )
 
-    def test_non_trainable(self):
+    def test_non_trainable(self) -> None:
         """Test that embedding matrix is not trainable by default."""
         # Create embeddings with non-trainable matrix (default)
         key = jr.key(5)
@@ -192,7 +195,7 @@ class TestRandomFourierFeatureEmbeddings:
         assert embeddings.trainable is False
 
         # Define a simple loss function
-        def loss_fn(model, x, y):
+        def loss_fn(model: Any, x: Any, y: Any) -> Any:
             pred = model(x)
             return jnp.mean((pred - y) ** 2)
 
@@ -207,7 +210,7 @@ class TestRandomFourierFeatureEmbeddings:
         # Check that the gradient for embedding_matrix is zero (non-trainable)
         assert jnp.allclose(eqx.filter(grads, eqx.is_array).embedding_matrix, 0.0)
 
-    def test_reproducibility(self):
+    def test_reproducibility(self) -> None:
         """Test that embeddings are reproducible with the same key."""
         # Create two embeddings with the same key
         key = jr.key(6)
@@ -231,7 +234,7 @@ class TestRandomFourierFeatureEmbeddings:
         output2 = embeddings2(x)
         assert jnp.allclose(output1, output2)
 
-    def test_different_keys(self):
+    def test_different_keys(self) -> None:
         """Test that embeddings are different with different keys."""
         # Create two embeddings with different keys
         key1 = jr.key(7)
@@ -252,7 +255,7 @@ class TestRandomFourierFeatureEmbeddings:
             embeddings1.embedding_matrix, embeddings2.embedding_matrix
         )
 
-    def test_error_on_wrong_input(self):
+    def test_error_on_wrong_input(self) -> None:
         """Test that an error is raised when input doesn't match feature_size."""
         # Create embeddings for scalar input
         key = jr.key(9)
@@ -263,7 +266,7 @@ class TestRandomFourierFeatureEmbeddings:
         with pytest.raises(ValueError):
             embeddings(x)
 
-    def test_high_dimensional_input(self):
+    def test_high_dimensional_input(self) -> None:
         """Test with high-dimensional input."""
         # Create embeddings for high-dimensional input
         key = jr.key(10)
@@ -280,7 +283,7 @@ class TestRandomFourierFeatureEmbeddings:
         # Check output shape
         assert output.shape == (out_size,)
 
-    def test_scalar_embedding_size(self):
+    def test_scalar_embedding_size(self) -> None:
         """Test with scalar embedding_size."""
         # Create embeddings with the smallest possible output size
         key = jr.key(11)
@@ -298,7 +301,7 @@ class TestRandomFourierFeatureEmbeddings:
 
 
 class TestExplicitFourierFeatureEmbeddings:
-    def test_explicit_features_phases_passthrough_and_constant(self):
+    def test_explicit_features_phases_passthrough_and_constant(self) -> None:
         embeddings = ExplicitFourierFeatureEmbeddings(
             in_size=2,
             wavevectors=jnp.array([[jnp.pi, 0.0], [0.0, 2.0 * jnp.pi]]),
@@ -316,7 +319,7 @@ class TestExplicitFourierFeatureEmbeddings:
             atol=1e-7,
         )
 
-    def test_periodic_factory_matches_values_and_derivatives_at_endpoints(self):
+    def test_periodic_factory_matches_values_and_derivatives_at_endpoints(self) -> None:
         embeddings = ExplicitFourierFeatureEmbeddings.from_periodic_modes(
             in_size=2,
             coordinate=0,
@@ -335,7 +338,7 @@ class TestExplicitFourierFeatureEmbeddings:
             atol=1e-6,
         )
 
-    def test_fixed_wavevectors_and_phases_stop_gradients(self):
+    def test_fixed_wavevectors_and_phases_stop_gradients(self) -> None:
         embeddings = ExplicitFourierFeatureEmbeddings(
             in_size=2,
             wavevectors=jnp.array([[1.0, 2.0]]),
@@ -349,7 +352,7 @@ class TestExplicitFourierFeatureEmbeddings:
         assert jnp.allclose(grads.embedding_matrix, 0.0)
         assert jnp.allclose(grads.phases, 0.0)
 
-    def test_tensor_input_is_flattened_and_jittable(self):
+    def test_tensor_input_is_flattened_and_jittable(self) -> None:
         embeddings = ExplicitFourierFeatureEmbeddings(
             in_size=(2, 2),
             wavevectors=jnp.array([[1.0, 0.0, 0.0, 1.0]]),
@@ -363,7 +366,7 @@ class TestExplicitFourierFeatureEmbeddings:
 
 
 class TestMultiscaleFourierFeatureEmbeddings:
-    def test_scales_multiply_each_base_wavevector_deterministically(self):
+    def test_scales_multiply_each_base_wavevector_deterministically(self) -> None:
         embeddings = MultiscaleFourierFeatureEmbeddings(
             in_size=2,
             scales=(1.0, 3.0),
@@ -377,7 +380,7 @@ class TestMultiscaleFourierFeatureEmbeddings:
         )
         assert jnp.array_equal(embeddings.scales, jnp.array([1.0, 3.0]))
 
-    def test_default_base_wavevectors_cover_each_coordinate(self):
+    def test_default_base_wavevectors_cover_each_coordinate(self) -> None:
         embeddings = MultiscaleFourierFeatureEmbeddings(
             in_size=3,
             scales=(1.0, 2.0),
@@ -390,7 +393,7 @@ class TestMultiscaleFourierFeatureEmbeddings:
 
 
 class TestHybridFourierFeatureEmbeddings:
-    def test_hybrid_preserves_deterministic_bank_and_random_reproducibility(self):
+    def test_hybrid_preserves_deterministic_bank_and_random_reproducibility(self) -> None:
         kwargs = {
             "in_size": 2,
             "deterministic_wavevectors": jnp.array([[jnp.pi, 0.0]]),
@@ -398,7 +401,9 @@ class TestHybridFourierFeatureEmbeddings:
             "passthrough": (1,),
             "include_constant": True,
         }
+        # ty: ignore[invalid-argument-type]
         first = HybridFourierFeatureEmbeddings(**kwargs, key=jr.key(12))
+        # ty: ignore[invalid-argument-type]
         second = HybridFourierFeatureEmbeddings(**kwargs, key=jr.key(12))
 
         assert first.deterministic_wavevector_count == 1
@@ -416,7 +421,7 @@ class TestHybridFourierFeatureEmbeddings:
 
 
 class TestTrainableFourierFeatureEmbeddings:
-    def test_explicit_initialization_has_unrestricted_wavevector_gradients(self):
+    def test_explicit_initialization_has_unrestricted_wavevector_gradients(self) -> None:
         embeddings = TrainableFourierFeatureEmbeddings(
             in_size=2,
             out_size=4,
@@ -431,7 +436,7 @@ class TestTrainableFourierFeatureEmbeddings:
         assert not jnp.allclose(grads.embedding_matrix, 0.0)
         assert jnp.allclose(grads.phases, 0.0)
 
-    def test_initial_wavevectors_must_match_output_size(self):
+    def test_initial_wavevectors_must_match_output_size(self) -> None:
         with pytest.raises(ValueError, match="row count"):
             TrainableFourierFeatureEmbeddings(
                 in_size=2,
@@ -440,7 +445,7 @@ class TestTrainableFourierFeatureEmbeddings:
             )
 
 
-def test_random_features_include_selected_raw_coordinates_and_constant():
+def test_random_features_include_selected_raw_coordinates_and_constant() -> None:
     embeddings = RandomFourierFeatureEmbeddings(
         in_size=2,
         out_size=8,

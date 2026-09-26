@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,16 +17,16 @@ class _IdentityModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         del key
         return state
 
 
-def _trajectory():
+def _trajectory() -> Any:
     return phx.dynamics.TrajectoryData(
         jnp.asarray((0.0, 1.0, 2.0, 3.0), dtype=jnp.float32),
         jnp.ones((4, 1), dtype=jnp.float32),
@@ -34,7 +35,7 @@ def _trajectory():
     )
 
 
-def test_progressive_policy_refines_on_plateau_then_stops_without_improvement():
+def test_progressive_policy_refines_on_plateau_then_stops_without_improvement() -> None:
     policy = phx.dynamics.identification.ProgressiveLinearRefinementPolicy(
         initial_steps=1,
         step_increment=2,
@@ -67,7 +68,7 @@ def test_progressive_policy_refines_on_plateau_then_stops_without_improvement():
     assert record.stopped
 
 
-def test_progressive_policy_records_python_plateau_flag_at_zero_metric():
+def test_progressive_policy_records_python_plateau_flag_at_zero_metric() -> None:
     policy = phx.dynamics.identification.ProgressiveLinearRefinementPolicy(
         initial_steps=1,
         step_increment=1,
@@ -83,7 +84,7 @@ def test_progressive_policy_records_python_plateau_flag_at_zero_metric():
     assert json.loads(json.dumps(dataclasses.asdict(record)))["plateau"] is True
 
 
-def test_progressive_policy_rejects_invalid_metrics_and_unsupported_transitions():
+def test_progressive_policy_rejects_invalid_metrics_and_unsupported_transitions() -> None:
     policy = phx.dynamics.identification.ProgressiveLinearRefinementPolicy(
         initial_steps=1,
         step_increment=1,
@@ -120,17 +121,17 @@ class _ZeroMACRateModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, size):
+    def __init__(self, size: Any) -> None:
         self.scale = jnp.asarray(0.0)
         self.in_size = int(size)
         self.out_size = int(size)
 
-    def __call__(self, state, /, *, key=None):
+    def __call__(self, state: Any, /, *, key: Any = None) -> Any:
         del key
         return self.scale * state
 
 
-def _mac_refinement_case():
+def _mac_refinement_case() -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(2)),
         axis_names=("x", "y"),
@@ -169,8 +170,8 @@ def _mac_refinement_case():
 
 
 def test_mac_transition_consumes_dynamic_krylov_control_and_full_fidelity_evaluation(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     dynamics, layout, transition = _mac_refinement_case()
     model = _ZeroMACRateModel(layout.size)
     state = jnp.zeros(
@@ -252,7 +253,7 @@ def test_mac_transition_consumes_dynamic_krylov_control_and_full_fidelity_evalua
     assert resumed.linear_refinement_records == fitted.linear_refinement_records
 
 
-def test_mac_transition_binds_port_declaring_rates_through_layout_ports():
+def test_mac_transition_binds_port_declaring_rates_through_layout_ports() -> None:
     dynamics, layout, unmapped = _mac_refinement_case()
     ports = phx.ModelPorts(
         inputs=(layout.value_port(role="point"),),
@@ -267,7 +268,9 @@ def test_mac_transition_binds_port_declaring_rates_through_layout_ports():
     )
     transition.validate_model(model)
     evidence = transition.component_binding(model).contract().port_binding
+    # ty: ignore[unresolved-attribute]
     assert evidence.inputs == ((ports.inputs[0].port_id,) * 2,)
+    # ty: ignore[unresolved-attribute]
     assert evidence.outputs == ((ports.outputs[0].port_id,) * 2,)
     state = jnp.zeros(
         layout.shape, dtype=dynamics.momentum.operators.pressure_space.dtype

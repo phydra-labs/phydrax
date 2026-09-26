@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -14,7 +17,7 @@ from phydrax.applications.semiconductor._optical_response import (
 )
 
 
-def _linear(**overrides):
+def _linear(**overrides: Any) -> Any:
     options = {
         "reference_carrier_pair_density": 2.0e24,
         "reference_temperature": 300.0,
@@ -35,11 +38,12 @@ def _linear(**overrides):
         1.5e24,
         4.0e-21,
         1.0e15,
+        # ty: ignore[invalid-argument-type]
         **options,
     )
 
 
-def test_linearized_response_preserves_transparency_and_power_field_factor_two():
+def test_linearized_response_preserves_transparency_and_power_field_factor_two() -> None:
     plan = _linear()
     transparent = evaluate_semiconductor_optical_response(plan, 1.5e24, 300.0, 1.0e15)
     populated = evaluate_semiconductor_optical_response(plan, 2.0e24, 300.0, 1.0e15)
@@ -54,7 +58,7 @@ def test_linearized_response_preserves_transparency_and_power_field_factor_two()
     assert populated.evidence.model_id == plan.model_id
 
 
-def test_active_region_projection_is_volume_and_mode_explicit():
+def test_active_region_projection_is_volume_and_mode_explicit() -> None:
     projection = ActiveRegionOpticalProjection(
         jnp.asarray((1.0, 2.0, 1.0)) * 1.0e-18,
         jnp.asarray((0.0, 1.0, 0.5)),
@@ -84,7 +88,9 @@ def test_active_region_projection_is_volume_and_mode_explicit():
     assert result.successful
 
 
-def test_tabulated_response_interpolates_all_three_physical_axes_without_extrapolation():
+def test_tabulated_response_interpolates_all_three_physical_axes_without_extrapolation() -> (
+    None
+):
     density = np.asarray((1.0, 3.0)) * 1.0e24
     temperature = np.asarray((290.0, 330.0))
     frequency = np.asarray((0.9, 1.1)) * 1.0e15
@@ -120,7 +126,7 @@ def test_tabulated_response_interpolates_all_three_physical_axes_without_extrapo
     assert np.isnan(rejected.modal_power_gain)
 
 
-def test_support_failures_remain_explicit_and_provenance_is_retained():
+def test_support_failures_remain_explicit_and_provenance_is_retained() -> None:
     plan = _linear()
     rejected = evaluate_semiconductor_optical_response(
         plan,

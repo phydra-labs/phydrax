@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _hierarchy(*, changing_shape=False, independent=False):
+def _hierarchy(*, changing_shape: Any = False, independent: Any = False) -> Any:
     transfer_id = "grid-5-to-3" if changing_shape else None
     coarse = phx.stochastic.StochasticLevelSpec(
         "coarse",
@@ -42,7 +45,7 @@ def _hierarchy(*, changing_shape=False, independent=False):
     )
 
 
-def _euler_level(level, realization, parent_result, transfer):
+def _euler_level(level: Any, realization: Any, parent_result: Any, transfer: Any) -> Any:
     del parent_result, transfer
     step = level.resolutions[0]
     times = jnp.arange(0.0, 1.0, step)
@@ -51,7 +54,7 @@ def _euler_level(level, realization, parent_result, transfer):
     return jnp.prod(factors, axis=-1)
 
 
-def test_coupled_hierarchy_reuses_paths_and_telescopes_exactly():
+def test_coupled_hierarchy_reuses_paths_and_telescopes_exactly() -> None:
     hierarchy = _hierarchy()
     realization = phx.stochastic.WienerRealization(
         jr.key(8),
@@ -84,7 +87,7 @@ def test_coupled_hierarchy_reuses_paths_and_telescopes_exactly():
     assert result.total_cost_seconds == 3.0
 
 
-def test_coupled_hierarchy_tracks_failed_pairs_without_repairing_them():
+def test_coupled_hierarchy_tracks_failed_pairs_without_repairing_them() -> None:
     hierarchy = _hierarchy()
     realization = phx.stochastic.WienerRealization(
         jr.key(9),
@@ -94,7 +97,7 @@ def test_coupled_hierarchy_tracks_failed_pairs_without_repairing_them():
         tolerance=1e-4,
     )
 
-    def solve(level, realization, parent_result, transfer):
+    def solve(level: Any, realization: Any, parent_result: Any, transfer: Any) -> Any:
         values = _euler_level(level, realization, parent_result, transfer)
         return values.at[2].set(jnp.nan) if level.refinement_index == 1 else values
 
@@ -113,7 +116,7 @@ def test_coupled_hierarchy_tracks_failed_pairs_without_repairing_them():
     assert not bool(result.successful[2])
 
 
-def test_coupled_hierarchy_resolves_declared_state_transfer():
+def test_coupled_hierarchy_resolves_declared_state_transfer() -> None:
     hierarchy = _hierarchy(changing_shape=True)
     transfer = phx.discretization.TensorGridStateTransfer(
         (5,),
@@ -122,7 +125,9 @@ def test_coupled_hierarchy_resolves_declared_state_transfer():
     )
     received = []
 
-    def solve(level, realization, parent_result, state_transfer):
+    def solve(
+        level: Any, realization: Any, parent_result: Any, state_transfer: Any
+    ) -> Any:
         del realization, parent_result
         received.append(state_transfer)
         return jnp.asarray(float(level.refinement_index))
@@ -139,7 +144,7 @@ def test_coupled_hierarchy_resolves_declared_state_transfer():
     assert result.levels[1].state_transfer_id == transfer.transfer_id
 
 
-def test_coupled_hierarchy_rejects_independent_level_noise():
+def test_coupled_hierarchy_rejects_independent_level_noise() -> None:
     hierarchy = _hierarchy(independent=True)
     with pytest.raises(ValueError, match="independent"):
         phx.solver.solve_coupled_hierarchy(

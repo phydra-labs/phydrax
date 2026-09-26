@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -7,7 +9,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _geometry():
+def _geometry() -> Any:
     prepared = phx.discretization.SurfelSetPlan(
         jnp.asarray((5,)),
         jnp.asarray(((0.0, 0.0, 0.0),)),
@@ -36,7 +38,7 @@ def test_surfel_footprint_query_gradient_is_finite() -> None:
     geometry = _geometry()
     plan = phx.discretization.SurfelFootprintPlan(3)
 
-    def objective(point):
+    def objective(point: Any) -> Any:
         result = plan.evaluate(
             geometry, point[None, :], jnp.asarray((0,), dtype=jnp.int32)
         )

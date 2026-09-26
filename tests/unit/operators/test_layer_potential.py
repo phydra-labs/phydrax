@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -10,7 +13,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _circle_panelization(*, panels=8, order=8):
+def _circle_panelization(*, panels: Any = 8, order: Any = 8) -> Any:
     geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
     return phx.operators.BoundaryPanelization2D(
         geometry.boundary_atlas,
@@ -20,11 +23,12 @@ def _circle_panelization(*, panels=8, order=8):
     )
 
 
-def _point_batch(domain, points):
+def _point_batch(domain: Any, points: Any) -> Any:
     layout = phx.domain.SampleLayout((("x",),)).canonicalize(domain.labels)
     axis_names = layout.axis_names
     assert axis_names is not None
     return phx.domain.PointBatch(
+        # ty: ignore[invalid-argument-type]
         {
             "x": cx.AxisArray(
                 jnp.asarray(points, dtype="float64").reshape((-1, 2)),
@@ -35,7 +39,7 @@ def _point_batch(domain, points):
     )
 
 
-def test_panelization_rejects_same_named_geometrically_distinct_support():
+def test_panelization_rejects_same_named_geometrically_distinct_support() -> None:
     source_geometry = phx.geometry.Circle(
         (0.0, 0.0),
         1.0,
@@ -61,7 +65,7 @@ def test_panelization_rejects_same_named_geometrically_distinct_support():
         )
 
 
-def test_panelization_measure_and_reports_separate_pde_from_accuracy():
+def test_panelization_measure_and_reports_separate_pde_from_accuracy() -> None:
     panelization = _circle_panelization()
     assert jnp.allclose(panelization.boundary_measure, 2.0 * jnp.pi, atol=2e-11)
     potential = phx.operators.LaplaceLayerPotential2D(
@@ -196,7 +200,7 @@ def test_panelization_measure_and_reports_separate_pde_from_accuracy():
     assert discretization.panelization_id == panelization.panelization_id
 
 
-def test_finite_layer_sum_is_harmonic_independently_of_quadrature_accuracy():
+def test_finite_layer_sum_is_harmonic_independently_of_quadrature_accuracy() -> None:
     panelization = _circle_panelization(panels=3, order=3)
     density = jnp.linspace(-0.7, 1.1, panelization.node_count)
     potential = phx.operators.LaplaceLayerPotential2D(
@@ -218,7 +222,7 @@ def test_finite_layer_sum_is_harmonic_independently_of_quadrature_accuracy():
     assert jnp.allclose(refined_residual, 0.0, atol=5e-10)
 
 
-def test_interior_circle_dirichlet_double_layer_recovers_constant_solution():
+def test_interior_circle_dirichlet_double_layer_recovers_constant_solution() -> None:
     panelization = _circle_panelization(panels=8, order=8)
     result = phx.solver.solve_interior_laplace_dirichlet_2d(
         panelization,

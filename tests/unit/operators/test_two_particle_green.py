@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -15,7 +18,7 @@ from phydrax.operators.quantum._two_particle_green import (
 )
 
 
-def _crossing_closed_green():
+def _crossing_closed_green() -> Any:
     convention = FermionicTwoParticleChannelConvention("particle-hole-direct")
     labels = jnp.arange(-2, 3, dtype=jnp.int32)
     route = convention.route(
@@ -34,7 +37,7 @@ def _crossing_closed_green():
     )
 
 
-def test_creation_annihilation_order_channel_routes_and_wraps_are_explicit():
+def test_creation_annihilation_order_channel_routes_and_wraps_are_explicit() -> None:
     direct = FermionicTwoParticleChannelConvention("particle-hole-direct")
     crossed = FermionicTwoParticleChannelConvention("particle-hole-crossed")
     pair = FermionicTwoParticleChannelConvention("particle-particle")
@@ -62,7 +65,7 @@ def test_creation_annihilation_order_channel_routes_and_wraps_are_explicit():
     np.testing.assert_array_equal(routing.wrapped_external_labels, [1, -1, 1, -1])
 
 
-def test_crossing_and_cyclic_rechanneling_preserve_the_same_four_external_legs():
+def test_crossing_and_cyclic_rechanneling_preserve_the_same_four_external_legs() -> None:
     green = _crossing_closed_green()
     evidence = fermionic_crossing_evidence(green)
 
@@ -82,7 +85,7 @@ def test_crossing_and_cyclic_rechanneling_preserve_the_same_four_external_legs()
     np.testing.assert_array_equal(round_trip.values, green.values)
 
 
-def test_two_particle_payload_is_rejected_before_oversized_allocation_contract():
+def test_two_particle_payload_is_rejected_before_oversized_allocation_contract() -> None:
     labels = jnp.arange(2)
     values = jnp.zeros((2, 2, 2, 1, 1, 1, 1))
     with pytest.raises(ValueError, match="maximum_elements"):

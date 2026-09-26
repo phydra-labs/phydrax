@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,9 @@ import phydrax as phx
 from phydrax.solver._kfac_layout import discover_parameter_layout
 
 
-def _layout(functions, *, exact_block_max_size=64, uncovered="error"):
+def _layout(
+    functions: Any, *, exact_block_max_size: Any = 64, uncovered: Any = "error"
+) -> Any:
     parameters, _, _ = phx.partition_parameters(functions)
     return discover_parameter_layout(
         functions,
@@ -22,7 +27,7 @@ def _layout(functions, *, exact_block_max_size=64, uncovered="error"):
     )
 
 
-def test_parameter_layout_discovers_ordinary_affine_bias_blocks():
+def test_parameter_layout_discovers_ordinary_affine_bias_blocks() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -42,7 +47,7 @@ def test_parameter_layout_discovers_ordinary_affine_bias_blocks():
     )
 
 
-def test_parameter_layout_discovers_learned_skip_projection():
+def test_parameter_layout_discovers_learned_skip_projection() -> None:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -62,7 +67,7 @@ def test_parameter_layout_discovers_learned_skip_projection():
     assert layout.uncovered_block is None
 
 
-def test_parameter_layout_excludes_geometry_and_uses_exact_uncovered_block():
+def test_parameter_layout_excludes_geometry_and_uses_exact_uncovered_block() -> None:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -85,7 +90,7 @@ def test_parameter_layout_excludes_geometry_and_uses_exact_uncovered_block():
     assert layout.uncovered_block.approximation == "exact"
 
 
-def test_parameter_layout_uses_explicit_diagonal_fallback_above_threshold():
+def test_parameter_layout_uses_explicit_diagonal_fallback_above_threshold() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -105,7 +110,7 @@ def test_parameter_layout_uses_explicit_diagonal_fallback_above_threshold():
     assert layout.uncovered_block.approximation == "diagonal"
 
 
-def test_parameter_layout_rejects_shared_affine_parameters():
+def test_parameter_layout_rejects_shared_affine_parameters() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=2,
@@ -124,7 +129,7 @@ def test_parameter_layout_rejects_shared_affine_parameters():
         _layout({"u": domain.Model("x")(model)})
 
 
-def test_parameter_layout_rejects_complex_uncovered_parameters():
+def test_parameter_layout_rejects_complex_uncovered_parameters() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -142,7 +147,7 @@ def test_parameter_layout_rejects_complex_uncovered_parameters():
         _layout(functions, exact_block_max_size=4)
 
 
-def test_parameter_layout_rejects_random_weight_factorization():
+def test_parameter_layout_rejects_random_weight_factorization() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -160,11 +165,11 @@ class _StatefulScale(phx.ParameterOwner, eqx.Module):
     scale: jax.Array
     calls: jax.Array = phx.model_state_field()
 
-    def __call__(self, x, **_kwargs):
+    def __call__(self, x: Any, **_kwargs: Any) -> Any:
         return self.scale * x[0]
 
 
-def test_parameter_layout_rejects_model_state():
+def test_parameter_layout_rejects_model_state() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     stateful = phx.domain.DomainFunction(
         domain=domain,

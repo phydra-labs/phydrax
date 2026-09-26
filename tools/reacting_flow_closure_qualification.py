@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -29,15 +30,15 @@ def _manifest(name: str) -> phx.qualification.ReferenceArtifactManifest:
     )
 
 
-def _zero_uncertainty(features):
+def _zero_uncertainty(features: Any) -> Any:
     return jnp.zeros(features.shape[:-1])
 
 
-def _extent_model(features):
+def _extent_model(features: Any) -> Any:
     return 1.0e-4 * jnp.ones(features.shape[:-1] + (1,))
 
 
-def build_low_mach_case():
+def build_low_mach_case() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (phx.equations.ChemicalPhaseKind.GAS,) * 2,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,7 +22,7 @@ from phydrax.discretization.finite_volume._unstructured import (
 from phydrax.discretization.finite_volume._unstructured_vof import UnstructuredVOFPlan
 
 
-def _grid(nx: int = 7, ny: int = 7, oversampling: int = 3):
+def _grid(nx: int = 7, ny: int = 7, oversampling: int = 3) -> Any:
     vertices = np.asarray(
         [(float(i), float(j)) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -38,7 +40,7 @@ def _grid(nx: int = 7, ny: int = 7, oversampling: int = 3):
     return discretization, gradient
 
 
-def _operator_and_plic(kind: str = "circle"):
+def _operator_and_plic(kind: str = "circle") -> Any:
     discretization, gradient = _grid(oversampling=8 if kind == "circle" else 3)
     vof = UnstructuredVOFPlan(discretization, gradient)
     centers = np.asarray(discretization.cell_centers)
@@ -60,7 +62,7 @@ def _operator_and_plic(kind: str = "circle"):
     return operator, plic, alpha
 
 
-def test_planar_zero_force_and_jittable_gradient():
+def test_planar_zero_force_and_jittable_gradient() -> None:
     operator, plic, alpha = _operator_and_plic("planar")
     evidence = operator.curvature(plic, alpha)
     assert jnp.all(
@@ -90,7 +92,7 @@ def test_planar_zero_force_and_jittable_gradient():
     )
 
 
-def test_circle_jump_budget_and_capillary_step():
+def test_circle_jump_budget_and_capillary_step() -> None:
     operator, plic, alpha = _operator_and_plic("circle")
     evidence = operator.curvature(plic, alpha)
     active_curvature = evidence.curvature[evidence.valid_mask]
@@ -108,7 +110,7 @@ def test_circle_jump_budget_and_capillary_step():
 
 
 @pytest.mark.parametrize("pure_alpha", (0.0, 1.0))
-def test_pure_phase_is_exact_zero_eager_and_filter_jit(pure_alpha):
+def test_pure_phase_is_exact_zero_eager_and_filter_jit(pure_alpha: Any) -> None:
     discretization, gradient = _grid()
     alpha = jnp.full((discretization.cell_count,), pure_alpha, dtype=jnp.float32)
     plic = UnstructuredVOFPlan(discretization, gradient).reconstruct(alpha)
@@ -145,7 +147,7 @@ def test_pure_phase_is_exact_zero_eager_and_filter_jit(pure_alpha):
     assert bool(jnp.isinf(compiled_limit))
 
 
-def test_active_uncertain_and_invalid_inputs_fail_closed():
+def test_active_uncertain_and_invalid_inputs_fail_closed() -> None:
     operator, plic, alpha = _operator_and_plic("circle")
     active_index = int(np.flatnonzero(np.asarray(plic.interface_active))[0])
     one_active = jnp.zeros_like(plic.interface_active).at[active_index].set(True)
@@ -170,7 +172,7 @@ def test_active_uncertain_and_invalid_inputs_fail_closed():
         SurfaceTensionPolicy(-1.0, 1.0, 0.5)
 
 
-def test_policy_identity_changes_with_policy_fields():
+def test_policy_identity_changes_with_policy_fields() -> None:
     first = SurfaceTensionPolicy(1.0, 1.0e-6, 0.5, "a")
     second = SurfaceTensionPolicy(1.1, 1.0e-6, 0.5, "a")
     third = SurfaceTensionPolicy(1.0, 1.0e-6, 0.5, "b")
@@ -178,7 +180,7 @@ def test_policy_identity_changes_with_policy_fields():
     assert first.policy_id != third.policy_id
 
 
-def test_geometry_identity_mismatch_is_rejected():
+def test_geometry_identity_mismatch_is_rejected() -> None:
     from types import SimpleNamespace
 
     operator, plic, alpha = _operator_and_plic("circle")

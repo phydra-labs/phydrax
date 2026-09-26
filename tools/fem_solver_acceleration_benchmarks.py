@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -10,7 +12,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _average_time(action, value, iterations=50):
+def _average_time(action: Any, value: Any, iterations: Any = 50) -> Any:
     compiled = eqx.filter_jit(action)
     compiled(value).block_until_ready()
     start = perf_counter()
@@ -19,7 +21,7 @@ def _average_time(action, value, iterations=50):
     return (perf_counter() - start) / iterations
 
 
-def run():
+def run() -> Any:
     points = 8
     derivative = jnp.asarray(
         [
@@ -58,7 +60,7 @@ def run():
     policy = phx.linalg.LinearSolvePolicy(phx.linalg.FGMRES(restart=2))
     rhs = dense.mv(jnp.asarray([2.0, 3.0]))
 
-    def guarded_solve(target):
+    def guarded_solve(target: Any) -> Any:
         return phx.linalg.solve(problem, target, policy=policy, initial_guess=history)
 
     guarded = guarded_solve(rhs)

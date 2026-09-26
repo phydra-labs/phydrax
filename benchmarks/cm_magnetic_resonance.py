@@ -16,7 +16,7 @@ from _runtime import capture_environment, logical_array_bytes, measure_repeated
 from phydrax.applications import magnetic_resonance as mr
 
 
-def _density(state):
+def _density(state: Any) -> Any:
     value = jnp.asarray(state, dtype="complex128")
     return jnp.outer(value, jnp.conj(value))
 

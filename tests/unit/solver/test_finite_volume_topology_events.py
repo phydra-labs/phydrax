@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from dataclasses import FrozenInstanceError
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -68,7 +70,7 @@ def _request(
     )
 
 
-def test_topology_event_requested_then_committed_publishes_one_epoch():
+def test_topology_event_requested_then_committed_publishes_one_epoch() -> None:
     initial = _epoch("initial")
     requested = FiniteVolumeTopologyEventJournal.allocate(
         initial, _artifacts(initial), capacity=3, time=0.0
@@ -101,7 +103,7 @@ def test_topology_event_requested_then_committed_publishes_one_epoch():
     assert requested.event(0) == pending_event
 
 
-def test_equal_topology_and_partition_retain_current_epoch():
+def test_equal_topology_and_partition_retain_current_epoch() -> None:
     initial = _epoch("initial")
     artifacts = _artifacts(initial)
     requested = FiniteVolumeTopologyEventJournal.allocate(
@@ -122,7 +124,7 @@ def test_equal_topology_and_partition_retain_current_epoch():
     assert committed.event(0).result_id == initial.epoch_id
 
 
-def test_topology_event_requested_then_failed_keeps_current_epoch():
+def test_topology_event_requested_then_failed_keeps_current_epoch() -> None:
     initial = _epoch("initial")
     requested = FiniteVolumeTopologyEventJournal(
         initial, _artifacts(initial), capacity=2
@@ -148,17 +150,19 @@ def test_topology_event_requested_then_failed_keeps_current_epoch():
     assert requested.event(0).state is TopologyEventState.REQUESTED
 
 
-def test_topology_event_schema_rejects_illegal_states_and_enum_values():
+def test_topology_event_schema_rejects_illegal_states_and_enum_values() -> None:
     initial = _epoch("initial")
     request = _request(initial)
     with pytest.raises(ValueError, match="valid TopologyEventKind"):
         FiniteVolumeTopologyEventRequest(
+            # ty: ignore[invalid-argument-type]
             99,
             initial.epoch_id,
             "requested-spec",
         )
     with pytest.raises(TypeError, match="must be TopologyEventKind"):
         FiniteVolumeTopologyEventRequest(
+            # ty: ignore[invalid-argument-type]
             True,
             initial.epoch_id,
             "requested-spec",
@@ -191,7 +195,7 @@ def test_topology_event_schema_rejects_illegal_states_and_enum_values():
         )
 
 
-def test_topology_event_journal_capacity_overflow_is_sticky_and_nonmutating():
+def test_topology_event_journal_capacity_overflow_is_sticky_and_nonmutating() -> None:
     initial = _epoch("initial")
     journal = FiniteVolumeTopologyEventJournal.allocate(
         initial, _artifacts(initial), capacity=1
@@ -211,7 +215,7 @@ def test_topology_event_journal_capacity_overflow_is_sticky_and_nonmutating():
     assert overflowed.journal_id != full.journal_id
 
 
-def test_topology_event_journal_accepts_one_simultaneous_pending_batch():
+def test_topology_event_journal_accepts_one_simultaneous_pending_batch() -> None:
     initial = _epoch("initial")
     journal = FiniteVolumeTopologyEventJournal.allocate(
         initial, _artifacts(initial), capacity=3
@@ -231,7 +235,7 @@ def test_topology_event_journal_accepts_one_simultaneous_pending_batch():
     assert requested.event(0).time == requested.event(1).time == 1.25
 
 
-def test_topology_event_journal_rejects_stale_and_parallel_requests():
+def test_topology_event_journal_rejects_stale_and_parallel_requests() -> None:
     initial = _epoch("initial")
     journal = FiniteVolumeTopologyEventJournal.allocate(
         initial, _artifacts(initial), capacity=3
@@ -252,7 +256,7 @@ def test_topology_event_journal_rejects_stale_and_parallel_requests():
     assert next_request.event(1).input_epoch_id == result.epoch_id
 
 
-def test_topology_event_sequence_steps_and_times_are_monotone():
+def test_topology_event_sequence_steps_and_times_are_monotone() -> None:
     initial = _epoch("initial")
     journal = FiniteVolumeTopologyEventJournal.allocate(
         initial, _artifacts(initial), capacity=3
@@ -273,7 +277,7 @@ def test_topology_event_sequence_steps_and_times_are_monotone():
         second.commit(2, missing, _artifacts(missing))
 
 
-def test_topology_content_identities_cover_all_static_content():
+def test_topology_content_identities_cover_all_static_content() -> None:
     initial = _epoch("initial")
     repeated = _epoch("initial")
     changed_geometry = TopologyEpoch(
@@ -457,7 +461,7 @@ def test_topology_content_identities_cover_all_static_content():
     assert len({event.event_id for event in event_variants}) == len(event_variants)
 
 
-def test_topology_event_journal_replay_reconstructs_exact_history():
+def test_topology_event_journal_replay_reconstructs_exact_history() -> None:
     initial = _epoch("initial")
     initial_artifacts = _artifacts(initial)
     failed = (
@@ -566,7 +570,7 @@ def test_topology_event_journal_replay_reconstructs_exact_history():
         )
 
 
-def test_topology_epoch_event_request_and_journal_are_immutable():
+def test_topology_epoch_event_request_and_journal_are_immutable() -> None:
     initial = _epoch("initial")
     request = _request(initial)
     event = FiniteVolumeTopologyEvent(
@@ -595,7 +599,7 @@ def test_topology_epoch_event_request_and_journal_are_immutable():
         journal.count = jnp.asarray(1)
 
 
-def test_topology_event_journal_numeric_storage_is_jit_safe_arrays():
+def test_topology_event_journal_numeric_storage_is_jit_safe_arrays() -> None:
     initial = _epoch("initial")
     journal = FiniteVolumeTopologyEventJournal.allocate(
         initial,
@@ -629,7 +633,7 @@ def test_topology_event_journal_numeric_storage_is_jit_safe_arrays():
     assert summary[4].dtype == jnp.float32
 
 
-def test_scheduler_builds_certified_remap_before_committing_event():
+def test_scheduler_builds_certified_remap_before_committing_event() -> None:
     source = phx.discretization.UnstructuredFiniteVolumePlan(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         quadrilaterals=np.asarray(((0, 1, 2, 3),), dtype=np.int32),
@@ -693,7 +697,7 @@ def test_scheduler_builds_certified_remap_before_committing_event():
         precision=precision,
     )
 
-    def transfer(content, remap):
+    def transfer(content: Any, remap: Any) -> Any:
         average = remap.apply(content.cell_average())
         return FiniteVolumeConservativeContentState(
             average * target.cell_volumes[:, None],
@@ -754,6 +758,7 @@ def test_scheduler_builds_certified_remap_before_committing_event():
     )
     compiled = phx.equations.compile_conservation_problem(problem, target, method)
     target_runtime = PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         compiled.dynamics,
         phx.discretization.FluxPositivityPlan(
             fallback_flux=phx.discretization.RusanovFluxPlan()

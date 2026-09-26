@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -9,7 +11,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _gravity(particles):
+def _gravity(particles: Any) -> Any:
     axes = tuple(
         phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(3)
     )
@@ -35,6 +37,7 @@ def _gravity(particles):
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -46,7 +49,13 @@ def _gravity(particles):
     return phx.solver.ParticleMeshGravityPlan(gravity, transfer)
 
 
-def _case(*, masses=None, active=None, cross_section=0.0, policy=None):
+def _case(
+    *,
+    masses: Any = None,
+    active: Any = None,
+    cross_section: Any = 0.0,
+    policy: Any = None,
+) -> Any:
     positions = jnp.asarray(
         [
             (0.25, 0.25, 0.25),
@@ -69,6 +78,7 @@ def _case(*, masses=None, active=None, cross_section=0.0, policy=None):
     ).prepare()
     gravity = _gravity(particles)
     kdk = cosmology.CosmologicalKDKPlan(particles, (1.0, 1.0, 1.0))
+    # ty: ignore[invalid-argument-type]
     pm = cosmology.CosmologicalParticleMeshPlan(kdk, gravity, (0.5, 0.55))
     box = phx.discretization.ParticleBox(
         jnp.zeros((3,)), jnp.ones((3,)), periodic_axes=(True, True, True)
@@ -119,7 +129,7 @@ def _case(*, masses=None, active=None, cross_section=0.0, policy=None):
     return sidm, pm, state, neighborhood
 
 
-def test_zero_cross_section_is_exactly_equivalent_to_particle_mesh():
+def test_zero_cross_section_is_exactly_equivalent_to_particle_mesh() -> None:
     sidm, pm, state, _ = _case(cross_section=0.0)
     expected = pm.rollout(cosmology.FLRWBackground(1.0, 0.3), state)
     actual = sidm.rollout(cosmology.FLRWBackground(1.0, 0.3), state, jr.key(17))
@@ -134,7 +144,7 @@ def test_zero_cross_section_is_exactly_equivalent_to_particle_mesh():
     assert not jnp.any(actual.diagnostics.second_half_collisions.accepted_pairs)
 
 
-def test_probability_evidence_has_explicit_a_time_and_kernel_scaling():
+def test_probability_evidence_has_explicit_a_time_and_kernel_scaling() -> None:
     sidm, _, state, _ = _case(cross_section=1.0e-4)
     short = sidm.collide(state, jr.key(2), 4, 0.01)
     long = sidm.collide(state, jr.key(2), 4, 0.02)
@@ -171,7 +181,7 @@ def test_probability_evidence_has_explicit_a_time_and_kernel_scaling():
     )
 
 
-def test_pair_events_are_reorder_stable_endpoint_disjoint_and_conservative():
+def test_pair_events_are_reorder_stable_endpoint_disjoint_and_conservative() -> None:
     sidm, pm, state, neighborhood = _case(cross_section=0.01)
     base = neighborhood.pair_relation
     permutation = jnp.arange(base.capacity - 1, -1, -1)
@@ -245,7 +255,7 @@ def test_pair_events_are_reorder_stable_endpoint_disjoint_and_conservative():
     assert first_ids == second_ids
 
 
-def test_inactive_particles_are_untouched_and_ignored_by_equal_mass_check():
+def test_inactive_particles_are_untouched_and_ignored_by_equal_mass_check() -> None:
     active = jnp.asarray((True, True, True, True, True, True, True, False))
     masses = jnp.asarray((0.125,) * 7 + (99.0,))
     sidm, _, initialized, _ = _case(masses=masses, active=active, cross_section=0.01)
@@ -266,7 +276,7 @@ def test_inactive_particles_are_untouched_and_ignored_by_equal_mass_check():
     )
 
 
-def test_probability_knudsen_mass_and_capacity_violations_roll_back_atomically():
+def test_probability_knudsen_mass_and_capacity_violations_roll_back_atomically() -> None:
     high_probability, _, state, _ = _case(cross_section=1.0)
     probability_failure = high_probability.collide(state, jr.key(8), 0, 100.0)
     assert not bool(probability_failure.diagnostics.probability_valid)

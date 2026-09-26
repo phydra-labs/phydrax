@@ -349,7 +349,10 @@ class PreparedPeriodicAlgebraicLES(StrictModule, NonTrainableState):
         dealiasing = self.closure_method.dealiasing
         evaluation = dealiasing.evaluation
         # Dealiasing keeps the tensor family of the periodic discretization.
-        assert isinstance(evaluation, TensorSpectralDiscretization)
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
         embedded = dealiasing.embed(live)
         gradient_modal = jnp.stack(
             tuple(evaluation.modal_derivative(embedded, axis=axis) for axis in range(3)),

@@ -8,14 +8,14 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_signal_namespace_is_public_and_old_resampling_export_is_removed():
+def test_signal_namespace_is_public_and_old_resampling_export_is_removed() -> None:
     assert "signal" in phx.__all__
     assert "fourier_resample" in phx.signal.__all__
     assert "DiscreteWaveletTransform" in phx.signal.__all__
     assert "spectral_resample" not in phx.nn.operator.architectures.__all__
 
 
-def test_signal_plans_are_fixed_but_carried_history_remains_differentiable():
+def test_signal_plans_are_fixed_but_carried_history_remains_differentiable() -> None:
     fir_plan = phx.signal.FIRFilterPlan(3)
     fir_parameters, _, _ = phx.partition_parameters(fir_plan)
     fir_state = fir_plan.initial_state((8,), dtype=jnp.float64)

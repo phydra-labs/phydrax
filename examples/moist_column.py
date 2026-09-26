@@ -17,7 +17,7 @@ import jax.numpy as jnp
 from phydrax.applications.atmosphere import MoistColumnPlan
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--steps", type=int, default=120)
     parser.add_argument("--dt", type=float, default=10.0)

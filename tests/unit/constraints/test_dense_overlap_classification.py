@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -21,7 +24,7 @@ from phydrax.terms._dense_classification import (
 )
 
 
-def test_overlap_kernels_match_weighted_sufficient_statistics():
+def test_overlap_kernels_match_weighted_sufficient_statistics() -> None:
     intersection = jnp.asarray([3.0, 2.0])
     prediction = jnp.asarray([5.0, 4.0])
     target = jnp.asarray([6.0, 3.0])
@@ -45,7 +48,7 @@ def test_overlap_kernels_match_weighted_sufficient_statistics():
     )
 
 
-def test_micro_macro_and_support_weighted_reductions_diverge():
+def test_micro_macro_and_support_weighted_reductions_diverge() -> None:
     intersection = jnp.asarray([[9.0, 1.0]])
     prediction = jnp.asarray([[10.0, 10.0]])
     target = jnp.asarray([[10.0, 2.0]])
@@ -74,7 +77,7 @@ def test_micro_macro_and_support_weighted_reductions_diverge():
     assert not jnp.allclose(micro, macro)
 
 
-def test_overlap_empty_policies_cover_both_empty_and_one_sided_empty():
+def test_overlap_empty_policies_cover_both_empty_and_one_sided_empty() -> None:
     zero = jnp.asarray([0.0])
     one = jnp.asarray([1.0])
 
@@ -100,7 +103,9 @@ def test_overlap_empty_policies_cover_both_empty_and_one_sided_empty():
     assert jnp.isnan(all_ignored)[0]
 
 
-def _multiclass_overlap_problem(*, soft=False, sample_weight=None, target_mask=None):
+def _multiclass_overlap_problem(
+    *, soft: Any = False, sample_weight: Any = None, target_mask: Any = None
+) -> Any:
     rows = jnp.asarray([0.0, 1.0])
     data = phx.domain.DatasetDomain(rows)
     domain = data @ phx.domain.Interval1d(0.0, 1.0)
@@ -109,7 +114,7 @@ def _multiclass_overlap_problem(*, soft=False, sample_weight=None, target_mask=N
     target = jax.nn.one_hot(hard, 3) if soft else hard
 
     @domain.Function("data", "x")
-    def logits(row, x):
+    def logits(row: Any, x: Any) -> Any:
         return jnp.stack((1.0 - x[0], row + x[0], x[0] - row))
 
     term = DenseOverlapClassificationTerm(
@@ -130,7 +135,7 @@ def _multiclass_overlap_problem(*, soft=False, sample_weight=None, target_mask=N
     return term, logits, nodes
 
 
-def test_dense_overlap_hard_gather_and_soft_targets_share_support_contract():
+def test_dense_overlap_hard_gather_and_soft_targets_share_support_contract() -> None:
     hard_term, logits, _ = _multiclass_overlap_problem()
     soft_term, _, _ = _multiclass_overlap_problem(soft=True)
     hard_score = hard_term.per_case_score({"u": logits}, hard_term.observed_batch())
@@ -154,7 +159,7 @@ def test_dense_overlap_hard_gather_and_soft_targets_share_support_contract():
     assert "one_hot" not in hard_jaxpr
 
 
-def test_dense_overlap_case_weights_follow_ratio_not_support_pooling():
+def test_dense_overlap_case_weights_follow_ratio_not_support_pooling() -> None:
     case_weight = jnp.asarray([1.0, 4.0])
     term, logits, _ = _multiclass_overlap_problem(sample_weight=case_weight)
     batch = term.observed_batch()
@@ -164,7 +169,7 @@ def test_dense_overlap_case_weights_follow_ratio_not_support_pooling():
     assert jnp.allclose(term.loss({"u": logits}, batch=batch), expected)
 
 
-def test_dense_overlap_masking_and_refinement_are_geometry_owned():
+def test_dense_overlap_masking_and_refinement_are_geometry_owned() -> None:
     mask = jnp.ones((2, 4), dtype="bool").at[:, 0].set(False)
     term, logits, _ = _multiclass_overlap_problem(target_mask=mask)
     score = term.per_case_score({"u": logits}, term.observed_batch())
@@ -176,11 +181,11 @@ def test_dense_overlap_masking_and_refinement_are_geometry_owned():
     domain = data @ phx.domain.Interval1d(0.0, 2.0)
 
     @domain.Function("data", "x")
-    def constant_logits(row, x):
+    def constant_logits(row: Any, x: Any) -> float:
         del row, x
         return 0.4
 
-    def refined_score(count):
+    def refined_score(count: Any) -> Any:
         refined = DenseOverlapClassificationTerm(
             "u",
             domain.component(),
@@ -198,7 +203,7 @@ def test_dense_overlap_masking_and_refinement_are_geometry_owned():
     assert jnp.allclose(refined_score(5), refined_score(17), rtol=1e-5)
 
 
-def test_dense_overlap_jit_gradient_and_ordinal_probabilities():
+def test_dense_overlap_jit_gradient_and_ordinal_probabilities() -> None:
     rows = jnp.asarray([0.0])
     data = phx.domain.DatasetDomain(rows)
     domain = data @ phx.domain.Interval1d(0.0, 1.0)
@@ -215,9 +220,9 @@ def test_dense_overlap_jit_gradient_and_ordinal_probabilities():
     )
     batch = binary.observed_batch()
 
-    def loss(scale):
+    def loss(scale: Any) -> Any:
         @domain.Function("data", "x")
-        def logits(row, x):
+        def logits(row: Any, x: Any) -> Any:
             del row
             return scale * (x[0] - 0.5)
 
@@ -239,7 +244,7 @@ def test_dense_overlap_jit_gradient_and_ordinal_probabilities():
     )
 
     @domain.Function("data", "x")
-    def location(row, x):
+    def location(row: Any, x: Any) -> Any:
         del row
         return x[0] - 0.5
 
@@ -248,7 +253,7 @@ def test_dense_overlap_jit_gradient_and_ordinal_probabilities():
     assert jnp.all(jnp.isfinite(ordinal_score))
 
 
-def test_overlap_config_is_final_json_safe_and_composes_as_separate_scalar_term():
+def test_overlap_config_is_final_json_safe_and_composes_as_separate_scalar_term() -> None:
     config = OverlapScoreConfig(
         "tversky", class_reduction="support_weighted", alpha=0.3, beta=0.7
     )

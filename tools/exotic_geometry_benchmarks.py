@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -15,7 +16,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _benchmark(function, argument, *, repeats):
+def _benchmark(function: Any, argument: Any, *, repeats: Any) -> Any:
     compiled = eqx.filter_jit(function)
     start = perf_counter()
     output = jax.block_until_ready(compiled(argument))
@@ -31,7 +32,7 @@ def _benchmark(function, argument, *, repeats):
     }
 
 
-def run_benchmarks(*, dimension=2, repeats=10):
+def run_benchmarks(*, dimension: Any = 2, repeats: Any = 10) -> Any:
     chart = phx.metrix.CoordinateChart(
         "exotic-benchmark",
         tuple([f"x{i}" for i in range(dimension)] + [f"y{i}" for i in range(dimension)]),
@@ -63,7 +64,7 @@ def run_benchmarks(*, dimension=2, repeats=10):
     g2_point = jnp.linspace(-0.3, 0.4, 7)
     g2_right = jnp.cos(jnp.arange(7, dtype="float64"))
 
-    def g2_validation(value):
+    def g2_validation(value: Any) -> Any:
         report = phx.metrix.validate_local_g2_structure(
             g2_bridge.local_structure(),
             value,
@@ -128,7 +129,7 @@ def run_benchmarks(*, dimension=2, repeats=10):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dimension", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=10)

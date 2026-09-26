@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -10,7 +13,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_predictive_storage_and_summary_precision_are_independent():
+def test_predictive_storage_and_summary_precision_are_independent() -> None:
     policy = phx.uq.PredictivePrecisionPolicy(
         storage_dtype="float32",
         summary_dtype="float64",
@@ -31,7 +34,9 @@ def test_predictive_storage_and_summary_precision_are_independent():
     assert predictive.precision_evidence.evidence_id
 
 
-def test_particle_state_statistics_and_decisions_use_distinct_dtypes(tmp_path):
+def test_particle_state_statistics_and_decisions_use_distinct_dtypes(
+    tmp_path: Any,
+) -> None:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[1.0], [2.0]]),

@@ -17,7 +17,7 @@ from phydrax.operators.quantum._electronic_transport import (
 )
 
 
-def test_nonorthogonal_retarded_embedding_is_causal_and_energy_shift_invariant():
+def test_nonorthogonal_retarded_embedding_is_causal_and_energy_shift_invariant() -> None:
     energy = 0.4 + 0.2j
     lead_onsite = -0.3
     coupling_h = jnp.asarray([[0.7 + 0.1j]])
@@ -39,7 +39,7 @@ def test_nonorthogonal_retarded_embedding_is_causal_and_energy_shift_invariant()
     assert jnp.allclose(shifted.broadening, original.broadening)
 
 
-def test_contact_currents_use_positive_into_region_and_signed_electron_charge():
+def test_contact_currents_use_positive_into_region_and_signed_electron_charge() -> None:
     energy = jnp.asarray(0.0 + 0.0j)
     surface = jnp.asarray([[-1.0j]])
     coupling = jnp.asarray([[1.0]])
@@ -72,7 +72,7 @@ def test_contact_currents_use_positive_into_region_and_signed_electron_charge():
     assert ELECTRONIC_TRANSPORT_CONVENTION.retarded_time_sign == -1
 
 
-def test_elastic_disorder_ensemble_retains_failed_realizations():
+def test_elastic_disorder_ensemble_retains_failed_realizations() -> None:
     plan = ElasticDisorderEnsemblePlan(
         ("clean", "positive", "negative"), jnp.asarray([0.5, 0.25, 0.25])
     )
@@ -89,7 +89,7 @@ def test_elastic_disorder_ensemble_retains_failed_realizations():
     assert result.effective_sample_size == pytest.approx(8.0 / 3.0)
 
 
-def test_fermionic_adapter_state_checks_car_causality_adjoint_and_conservation():
+def test_fermionic_adapter_state_checks_car_causality_adjoint_and_conservation() -> None:
     retarded = jnp.asarray([[[[0.0j]], [[0.0j]]], [[[1.0j]], [[0.0j]]]])
     advanced = jnp.swapaxes(jnp.swapaxes(retarded.conj(), -1, -2), 0, 1)
     spectral = retarded - advanced

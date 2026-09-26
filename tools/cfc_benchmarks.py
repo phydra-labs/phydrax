@@ -117,7 +117,7 @@ def _event_dataset(
     scan_valid = jnp.moveaxis(valid, 1, 0)
     scan_reset = jnp.moveaxis(reset, 1, 0)
 
-    def transition(state, event):
+    def transition(state: Any, event: Any) -> Any:
         values, interval, is_valid, is_reset = event
         entering = jnp.where(is_reset[:, None], 0.0, state)
         features = jnp.concatenate((values, entering), axis=-1)
@@ -165,7 +165,7 @@ def _build_model(
     /,
     *,
     key: Key[Array, ""],
-):
+) -> Any:
     cell_key, readout_key = jr.split(key)
     if architecture == "cfc":
         cell = phx.nn.layers.CfCCell(
@@ -222,7 +222,7 @@ def _matched_widths(*, cfc_width: int) -> tuple[dict[Architecture, int], int]:
     return widths, target
 
 
-def _model_batch(architecture: Architecture, data: EventDataset, /):
+def _model_batch(architecture: Architecture, data: EventDataset, /) -> Any:
     if architecture not in ("gru-dt", "lstm-dt"):
         return data.batch
     values = jnp.concatenate(
@@ -258,7 +258,7 @@ def _train_candidate(
     require_parameter_roles(model, context="_train_candidate")
     parameters, model_state, fixed = partition_parameters(model)
 
-    def objective(candidate):
+    def objective(candidate: Any) -> Any:
         current = combine_parameters(candidate, model_state, fixed)
         return _masked_mse(
             current,
@@ -271,7 +271,7 @@ def _train_candidate(
     optimizer_state = optimizer.init(parameters)
 
     @eqx.filter_jit
-    def train_step(current_parameters, current_state):
+    def train_step(current_parameters: Any, current_state: Any) -> Any:
         loss, gradient = eqx.filter_value_and_grad(objective)(current_parameters)
         updates, next_state = optimizer.update(
             gradient,
@@ -322,7 +322,7 @@ def _inference_evidence(
 ) -> dict[str, Any]:
     parameters, model_state, fixed = partition_parameters(model)
 
-    def predict(candidate):
+    def predict(candidate: Any) -> Any:
         return combine_parameters(candidate, model_state, fixed)(batch)
 
     jitted = jax.jit(predict)

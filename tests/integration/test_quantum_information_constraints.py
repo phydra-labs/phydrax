@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -9,17 +12,17 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_infidelity_residual_runs_through_functional_solver():
+def test_infidelity_residual_runs_through_functional_solver() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     target = time.Function()(jnp.asarray([1.0, 1.0], dtype="complex128") / jnp.sqrt(2.0))
 
     @time.Function("t")
-    def exact_state(t):
+    def exact_state(t: Any) -> Any:
         del t
         return target.func()
 
     @time.Function("t")
-    def orthogonal_state(t):
+    def orthogonal_state(t: Any) -> Any:
         del t
         return jnp.asarray([1.0, -1.0], dtype="complex128") / jnp.sqrt(2.0)
 

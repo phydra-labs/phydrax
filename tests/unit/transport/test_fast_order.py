@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ import phydrax.axes as cx
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-def test_fast_soft_sort_preserves_value_contract(dtype):
+def test_fast_soft_sort_preserves_value_contract(dtype: Any) -> None:
     values = jnp.asarray([3.0, -1.0, 2.0, 0.5, 4.0], dtype=dtype)
     result = phx.transport.fast_soft_sort(values, temperature=0.8)
 
@@ -27,7 +30,7 @@ def test_fast_soft_sort_preserves_value_contract(dtype):
     assert not jnp.array_equal(result, jnp.sort(values))
 
 
-def test_fast_soft_order_is_affine_and_permutation_equivariant():
+def test_fast_soft_order_is_affine_and_permutation_equivariant() -> None:
     values = jnp.asarray([2.0, -0.5, 4.0, 1.0, 0.2])
     permutation = jnp.asarray([3, 0, 4, 1, 2])
     sorted_values = phx.transport.fast_soft_sort(values, temperature=0.9)
@@ -67,7 +70,7 @@ def test_fast_soft_order_is_affine_and_permutation_equivariant():
     )
 
 
-def test_fast_soft_rank_is_zero_based_and_tie_symmetric():
+def test_fast_soft_rank_is_zero_based_and_tie_symmetric() -> None:
     values = jnp.asarray([3.0, 1.0, 1.0, 5.0, 2.0])
     ranks = phx.transport.fast_soft_rank(values, temperature=3.0)
     descending = phx.transport.fast_soft_rank(
@@ -85,7 +88,7 @@ def test_fast_soft_rank_is_zero_based_and_tie_symmetric():
     assert jnp.array_equal(jnp.argsort(ranks), jnp.argsort(values, stable=True))
 
 
-def test_fast_soft_order_handles_axes_fields_constants_and_singletons():
+def test_fast_soft_order_handles_axes_fields_constants_and_singletons() -> None:
     values = jnp.asarray([[3.0, 1.0, 2.0], [4.0, -1.0, 0.0]])
     field = cx.AxisArray(values, dims=("case", "sample"))
     named = phx.transport.fast_soft_sort(
@@ -113,12 +116,12 @@ def test_fast_soft_order_handles_axes_fields_constants_and_singletons():
     )
 
 
-def test_fast_soft_order_supports_jit_vmap_forward_and_reverse_ad():
+def test_fast_soft_order_supports_jit_vmap_forward_and_reverse_ad() -> None:
     values = jnp.asarray([-0.9, -0.2, 0.1, 0.8, 1.4])
     direction = jnp.asarray([0.2, -0.1, 0.4, -0.3, 0.5])
     coefficients = jnp.asarray([0.4, -0.7, 0.3, 0.8, -0.2])
 
-    def operation(candidate):
+    def operation(candidate: Any) -> Any:
         return phx.transport.fast_soft_sort(
             candidate,
             temperature=1.2,
@@ -159,7 +162,7 @@ def test_fast_soft_order_supports_jit_vmap_forward_and_reverse_ad():
     assert jnp.abs(rank_temperature_gradient) > 1e-6
 
 
-def test_fast_soft_rank_has_informative_gradients_for_nearby_values():
+def test_fast_soft_rank_has_informative_gradients_for_nearby_values() -> None:
     values = jnp.asarray([-0.2, -0.1, 0.0, 0.1, 0.2])
     jacobian = jax.jacfwd(
         lambda candidate: phx.transport.fast_soft_rank(
@@ -179,7 +182,7 @@ def test_fast_soft_rank_has_informative_gradients_for_nearby_values():
     assert jnp.any(jnp.abs(jacobian) > 1e-6)
 
 
-def test_fast_soft_order_temperature_controls_hard_approximation():
+def test_fast_soft_order_temperature_controls_hard_approximation() -> None:
     values = jnp.asarray([3.0, -1.0, 2.0, 0.5, 4.0])
     order = jnp.argsort(values, stable=True)
     hard_ranks = (
@@ -198,7 +201,7 @@ def test_fast_soft_order_temperature_controls_hard_approximation():
     )
 
 
-def test_fast_soft_order_rejects_invalid_inputs_eagerly_and_under_jit():
+def test_fast_soft_order_rejects_invalid_inputs_eagerly_and_under_jit() -> None:
     values = jnp.asarray([3.0, 1.0, 2.0])
 
     with pytest.raises(ValueError, match="at least one dimension"):

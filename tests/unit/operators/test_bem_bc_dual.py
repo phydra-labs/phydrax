@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -46,7 +48,7 @@ _ANISOTROPIC_OCTAHEDRON = (
 )
 
 
-def _bc_values_at_refined_centroids(dual):
+def _bc_values_at_refined_centroids(dual: Any) -> Any:
     refined = dual.barycentric_surface
     local_basis = np.asarray(dual.barycentric_rwg.centroid_basis)
     local_transform = np.asarray(dual.barycentric_transform)[
@@ -55,7 +57,7 @@ def _bc_values_at_refined_centroids(dual):
     return np.einsum("flv,fle->fev", local_basis, local_transform)
 
 
-def _oriented_refined_edge_flux_dofs(dual):
+def _oriented_refined_edge_flux_dofs(dual: Any) -> Any:
     refined = dual.barycentric_surface
     points = np.asarray(refined.vertices)
     triangles = np.asarray(refined.triangles)
@@ -91,7 +93,9 @@ def _oriented_refined_edge_flux_dofs(dual):
 
 
 @pytest.mark.parametrize("vertices, faces", (_TETRAHEDRON, _ANISOTROPIC_OCTAHEDRON))
-def test_bc_basis_on_barycentric_refinement_has_stable_rwg_duality(vertices, faces):
+def test_bc_basis_on_barycentric_refinement_has_stable_rwg_duality(
+    vertices: Any, faces: Any
+) -> None:
     primal = RWGSurfaceCurrentSpace3D(OrientedTriangleSurfaceComplex3D(vertices, faces))
     dual = prepare_buffa_christiansen_dual_3d(primal)
 
@@ -127,7 +131,7 @@ def test_bc_basis_on_barycentric_refinement_has_stable_rwg_duality(vertices, fac
     )
 
 
-def test_bc_dual_edge_flux_dofs_follow_coarse_edge_orientation():
+def test_bc_dual_edge_flux_dofs_follow_coarse_edge_orientation() -> None:
     primal = RWGSurfaceCurrentSpace3D(
         OrientedTriangleSurfaceComplex3D(*_ANISOTROPIC_OCTAHEDRON)
     )
@@ -183,7 +187,7 @@ def test_bc_dual_edge_flux_dofs_follow_coarse_edge_orientation():
     assert dual.evidence.barycentric_area_defect < 1e-12
 
 
-def test_bc_basis_obeys_surface_piola_map_under_anisotropic_scaling():
+def test_bc_basis_obeys_surface_piola_map_under_anisotropic_scaling() -> None:
     vertices, faces = _ANISOTROPIC_OCTAHEDRON
     affine = np.asarray(((3.2, 0.4, 0.0), (0.0, 0.45, 0.2), (0.1, 0.0, 1.7)))
     translation = np.asarray((0.3, -1.1, 0.7))
@@ -214,7 +218,7 @@ def test_bc_basis_obeys_surface_piola_map_under_anisotropic_scaling():
     )
 
 
-def test_bc_divergence_commutes_to_dual_vertex_dofs_on_anisotropic_mesh():
+def test_bc_divergence_commutes_to_dual_vertex_dofs_on_anisotropic_mesh() -> None:
     primal = RWGSurfaceCurrentSpace3D(
         OrientedTriangleSurfaceComplex3D(*_ANISOTROPIC_OCTAHEDRON)
     )
@@ -239,7 +243,7 @@ def test_bc_divergence_commutes_to_dual_vertex_dofs_on_anisotropic_mesh():
     np.testing.assert_allclose(integrated_divergence, expected, atol=1e-7)
 
 
-def test_bc_preparation_fails_closed_outside_condition_envelope():
+def test_bc_preparation_fails_closed_outside_condition_envelope() -> None:
     primal = RWGSurfaceCurrentSpace3D(OrientedTriangleSurfaceComplex3D(*_TETRAHEDRON))
     with pytest.raises(ValueError, match="finite and exceed one"):
         prepare_buffa_christiansen_dual_3d(primal, maximum_condition_number=np.inf)

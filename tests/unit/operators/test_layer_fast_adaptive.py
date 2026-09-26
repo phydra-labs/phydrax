@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -39,7 +41,7 @@ _VERTICES = jnp.asarray(
 _FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32)
 
 
-def _prepared():
+def _prepared() -> Any:
     policy = LaplaceSingleLayerDP0GalerkinPolicy3D(
         singular_order=3,
         near_ratio=1.0,
@@ -54,7 +56,7 @@ def _prepared():
     )
 
 
-def _epoch():
+def _epoch() -> Any:
     metadata = SurfaceMetadata(
         source_id="unit-tetrahedron",
         source_revision="1",
@@ -71,7 +73,9 @@ def _epoch():
     return BoundaryMeshEpoch(surface)
 
 
-def test_fused_block_forward_transpose_and_per_column_status_match_serial(tmp_path):
+def test_fused_block_forward_transpose_and_per_column_status_match_serial(
+    tmp_path: Any,
+) -> None:
     prepared = _prepared()
     action = FusedBlockedBEMAction3D(prepared, 3)
     right_hand_sides = jnp.asarray(
@@ -131,7 +135,7 @@ def test_fused_block_forward_transpose_and_per_column_status_match_serial(tmp_pa
     )
 
 
-def test_exact_near_local_blocks_and_diagonal_match_prepared_operator():
+def test_exact_near_local_blocks_and_diagonal_match_prepared_operator() -> None:
     prepared = _prepared()
     provider = LaplaceDP0ExactNearProvider3D(prepared, max_block_entries=32)
     dense = prepared.dense_oracle.matrix
@@ -151,7 +155,7 @@ def test_exact_near_local_blocks_and_diagonal_match_prepared_operator():
     assert not diagonal.envelope.continuum_certified
 
 
-def test_unsupported_3d_fast_capabilities_fail_closed():
+def test_unsupported_3d_fast_capabilities_fail_closed() -> None:
     with pytest.raises(BEMFastCapabilityError, match="No catalogued 3D fast provider"):
         boundary_fast_provider_capabilities("fmm-3d", ambient_dimension=3)
     with pytest.raises(BEMFastCapabilityError, match="not an accelerator"):
@@ -168,7 +172,9 @@ def test_unsupported_3d_fast_capabilities_fail_closed():
     assert not capabilities.exact_transpose
 
 
-def test_deterministic_refinement_transfer_conserves_charge_and_invalidates_epoch():
+def test_deterministic_refinement_transfer_conserves_charge_and_invalidates_epoch() -> (
+    None
+):
     epoch = _epoch()
     policy = BoundaryRefinementPolicy(
         strategy="dorfler",

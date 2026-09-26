@@ -25,6 +25,7 @@ from ..._differentiation import (
 from ..._model import ValuePort
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -449,8 +450,7 @@ def _validate_common(
         raise ValueError("class_prior must be positive and sum to one.")
     if classes is not None and values and len(values) != classes:
         raise ValueError("class_prior must align with num_classes.")
-    if policy not in {"none", "statistical", "measure", "product"}:
-        raise ValueError("Unsupported weight policy.")
+    policy = parse(policy, WeightPolicy, "policy")
     return classes, values, policy
 
 

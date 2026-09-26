@@ -27,7 +27,7 @@ class DirectCollocationQualificationSetup:
     reference_objective: float | None = None
 
 
-def _mesh(case_id: str, intervals: int = 4):
+def _mesh(case_id: str, intervals: int = 4) -> Any:
     return phx.discretization.TemporalMesh.uniform(
         0.0,
         1.0,
@@ -37,7 +37,7 @@ def _mesh(case_id: str, intervals: int = 4):
     )
 
 
-def _plan(case_id: str, *, variable_duration=False):
+def _plan(case_id: str, *, variable_duration: Any = False) -> Any:
     return phx.control.DirectCollocationPlan(
         _mesh(case_id),
         method=phx.solver.ThetaMethod(0.5, endpoint=False),
@@ -51,7 +51,7 @@ def _plan(case_id: str, *, variable_duration=False):
     )
 
 
-def _fixed_integrator():
+def _fixed_integrator() -> Any:
     case_id = "fixed-integrator"
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: control,
@@ -83,7 +83,7 @@ def _fixed_integrator():
     )
 
 
-def _variable_integrator():
+def _variable_integrator() -> Any:
     case_id = "variable-duration-integrator"
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: control,
@@ -120,7 +120,7 @@ def _variable_integrator():
     )
 
 
-def _controlled_dae():
+def _controlled_dae() -> Any:
     case_id = "controlled-semi-explicit-dae"
     input_layout = phx.dynamics.InputLayout((1,), roles="control")
     system = phx.dynamics.DifferentialAlgebraicSystem(
@@ -159,7 +159,7 @@ def _controlled_dae():
     )
 
 
-def _active_path_constraint():
+def _active_path_constraint() -> Any:
     case_id = "active-path-inequality"
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: control,
@@ -199,7 +199,7 @@ def _active_path_constraint():
     )
 
 
-def _shared_parameter():
+def _shared_parameter() -> Any:
     case_id = "shared-parameter-cases"
     space = phx.linalg.ArraySpace((1,), dtype=jnp.float64)
     system = phx.dynamics.ContinuousSystem(
@@ -250,7 +250,7 @@ def _shared_parameter():
     )
 
 
-def _stiff_dae():
+def _stiff_dae() -> Any:
     case_id = "stiff-controlled-dae"
     system = phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, control, args: jnp.asarray(
@@ -287,7 +287,7 @@ def _stiff_dae():
     )
 
 
-def _unstable_system():
+def _unstable_system() -> Any:
     case_id = "open-loop-unstable"
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: state + control,
@@ -320,7 +320,7 @@ def _unstable_system():
     )
 
 
-def _nonholonomic_constraint():
+def _nonholonomic_constraint() -> Any:
     case_id = "nonholonomic-constraint"
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: control,

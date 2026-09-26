@@ -35,7 +35,7 @@ _HOST_COMPILATION_REASON = (
 )
 
 
-def _law_means(flow):
+def _law_means(flow: Any) -> Any:
     return jax.vmap(lambda time: flow.snapshot(time).mean)(flow.times)
 
 
@@ -49,7 +49,7 @@ def _flow(
     scenario_index: int,
     particle_count: int,
     time_count: int,
-):
+) -> Any:
     times = jnp.linspace(0.0, 1.0, time_count)
     particle_weights = jnp.linspace(1.0, 2.0, particle_count)
     offsets = _centered_offsets(particle_count, particle_weights)
@@ -73,7 +73,7 @@ def _flow(
     )
 
 
-def _frozen_response(flow, args):
+def _frozen_response(flow: Any, args: Any) -> Any:
     del args
     paths = phx.stochastic.BSDEPathBatch(
         flow.times,
@@ -121,7 +121,7 @@ def _frozen_response(flow, args):
     )
 
 
-def _induce_toward(response, target: float):
+def _induce_toward(response: Any, target: float) -> Any:
     current = response.mean_field
     induced_means = target + 0.5 * (_law_means(current) - target)
     particle_weights = current.weights[:, 0]
@@ -138,26 +138,26 @@ def _induce_toward(response, target: float):
     )
 
 
-def _induced_flow(response, target):
+def _induced_flow(response: Any, target: Any) -> Any:
     return _induce_toward(response, float(target))
 
 
-def _conditional_frozen_response(flow, history, args):
+def _conditional_frozen_response(flow: Any, history: Any, args: Any) -> Any:
     del history
     return _frozen_response(flow, args)
 
 
-def _conditional_induced_flow(response, history, args):
+def _conditional_induced_flow(response: Any, history: Any, args: Any) -> Any:
     del args
     return _induce_toward(response, float(history))
 
 
-def _law_distance(current, induced, args):
+def _law_distance(current: Any, induced: Any, args: Any) -> Any:
     del args
     return jnp.max(jnp.abs(_law_means(current) - _law_means(induced)))
 
 
-def _conditional_law_distance(current, induced, history, args):
+def _conditional_law_distance(current: Any, induced: Any, history: Any, args: Any) -> Any:
     del history
     return _law_distance(current, induced, args)
 
@@ -167,7 +167,7 @@ def _build_unconditional(
     particle_count: int,
     time_count: int,
     outer_iterations: int,
-):
+) -> Any:
     flow = _flow(name, 0, particle_count, time_count)
     problem_id = f"{name}:unconditional-fixed-point"
     problem = phx.control.games.MeanFieldGameFixedPointProblem(
@@ -204,7 +204,7 @@ def _build_conditional(
     time_count: int,
     outer_iterations: int,
     common_scenario_count: int,
-):
+) -> Any:
     flows = tuple(
         _flow(name, scenario, particle_count, time_count)
         for scenario in range(common_scenario_count)
@@ -270,7 +270,7 @@ def _compiler_record() -> dict[str, Any]:
     }
 
 
-def _array_inputs(problem, plan):
+def _array_inputs(problem: Any, plan: Any) -> Any:
     if isinstance(problem, CommonNoiseMeanFieldProblem):
         flows = problem.initial_conditional_flows
         return (
@@ -287,7 +287,7 @@ def _array_inputs(problem, plan):
     )
 
 
-def _result_evidence(result, conditional: bool) -> dict[str, Any]:
+def _result_evidence(result: Any, conditional: bool) -> dict[str, Any]:
     iterations = int(result.iterations)
     if conditional:
         distance_history = result.distance_history[:iterations]
@@ -443,7 +443,7 @@ def _case(
     }
 
 
-def _specifications():
+def _specifications() -> Any:
     return (
         ("baseline", 16, 8, 4, 1),
         ("particles-64", 64, 8, 4, 1),

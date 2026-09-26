@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def test_parameter_bounds_and_superquadric_conditions_are_executable():
+def test_parameter_bounds_and_superquadric_conditions_are_executable() -> None:
     sphere = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         1.0,
@@ -46,7 +49,7 @@ def test_parameter_bounds_and_superquadric_conditions_are_executable():
     assert not bool(superquadric.validity(invalid_orientation).accepted)
 
 
-def test_geometry_validity_is_jittable_and_keeps_fixed_evidence_shape():
+def test_geometry_validity_is_jittable_and_keeps_fixed_evidence_shape() -> None:
     compiled = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         1.0,
@@ -54,7 +57,7 @@ def test_geometry_validity_is_jittable_and_keeps_fixed_evidence_shape():
     ).compile()
     radius = compiled.schema.index(phx.geometry.ParameterId("body", "radius"))
 
-    def evaluate(value):
+    def evaluate(value: Any) -> Any:
         state = compiled.state.replace_at(radius, value)
         evidence = compiled.validity(state)
         return evidence.accepted, evidence.margins
@@ -68,7 +71,7 @@ def test_geometry_validity_is_jittable_and_keeps_fixed_evidence_shape():
     assert jnp.all(jnp.isfinite(margins))
 
 
-def test_live_topology_classifications_reject_invalid_design_states():
+def test_live_topology_classifications_reject_invalid_design_states() -> None:
     polygon = phx.geometry.Polygon(
         ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
         feature_id="polygon",
@@ -146,7 +149,7 @@ def test_live_topology_classifications_reject_invalid_design_states():
     )
 
 
-def test_geometry_wrappers_implement_every_advertised_capability():
+def test_geometry_wrappers_implement_every_advertised_capability() -> None:
     sphere = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0, feature_id="capability-sphere")
     translated_sphere = sphere.translated((1.0, 0.0, 0.0)).compile()
     curvature = translated_sphere.contact_curvature(jnp.asarray(((2.0, 0.0, 0.0),)))

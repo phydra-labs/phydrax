@@ -6,6 +6,8 @@ This proves the numerical bridge only. No biological parameter corpus is bundled
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -32,7 +34,7 @@ from phydrax.atomistic import AtomisticSystemPlan, AtomisticUnitSystem
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def numerical_model(size, loop, method, tolerance):
+def numerical_model(size: Any, loop: Any, method: Any, tolerance: Any) -> Any:
     units = AtomisticUnitSystem.reduced()
     ids = np.arange(3 * size, dtype=np.int64) * 17 + 100
     positions = jnp.asarray(
@@ -103,8 +105,8 @@ def numerical_model(size, loop, method, tolerance):
     return term, positions
 
 
-def compile_execution(term, positions):
-    def scalar(q):
+def compile_execution(term: Any, positions: Any) -> Any:
+    def scalar(q: Any) -> Any:
         result = term.evaluate(q)
         if term.exact is None:
             diagnostics = result.inference.inference.diagnostics
@@ -135,7 +137,7 @@ def compile_execution(term, positions):
     return executable, compilation, evidence
 
 
-def run_case(size, loop, tolerances, repeats):
+def run_case(size: Any, loop: Any, tolerances: Any, repeats: Any) -> Any:
     reference, positions = numerical_model(size, loop, "exact", 1e-12)
     executable, compilation, memory = compile_execution(reference, positions)
     exact, timings = measure_repeated(
@@ -198,7 +200,7 @@ def run_case(size, loop, tolerances, repeats):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sizes", nargs="+", type=int, default=[3, 6, 9])
     parser.add_argument("--tolerances", nargs="+", type=float, default=[1e-5, 1e-9])

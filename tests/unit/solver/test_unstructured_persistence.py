@@ -2,11 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 import json
 import zipfile
 from importlib import import_module
 from importlib.util import find_spec
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +17,7 @@ import pytest
 import phydrax as phx
 
 
-def _unstructured_runtime():
+def _unstructured_runtime() -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0),
@@ -56,7 +58,9 @@ def _unstructured_runtime():
         problem, discretization, method
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
-        dynamics, phx.discretization.FluxPositivityPlan()
+        # ty: ignore[invalid-argument-type]
+        dynamics,
+        phx.discretization.FluxPositivityPlan(),
     )
     primitive = jnp.broadcast_to(
         jnp.asarray((1.0, 0.1, -0.05, 1.0)), discretization.state_shape
@@ -75,7 +79,7 @@ def _unstructured_runtime():
     return plan, discretization, runtime, runtime_state, case
 
 
-def _moving_sliding_runtime():
+def _moving_sliding_runtime() -> Any:
     system = phx.equations.EulerSystem(2)
     vertices = np.asarray([(i / 2.0, j / 2.0) for j in range(3) for i in range(3)])
     cells = np.asarray(
@@ -126,7 +130,7 @@ def _moving_sliding_runtime():
         receptor_face_cells=face_cells,
     )
 
-    def translation(time, points, args):
+    def translation(time: Any, points: Any, args: Any) -> Any:
         del args
         return points.at[:, 0].add(0.2 * time)
 
@@ -149,7 +153,7 @@ def _moving_sliding_runtime():
         topology_event_policy="accepted_step",
     )
 
-    def wall_velocity(time, points, normals, args):
+    def wall_velocity(time: Any, points: Any, normals: Any, args: Any) -> Any:
         del time, points, normals, args
         return jnp.asarray((0.2, 0.0))
 
@@ -180,6 +184,7 @@ def _moving_sliding_runtime():
         coupling=coupling,
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
     )
@@ -199,7 +204,7 @@ def _moving_sliding_runtime():
     return discretization, runtime, initial
 
 
-def test_unstructured_mesh_archive_preserves_stable_identity(tmp_path):
+def test_unstructured_mesh_archive_preserves_stable_identity(tmp_path: Any) -> None:
     plan, _, _, _, _ = _unstructured_runtime()
     path = tmp_path / "mesh.fvmesh"
     phx.discretization.write_unstructured_fv_archive(
@@ -224,7 +229,9 @@ def test_unstructured_mesh_archive_preserves_stable_identity(tmp_path):
         )
 
 
-def test_unstructured_case_loader_checkpoint_and_mesh_compatibility(tmp_path):
+def test_unstructured_case_loader_checkpoint_and_mesh_compatibility(
+    tmp_path: Any,
+) -> None:
     plan, _, _, state, _ = _unstructured_runtime()
     mesh_path = tmp_path / "mesh.fvmesh"
     phx.discretization.write_unstructured_fv_archive(mesh_path, plan)
@@ -259,37 +266,47 @@ def test_unstructured_case_loader_checkpoint_and_mesh_compatibility(tmp_path):
     phx.solver.write_finite_volume_checkpoint(checkpoint_path, checkpoint_plan, state)
     restored = phx.solver.read_finite_volume_checkpoint(checkpoint_path, checkpoint_plan)
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.content_state.conservative_content,
         state.content_state.conservative_content,
     )
     np.testing.assert_array_equal(
-        restored.runtime_state.cell_average(), state.cell_average()
+        # ty: ignore[unresolved-attribute]
+        restored.runtime_state.cell_average(),
+        state.cell_average(),
     )
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.content_state.effective_cell_volumes,
         state.content_state.effective_cell_volumes,
     )
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.content_state.active_cell_mask,
         state.content_state.active_cell_mask,
     )
     assert (
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.content_state.topology_epoch_id
         == state.content_state.topology_epoch_id
     )
     assert (
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.content_state.geometry_layout_id
         == state.content_state.geometry_layout_id
     )
     assert (
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.content_state.geometry_version
         == state.content_state.geometry_version
     )
     assert (
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.content_state.evidence_policy_id
         == state.content_state.evidence_policy_id
     )
     assert (
+        # ty: ignore[unresolved-attribute]
         restored.runtime_state.content_state.evidence_version
         == state.content_state.evidence_version
     )
@@ -310,7 +327,9 @@ def test_unstructured_case_loader_checkpoint_and_mesh_compatibility(tmp_path):
         )
 
 
-def test_unstructured_hdf5_xdmf_and_vtk_outputs_are_self_describing(tmp_path):
+def test_unstructured_hdf5_xdmf_and_vtk_outputs_are_self_describing(
+    tmp_path: Any,
+) -> None:
     _, discretization, _, state, _ = _unstructured_runtime()
     output = phx.solver.FiniteVolumeOutputPlan(tmp_path / "solution.h5", discretization)
     if find_spec("h5py") is None:
@@ -375,7 +394,9 @@ def test_unstructured_hdf5_xdmf_and_vtk_outputs_are_self_describing(tmp_path):
         )
 
 
-def test_sliding_checkpoint_preserves_successor_identity_and_advance(tmp_path):
+def test_sliding_checkpoint_preserves_successor_identity_and_advance(
+    tmp_path: Any,
+) -> None:
     discretization, runtime, initial = _moving_sliding_runtime()
     accepted = runtime.advance(initial, {"sliding_shift": 0.2})
     assert bool(np.asarray(accepted.accepted))
@@ -407,8 +428,11 @@ def test_sliding_checkpoint_preserves_successor_identity_and_advance(tmp_path):
         checkpoint_plan,
     ).runtime_state
 
+    # ty: ignore[unresolved-attribute]
     assert restored.sliding_event_id == state.sliding_event_id
+    # ty: ignore[unresolved-attribute]
     assert restored.sliding_coupling_id == state.sliding_coupling_id
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(restored.sliding_shift, state.sliding_shift)
     for name in (
         "left_routes",
@@ -418,6 +442,7 @@ def test_sliding_checkpoint_preserves_successor_identity_and_advance(tmp_path):
         "right_measures",
     ):
         np.testing.assert_array_equal(
+            # ty: ignore[unresolved-attribute]
             getattr(restored.sliding_coupling, name),
             getattr(state.sliding_coupling, name),
         )
@@ -438,7 +463,7 @@ def test_sliding_checkpoint_preserves_successor_identity_and_advance(tmp_path):
     )
 
 
-def test_ale_outputs_use_accepted_points_and_reject_stale_geometry(tmp_path):
+def test_ale_outputs_use_accepted_points_and_reject_stale_geometry(tmp_path: Any) -> None:
     h5py = pytest.importorskip("h5py")
     meshio = import_module("meshio")
     discretization, runtime, initial = _moving_sliding_runtime()
@@ -504,7 +529,7 @@ def test_ale_outputs_use_accepted_points_and_reject_stale_geometry(tmp_path):
     np.testing.assert_array_equal(vtk.points[:, : moved_points.shape[1]], moved_points)
 
 
-def test_unstructured_snapshot_rejects_shallow_water_views(tmp_path):
+def test_unstructured_snapshot_rejects_shallow_water_views(tmp_path: Any) -> None:
     pytest.importorskip("h5py")
     _, discretization, _, state, _ = _unstructured_runtime()
     output = phx.solver.FiniteVolumeOutputPlan(tmp_path / "solution.h5", discretization)

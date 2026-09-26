@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import math
@@ -140,7 +142,7 @@ def performance_workload_id(
     )
 
 
-def _compiler_resource_record(compiled) -> dict[str, object]:
+def _compiler_resource_record(compiled: Any) -> dict[str, object]:
     unavailable_reason = None
     try:
         cost = compiled.cost_analysis()

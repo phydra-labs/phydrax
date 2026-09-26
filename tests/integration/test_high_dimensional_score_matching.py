@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -14,12 +16,12 @@ from phydrax.terms._score_matching import (
 class _LinearTimeScore(eqx.Module):
     coefficient: jnp.ndarray = phx.parameter_field()
 
-    def __call__(self, state, time):
+    def __call__(self, state: Any, time: Any) -> Any:
         del time
         return self.coefficient * state
 
 
-def test_dimension_100_ornstein_uhlenbeck_score_improves_over_zero_field():
+def test_dimension_100_ornstein_uhlenbeck_score_improves_over_zero_field() -> None:
     dimension = 100
     time = 1.0
     variance = 1.0 - jnp.exp(-2.0 * time)

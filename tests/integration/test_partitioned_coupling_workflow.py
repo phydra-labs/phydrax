@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -10,7 +13,7 @@ import phydrax as phx
 cpl = phx.solver.coupling
 
 
-def test_three_participant_cycle_solves_and_rolls_out_with_certified_residuals():
+def test_three_participant_cycle_solves_and_rolls_out_with_certified_residuals() -> None:
     space = phx.linalg.ArraySpace((1,), dtype=jnp.float64, space_id="three-way-interface")
     capabilities = cpl.CouplingSubsystemCapabilities(
         jit=True,
@@ -19,7 +22,7 @@ def test_three_participant_cycle_solves_and_rolls_out_with_certified_residuals()
         fixed_topology=True,
     )
 
-    def participant(name, forcing):
+    def participant(name: Any, forcing: Any) -> Any:
         input_port = cpl.CouplingPort(
             f"{name}-input", "input", space, reference_scale=4.0
         )
@@ -27,7 +30,7 @@ def test_three_participant_cycle_solves_and_rolls_out_with_certified_residuals()
             f"{name}-output", "output", space, reference_scale=4.0
         )
 
-        def advance(window, state, inputs, args):
+        def advance(window: Any, state: Any, inputs: Any, args: Any) -> Any:
             del window, state, args
             value = 0.25 * inputs[0] + forcing
             return cpl.CouplingSubsystemResult(

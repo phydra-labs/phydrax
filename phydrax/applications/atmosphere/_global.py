@@ -673,7 +673,10 @@ class PreparedGlobalAtmosphere(StrictModule):
         else:
             thermodynamics = self.plan.processes.thermodynamics
             # GlobalAtmosphereProcesses admits surface physics only with thermodynamics.
-            assert thermodynamics is not None
+            if not (thermodynamics is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: thermodynamics is not None."
+                )
             surface_admissible = jnp.all(
                 surface_physics.admissible(
                     state.surface_water, state.surface_energy, thermodynamics
@@ -868,7 +871,10 @@ class PreparedGlobalAtmosphere(StrictModule):
         def correct(_: None) -> tuple[GlobalAtmosphereState, Array]:
             thermodynamics = self.plan.processes.thermodynamics
             # Conservative limiting is admitted only with moist thermodynamics.
-            assert thermodynamics is not None
+            if not (thermodynamics is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: thermodynamics is not None."
+                )
             before = self.view(state)
             replaced = eqx.tree_at(lambda value: value.water, state, water)
             after = self.view(replaced)

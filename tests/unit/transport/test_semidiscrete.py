@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +16,14 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _finite(points, weights, *, normalized=True, mask=None, provenance="atoms"):
+def _finite(
+    points: Any,
+    weights: Any,
+    *,
+    normalized: Any = True,
+    mask: Any = None,
+    provenance: Any = "atoms",
+) -> Any:
     return phx.integration.discrete(
         jnp.asarray(points, dtype="float64"),
         cx.AxisArray(jnp.asarray(weights, dtype="float64"), dims=("atom",)),
@@ -29,16 +39,16 @@ def _finite(points, weights, *, normalized=True, mask=None, provenance="atoms"):
 
 
 def _uniform_problem(
-    support,
-    weights,
+    support: Any,
+    weights: Any,
     *,
-    order=32,
-    normalized=True,
-    lower=0.0,
-    upper=1.0,
-    mask=None,
-    log_density=None,
-):
+    order: Any = 32,
+    normalized: Any = True,
+    lower: Any = 0.0,
+    upper: Any = 1.0,
+    mask: Any = None,
+    log_density: Any = None,
+) -> Any:
     domain = phx.domain.ScalarInterval(lower, upper, label="x")
     base = phx.integration.over(domain.component())
     log_density = (
@@ -70,7 +80,7 @@ def _uniform_problem(
     )
 
 
-def _solver(*, tolerance=1e-9, iterations=200):
+def _solver(*, tolerance: Any = 1e-9, iterations: Any = 200) -> Any:
     return phx.transport.SemidiscreteSinkhorn(
         0.08,
         tolerance=tolerance,
@@ -80,7 +90,7 @@ def _solver(*, tolerance=1e-9, iterations=200):
     )
 
 
-def test_uniform_density_to_one_atom_matches_analytic_cost_and_is_approximate():
+def test_uniform_density_to_one_atom_matches_analytic_cost_and_is_approximate() -> None:
     problem = _uniform_problem([0.5], [1.0], order=12)
     result = _solver()(problem)
 
@@ -94,7 +104,7 @@ def test_uniform_density_to_one_atom_matches_analytic_cost_and_is_approximate():
     assert result.integration_status == int(phx.integration.IntegrationStatus.CONVERGED)
 
 
-def test_two_atom_uniform_solution_is_symmetric_and_exposes_soft_c_transform():
+def test_two_atom_uniform_solution_is_symmetric_and_exposes_soft_c_transform() -> None:
     result = _solver()(_uniform_problem([0.25, 0.75], [0.5, 0.5], order=48))
 
     assert result.converged
@@ -105,7 +115,7 @@ def test_two_atom_uniform_solution_is_symmetric_and_exposes_soft_c_transform():
     assert jnp.allclose(transformed[0], transformed[2], atol=1e-10)
 
 
-def test_quadrature_refinement_changes_only_declared_integration_approximation():
+def test_quadrature_refinement_changes_only_declared_integration_approximation() -> None:
     solver = _solver(tolerance=1e-10, iterations=300)
     low = solver(_uniform_problem([0.2, 0.8], [0.3, 0.7], order=3))
     medium = solver(_uniform_problem([0.2, 0.8], [0.3, 0.7], order=8))
@@ -120,7 +130,7 @@ def test_quadrature_refinement_changes_only_declared_integration_approximation()
     )
 
 
-def test_normalized_and_unnormalized_density_preserve_physical_mass():
+def test_normalized_and_unnormalized_density_preserve_physical_mass() -> None:
     normalized = _solver()(_uniform_problem([0.5], [1.0], normalized=True))
     physical = _solver()(
         _uniform_problem(
@@ -138,7 +148,7 @@ def test_normalized_and_unnormalized_density_preserve_physical_mass():
     assert jnp.allclose(physical.transport_cost, 2.0 * (7.0 / 12.0), atol=1e-9)
 
 
-def test_fixed_random_batch_has_common_random_number_replay_semantics():
+def test_fixed_random_batch_has_common_random_number_replay_semantics() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     source = phx.integration.normalized_density(
         phx.integration.over(domain.component()),
@@ -165,7 +175,7 @@ def test_fixed_random_batch_has_common_random_number_replay_semantics():
     assert first.provenance.deterministic_replay
 
 
-def test_failed_density_integration_is_not_reported_as_transport_convergence():
+def test_failed_density_integration_is_not_reported_as_transport_convergence() -> None:
     problem = _uniform_problem(
         [0.5],
         [1.0],
@@ -186,7 +196,7 @@ def test_failed_density_integration_is_not_reported_as_transport_convergence():
     assert not result.converged
 
 
-def test_mass_mismatch_is_distinct_from_integration_failure():
+def test_mass_mismatch_is_distinct_from_integration_failure() -> None:
     problem = _uniform_problem(
         [0.5],
         [3.0],
@@ -201,7 +211,7 @@ def test_mass_mismatch_is_distinct_from_integration_failure():
     assert not result.converged
 
 
-def test_transport_nonconvergence_does_not_overwrite_successful_integration():
+def test_transport_nonconvergence_does_not_overwrite_successful_integration() -> None:
     result = phx.transport.SemidiscreteSinkhorn(
         0.08,
         max_iterations=1,
@@ -215,11 +225,11 @@ def test_transport_nonconvergence_does_not_overwrite_successful_integration():
     assert not result.converged
 
 
-def test_support_gradient_is_finite_symmetric_and_jittable():
+def test_support_gradient_is_finite_symmetric_and_jittable() -> None:
     problem = _uniform_problem([0.2, 0.8], [0.5, 0.5], order=32)
     solver = _solver(iterations=100)
 
-    def objective(support):
+    def objective(support: Any) -> Any:
         return solver(problem.with_target_support(support)).regularized_cost
 
     gradient = eqx.filter_jit(jax.grad(objective))(problem.target_support)
@@ -227,7 +237,7 @@ def test_support_gradient_is_finite_symmetric_and_jittable():
     assert jnp.allclose(gradient[0], -gradient[1], atol=1e-8)
 
 
-def test_quantizer_composes_bounded_parameterization_without_clipping():
+def test_quantizer_composes_bounded_parameterization_without_clipping() -> None:
     problem = _uniform_problem([0.2, 0.8], [0.5, 0.5], order=24)
     quantizer = phx.transport.SemidiscreteQuantizer(
         _solver(tolerance=1e-7, iterations=120),
@@ -247,7 +257,7 @@ def test_quantizer_composes_bounded_parameterization_without_clipping():
     )
 
 
-def test_quantizer_rejects_nonconverged_transport_as_a_training_objective():
+def test_quantizer_rejects_nonconverged_transport_as_a_training_objective() -> None:
     problem = _uniform_problem([0.1, 0.9], [0.2, 0.8], order=16)
     quantizer = phx.transport.SemidiscreteQuantizer(
         phx.transport.SemidiscreteSinkhorn(
@@ -264,7 +274,8 @@ def test_quantizer_rejects_nonconverged_transport_as_a_training_objective():
         jax.block_until_ready(value)
 
 
-def test_masks_and_event_shape_survive_semidiscrete_solve():
+def test_masks_and_event_shape_survive_semidiscrete_solve() -> None:
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle([0.0, 0.0], [1.0, 1.0], label="x")
     source = phx.integration.normalized_density(
         phx.integration.over(domain.component()),
@@ -295,7 +306,7 @@ def test_masks_and_event_shape_survive_semidiscrete_solve():
     assert result.target_marginal[-1] == 0.0
 
 
-def test_solver_batches_over_support_while_sharing_one_realization():
+def test_solver_batches_over_support_while_sharing_one_realization() -> None:
     problem = _uniform_problem([0.25, 0.75], [0.5, 0.5], order=24)
     supports = jnp.asarray([[0.2, 0.8], [0.3, 0.7]])
     solver = _solver(tolerance=1e-7, iterations=100)
@@ -311,7 +322,7 @@ def test_solver_batches_over_support_while_sharing_one_realization():
     assert jnp.all(statuses == int(phx.transport.TransportStatus.CONVERGED))
 
 
-def test_public_semidiscrete_catalog_is_intentional_and_complete():
+def test_public_semidiscrete_catalog_is_intentional_and_complete() -> None:
     expected = {
         "SemidiscreteIntegrationDiagnostics",
         "SemidiscreteProblemProvenance",

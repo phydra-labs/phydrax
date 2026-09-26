@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,16 +14,16 @@ import phydrax as phx
 
 
 def _compiled(
-    dimension=2,
+    dimension: Any = 2,
     *,
-    particle_count=4,
-    points=12,
-    periodic=True,
-    boundary=None,
-    clamp_x=False,
-    external_acceleration=None,
-    external_acceleration_id=None,
-):
+    particle_count: Any = 4,
+    points: Any = 12,
+    periodic: Any = True,
+    boundary: Any = None,
+    clamp_x: Any = False,
+    external_acceleration: Any = None,
+    external_acceleration_id: Any = None,
+) -> Any:
     axis = tuple(
         phx.discretization.UniformAxisSpec(
             points,
@@ -86,7 +88,7 @@ def _compiled(
     return compiled, arguments
 
 
-def _positions(dimension):
+def _positions(dimension: Any) -> Any:
     base = jnp.asarray(
         [
             [0.28, 0.31, 0.35],
@@ -98,7 +100,7 @@ def _positions(dimension):
     return base[:, :dimension]
 
 
-def test_constant_translation_crosses_grid_without_force_or_state_loss():
+def test_constant_translation_crosses_grid_without_force_or_state_loss() -> None:
     compiled, arguments = _compiled()
     position = _positions(2).at[0, 0].set(0.999)
     velocity = jnp.broadcast_to(jnp.asarray((0.2, -0.05)), position.shape)
@@ -137,7 +139,7 @@ def test_constant_translation_crosses_grid_without_force_or_state_loss():
     assert int(detail.accepted_state.accepted_step) == 1
 
 
-def test_nonperiodic_apic_transfer_certifies_angular_momentum():
+def test_nonperiodic_apic_transfer_certifies_angular_momentum() -> None:
     compiled, arguments = _compiled(periodic=False)
     position = _positions(2)
     velocity = jnp.broadcast_to(jnp.asarray((0.08, -0.03)), position.shape)
@@ -154,7 +156,7 @@ def test_nonperiodic_apic_transfer_certifies_angular_momentum():
     assert detail.diagnostics.transfer.relative_angular_momentum_defect < 1e-10
 
 
-def test_prescribed_grid_velocity_reports_impulse_and_work():
+def test_prescribed_grid_velocity_reports_impulse_and_work() -> None:
     compiled, arguments = _compiled(clamp_x=True)
     position = _positions(2)
     velocity = jnp.broadcast_to(jnp.asarray((0.1, 0.0)), position.shape)
@@ -174,8 +176,8 @@ def test_prescribed_grid_velocity_reports_impulse_and_work():
     assert detail.diagnostics.energy.grid_kinetic_after == 0.0
 
 
-def test_external_acceleration_updates_momentum_and_work():
-    def acceleration(time, position, velocity, args):
+def test_external_acceleration_updates_momentum_and_work() -> None:
+    def acceleration(time: Any, position: Any, velocity: Any, args: Any) -> Any:
         del time, velocity, args
         return jnp.broadcast_to(jnp.asarray((0.0, -0.2)), position.shape)
 
@@ -202,7 +204,7 @@ def test_external_acceleration_updates_momentum_and_work():
     assert detail.diagnostics.energy.external_work > 0.0
 
 
-def test_apic_affine_field_reproduces_velocity_gradient_and_deformation():
+def test_apic_affine_field_reproduces_velocity_gradient_and_deformation() -> None:
     compiled, arguments = _compiled()
     position = _positions(2)
     affine = jnp.asarray([[0.04, -0.02], [0.03, -0.01]])
@@ -236,7 +238,7 @@ def test_apic_affine_field_reproduces_velocity_gradient_and_deformation():
     assert detail.diagnostics.transfer.maximum_apic_condition <= 1.0 + 1e-10
 
 
-def test_oversized_step_rejects_without_mutating_accepted_particle_state():
+def test_oversized_step_rejects_without_mutating_accepted_particle_state() -> None:
     compiled, arguments = _compiled()
     state = compiled.initialize_state(
         _positions(2),
@@ -263,7 +265,7 @@ def test_oversized_step_rejects_without_mutating_accepted_particle_state():
         np.testing.assert_array_equal(accepted, initial)
 
 
-def test_particle_support_domain_rejection_is_transactional():
+def test_particle_support_domain_rejection_is_transactional() -> None:
     compiled, arguments = _compiled(periodic=False)
     state = compiled.initialize_state(
         _positions(2),
@@ -300,7 +302,7 @@ def test_particle_support_domain_rejection_is_transactional():
     )
 
 
-def test_three_dimensional_step_is_finite_and_conservative():
+def test_three_dimensional_step_is_finite_and_conservative() -> None:
     compiled, arguments = _compiled(3, points=10)
     position = _positions(3)
     velocity = jnp.broadcast_to(jnp.asarray((0.04, -0.02, 0.03)), position.shape)

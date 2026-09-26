@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,7 +24,7 @@ from phydrax.solver._fem_multirate import (
 )
 
 
-def test_conservation_imex_commits_converged_implicit_stage():
+def test_conservation_imex_commits_converged_implicit_stage() -> None:
     tableau = AdditiveIMEXTableau(
         jnp.asarray(((0.0,),)),
         jnp.asarray(((1.0,),)),
@@ -29,7 +32,7 @@ def test_conservation_imex_commits_converged_implicit_stage():
         jnp.asarray((1.0,)),
     )
 
-    def implicit_solver(provisional, time, coefficient, args):
+    def implicit_solver(provisional: Any, time: Any, coefficient: Any, args: Any) -> Any:
         del time, args
         state = provisional / (1.0 + 10.0 * coefficient)
         return ImplicitConservationStageResult(
@@ -46,19 +49,26 @@ def test_conservation_imex_commits_converged_implicit_stage():
         implicit_solver,
         method_id="linear-imex",
     )
+    # ty: ignore[invalid-argument-type]
     result = method.step(0.0, jnp.asarray((1.0,)), 0.1)
     assert result.successful
     np.testing.assert_allclose(result.accepted_state, (0.45,), atol=2.0e-12)
     assert result.implicit_iterations == 1
 
 
-def test_conservation_imex_calls_custom_validator_and_retains_rejected_input():
+def test_conservation_imex_calls_custom_validator_and_retains_rejected_input() -> None:
+    # ty: ignore[invalid-argument-type]
     tableau = AdditiveIMEXTableau([[0.0]], [[1.0]], [1.0], [1.0])
 
-    def solve(provisional, time, coefficient, args):
+    def solve(provisional: Any, time: Any, coefficient: Any, args: Any) -> Any:
         del time, args
         return ImplicitConservationStageResult(
-            provisional / (1.0 + coefficient), True, 1, jnp.asarray(0.0)
+            provisional / (1.0 + coefficient),
+            # ty: ignore[invalid-argument-type]
+            True,
+            # ty: ignore[invalid-argument-type]
+            1,
+            jnp.asarray(0.0),
         )
 
     method = ConservationIMEXMethod(
@@ -70,7 +80,9 @@ def test_conservation_imex_calls_custom_validator_and_retains_rejected_input():
         method_id="validator-regression",
     )
     step = eqx.filter_jit(method.step)
+    # ty: ignore[invalid-argument-type]
     accepted = step(0.0, jnp.asarray([1.0]), 0.1)
+    # ty: ignore[invalid-argument-type]
     rejected = step(0.0, jnp.asarray([0.5]), 0.1)
     assert accepted.successful
     np.testing.assert_allclose(accepted.accepted_state, [1.0 / 1.1])
@@ -84,30 +96,38 @@ def test_conservation_imex_calls_custom_validator_and_retains_rejected_input():
             method.explicit_rhs,
             method.implicit_rhs,
             solve,
+            # ty: ignore[invalid-argument-type]
             validator=False,
             method_id="invalid-validator",
         )
 
 
-def test_zero_implicit_diagonal_and_zero_step_preserve_tableau_and_derivatives():
+def test_zero_implicit_diagonal_and_zero_step_preserve_tableau_and_derivatives() -> None:
     tableau = AdditiveIMEXTableau(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0], [1.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0], [0.5, 0.5]],
+        # ty: ignore[invalid-argument-type]
         [0.5, 0.5],
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0],
     )
 
-    def solve(provisional, time, coefficient, args):
+    def solve(provisional: Any, time: Any, coefficient: Any, args: Any) -> Any:
         del time, args
         # A diagonal solver need not be defined for an explicit stage.
         return jnp.where(
             coefficient != 0.0, provisional / (1.0 + 2.0 * coefficient), jnp.nan
         )
 
-    def solve_with_evidence(provisional, time, coefficient, args):
+    def solve_with_evidence(
+        provisional: Any, time: Any, coefficient: Any, args: Any
+    ) -> Any:
         return ImplicitConservationStageResult(
             solve(provisional, time, coefficient, args),
             coefficient != 0.0,
+            # ty: ignore[invalid-argument-type]
             1,
             jnp.asarray(0.0),
         )
@@ -119,15 +139,17 @@ def test_zero_implicit_diagonal_and_zero_step_preserve_tableau_and_derivatives()
         solve_with_evidence,
         method_id="explicit-first-imex",
     )
+    # ty: ignore[invalid-argument-type]
     result = eqx.filter_jit(method.step)(0.0, jnp.asarray(1.0), 0.1)
     expected = 1.0 - 0.15 * (1.0 + 0.8 / 1.1)
     assert result.successful
     assert result.implicit_iterations == 1
     np.testing.assert_allclose(result.accepted_state, expected, atol=1e-12)
 
-    def tableau_step(state, step):
+    def tableau_step(state: Any, step: Any) -> Any:
         return tableau.step(
             state,
+            # ty: ignore[invalid-argument-type]
             0.0,
             step,
             lambda state, time, args: -state,
@@ -135,7 +157,8 @@ def test_zero_implicit_diagonal_and_zero_step_preserve_tableau_and_derivatives()
             implicit_rhs=lambda state, time, args: -2.0 * state,
         )
 
-    def method_step(state, step):
+    def method_step(state: Any, step: Any) -> Any:
+        # ty: ignore[invalid-argument-type]
         return method.step(0.0, state, step).accepted_state
 
     for advance in (tableau_step, method_step):
@@ -144,21 +167,24 @@ def test_zero_implicit_diagonal_and_zero_step_preserve_tableau_and_derivatives()
         np.testing.assert_array_equal(jax.jit(advance)(2.0, 0.0), 2.0)
         np.testing.assert_allclose(jax.grad(advance, argnums=0)(2.0, 0.0), 1.0)
         np.testing.assert_allclose(jax.grad(advance, argnums=1)(2.0, 0.0), -6.0)
+    # ty: ignore[invalid-argument-type]
     zero = method.step(0.0, jnp.asarray(2.0), 0.0)
     assert zero.successful
     assert zero.implicit_iterations == 0
     np.testing.assert_array_equal(zero.maximum_implicit_residual, 0.0)
 
 
-def test_complex_imex_reports_real_residual_and_retains_failed_solve_evidence():
+def test_complex_imex_reports_real_residual_and_retains_failed_solve_evidence() -> None:
+    # ty: ignore[invalid-argument-type]
     tableau = AdditiveIMEXTableau([[0.0]], [[1.0]], [1.0], [1.0])
     rate = 2.0 + 3.0j
 
-    def solve(provisional, time, coefficient, converged):
+    def solve(provisional: Any, time: Any, coefficient: Any, converged: Any) -> Any:
         del time
         state = provisional / (1.0 + rate * coefficient)
         state = state + jnp.where(converged, 0.0, 0.01j)
         residual = jnp.max(jnp.abs(state - provisional + coefficient * rate * state))
+        # ty: ignore[invalid-argument-type]
         return ImplicitConservationStageResult(state, converged, 3, residual)
 
     method = ConservationIMEXMethod(
@@ -170,7 +196,9 @@ def test_complex_imex_reports_real_residual_and_retains_failed_solve_evidence():
     )
     state = jnp.asarray([1.0 + 2.0j, -0.5j])
     step = eqx.filter_jit(method.step)
+    # ty: ignore[invalid-argument-type]
     accepted = step(0.0, state, 0.1, jnp.asarray(True))
+    # ty: ignore[invalid-argument-type]
     rejected = step(0.0, state, 0.1, jnp.asarray(False))
     assert accepted.successful
     np.testing.assert_allclose(accepted.accepted_state, state / (1.0 + 0.1 * rate))
@@ -182,16 +210,20 @@ def test_complex_imex_reports_real_residual_and_retains_failed_solve_evidence():
     np.testing.assert_array_equal(rejected.accepted_state, state)
 
 
-def test_real_initial_imex_state_promotes_for_complex_evolution():
+def test_real_initial_imex_state_promotes_for_complex_evolution() -> None:
+    # ty: ignore[invalid-argument-type]
     tableau = AdditiveIMEXTableau([[0.0]], [[1.0]], [1.0], [1.0])
 
-    def solve(provisional, time, coefficient, args):
+    def solve(provisional: Any, time: Any, coefficient: Any, args: Any) -> Any:
         del time, args
         return provisional / (1.0 + 1j * coefficient)
 
-    def solve_with_evidence(provisional, time, coefficient, args):
+    def solve_with_evidence(
+        provisional: Any, time: Any, coefficient: Any, args: Any
+    ) -> Any:
         state = solve(provisional, time, coefficient, args)
         residual = jnp.max(jnp.abs(state - provisional + 1j * coefficient * state))
+        # ty: ignore[invalid-argument-type]
         return ImplicitConservationStageResult(state, True, 1, residual)
 
     method = ConservationIMEXMethod(
@@ -202,9 +234,10 @@ def test_real_initial_imex_state_promotes_for_complex_evolution():
         method_id="real-initial-complex-evolution",
     )
 
-    def tableau_step(state, step):
+    def tableau_step(state: Any, step: Any) -> Any:
         return tableau.step(
             state,
+            # ty: ignore[invalid-argument-type]
             0.0,
             step,
             lambda state, time, args: jnp.zeros_like(state),
@@ -212,7 +245,8 @@ def test_real_initial_imex_state_promotes_for_complex_evolution():
             implicit_rhs=lambda state, time, args: -1j * state,
         )
 
-    def method_step(state, step):
+    def method_step(state: Any, step: Any) -> Any:
+        # ty: ignore[invalid-argument-type]
         return method.step(0.0, state, step).accepted_state
 
     initial = jnp.asarray([1.0])
@@ -229,7 +263,7 @@ def test_real_initial_imex_state_promotes_for_complex_evolution():
         np.testing.assert_allclose(jax.grad(imaginary_response)(0.0), -1.0)
 
 
-def test_element_block_preconditioner_uses_local_implicit_jacobians():
+def test_element_block_preconditioner_uses_local_implicit_jacobians() -> None:
     state = jnp.asarray(((1.0,), (2.0,)))
     preconditioner = prepare_element_block_preconditioner(
         state,
@@ -242,7 +276,7 @@ def test_element_block_preconditioner_uses_local_implicit_jacobians():
     np.testing.assert_allclose(preconditioner.apply(residual), ((1.0,), (2.0,)))
 
 
-def test_local_time_slab_accumulates_one_equal_opposite_flux():
+def test_local_time_slab_accumulates_one_equal_opposite_flux() -> None:
     trace_plan = DGMultirateTracePlan(jnp.asarray(((0, 1),)), history_depth=2)
     plan = ConservativeLocalTimeStepPlan(
         jnp.asarray((0, 1), dtype=jnp.int32), 0.2, trace_plan

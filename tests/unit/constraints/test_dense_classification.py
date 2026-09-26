@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +17,9 @@ from phydrax.ml._classification import ClassificationObjective
 from phydrax.terms._dense_classification import DenseSiteClassificationTerm
 
 
-def _binary_problem(*, target_mask=None, sample_weight=None, where=None):
+def _binary_problem(
+    *, target_mask: Any = None, sample_weight: Any = None, where: Any = None
+) -> Any:
     cases = jnp.asarray([-1.0, 0.5, 1.5])
     data = phx.domain.DatasetDomain(cases)
     domain = data @ phx.domain.Interval1d(0.0, 1.0)
@@ -24,7 +29,7 @@ def _binary_problem(*, target_mask=None, sample_weight=None, where=None):
     targets = (logits >= 0.75).astype(jnp.int32)
 
     @domain.Function("data", "x")
-    def field(row, x):
+    def field(row: Any, x: Any) -> Any:
         return row + x[0]
 
     term = DenseSiteClassificationTerm(
@@ -44,7 +49,7 @@ def _binary_problem(*, target_mask=None, sample_weight=None, where=None):
     return term, field, logits, targets
 
 
-def test_dense_site_named_axes_and_exact_binary_nll():
+def test_dense_site_named_axes_and_exact_binary_nll() -> None:
     term, field, logits, targets = _binary_problem()
     batch = term.observed_batch(key=jr.key(1))
     per_case = term.per_case_loss({"u": field}, batch)
@@ -56,7 +61,7 @@ def test_dense_site_named_axes_and_exact_binary_nll():
     assert jnp.allclose(per_case, expected)
 
 
-def test_dense_masks_sanitize_poisoned_targets_before_geometry_weighting():
+def test_dense_masks_sanitize_poisoned_targets_before_geometry_weighting() -> None:
     target_mask = jnp.ones((3, 5), dtype="bool").at[:, 0].set(False)
     term, field, logits, targets = _binary_problem(
         target_mask=target_mask,
@@ -72,7 +77,7 @@ def test_dense_masks_sanitize_poisoned_targets_before_geometry_weighting():
     assert jnp.allclose(per_case, jnp.mean(pointwise[:, active], axis=1))
 
 
-def test_dense_case_weights_are_separate_from_support_reduction():
+def test_dense_case_weights_are_separate_from_support_reduction() -> None:
     case_weight = jnp.asarray([1.0, 2.0, 5.0])
     term, field, _, _ = _binary_problem(sample_weight=case_weight)
     batch = term.observed_batch()
@@ -84,7 +89,7 @@ def test_dense_case_weights_are_separate_from_support_reduction():
     )
 
 
-def test_dense_hard_soft_and_multilabel_target_shapes():
+def test_dense_hard_soft_and_multilabel_target_shapes() -> None:
     rows = jnp.asarray([0.0, 1.0])
     data = phx.domain.DatasetDomain(rows)
     domain = data @ phx.domain.Interval1d(0.0, 1.0)
@@ -97,7 +102,7 @@ def test_dense_hard_soft_and_multilabel_target_shapes():
     soft = jax.nn.one_hot(hard, 3) * 0.8 + 0.2 / 3.0
 
     @domain.Function("data", "x")
-    def categorical(row, x):
+    def categorical(row: Any, x: Any) -> Any:
         return jnp.stack((row - x[0], x[0], 1.0 - row + x[0]))
 
     schema = phx.ml.TargetSchema("multiclass", class_labels=("a", "b", "c"))
@@ -137,13 +142,13 @@ def test_dense_hard_soft_and_multilabel_target_shapes():
     ).shape == (2,)
 
 
-def test_dense_ordinal_active_invalid_label_remains_infinite():
+def test_dense_ordinal_active_invalid_label_remains_infinite() -> None:
     rows = jnp.asarray([0.0, 1.0])
     data = phx.domain.DatasetDomain(rows)
     domain = data @ phx.domain.Interval1d(0.0, 1.0)
 
     @domain.Function("data", "x")
-    def location(row, x):
+    def location(row: Any, x: Any) -> Any:
         return row + x[0]
 
     term = DenseSiteClassificationTerm(
@@ -163,11 +168,11 @@ def test_dense_ordinal_active_invalid_label_remains_infinite():
     assert jnp.isinf(per_case[1])
 
 
-def test_dense_integral_refinement_and_jit_gradient():
+def test_dense_integral_refinement_and_jit_gradient() -> None:
     data = phx.domain.DatasetDomain(jnp.asarray([0.0]))
     domain = data @ phx.domain.Interval1d(0.0, 2.0)
 
-    def make_term(count):
+    def make_term(count: Any) -> Any:
         return DenseSiteClassificationTerm(
             "u",
             domain.component(),
@@ -180,9 +185,9 @@ def test_dense_integral_refinement_and_jit_gradient():
             site_reduction="integral",
         )
 
-    def evaluate(scale, term, batch):
+    def evaluate(scale: Any, term: Any, batch: Any) -> Any:
         @domain.Function("data", "x")
-        def field(row, x):
+        def field(row: Any, x: Any) -> Any:
             del row, x
             return scale
 
@@ -199,7 +204,7 @@ def test_dense_integral_refinement_and_jit_gradient():
     assert jnp.isfinite(gradient)
 
 
-def test_dense_rejects_resampled_site_coordinates_and_shape_mismatch():
+def test_dense_rejects_resampled_site_coordinates_and_shape_mismatch() -> None:
     data = phx.domain.DatasetDomain(jnp.asarray([0.0, 1.0]))
     component = (data @ phx.domain.Interval1d(0.0, 1.0)).component()
     schema = phx.ml.TargetSchema("binary", class_labels=(0, 1))
@@ -227,7 +232,7 @@ def test_dense_rejects_resampled_site_coordinates_and_shape_mismatch():
         )
 
 
-def test_dense_classification_composes_with_physics_residual_in_solver():
+def test_dense_classification_composes_with_physics_residual_in_solver() -> None:
     term, field, _, _ = _binary_problem()
     residual = phx.conditions.Residual("u", term.component, lambda candidate: candidate)
     residual_term = phx.terms.ResidualPenalty(
@@ -249,22 +254,22 @@ def test_dense_classification_composes_with_physics_residual_in_solver():
     assert jnp.isfinite(solver.loss(key=jr.key(12)))
 
 
-def test_dense_zero_weight_skips_nonfinite_predictions():
+def test_dense_zero_weight_skips_nonfinite_predictions() -> None:
     term, _, _, _ = _binary_problem()
     disabled = eqx.tree_at(lambda value: value.weight, term, jnp.asarray(0.0))
 
     @term.component.domain.Function("data", "x")
-    def poisoned(row, x):
+    def poisoned(row: Any, x: Any) -> Any:
         return row + x[0] + jnp.nan
 
     assert disabled.loss({"u": poisoned}, batch=disabled.observed_batch()) == 0.0
 
 
-def test_dense_active_nonfinite_logits_propagate_to_the_objective():
+def test_dense_active_nonfinite_logits_propagate_to_the_objective() -> None:
     term, _, _, _ = _binary_problem()
 
     @term.component.domain.Function("data", "x")
-    def poisoned(row, x):
+    def poisoned(row: Any, x: Any) -> Any:
         del row, x
         return jnp.nan
 

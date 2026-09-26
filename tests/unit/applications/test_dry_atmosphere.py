@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -15,10 +18,15 @@ from phydrax.applications.atmosphere._dry import (
 
 
 @pytest.mark.parametrize("family,shape", [("isothermal", (6,)), ("isentropic", (4, 6))])
-def test_hydrostatic_reference_remains_at_rest_to_roundoff(family, shape):
+def test_hydrostatic_reference_remains_at_rest_to_roundoff(
+    family: Any, shape: Any
+) -> None:
     bounds = ((0.0,), (6000.0,)) if len(shape) == 1 else ((0.0, 0.0), (4000.0, 6000.0))
     prepared = DryAtmospherePlan(
-        shape, bounds, reference=DryHydrostaticReference(family)
+        shape,
+        # ty: ignore[invalid-argument-type]
+        bounds,
+        reference=DryHydrostaticReference(family),
     ).prepare()
     initial = prepared.initial_state()
     residual = eqx.filter_jit(prepared.balance.evaluate)(initial.conserved)
@@ -38,7 +46,8 @@ def test_hydrostatic_reference_remains_at_rest_to_roundoff(family, shape):
     np.testing.assert_allclose(result.budget.closure / scale, 0.0, atol=2e-10)
 
 
-def test_shared_mass_flux_closes_gravitational_energy_and_species_budgets():
+def test_shared_mass_flux_closes_gravitational_energy_and_species_budgets() -> None:
+    # ty: ignore[invalid-argument-type]
     prepared = DryAtmospherePlan((4, 6), ((0.0, 0.0), (4000.0, 6000.0))).prepare()
     coordinates = prepared.balance.discretization.cell_centers
     warm = (
@@ -62,9 +71,12 @@ def test_shared_mass_flux_closes_gravitational_energy_and_species_budgets():
     assert float(jnp.max(jnp.abs(result.state.conserved[..., -2]))) > 0.0
 
 
-def test_prescribed_outflow_energy_uses_boundary_potential_and_restart_is_exact():
+def test_prescribed_outflow_energy_uses_boundary_potential_and_restart_is_exact() -> None:
     prepared = DryAtmospherePlan(
-        (6,), ((0.0,), (3000.0,)), boundaries=(("prescribed", "prescribed"),)
+        (6,),
+        # ty: ignore[invalid-argument-type]
+        ((0.0,), (3000.0,)),
+        boundaries=(("prescribed", "prescribed"),),
     ).prepare()
     initial = prepared.thermal_state(jnp.zeros((6,)), velocity=jnp.asarray((0.2,)))
     dt = 0.2 * eqx.filter_jit(prepared.stable_step)(initial)
@@ -86,13 +98,17 @@ def test_prescribed_outflow_energy_uses_boundary_potential_and_restart_is_exact(
     )
     assert float(restored.state.time) == float(continued.state.time)
     other = DryAtmospherePlan(
-        (6,), ((0.0,), (3000.0,)), reference=DryHydrostaticReference(gravity=9.7)
+        (6,),
+        # ty: ignore[invalid-argument-type]
+        ((0.0,), (3000.0,)),
+        reference=DryHydrostaticReference(gravity=9.7),
     ).prepare()
     with pytest.raises(ValueError, match="identity"):
         other.restore(prepared.checkpoint(first.state))
 
 
-def test_invalid_and_unstable_states_are_not_clipped_or_partially_accepted():
+def test_invalid_and_unstable_states_are_not_clipped_or_partially_accepted() -> None:
+    # ty: ignore[invalid-argument-type]
     prepared = DryAtmospherePlan((4,), ((0.0,), (2000.0,))).prepare()
     initial = prepared.initial_state()
     with pytest.raises(Exception, match="inadmissible"):
@@ -108,10 +124,11 @@ def test_invalid_and_unstable_states_are_not_clipped_or_partially_accepted():
     assert float(result.state.time) == 0.0
 
 
-def test_reference_pressure_drop_agrees_with_integrated_column_weight():
+def test_reference_pressure_drop_agrees_with_integrated_column_weight() -> None:
     air = DryAir()
     prepared = DryAtmospherePlan(
         (8,),
+        # ty: ignore[invalid-argument-type]
         ((0.0,), (8000.0,)),
         air=air,
         reference=DryHydrostaticReference("isentropic"),
@@ -132,8 +149,11 @@ def test_reference_pressure_drop_agrees_with_integrated_column_weight():
     )
 
 
-def test_vertical_periodicity_is_rejected_in_nonperiodic_gravity():
+def test_vertical_periodicity_is_rejected_in_nonperiodic_gravity() -> None:
     with pytest.raises(ValueError, match="vertical gravity"):
         DryAtmospherePlan(
-            (4,), ((0.0,), (2000.0,)), boundaries=(("periodic", "periodic"),)
+            (4,),
+            # ty: ignore[invalid-argument-type]
+            ((0.0,), (2000.0,)),
+            boundaries=(("periodic", "periodic"),),
         )

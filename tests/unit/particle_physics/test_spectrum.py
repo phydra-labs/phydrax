@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -26,7 +29,7 @@ from phydrax.particle_physics import (
 )
 
 
-def _profile():
+def _profile() -> Any:
     return SpectrumApproximationProfile(
         model_id="analytic-one-coupling-control",
         renormalization_scheme="MSbar",
@@ -40,7 +43,7 @@ def _profile():
     )
 
 
-def test_spectrum_status_keeps_numerical_physical_and_warning_axes_separate():
+def test_spectrum_status_keeps_numerical_physical_and_warning_axes_separate() -> None:
     diagnostics = SpectrumDiagnostics(
         SpectrumStatus.SUCCESS,
         provider_available=True,
@@ -57,8 +60,11 @@ def test_spectrum_status_keeps_numerical_physical_and_warning_axes_separate():
     assert bool(diagnostics.physical_admissible)
     assert not bool(diagnostics.successful)
     result = SpectrumCalculationResult(
+        # ty: ignore[invalid-argument-type]
         SpectrumObservableTable(("pdg:25",), ("pole-mass",), ("GeV",), (125.1,)),
+        # ty: ignore[invalid-argument-type]
         (100.0, 1000.0),
+        # ty: ignore[invalid-argument-type]
         ((0.1,), (0.2,)),
         diagnostics,
         _profile(),
@@ -72,7 +78,9 @@ def test_spectrum_status_keeps_numerical_physical_and_warning_axes_separate():
     assert "approximation" in result.claim
 
 
-def test_cross_qualification_rejects_noncanonical_provider_keys_without_lookup_failure():
+def test_cross_qualification_rejects_noncanonical_provider_keys_without_lookup_failure() -> (
+    None
+):
     evidence = cross_qualify_spectra(
         ("mass",),
         np.asarray((1.0,)),
@@ -84,7 +92,7 @@ def test_cross_qualification_rejects_noncanonical_provider_keys_without_lookup_f
     assert int(evidence.status) == int(NativeSpectrumStatus.INVALID_INPUT)
 
 
-def test_strict_slha_roundtrip_preserves_unknown_blocks_comments_and_decays():
+def test_strict_slha_roundtrip_preserves_unknown_blocks_comments_and_decays() -> None:
     source = (
         b"# spectrum control\n"
         b"BLOCK MASS # pole masses\n"
@@ -108,12 +116,12 @@ def test_strict_slha_roundtrip_preserves_unknown_blocks_comments_and_decays():
     assert b"retained extension" in serialized
 
 
-def test_slha_duplicate_entries_are_rejected_without_repinning():
+def test_slha_duplicate_entries_are_rejected_without_repinning() -> None:
     with pytest.raises(ValueError, match="Duplicate"):
         parse_slha(b"BLOCK MASS\n 25 125.0\n 25 126.0\n")
 
 
-def test_native_scale_bvp_recovers_analytic_exponential_flow():
+def test_native_scale_bvp_recovers_analytic_exponential_flow() -> None:
     coefficient = 0.2
     lower = 10.0
     upper = 1000.0

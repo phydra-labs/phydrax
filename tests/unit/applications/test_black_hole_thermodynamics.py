@@ -20,7 +20,7 @@ from phydrax.applications.compact_objects._black_hole_thermodynamics import (
 jax.config.update("jax_enable_x64", True)
 
 
-def test_schwarzschild_and_extremal_limits_are_exact_and_branch_explicit():
+def test_schwarzschild_and_extremal_limits_are_exact_and_branch_explicit() -> None:
     mass = 2.0
     schwarzschild = eqx.filter_jit(evaluate_stationary_kerr_horizon)(KerrInput(mass, 0.0))
     assert int(schwarzschild.branch.code) == int(KerrBranchCode.SUBEXTREMAL)
@@ -47,7 +47,7 @@ def test_schwarzschild_and_extremal_limits_are_exact_and_branch_explicit():
     assert not bool(extremal.derivative_valid)
 
 
-def test_near_extremal_evaluation_retains_the_resolved_gap_without_clipping():
+def test_near_extremal_evaluation_retains_the_resolved_gap_without_clipping() -> None:
     spin = np.nextafter(1.0, 0.0)
     expected_root = np.sqrt((1.0 - spin) * (1.0 + spin))
     horizon = evaluate_stationary_kerr_horizon(KerrInput(1.0, spin))
@@ -60,7 +60,7 @@ def test_near_extremal_evaluation_retains_the_resolved_gap_without_clipping():
     assert bool(horizon.derivative_valid)
 
 
-def test_overextremal_and_indeterminate_inputs_do_not_claim_a_horizon():
+def test_overextremal_and_indeterminate_inputs_do_not_claim_a_horizon() -> None:
     over = evaluate_stationary_kerr_horizon(KerrInput(1.0, 1.01))
     assert bool(over.branch.overextremal)
     assert int(over.branch.code) == int(KerrBranchCode.OVEREXTREMAL)
@@ -77,7 +77,7 @@ def test_overextremal_and_indeterminate_inputs_do_not_claim_a_horizon():
     assert indeterminate_input.input_id != KerrInput(1.0, 0.0).input_id
 
 
-def test_entropy_and_temperature_require_and_retain_an_explicit_scale():
+def test_entropy_and_temperature_require_and_retain_an_explicit_scale() -> None:
     scale = RelativityScaleContract.si()
     mass = 1_000.0
     horizon = evaluate_stationary_kerr_horizon(KerrInput(mass, 0.0))
@@ -122,7 +122,7 @@ def test_entropy_and_temperature_require_and_retain_an_explicit_scale():
         evaluate_kerr_entropy_temperature(horizon, implicit_quantum_scale)
 
 
-def test_first_law_jvp_and_smarr_evidence_are_directional_and_qualified():
+def test_first_law_jvp_and_smarr_evidence_are_directional_and_qualified() -> None:
     parameters = KerrInput(2.0, 0.8)
     evidence = eqx.filter_jit(evaluate_kerr_first_law)(parameters, 0.3, -0.2)
 
@@ -146,7 +146,7 @@ def test_first_law_jvp_and_smarr_evidence_are_directional_and_qualified():
     np.testing.assert_allclose(extremal.smarr_residual, 0.0, atol=2.0e-15)
 
 
-def test_fixed_angular_momentum_response_exposes_davies_singularity():
+def test_fixed_angular_momentum_response_exposes_davies_singularity() -> None:
     mass = 2.0
     schwarzschild = evaluate_fixed_angular_momentum_response(KerrInput(mass, 0.0))
     np.testing.assert_allclose(
@@ -175,7 +175,7 @@ def test_fixed_angular_momentum_response_exposes_davies_singularity():
     assert bool(jnp.isnan(davies.mass_temperature_response))
 
 
-def test_fixed_angular_velocity_response_separates_heat_and_rotational_work():
+def test_fixed_angular_velocity_response_separates_heat_and_rotational_work() -> None:
     mass = 2.0
     spin = 0.6
     response = evaluate_fixed_angular_velocity_response(KerrInput(mass, spin * mass**2))

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -34,7 +37,7 @@ from phydrax.discretization.discrete_velocity._filtered_d3q33 import (
 )
 
 
-def _uniform(model, shape=(8, 8, 8)):
+def _uniform(model: Any, shape: Any = (8, 8, 8)) -> Any:
     return model.initialize(
         jnp.ones(shape),
         jnp.zeros(shape + (3,)),
@@ -42,7 +45,7 @@ def _uniform(model, shape=(8, 8, 8)):
     )
 
 
-def test_production_velocity_rules_have_canonical_population_identity():
+def test_production_velocity_rules_have_canonical_population_identity() -> None:
     rules = (d3q39_guided_rule(), d3q343_entropic_rule(), d3q33_filtered_rule())
     assert tuple(rule.population_count for rule in rules) == (39, 343, 33)
     assert tuple(rule.dual_dimension for rule in rules) == (12, 4, 4)
@@ -53,7 +56,7 @@ def test_production_velocity_rules_have_canonical_population_identity():
         np.testing.assert_allclose(jnp.sum(rule.base_probabilities), 1.0, atol=2e-14)
 
 
-def test_guided_d3q39_collision_and_full_prandtl_closure_conserve_state():
+def test_guided_d3q39_collision_and_full_prandtl_closure_conserve_state() -> None:
     model = guided_d3q39_plan(gamma=1.4)
     state = _uniform(model)
     direct = model.collide(state, 1.0)
@@ -73,7 +76,7 @@ def test_guided_d3q39_collision_and_full_prandtl_closure_conserve_state():
     np.testing.assert_allclose(direct.conservation.energy_defect, 0.0, atol=1e-9)
 
 
-def test_entropic_d3q343_velocity_partition_roundtrips_and_collides():
+def test_entropic_d3q343_velocity_partition_roundtrips_and_collides() -> None:
     model = entropic_d3q343_plan()
     state = _uniform(model, shape=(1,))
     partition = KineticVelocityPartitionPlan(model.rule, 7)
@@ -86,7 +89,7 @@ def test_entropic_d3q343_velocity_partition_roundtrips_and_collides():
     np.testing.assert_array_equal(assembled, state.population("particle"))
 
 
-def test_filtered_d3q33_filters_only_nonconserved_moments():
+def test_filtered_d3q33_filters_only_nonconserved_moments() -> None:
     plan = FilteredD3Q33Plan()
     state = _uniform(plan.model)
     result, evidence = plan.collide(state, 1.0)
@@ -96,7 +99,7 @@ def test_filtered_d3q33_filters_only_nonconserved_moments():
     assert plan.filter_indices.size == 15
 
 
-def test_integer_frame_remap_and_adaptive_gauge_retain_supported_state():
+def test_integer_frame_remap_and_adaptive_gauge_retain_supported_state() -> None:
     source = guided_d3q39_plan()
     frame = IntegerKineticFramePlan(source.rule, (1, 0, 0))
     target = type(source)(
@@ -119,7 +122,9 @@ def test_integer_frame_remap_and_adaptive_gauge_retain_supported_state():
     np.testing.assert_allclose(scale, 1.0)
 
 
-def test_periodic_transport_amr_precision_and_moving_geometry_preserve_contracts():
+def test_periodic_transport_amr_precision_and_moving_geometry_preserve_contracts() -> (
+    None
+):
     model = guided_d3q39_plan()
     state = _uniform(model)
     transport = IntegerLatticeTransportPlan(
@@ -164,7 +169,9 @@ def test_periodic_transport_amr_precision_and_moving_geometry_preserve_contracts
     )
 
 
-def test_predictive_refinement_species_transport_radiation_and_spectrum_are_audited():
+def test_predictive_refinement_species_transport_radiation_and_spectrum_are_audited() -> (
+    None
+):
     model = guided_d3q39_plan()
     state = _uniform(model)
     transport = IntegerLatticeTransportPlan(model.rule, state.spatial_shape)
@@ -205,7 +212,7 @@ def test_predictive_refinement_species_transport_radiation_and_spectrum_are_audi
     np.testing.assert_array_equal(updated.species_densities, species)
 
 
-def test_population_state_rejects_foreign_model_identity():
+def test_population_state_rejects_foreign_model_identity() -> None:
     source = guided_d3q39_plan(gamma=1.4)
     foreign = guided_d3q39_plan(gamma=1.5)
     state = source.initialize(
@@ -218,7 +225,7 @@ def test_population_state_rejects_foreign_model_identity():
         foreign.moments(state)
 
 
-def test_predictive_refinement_ignores_inactive_source_cells():
+def test_predictive_refinement_ignores_inactive_source_cells() -> None:
     model = guided_d3q39_plan()
     indicator = jnp.zeros((5, 5, 5))
     indicator = indicator.at[2, 2, 2].set(10.0)
@@ -235,7 +242,7 @@ def test_predictive_refinement_ignores_inactive_source_cells():
     assert bool(evidence.successful)
 
 
-def test_moving_geometry_reports_negative_uncovered_candidate_without_commit():
+def test_moving_geometry_reports_negative_uncovered_candidate_without_commit() -> None:
     model = guided_d3q39_plan()
     state = _uniform(model, shape=(2, 2, 2))
     negative = CompressibleKineticPopulationState(

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -31,7 +34,7 @@ class _PolynomialBasis(AbstractArrayModel):
     channels: int = eqx.field(static=True)
     rank: int = eqx.field(static=True)
 
-    def __init__(self, coefficients):
+    def __init__(self, coefficients: Any) -> None:
         values = jnp.asarray(coefficients)
         if values.ndim != 3:
             raise ValueError("coefficients must have shape (channels, rank, powers).")
@@ -41,7 +44,7 @@ class _PolynomialBasis(AbstractArrayModel):
         self.rank = values.shape[1]
         self.out_size = self.channels * self.rank
 
-    def __call__(self, coordinate, /, *, key=None):
+    def __call__(self, coordinate: Any, /, *, key: Any = None) -> Any:
         del key
         powers = jnp.asarray(coordinate[0]) ** jnp.arange(self.coefficients.shape[-1])
         return oe.contract("crp,p->cr", self.coefficients, powers).reshape(-1)
@@ -52,7 +55,7 @@ class _PolynomialOutput(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, coefficients):
+    def __init__(self, coefficients: Any) -> None:
         values = jnp.asarray(coefficients)
         if values.ndim != 2:
             raise ValueError("coefficients must have shape (channels, powers).")
@@ -60,7 +63,7 @@ class _PolynomialOutput(AbstractArrayModel):
         self.in_size = 1
         self.out_size = values.shape[0]
 
-    def __call__(self, coordinate, /, *, key=None):
+    def __call__(self, coordinate: Any, /, *, key: Any = None) -> Any:
         del key
         powers = jnp.asarray(coordinate[0]) ** jnp.arange(self.coefficients.shape[-1])
         return self.coefficients @ powers
@@ -71,18 +74,20 @@ class _LinearMap(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, matrix):
+    def __init__(self, matrix: Any) -> None:
         values = jnp.asarray(matrix)
         self.matrix = values
         self.in_size = values.shape[1]
         self.out_size = values.shape[0]
 
-    def __call__(self, coefficients, /, *, key=None):
+    def __call__(self, coefficients: Any, /, *, key: Any = None) -> Any:
         del key
         return self.matrix @ coefficients
 
 
-def _scalar_frame(*, frame_id="scalar", offset_model=None, coefficients=None):
+def _scalar_frame(
+    *, frame_id: Any = "scalar", offset_model: Any = None, coefficients: Any = None
+) -> Any:
     basis_coefficients = (
         jnp.eye(3)[None, ...] if coefficients is None else jnp.asarray(coefficients)
     )
@@ -96,7 +101,7 @@ def _scalar_frame(*, frame_id="scalar", offset_model=None, coefficients=None):
     )
 
 
-def _vector_frame(*, frame_id="vector", coefficients=None):
+def _vector_frame(*, frame_id: Any = "vector", coefficients: Any = None) -> Any:
     basis_coefficients = (
         jnp.asarray(
             [
@@ -116,7 +121,9 @@ def _vector_frame(*, frame_id="vector", coefficients=None):
     )
 
 
-def _samples(coordinates, values=None, *, weights=None, mask=None):
+def _samples(
+    coordinates: Any, values: Any = None, *, weights: Any = None, mask: Any = None
+) -> Any:
     points = jnp.asarray(coordinates)
     if points.ndim == 1:
         points = points[..., None]
@@ -128,13 +135,15 @@ def _samples(coordinates, values=None, *, weights=None, mask=None):
     )
 
 
-def _projection_samples(frame, coefficients, coordinates, *, weights=None):
+def _projection_samples(
+    frame: Any, coefficients: Any, coordinates: Any, *, weights: Any = None
+) -> Any:
     query = _samples(coordinates, weights=weights)
     values = frame.decode(jnp.asarray(coefficients), query)
     return _samples(coordinates, values, weights=weights)
 
 
-def test_function_frame_constructor_enforces_exact_model_contracts():
+def test_function_frame_constructor_enforces_exact_model_contracts() -> None:
     with pytest.raises(ValueError, match="rank and coord_dim"):
         LearnedFunctionFrame(
             basis_model=_PolynomialBasis(jnp.ones((1, 1, 1))),
@@ -178,7 +187,9 @@ def test_function_frame_constructor_enforces_exact_model_contracts():
         ({"rank_policy": "regularized"}, "positive ridge"),
     ),
 )
-def test_projection_policy_rejects_invalid_scalar_configuration(kwargs, message):
+def test_projection_policy_rejects_invalid_scalar_configuration(
+    kwargs: Any, message: Any
+) -> None:
     with pytest.raises(ValueError, match=message):
         FunctionProjectionPolicy(**kwargs)
 
@@ -192,12 +203,12 @@ def test_projection_policy_rejects_invalid_scalar_configuration(kwargs, message)
         jnp.asarray([[1.0, jnp.nan], [jnp.nan, 1.0]]),
     ),
 )
-def test_projection_policy_rejects_invalid_channel_metrics(metric):
+def test_projection_policy_rejects_invalid_channel_metrics(metric: Any) -> None:
     with pytest.raises((TypeError, ValueError), match="channel_metric"):
         FunctionProjectionPolicy(channel_metric=metric)
 
 
-def test_scalar_frame_recovers_coefficients_and_decodes_arbitrary_queries():
+def test_scalar_frame_recovers_coefficients_and_decodes_arbitrary_queries() -> None:
     frame = _scalar_frame()
     coordinates = jnp.asarray([0.0, 0.13, 0.31, 0.52, 0.74, 0.91, 1.0])
     coefficients = jnp.asarray([1.25, -0.75, 0.4])
@@ -227,7 +238,7 @@ def test_scalar_frame_recovers_coefficients_and_decodes_arbitrary_queries():
     assert float(report.relative_residual) < 1e-11
 
 
-def test_scalar_frame_accepts_an_explicit_singleton_channel_axis():
+def test_scalar_frame_accepts_an_explicit_singleton_channel_axis() -> None:
     frame = _scalar_frame()
     coordinates = jnp.linspace(0.0, 1.0, 8)
     implicit = _projection_samples(frame, jnp.asarray([0.5, -1.0, 2.0]), coordinates)
@@ -239,7 +250,7 @@ def test_scalar_frame_accepts_an_explicit_singleton_channel_axis():
     np.testing.assert_allclose(explicit_report.coefficients, implicit_report.coefficients)
 
 
-def test_vector_frame_uses_one_coefficient_vector_across_channels():
+def test_vector_frame_uses_one_coefficient_vector_across_channels() -> None:
     frame = _vector_frame()
     coordinates = jnp.asarray([0.0, 0.15, 0.4, 0.8, 1.0])
     coefficients = jnp.asarray([1.5, -0.25])
@@ -252,7 +263,7 @@ def test_vector_frame_uses_one_coefficient_vector_across_channels():
     assert int(report.sample_count) == coordinates.size
 
 
-def test_channel_metric_changes_the_best_approximation_without_changing_shape():
+def test_channel_metric_changes_the_best_approximation_without_changing_shape() -> None:
     constant_vector_frame = _vector_frame(coefficients=jnp.asarray([[[1.0]], [[1.0]]]))
     coordinates = jnp.linspace(0.0, 1.0, 5)
     values = jnp.broadcast_to(jnp.asarray([1.0, 3.0]), (5, 2))
@@ -269,7 +280,7 @@ def test_channel_metric_changes_the_best_approximation_without_changing_shape():
     assert euclidean.coefficients.shape == weighted.coefficients.shape == (1,)
 
 
-def test_complex_frame_and_hermitian_metric_recover_complex_coefficients():
+def test_complex_frame_and_hermitian_metric_recover_complex_coefficients() -> None:
     frame = _vector_frame(
         coefficients=jnp.asarray(
             [
@@ -292,7 +303,7 @@ def test_complex_frame_and_hermitian_metric_recover_complex_coefficients():
     assert jnp.all(jnp.isfinite(report.coefficients))
 
 
-def test_frame_offset_is_subtracted_for_projection_and_restored_for_decoding():
+def test_frame_offset_is_subtracted_for_projection_and_restored_for_decoding() -> None:
     offset_model = _PolynomialOutput(jnp.asarray([[2.0, -0.5]]))
     frame = _scalar_frame(offset_model=offset_model)
     coordinates = jnp.linspace(0.0, 1.0, 8)
@@ -308,7 +319,7 @@ def test_frame_offset_is_subtracted_for_projection_and_restored_for_decoding():
     np.testing.assert_allclose(decoded, 2.0 - 0.5 * query_coordinates, atol=2e-11)
 
 
-def test_projection_is_invariant_to_point_permutation_and_weight_rescaling():
+def test_projection_is_invariant_to_point_permutation_and_weight_rescaling() -> None:
     frame = _scalar_frame()
     coordinates = jnp.asarray([0.0, 0.2, 0.45, 0.7, 1.0])
     values = 0.7 - 0.3 * coordinates + 0.5 * coordinates**2 + 0.02 * coordinates**3
@@ -330,7 +341,7 @@ def test_projection_is_invariant_to_point_permutation_and_weight_rescaling():
     np.testing.assert_allclose(rescaled.coefficients, reference.coefficients, atol=2e-11)
 
 
-def test_projection_is_invariant_to_equivalent_quadrature_refinement():
+def test_projection_is_invariant_to_equivalent_quadrature_refinement() -> None:
     frame = _scalar_frame()
     coordinates = jnp.asarray([0.0, 0.3, 0.65, 1.0])
     values = 0.8 + coordinates - 0.4 * coordinates**2 + 0.1 * coordinates**3
@@ -347,7 +358,7 @@ def test_projection_is_invariant_to_equivalent_quadrature_refinement():
     np.testing.assert_allclose(refined.coefficients, reference.coefficients, atol=2e-11)
 
 
-def test_masked_padding_with_nan_payloads_does_not_contaminate_projection():
+def test_masked_padding_with_nan_payloads_does_not_contaminate_projection() -> None:
     frame = _scalar_frame()
     coordinates = jnp.asarray([0.0, 0.3, 0.7, 1.0])
     values = 1.0 + 2.0 * coordinates - coordinates**2
@@ -370,7 +381,7 @@ def test_masked_padding_with_nan_payloads_does_not_contaminate_projection():
     assert bool(padded.valid)
 
 
-def test_case_batched_projection_matches_independent_case_solves():
+def test_case_batched_projection_matches_independent_case_solves() -> None:
     frame = _scalar_frame()
     coordinates = jnp.asarray(
         [
@@ -398,7 +409,7 @@ def test_case_batched_projection_matches_independent_case_solves():
     assert batched.status.shape == (2,)
 
 
-def test_projection_reports_insufficient_support_and_blocks_coefficients():
+def test_projection_reports_insufficient_support_and_blocks_coefficients() -> None:
     frame = _scalar_frame()
     coordinates = jnp.linspace(0.0, 1.0, 4)
     all_masked = frame.project(
@@ -417,7 +428,7 @@ def test_projection_reports_insufficient_support_and_blocks_coefficients():
             jax.block_until_ready(report.require_coefficients())
 
 
-def test_rank_deficiency_errors_or_reports_regularized_nonidentification():
+def test_rank_deficiency_errors_or_reports_regularized_nonidentification() -> None:
     frame = _scalar_frame(
         coefficients=jnp.asarray([[[1.0], [1.0]]]),
         frame_id="dependent",
@@ -451,7 +462,7 @@ def test_rank_deficiency_errors_or_reports_regularized_nonidentification():
         jnp.asarray([1.0, jnp.nan, 1.0]),
     ),
 )
-def test_requested_invalid_quadrature_is_reported(weights):
+def test_requested_invalid_quadrature_is_reported(weights: Any) -> None:
     frame = _scalar_frame(coefficients=jnp.asarray([[[1.0]]]))
     report = frame.project(
         _samples(jnp.asarray([0.0, 0.5, 1.0]), jnp.ones(3), weights=weights)
@@ -461,7 +472,7 @@ def test_requested_invalid_quadrature_is_reported(weights):
     assert not bool(report.valid)
 
 
-def test_nonfinite_active_values_and_frame_outputs_are_reported():
+def test_nonfinite_active_values_and_frame_outputs_are_reported() -> None:
     constant = _scalar_frame(coefficients=jnp.asarray([[[1.0]]]))
     target_report = constant.project(
         _samples(
@@ -483,7 +494,7 @@ def test_nonfinite_active_values_and_frame_outputs_are_reported():
     assert not bool(frame_report.valid)
 
 
-def test_physical_quadrature_requirement_rejects_counting_measure():
+def test_physical_quadrature_requirement_rejects_counting_measure() -> None:
     frame = _scalar_frame(coefficients=jnp.asarray([[[1.0]]]))
     report = frame.project(
         _samples(jnp.linspace(0.0, 1.0, 4), jnp.ones(4)),
@@ -494,7 +505,7 @@ def test_physical_quadrature_requirement_rejects_counting_measure():
     assert not bool(report.valid)
 
 
-def test_projection_rejects_ambiguous_value_and_coordinate_shapes():
+def test_projection_rejects_ambiguous_value_and_coordinate_shapes() -> None:
     vector_frame = _vector_frame()
     coordinates = jnp.linspace(0.0, 1.0, 5)
     with pytest.raises(ValueError, match="explicit channel axis"):
@@ -507,7 +518,9 @@ def test_projection_rejects_ambiguous_value_and_coordinate_shapes():
         )
 
 
-def test_projection_is_jittable_and_differentiable_in_values_and_frame_parameters():
+def test_projection_is_jittable_and_differentiable_in_values_and_frame_parameters() -> (
+    None
+):
     frame = _scalar_frame()
     coordinates = jnp.linspace(0.0, 1.0, 9)
     values = 0.5 - coordinates + 0.75 * coordinates**2 + 0.05 * coordinates**3
@@ -540,7 +553,7 @@ def test_projection_is_jittable_and_differentiable_in_values_and_frame_parameter
     assert jnp.all(jnp.isfinite(frame_gradient.basis_model.coefficients))
 
 
-def test_encoded_reconstructor_reuses_state_across_independent_queries():
+def test_encoded_reconstructor_reuses_state_across_independent_queries() -> None:
     frame = _scalar_frame(frame_id="identity")
     support_coordinates = jnp.asarray([0.0, 0.17, 0.39, 0.62, 0.84, 1.0])
     coefficients = jnp.asarray([1.0, -0.5, 0.25])
@@ -567,7 +580,7 @@ def test_encoded_reconstructor_reuses_state_across_independent_queries():
     assert bool(state.reports["source"].identified)
 
 
-def test_conditional_function_frame_flow_requires_matching_law_batch_shape():
+def test_conditional_function_frame_flow_requires_matching_law_batch_shape() -> None:
     frame = _scalar_frame(frame_id="flow-batch")
     coordinates = jnp.linspace(0.0, 1.0, 6)
     query = _samples(jnp.asarray([0.2, 0.8]))
@@ -601,7 +614,7 @@ def test_conditional_function_frame_flow_requires_matching_law_batch_shape():
         flow.condition(batch)
 
 
-def test_reconstructor_maps_between_frames_with_different_ranks():
+def test_reconstructor_maps_between_frames_with_different_ranks() -> None:
     source = _scalar_frame(frame_id="source")
     target = LearnedFunctionFrame(
         basis_model=_PolynomialBasis(jnp.eye(2)[None, ...]),
@@ -641,7 +654,7 @@ def test_reconstructor_maps_between_frames_with_different_ranks():
     )
 
 
-def test_bias_free_identity_reconstructor_obeys_superposition():
+def test_bias_free_identity_reconstructor_obeys_superposition() -> None:
     frame = _scalar_frame(frame_id="linear")
     model = FunctionFrameReconstructor(
         sources=(FunctionFrameSource("source", frame),),
@@ -650,7 +663,7 @@ def test_bias_free_identity_reconstructor_obeys_superposition():
     coordinates = jnp.linspace(0.0, 1.0, 8)
     query = _samples(jnp.asarray([0.1, 0.4, 0.9]))
 
-    def evaluate(coefficients):
+    def evaluate(coefficients: Any) -> Any:
         batch = phx.nn.operator.OperatorBatch(
             inputs={"source": _projection_samples(frame, coefficients, coordinates)},
             queries={"query": query},
@@ -667,7 +680,9 @@ def test_bias_free_identity_reconstructor_obeys_superposition():
     )
 
 
-def test_frozen_reconstructor_removes_frame_and_map_arrays_from_training_partition():
+def test_frozen_reconstructor_removes_frame_and_map_arrays_from_training_partition() -> (
+    None
+):
     source = _scalar_frame(frame_id="frozen-source")
     target = LearnedFunctionFrame(
         basis_model=_PolynomialBasis(jnp.eye(2)[None, ...]),
@@ -694,7 +709,7 @@ def test_frozen_reconstructor_removes_frame_and_map_arrays_from_training_partiti
     assert jax.tree.leaves(parameters) == []
 
 
-def test_end_to_end_reconstruction_has_finite_frame_gradients():
+def test_end_to_end_reconstruction_has_finite_frame_gradients() -> None:
     frame = _scalar_frame(frame_id="gradient")
     model = FunctionFrameReconstructor(
         sources=(FunctionFrameSource("source", frame),),

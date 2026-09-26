@@ -85,4 +85,5 @@ print("successful=True")
 print(f"old_capacity={particles.capacity}")
 print(f"new_capacity={result.epoch.dynamics.bodies.capacity}")
 print(f"occupied={int(jnp.sum(result.epoch.ever_occupied))}")
+# ty: ignore[unresolved-attribute]
 print(f"mass_residual={float(result.transition.mass_residual):.6e}")

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -22,7 +25,7 @@ from phydrax.ml.kernel_methods import (
 from phydrax.uq import GaussianProcessLikelihoodState
 
 
-def _sparse_data():
+def _sparse_data() -> Any:
     dense = jnp.array(
         [
             [-1.4, -0.2],
@@ -42,12 +45,12 @@ def _sparse_data():
     return sparse, targets, labels
 
 
-def _assert_sparse_rejected(recipe, batch, *, key=None):
+def _assert_sparse_rejected(recipe: Any, batch: Any, *, key: Any = None) -> None:
     with pytest.raises(TypeError, match="SparseFeatures|sparse|dense"):
         recipe.fit_batch(batch, key=key)
 
 
-def test_dense_only_kernel_machines_reject_sparse_features_explicitly():
+def test_dense_only_kernel_machines_reject_sparse_features_explicitly() -> None:
     sparse, targets, labels = _sparse_data()
     kernel = SquaredExponentialKernel(length_scale=0.9)
     recipes_and_targets = (
@@ -68,7 +71,7 @@ def test_dense_only_kernel_machines_reject_sparse_features_explicitly():
     _assert_sparse_rejected(OneClassSVMRecipe(kernel, iterations=4), MLBatch(sparse))
 
 
-def test_dense_only_spectral_maps_reject_sparse_features_explicitly():
+def test_dense_only_spectral_maps_reject_sparse_features_explicitly() -> None:
     sparse, _, _ = _sparse_data()
     kernel = SquaredExponentialKernel(length_scale=0.9)
 
@@ -81,7 +84,7 @@ def test_dense_only_spectral_maps_reject_sparse_features_explicitly():
     )
 
 
-def test_dense_only_exact_and_finite_gp_factors_reject_sparse_features():
+def test_dense_only_exact_and_finite_gp_factors_reject_sparse_features() -> None:
     sparse, _, labels = _sparse_data()
     exact_state = GaussianProcessLikelihoodState(
         kernel=SquaredExponentialKernel(length_scale=0.9),

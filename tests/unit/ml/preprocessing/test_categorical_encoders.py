@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,25 +19,29 @@ from phydrax.ml.preprocessing import (
 )
 
 
-def _schema():
+def _schema() -> Any:
+    # ty: ignore[invalid-argument-type]
     return CategoricalSchema(((0, 1), (10, 20, 30)), names=("color", "size"))
 
 
-def test_categorical_schema_is_explicit_finite_unique_and_fixed_capacity():
+def test_categorical_schema_is_explicit_finite_unique_and_fixed_capacity() -> None:
     schema = _schema()
     assert schema.feature_count == 2
     assert schema.category_counts == (2, 3)
     assert schema.names == ("color", "size")
 
     with pytest.raises(ValueError, match="unique"):
+        # ty: ignore[invalid-argument-type]
         CategoricalSchema(((0, 0),))
     with pytest.raises(ValueError, match="finite"):
+        # ty: ignore[invalid-argument-type]
         CategoricalSchema(((0.0, jnp.nan),))
     with pytest.raises(TypeError, match="numeric"):
+        # ty: ignore[invalid-argument-type]
         CategoricalSchema((("red", "blue"),))
 
 
-def test_ordinal_encoder_fail_and_indicator_policies_names_inverse_jit_and_vmap():
+def test_ordinal_encoder_fail_and_indicator_policies_names_inverse_jit_and_vmap() -> None:
     schema = _schema()
     training = phx.ml.MLBatch(
         jnp.array([[0, 10], [1, 20], [0, 30]]),
@@ -57,10 +64,14 @@ def test_ordinal_encoder_fail_and_indicator_policies_names_inverse_jit_and_vmap(
     model = result.as_trainable()
     encoded = jax.jit(jax.vmap(model))(jnp.array([[1, 20], [7, 30]]))
     assert jnp.array_equal(encoded, jnp.array([[1, 1, 0, 0], [-1, 2, 1, 0]]))
+    # ty: ignore[unresolved-attribute]
     assert model.output_schema.names == ("color", "size", "color_unknown", "size_unknown")
+    # ty: ignore[unresolved-attribute]
     assert model.output_schema.kinds == ("ordinal", "ordinal", "boolean", "boolean")
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(model.inverse_transform(encoded[:1]), jnp.array([[1, 20]]))
     with pytest.raises((eqx.EquinoxRuntimeError, ValueError), match="not invertible"):
+        # ty: ignore[unresolved-attribute]
         model.inverse_transform(encoded[1:])
     assert (
         result.derivative_contract.level(phx.DerivativeSurface.INPUT)
@@ -73,7 +84,7 @@ def test_ordinal_encoder_fail_and_indicator_policies_names_inverse_jit_and_vmap(
     assert "ordinal_codes" in result.derivative_contract.nondifferentiable_outputs
 
 
-def test_onehot_encoder_schema_unknown_indicator_inverse_and_hard_contract():
+def test_onehot_encoder_schema_unknown_indicator_inverse_and_hard_contract() -> None:
     schema = _schema()
     batch = phx.ml.MLBatch(
         jnp.array([[0, 10], [1, 20], [0, 30]]),
@@ -93,6 +104,7 @@ def test_onehot_encoder_schema_unknown_indicator_inverse_and_hard_contract():
             ]
         ),
     )
+    # ty: ignore[unresolved-attribute]
     assert model.output_schema.names == (
         "color=0",
         "color=1",
@@ -102,8 +114,10 @@ def test_onehot_encoder_schema_unknown_indicator_inverse_and_hard_contract():
         "color_unknown",
         "size_unknown",
     )
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(model.inverse_transform(encoded[:1]), jnp.array([[1, 20]]))
     with pytest.raises((eqx.EquinoxRuntimeError, ValueError), match="not invertible"):
+        # ty: ignore[unresolved-attribute]
         model.inverse_transform(encoded[1:])
     assert result.diagnostics.category_weight.shape == (2, 3)
     assert result.diagnostics.input_shape == (3, 2)
@@ -115,7 +129,10 @@ def test_onehot_encoder_schema_unknown_indicator_inverse_and_hard_contract():
     assert "one_hot_codes" in result.derivative_contract.nondifferentiable_outputs
 
 
-def test_target_encoder_preserves_case_sample_axes_masks_weights_and_target_gradients():
+def test_target_encoder_preserves_case_sample_axes_masks_weights_and_target_gradients() -> (
+    None
+):
+    # ty: ignore[invalid-argument-type]
     schema = CategoricalSchema(((0, 1),), names=("group",))
     features = jnp.array([[[0], [1], [0], [1]], [[0], [1], [0], [1]]])
     targets = jnp.array([[0.0, 10.0, 2.0, 14.0], [2.0, 20.0, 6.0, 24.0]])
@@ -140,6 +157,7 @@ def test_target_encoder_preserves_case_sample_axes_masks_weights_and_target_grad
     )
     unknown = model(jnp.array([[[7]], [[7]]]))
     assert jnp.array_equal(unknown[..., 1], jnp.ones((2, 1)))
+    # ty: ignore[unresolved-attribute]
     assert model.output_schema.names == ("group_target", "group_unknown")
     assert result.diagnostics.category_weight.shape == (2, 1, 2)
     assert (
@@ -159,10 +177,12 @@ def test_target_encoder_preserves_case_sample_axes_masks_weights_and_target_grad
         is phx.GradientLevel.CONDITIONAL
     )
     with pytest.raises(NotImplementedError, match="not invertible"):
+        # ty: ignore[unresolved-attribute]
         model.inverse_transform(transformed)
 
     target_gradient = jax.grad(
         lambda y: jnp.sum(
+            # ty: ignore[unresolved-attribute]
             TargetEncoder(schema, smoothing=1.0)
             .fit_batch(phx.ml.MLBatch(features[0], y))
             .as_trainable()

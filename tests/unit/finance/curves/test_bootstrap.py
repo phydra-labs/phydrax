@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -35,7 +38,7 @@ SOLVER = BootstrapSolverPolicy(
 )
 
 
-def _log_discount_definition(curve_id, role):
+def _log_discount_definition(curve_id: Any, role: Any) -> Any:
     return CurveDefinition(
         curve_id=curve_id,
         role=role,
@@ -47,7 +50,7 @@ def _log_discount_definition(curve_id, role):
     )
 
 
-def test_single_curve_bootstrap_recovers_a_flat_curve_and_quote_jacobian():
+def test_single_curve_bootstrap_recovers_a_flat_curve_and_quote_jacobian() -> None:
     definition = _log_discount_definition("usd-discount", "discount")
     instruments = (
         DepositBootstrapInstrument(
@@ -80,10 +83,11 @@ def test_single_curve_bootstrap_recovers_a_flat_curve_and_quote_jacobian():
         jnp.array([0.0, -true_rate, -2.0 * true_rate]),
         atol=2e-6,
     )
+    # ty: ignore[unresolved-attribute]
     assert result.curves.curve("usd-discount").node_quote_jacobian.shape == (3, 2)
 
 
-def test_joint_two_curve_bootstrap_uses_discounted_projection_cashflows():
+def test_joint_two_curve_bootstrap_uses_discounted_projection_cashflows() -> None:
     discount_definition = _log_discount_definition("discount", "discount")
     projection_definition = _log_discount_definition("projection", "projection")
     instruments = (
@@ -158,7 +162,7 @@ def test_joint_two_curve_bootstrap_uses_discounted_projection_cashflows():
     )
 
 
-def test_bootstrap_success_requires_independent_instrument_repricing():
+def test_bootstrap_success_requires_independent_instrument_repricing() -> None:
     definition = _log_discount_definition("discount", "discount")
     instruments = tuple(
         DepositBootstrapInstrument(
@@ -183,7 +187,7 @@ def test_bootstrap_success_requires_independent_instrument_repricing():
         result.require_success()
 
 
-def test_replay_rejects_quote_layout_changes_even_when_shapes_match():
+def test_replay_rejects_quote_layout_changes_even_when_shapes_match() -> None:
     definition = _log_discount_definition("discount", "discount")
     base = (
         DepositBootstrapInstrument(

@@ -9,7 +9,7 @@ from phydrax.applications.cosmology._wave_dark_matter import (
 )
 
 
-def test_small_soliton_like_wave_dark_matter_workflow_is_bounded():
+def test_small_soliton_like_wave_dark_matter_workflow_is_bounded() -> None:
     shape = (8, 8, 8)
     space = phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(count) for count in shape),

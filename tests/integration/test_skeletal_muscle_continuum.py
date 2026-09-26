@@ -19,7 +19,7 @@ from phydrax.discretization import (
 )
 
 
-def test_exact_mixed_taylor_hood_manufactured_rest_solves_and_commits():
+def test_exact_mixed_taylor_hood_manufactured_rest_solves_and_commits() -> None:
     mesh = CellMesh.from_tetrahedra(
         jnp.asarray(
             (

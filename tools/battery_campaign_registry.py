@@ -109,6 +109,7 @@ class CampaignEntry:
                 "Registry entries require real preparation and observation evaluators."
             )
         contract = battery_release_contract(
+            # ty: ignore[invalid-argument-type]
             dict(self.candidate_support.attributes)["model_id"]
         )
         expected = dict(contract.scientific_cases)
@@ -136,7 +137,9 @@ class CampaignEntry:
             "raw_fields": list(self.raw_fields),
             "raw_metric_fields": ["value", "unavailable_reason"],
             "outcome_policy": "observed-violation-failed;unavailable-inconclusive",
+            # ty: ignore[unresolved-attribute]
             "prepare": f"{self.prepare.__module__}.{self.prepare.__qualname__}",
+            # ty: ignore[unresolved-attribute]
             "evaluator": f"{self.raw_output.__module__}.{self.raw_output.__qualname__}",
         }
 
@@ -149,6 +152,7 @@ class CampaignEntry:
 
     def evidence_kind(self, criterion: QualificationCriterion, /) -> str:
         contract = battery_release_contract(
+            # ty: ignore[invalid-argument-type]
             dict(self.candidate_support.attributes)["model_id"]
         )
         return (
@@ -213,8 +217,10 @@ class CampaignEntry:
         if criterion.comparison == "equal":
             passed = value == criterion.target
         elif criterion.comparison == "less-than-or-equal":
+            # ty: ignore[unsupported-operator]
             passed = value <= criterion.target
         else:
+            # ty: ignore[unsupported-operator]
             passed = value >= criterion.target
         return (
             ("passed", "registered-threshold-satisfied")

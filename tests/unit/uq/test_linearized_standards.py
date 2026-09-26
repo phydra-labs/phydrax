@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -16,10 +19,10 @@ import phydrax as phx
     ],
 )
 def test_jcgm_102_section_9_2_additive_common_effect(
-    common_variance,
-    expected_covariance,
-    expected_correlation,
-):
+    common_variance: Any,
+    expected_covariance: Any,
+    expected_correlation: Any,
+) -> None:
     """Reproduce JCGM 102:2011 sections 9.2.2 and 9.2.4 exactly."""
     input_covariance = jnp.diag(jnp.asarray([1.0, 1.0, common_variance]))
     result = phx.uq.propagate_linearized(
@@ -47,10 +50,10 @@ def test_jcgm_102_section_9_2_additive_common_effect(
     ],
 )
 def test_jcgm_102_section_9_3_cartesian_to_polar_first_order_covariance(
-    x1,
-    correlation,
-    expected_covariance,
-):
+    x1: Any,
+    correlation: Any,
+    expected_covariance: Any,
+) -> None:
     """Reproduce the generalized-GUM rows of JCGM 102:2011 section 9.3."""
     standard_uncertainty = 0.010
     input_covariance = standard_uncertainty**2 * jnp.asarray(
@@ -69,7 +72,7 @@ def test_jcgm_102_section_9_3_cartesian_to_polar_first_order_covariance(
     assert jnp.allclose(covariance, expected_covariance, rtol=1e-12, atol=1e-12)
 
 
-def test_jcgm_near_origin_case_remains_an_explicit_first_order_approximation():
+def test_jcgm_near_origin_case_remains_an_explicit_first_order_approximation() -> None:
     """The section 9.3 case must not be disguised as a full polar distribution."""
     result = phx.uq.propagate_linearized(
         lambda value: jnp.asarray(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -32,7 +35,7 @@ equilibrium = fd.ForceDensityProblem(structure, sign_mode="tension")
 plan = fd.plan_force_density(equilibrium, sample)
 
 
-def decode(support_height, _):
+def decode(support_height: Any, _: Any) -> Any:
     positions = base.at[2, 2].set(support_height.reshape(()))
     return fd.ForceDensityInputs(
         sample.force_densities,
@@ -41,7 +44,7 @@ def decode(support_height, _):
     )
 
 
-def objective(state, support_height, _):
+def objective(state: Any, support_height: Any, _: Any) -> Any:
     planarity = fd.surface_planarity_residual(structure, state.positions, 1.0)
     rectangularity = fd.surface_rectangularity_residual(structure, state.positions, 1.0)
     return jnp.sum(planarity**2) + 0.1 * jnp.sum(rectangularity**2)

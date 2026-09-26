@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _two_tetrahedra():
+def _two_tetrahedra() -> Any:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -24,7 +26,7 @@ def _two_tetrahedra():
     return phx.discretization.CellMesh.from_tetrahedra(coordinates, cells)
 
 
-def test_p2_tetrahedral_entity_routes_share_vertices_and_edges():
+def test_p2_tetrahedral_entity_routes_share_vertices_and_edges() -> None:
     mesh = _two_tetrahedra()
     element = phx.discretization.lagrange_element("tetrahedron", 2)
     discretization = phx.discretization.FiniteElementPlan(
@@ -50,7 +52,7 @@ def test_p2_tetrahedral_entity_routes_share_vertices_and_edges():
     )
 
 
-def test_curved_p2_tetrahedral_coordinates_drive_tensor_diffusion():
+def test_curved_p2_tetrahedral_coordinates_drive_tensor_diffusion() -> None:
     mesh = phx.discretization.CellMesh.from_tetrahedra(
         jnp.asarray(
             (

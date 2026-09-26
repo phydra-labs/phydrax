@@ -4,6 +4,8 @@
 
 """Static multi-case rigid-unit response matching with independent reanalysis."""
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -30,8 +32,11 @@ ligament_section = mn.BeamSection(0.08, 0.002, 0.002, 0.001, 0.08, 0.08)
 properties = mn.MemberPropertyMap(
     (material,),
     (rigid_section, ligament_section),
+    # ty: ignore[invalid-argument-type]
     (0, 0, 0, 0),
+    # ty: ignore[invalid-argument-type]
     (0, 0, 1, 1),
+    # ty: ignore[invalid-argument-type]
     fabrication_group=(0, 1, 2, 2),
 )
 reference = mn.MemberReferenceState(structure, nominal_positions)
@@ -40,11 +45,12 @@ dofs = mn.MemberDOFLayout(
     rotation_constrained=jnp.asarray(((True,), (True,), (False,), (False,))),
 )
 definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
+# ty: ignore[invalid-argument-type]
 assembly = mn.MemberNetworkAssembly((mn.CorotationalFrameBlock((0, 1, 2, 3)),))
 base_problem = mn.MemberNetworkProblem(definition, assembly)
 
 
-def geometry(design):
+def geometry(design: Any) -> Any:
     gap, offset = design
     positions = jnp.asarray(((0.0, 0.0), (0.0, 1.0), (gap, offset), (gap, 1.0 + offset)))
     vectors = positions[edges[:, 1]] - positions[edges[:, 0]]
@@ -52,7 +58,7 @@ def geometry(design):
     return positions, rest_lengths
 
 
-def realized_problem(design):
+def realized_problem(design: Any) -> Any:
     positions, rest_lengths = geometry(design)
     current_reference = eqx.tree_at(
         lambda value: (value.positions, value.rest_lengths),
@@ -75,7 +81,7 @@ vertical = jnp.zeros((4, 2)).at[2:, 1].set(-0.005)
 horizontal = jnp.zeros((4, 2)).at[2:, 0].set(-0.005)
 
 
-def generalized_load(nodal_load):
+def generalized_load(nodal_load: Any) -> Any:
     return jnp.concatenate(
         (
             structure.reduce(nodal_load),
@@ -106,19 +112,19 @@ aggregation = sm.Aggregation("weighted_sum")
 initial_design = jnp.asarray((1.0, 0.1))
 
 
-def reference_state(design):
+def reference_state(design: Any) -> Any:
     positions, _ = geometry(design)
     return dofs.reduce(positions, jnp.zeros((4, 1)))
 
 
-def state_residual(states, design, _args):
+def state_residual(states: Any, design: Any, _args: Any) -> Any:
     problem = realized_problem(design)
     positions, _ = geometry(design)
     prescribed = structure.prescribed_values(positions)
     prescribed_rotations = dofs.prescribed_rotations(jnp.zeros((4, 1)))
     undeformed = reference_state(design)
 
-    def energy(state):
+    def energy(state: Any) -> Any:
         kinematics = dofs.expand(state, prescribed, prescribed_rotations)
         return problem.assembly.evaluate(problem.definition, kinematics).energy
 
@@ -131,7 +137,7 @@ def state_residual(states, design, _args):
     )
 
 
-def responses(states, design):
+def responses(states: Any, design: Any) -> Any:
     current_reference = reference_state(design)
     return jnp.stack(
         tuple(
@@ -237,7 +243,7 @@ if not all(
     raise RuntimeError("Optimized design violates a declared constraint")
 
 
-def refined_reanalysis(design, nodal_load):
+def refined_reanalysis(design: Any, nodal_load: Any) -> Any:
     gap, offset = design
     positions = jnp.asarray(
         (
@@ -271,7 +277,9 @@ def refined_reanalysis(design, nodal_load):
     refined_properties = mn.MemberPropertyMap(
         (material,),
         (rigid_section, ligament_section),
+        # ty: ignore[invalid-argument-type]
         (0,) * 6,
+        # ty: ignore[invalid-argument-type]
         (0, 0, 1, 1, 1, 1),
     )
     refined_reference = mn.MemberReferenceState(refined_structure, positions)

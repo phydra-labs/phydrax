@@ -19,7 +19,7 @@ from jaxtyping import PyTree
 from .._sampling import AbstractProposal
 from .._strict import StrictModule
 from ..stochastic._state_space import state_space_key, StateSpaceProblem
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._particle import (
     bootstrap_particle_filter,
     normalize_log_weights,
@@ -577,13 +577,7 @@ def particle_marginal_metropolis_hastings(
         raise ValueError("num_warmup must be nonnegative.")
     if thin < 1:
         raise ValueError("thinning must be positive.")
-    if resampling_method not in (
-        "systematic",
-        "stratified",
-        "multinomial",
-        "residual",
-    ):
-        raise ValueError("Unknown resampling_method.")
+    resampling_method = parse(resampling_method, ResamplingMethod, "resampling_method")
     current = jax.tree_util.tree_map(jnp.asarray, initial_parameters)
     if not jax.tree_util.tree_leaves(current):
         raise ValueError("initial_parameters must be non-empty.")

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import optax
 import pytest
@@ -11,7 +13,7 @@ from phydrax.stochastic._feynman_kac import (
 from phydrax.terms._feynman_kac import FeynmanKacRegressionTerm
 
 
-def _problem():
+def _problem() -> Any:
     paths = BSDEPathBatch(
         jnp.asarray([0.0, 1.0]),
         jnp.zeros((1, 2, 1)),
@@ -36,7 +38,7 @@ def _problem():
     )
 
 
-def _plan(*, refresh_mode="fixed", control=False):
+def _plan(*, refresh_mode: Any = "fixed", control: Any = False) -> Any:
     return FeynmanKacSamplingPlan(
         terminal_time=1.0,
         sampling_mode="queries",
@@ -47,7 +49,7 @@ def _plan(*, refresh_mode="fixed", control=False):
     )
 
 
-def _labels(problem, plan, *, valid=None, control=False):
+def _labels(problem: Any, plan: Any, *, valid: Any = None, control: Any = False) -> Any:
     times = jnp.asarray([0.0, 0.5, 1.0])
     controls = jnp.ones((3, 1, 1)) if control else None
     return FeynmanKacLabelBatch(
@@ -70,7 +72,7 @@ def _labels(problem, plan, *, valid=None, control=False):
     )
 
 
-def test_fixed_regression_objective_trains_a_global_value_parameter():
+def test_fixed_regression_objective_trains_a_global_value_parameter() -> None:
     problem = _problem()
     plan = _plan()
     labels = _labels(problem, plan)
@@ -101,13 +103,13 @@ def test_fixed_regression_objective_trains_a_global_value_parameter():
     assert objective.diagnostics(trained.functions, batch=labels).passed
 
 
-def test_resampled_provider_is_called_once_per_optimizer_update():
+def test_resampled_provider_is_called_once_per_optimizer_update() -> None:
     problem = _problem()
     plan = _plan(refresh_mode="resample")
     labels = _labels(problem, plan)
     calls = []
 
-    def provider(key):
+    def provider(key: Any) -> Any:
         calls.append(key)
         return labels
 
@@ -132,7 +134,7 @@ def test_resampled_provider_is_called_once_per_optimizer_update():
     assert len(calls) == 5
 
 
-def test_control_targets_can_train_against_value_autodiff():
+def test_control_targets_can_train_against_value_autodiff() -> None:
     problem = _problem()
     plan = _plan(control=True)
     labels = _labels(problem, plan, control=True)
@@ -150,7 +152,7 @@ def test_control_targets_can_train_against_value_autodiff():
     assert jnp.allclose(objective.loss({"value": value}, batch=labels), 0.0)
 
 
-def test_zero_valid_mass_and_provenance_mismatch_fail_early():
+def test_zero_valid_mass_and_provenance_mismatch_fail_early() -> None:
     problem = _problem()
     plan = _plan()
     invalid = _labels(problem, plan, valid=jnp.zeros((3,), dtype="bool"))

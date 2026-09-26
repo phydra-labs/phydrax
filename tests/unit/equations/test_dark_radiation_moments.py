@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -20,7 +23,7 @@ from phydrax.metrix._adm_exchange import ADMGridGeometry
 from phydrax.metrix._spacetime_conventions import RelativityConvention
 
 
-def _geometry(*, lanes=()):
+def _geometry(*, lanes: Any = ()) -> Any:
     identity = jnp.broadcast_to(jnp.eye(3), lanes + (3, 3))
     return ADMGridGeometry(
         jnp.ones(lanes),
@@ -40,7 +43,7 @@ def _geometry(*, lanes=()):
     )
 
 
-def _hierarchy_frame(*, time, scale_factor, snapshot):
+def _hierarchy_frame(*, time: Any, scale_factor: Any, snapshot: Any) -> Any:
     units = RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1),
         RelativityConvention(metric_signature="mostly_minus"),
@@ -72,7 +75,7 @@ def _hierarchy_frame(*, time, scale_factor, snapshot):
     )
 
 
-def test_multigroup_m1_physical_c_redshift_exchange_reflux_and_gravity():
+def test_multigroup_m1_physical_c_redshift_exchange_reflux_and_gravity() -> None:
     system = CosmologicalMultigroupM1System(
         jnp.asarray((1.0, 2.0, 4.0)),
         3,
@@ -137,7 +140,7 @@ def test_multigroup_m1_physical_c_redshift_exchange_reflux_and_gravity():
     assert projection.snapshot_token == 11
 
 
-def test_m1_realizability_repair_is_explicit_and_beam_risk_refuses():
+def test_m1_realizability_repair_is_explicit_and_beam_risk_refuses() -> None:
     system = CosmologicalMultigroupM1System(
         jnp.asarray((1.0, 2.0)), physical_light_speed=1.0
     )
@@ -154,7 +157,7 @@ def test_m1_realizability_repair_is_explicit_and_beam_risk_refuses():
     assert "crossing-beam" in qualification.refusal_reason
 
 
-def test_boltzmann_hierarchy_free_streaming_tight_coupling_and_line_of_sight():
+def test_boltzmann_hierarchy_free_streaming_tight_coupling_and_line_of_sight() -> None:
     frame0 = _hierarchy_frame(time=0.0, scale_factor=1.0, snapshot=1)
     frame1 = _hierarchy_frame(time=0.01, scale_factor=1.001, snapshot=2)
     plan = DarkRadiationBoltzmannHierarchyPlan(
@@ -193,7 +196,7 @@ def test_boltzmann_hierarchy_free_streaming_tight_coupling_and_line_of_sight():
     assert output.polarization_e.shape == (2,)
 
 
-def test_vet_formal_solve_preserves_directional_shadow_and_iteration_evidence():
+def test_vet_formal_solve_preserves_directional_shadow_and_iteration_evidence() -> None:
     directions = jnp.asarray(
         ((1.0, 0.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, -1.0, 0.0))
     )

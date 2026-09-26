@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +17,7 @@ from tests._control_systems import make_discrete_control_dynamics
 class _ScaledTransition(eqx.Module):
     scale: jax.Array
 
-    def __call__(self, context, state, control, args):
+    def __call__(self, context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, args
         accepted = state + self.scale * control
         return phx.dynamics.DiscreteTransitionResult(
@@ -26,7 +28,7 @@ class _ScaledTransition(eqx.Module):
         )
 
 
-def test_prepared_ilqr_preserves_two_dimensional_case_axes_and_statuses():
+def test_prepared_ilqr_preserves_two_dimensional_case_axes_and_statuses() -> None:
     dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
         state_shape=(1,),
@@ -51,7 +53,7 @@ def test_prepared_ilqr_preserves_two_dimensional_case_axes_and_statuses():
     assert result.diagnostics.objective_history.shape == problem.case_shape + (9,)
 
 
-def test_prepared_ilqr_uses_six_pose_feedback_coordinates_across_signs():
+def test_prepared_ilqr_uses_six_pose_feedback_coordinates_across_signs() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
@@ -105,7 +107,7 @@ def test_prepared_ilqr_uses_six_pose_feedback_coordinates_across_signs():
     )
 
 
-def test_prepared_ilqr_retains_rejected_line_search_attempt_metrics():
+def test_prepared_ilqr_retains_rejected_line_search_attempt_metrics() -> None:
     dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state,
         state_shape=(1,),
@@ -145,10 +147,10 @@ def test_prepared_ilqr_retains_rejected_line_search_attempt_metrics():
     np.testing.assert_array_equal(result.trajectory.controls, controls)
 
 
-def test_prepared_ilqr_retains_selected_transition_evidence_per_case():
+def test_prepared_ilqr_retains_selected_transition_evidence_per_case() -> None:
     failure_status = 73
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, args
         successful = state[0] >= 0.0
         candidate = state + control + 100.0
@@ -219,7 +221,7 @@ def test_prepared_ilqr_retains_selected_transition_evidence_per_case():
     )
 
 
-def test_prepared_ilqr_keeps_transition_parameters_dynamic():
+def test_prepared_ilqr_keeps_transition_parameters_dynamic() -> None:
     dynamics = make_discrete_control_dynamics(
         _ScaledTransition(jnp.asarray(1.0)),
         state_shape=(1,),

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -5,11 +7,11 @@ import phydrax as phx
 
 
 @pytest.fixture
-def wave_problem():
+def wave_problem() -> Any:
     return build_wave_problem
 
 
-def build_wave_problem(*, sample_count=64):
+def build_wave_problem(*, sample_count: Any = 64) -> Any:
     gw = phx.applications.astrophysics.gravitational_waves
     sample_interval = 1.0 / sample_count
     frequency = jnp.fft.rfftfreq(sample_count, sample_interval)

@@ -10,6 +10,7 @@ import json
 import struct
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -63,7 +64,7 @@ def _archive_limits(maximum_bytes: int = 1_000_000) -> ArchiveLimits:
     )
 
 
-def test_opened_resource_is_seekable_and_content_identified(tmp_path: Path):
+def test_opened_resource_is_seekable_and_content_identified(tmp_path: Path) -> None:
     payload = b"seekable resource bytes"
     source = tmp_path / "source.bin"
     source.write_bytes(payload)
@@ -82,7 +83,7 @@ def test_opened_resource_is_seekable_and_content_identified(tmp_path: Path):
     assert manifest_id
 
 
-def test_opened_resource_preserves_consumer_errors(tmp_path: Path):
+def test_opened_resource_preserves_consumer_errors(tmp_path: Path) -> None:
     class ConsumerError(ValueError):
         pass
 
@@ -98,7 +99,7 @@ def test_opened_resource_preserves_consumer_errors(tmp_path: Path):
             raise ConsumerError("consumer failure")
 
 
-def test_trusted_root_walk_rejects_symlink_ancestors(tmp_path: Path):
+def test_trusted_root_walk_rejects_symlink_ancestors(tmp_path: Path) -> None:
     actual = tmp_path / "actual"
     root = actual / "root"
     root.mkdir(parents=True)
@@ -117,9 +118,9 @@ def test_trusted_root_walk_rejects_symlink_ancestors(tmp_path: Path):
 
 
 def test_trusted_root_walk_stays_on_held_ancestor_during_replacement(
-    monkeypatch,
+    monkeypatch: Any,
     tmp_path: Path,
-):
+) -> None:
     parent = tmp_path / "parent"
     trusted = parent / "trusted"
     trusted.mkdir(parents=True)
@@ -132,7 +133,7 @@ def test_trusted_root_walk_stays_on_held_ancestor_during_replacement(
     original_open = host_io.os.open
     replaced = False
 
-    def replace_ancestor(path, flags, *args, **kwargs):
+    def replace_ancestor(path: Any, flags: Any, *args: Any, **kwargs: Any) -> Any:
         nonlocal replaced
         if path == "trusted" and kwargs.get("dir_fd") is not None and not replaced:
             replaced = True
@@ -151,7 +152,7 @@ def test_trusted_root_walk_stays_on_held_ancestor_during_replacement(
     assert resource.data == b"original"
 
 
-def test_resource_set_accounts_exact_members_and_rejects_links(tmp_path: Path):
+def test_resource_set_accounts_exact_members_and_rejects_links(tmp_path: Path) -> None:
     root = tmp_path / "root"
     dataset = root / "dataset"
     nested = dataset / "nested"
@@ -179,7 +180,9 @@ def test_resource_set_accounts_exact_members_and_rejects_links(tmp_path: Path):
     assert caught.value.reason == "policy"
 
 
-def test_resource_set_counts_directories_against_total_entry_limit(tmp_path: Path):
+def test_resource_set_counts_directories_against_total_entry_limit(
+    tmp_path: Path,
+) -> None:
     dataset = tmp_path / "dataset"
     dataset.mkdir()
     for index in range(4):
@@ -195,7 +198,9 @@ def test_resource_set_counts_directories_against_total_entry_limit(tmp_path: Pat
     assert caught.value.reason == "limit"
 
 
-def test_opened_resource_set_reads_from_admitted_directory_generation(tmp_path: Path):
+def test_opened_resource_set_reads_from_admitted_directory_generation(
+    tmp_path: Path,
+) -> None:
     dataset = tmp_path / "dataset"
     dataset.mkdir()
     (dataset / "module.bin").write_bytes(b"admitted")
@@ -216,7 +221,7 @@ def test_opened_resource_set_reads_from_admitted_directory_generation(tmp_path: 
     assert payload == b"admitted"
 
 
-def test_external_archive_preflights_paths_and_reads_exact_members():
+def test_external_archive_preflights_paths_and_reads_exact_members() -> None:
     output = io.BytesIO()
     with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", b"{}")
@@ -246,7 +251,7 @@ def test_external_archive_preflights_paths_and_reads_exact_members():
     assert caught.value.reason == "policy"
 
 
-def test_external_archive_counts_directory_entries_before_member_decode():
+def test_external_archive_counts_directory_entries_before_member_decode() -> None:
     output = io.BytesIO()
     with zipfile.ZipFile(output, mode="w") as archive:
         archive.mkdir("one/")
@@ -274,7 +279,9 @@ def test_external_archive_counts_directory_entries_before_member_decode():
     assert caught.value.reason == "limit"
 
 
-def test_external_archive_counts_headers_before_zipinfo_materialization(monkeypatch):
+def test_external_archive_counts_headers_before_zipinfo_materialization(
+    monkeypatch: Any,
+) -> None:
     output = io.BytesIO()
     with zipfile.ZipFile(output, mode="w") as archive:
         archive.writestr("one.bin", b"1")
@@ -284,7 +291,7 @@ def test_external_archive_counts_headers_before_zipinfo_materialization(monkeypa
     end_offset = payload.rfind(b"PK\x05\x06")
     struct.pack_into("<HH", payload, end_offset + 8, 1, 1)
 
-    def unexpected_zipfile(*_args, **_kwargs):
+    def unexpected_zipfile(*_args: Any, **_kwargs: Any) -> None:
         pytest.fail("ZipFile materialized entries before central-directory preflight")
 
     monkeypatch.setattr(resource_archive.zipfile, "ZipFile", unexpected_zipfile)
@@ -302,7 +309,7 @@ def test_external_archive_counts_headers_before_zipinfo_materialization(monkeypa
 
 def test_resource_publication_preflights_parent_directories_as_entries(
     tmp_path: Path,
-):
+) -> None:
     destination = tmp_path / "bundle"
 
     with pytest.raises(ValueError, match="total entry limit"):
@@ -315,7 +322,7 @@ def test_resource_publication_preflights_parent_directories_as_entries(
     assert not destination.exists()
 
 
-def test_publication_exposes_only_complete_file_and_resource_set(tmp_path: Path):
+def test_publication_exposes_only_complete_file_and_resource_set(tmp_path: Path) -> None:
     destination = tmp_path / "artifact.bin"
     first = publish_bytes(destination, b"first", maximum_bytes=16)
     second = publish_bytes(
@@ -356,7 +363,7 @@ def test_publication_exposes_only_complete_file_and_resource_set(tmp_path: Path)
     assert not (bundle / "data").exists()
 
 
-def test_document_decoders_reject_duplicate_json_and_xml_doctype():
+def test_document_decoders_reject_duplicate_json_and_xml_doctype() -> None:
     limits = _resource_limits()
     with pytest.raises(ResourceReadError):
         decode_json_resource(
@@ -382,7 +389,7 @@ def test_document_decoders_reject_duplicate_json_and_xml_doctype():
     assert caught.value.reason == "policy"
 
 
-def test_numpy_decoders_preflight_pickle_and_preserve_read_only_arrays():
+def test_numpy_decoders_preflight_pickle_and_preserve_read_only_arrays() -> None:
     limits = _resource_limits()
     encoded = io.BytesIO()
     np.save(encoded, np.arange(6, dtype=np.float64).reshape(2, 3), allow_pickle=False)
@@ -410,7 +417,7 @@ def test_numpy_decoders_preflight_pickle_and_preserve_read_only_arrays():
     assert caught.value.reason == "policy"
 
 
-def test_hdf5_inspection_and_reference_admission(tmp_path: Path):
+def test_hdf5_inspection_and_reference_admission(tmp_path: Path) -> None:
     h5py = pytest.importorskip("h5py")
     source = tmp_path / "values.h5"
     with h5py.File(source, "w") as handle:
@@ -460,7 +467,7 @@ def test_hdf5_inspection_and_reference_admission(tmp_path: Path):
     assert manifest.total_dataset_bytes == 96
 
 
-def test_format_catalog_is_deterministic_and_non_dispatching():
+def test_format_catalog_is_deterministic_and_non_dispatching() -> None:
     first = format_capabilities()
     second = format_capabilities()
     assert first == second

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -12,20 +13,20 @@ import numpy as np
 import phydrax as phx
 
 
-def _block(value) -> None:
+def _block(value: Any) -> None:
     for leaf in jax.tree.leaves(value):
         if isinstance(leaf, jax.Array):
             leaf.block_until_ready()
 
 
-def _measure(function, *arguments):
+def _measure(function: Any, *arguments: Any) -> Any:
     started = time.perf_counter()
     value = function(*arguments)
     _block(value)
     return value, time.perf_counter() - started
 
 
-def _case(depth: int):
+def _case(depth: int) -> Any:
     resolution = 1 << depth
     address = phx.discretization.MortonAddressPlan(
         (-1.0, -1.0, -1.0), (1.0, 1.0, 1.0), depth

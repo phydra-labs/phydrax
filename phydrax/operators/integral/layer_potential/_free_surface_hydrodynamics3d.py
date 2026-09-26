@@ -843,7 +843,8 @@ def prepare_free_surface_hydrodynamics_3d(
     )
     dense_oracle = galerkin.dense_oracle
     # _galerkin_policy_with_oracle always requests the dense oracle.
-    assert dense_oracle is not None
+    if not (dense_oracle is not None):
+        raise RuntimeError("Internal invariant failed: dense_oracle is not None.")
     direct_trace = jnp.asarray(dense_oracle.matrix, dtype=jnp.complex128)
     trace_matrix = direct_trace + integrated_wave
     boundary_operator = DenseLinearOperator(

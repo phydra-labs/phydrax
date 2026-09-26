@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _wcsph(name, ids, positions, *, density_reference=1.0):
+def _wcsph(name: Any, ids: Any, positions: Any, *, density_reference: Any = 1.0) -> Any:
     count = len(ids)
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray(ids),
@@ -15,6 +18,7 @@ def _wcsph(name, ids, positions, *, density_reference=1.0):
         ambient_dimension=1,
         name=name,
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
         phx.discretization.WendlandC2SPHKernel(1),
@@ -35,7 +39,7 @@ def _wcsph(name, ids, positions, *, density_reference=1.0):
     return compiled, jnp.asarray(positions)[:, None], box
 
 
-def test_transport_velocity_runs_through_fixed_step_substrate():
+def test_transport_velocity_runs_through_fixed_step_substrate() -> None:
     compiled, position, _ = _wcsph("transport", range(6), (jnp.arange(6) + 0.5) / 6.0)
     transport = phx.discretization.PreparedTransportVelocityDynamics(
         compiled.dynamics,
@@ -52,6 +56,7 @@ def test_transport_velocity_runs_through_fixed_step_substrate():
             step_size=0.001,
         )
     )
+    # ty: ignore[invalid-argument-type]
     diagnostics = transport.diagnostics(0.0, solution.states[-1], None)
 
     assert solution.successful
@@ -59,7 +64,7 @@ def test_transport_velocity_runs_through_fixed_step_substrate():
     assert jnp.isfinite(diagnostics.background_acceleration_norm)
 
 
-def test_multiphase_interface_is_reciprocal_and_compiles_flat_state():
+def test_multiphase_interface_is_reciprocal_and_compiles_flat_state() -> None:
     first, first_position, box = _wcsph("phase-a", range(4), (jnp.arange(4) + 0.25) / 4.0)
     second, second_position, _ = _wcsph("phase-b", range(4), (jnp.arange(4) + 0.75) / 4.0)
     phase_a = phx.discretization.PhaseDefinition("phase-a", first.dynamics)
@@ -80,7 +85,9 @@ def test_multiphase_interface_is_reciprocal_and_compiles_flat_state():
     state_a = first.initialize_state(first_position, jnp.zeros_like(first_position))
     state_b = second.initialize_state(second_position, jnp.zeros_like(second_position))
     state = dynamics.pack(state_a, state_b)
+    # ty: ignore[invalid-argument-type]
     rate = dynamics(0.0, state, None)
+    # ty: ignore[invalid-argument-type]
     diagnostics = dynamics.diagnostics(0.0, state, None)
 
     assert rate.shape == state.shape
@@ -88,12 +95,13 @@ def test_multiphase_interface_is_reciprocal_and_compiles_flat_state():
     assert diagnostics.interface_pair_count > 0
 
 
-def test_iisph_and_dfsph_fixed_steps_return_complete_projection_status():
+def test_iisph_and_dfsph_fixed_steps_return_complete_projection_status() -> None:
     count = 6
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(
         count * (count - 1) // 2, box=box
@@ -110,6 +118,7 @@ def test_iisph_and_dfsph_fixed_steps_return_complete_projection_status():
         phx.discretization.IISPHMethodPlan(1.0, maximum_iterations=2, tolerance=1.0),
     )
     iisph_state = iisph.initialize_state(position, velocity)
+    # ty: ignore[invalid-argument-type]
     iisph_result = iisph.step_detailed(0.0, iisph_state, 0.001, None)
     iisph_solution = phx.solver.solve_fixed_step(
         phx.solver.FixedStepProblem(
@@ -135,6 +144,7 @@ def test_iisph_and_dfsph_fixed_steps_return_complete_projection_status():
         ),
     )
     dfsph_state = dfsph.initialize_state(position, velocity)
+    # ty: ignore[invalid-argument-type]
     dfsph_result = dfsph.step_detailed(0.0, dfsph_state, 0.001, None)
     dfsph_solution = phx.solver.solve_fixed_step(
         phx.solver.FixedStepProblem(

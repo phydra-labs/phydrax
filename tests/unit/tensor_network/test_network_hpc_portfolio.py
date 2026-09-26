@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import opt_einsum as oe
@@ -70,7 +73,7 @@ from phydrax.tensor_network._tree_network import (
 )
 
 
-def test_arbitrary_incidence_trace_hyperedge_scalar_and_outputs():
+def test_arbitrary_incidence_trace_hyperedge_scalar_and_outputs() -> None:
     structure = ContractionStructure(
         (
             ContractionOperand(
@@ -112,7 +115,7 @@ def test_arbitrary_incidence_trace_hyperedge_scalar_and_outputs():
     assert jnp.allclose(output.value, (a @ b).T)
 
 
-def test_slicing_order_serial_batch_equality_resource_refusal_and_reverse():
+def test_slicing_order_serial_batch_equality_resource_refusal_and_reverse() -> None:
     structure = ContractionStructure(
         (
             ContractionOperand("left", (ContractionLeg("i", 2), ContractionLeg("j", 3))),
@@ -213,7 +216,7 @@ def test_slicing_order_serial_batch_equality_resource_refusal_and_reverse():
     assert reverse.reverse_evidence.exact_derivative
 
 
-def test_single_and_available_multi_device_slice_parity():
+def test_single_and_available_multi_device_slice_parity() -> None:
     structure = ContractionStructure(
         (
             ContractionOperand("x", (ContractionLeg("s", 4),)),
@@ -240,12 +243,12 @@ def test_single_and_available_multi_device_slice_parity():
         assert jnp.allclose(multiple_result.aggregate, expected)
 
 
-def _product_peps(rows=2, columns=2):
+def _product_peps(rows: Any = 2, columns: Any = 2) -> Any:
     local = jnp.asarray([1.0, 0.0], dtype=jnp.float32).reshape((1, 1, 1, 1, 2))
     return PEPS(tuple(local for _ in range(rows * columns)), rows, columns)
 
 
-def test_exact_2x2_peps_boundary_and_ctm_evidence():
+def test_exact_2x2_peps_boundary_and_ctm_evidence() -> None:
     state = _product_peps()
     exact = contract_peps_exact(state)
     boundary = contract_peps_boundary_mps(state, BoundaryMPSPolicy(2))
@@ -261,7 +264,7 @@ def test_exact_2x2_peps_boundary_and_ctm_evidence():
     assert not ctm.evidence.global_error_bound_claimed
 
 
-def test_simple_and_full_peps_updates_are_explicitly_distinct():
+def test_simple_and_full_peps_updates_are_explicitly_distinct() -> None:
     state = _product_peps(1, 2)
     gate = jnp.eye(4, dtype=jnp.float32).reshape((2, 2, 2, 2))
     policy = PEPSUpdatePolicy(2, regularization=1e-3)
@@ -283,7 +286,7 @@ def test_simple_and_full_peps_updates_are_explicitly_distinct():
     assert not full.evidence.global_error_bound_claimed
 
 
-def test_ttn_messages_equal_direct_exact_contraction():
+def test_ttn_messages_equal_direct_exact_contraction() -> None:
     structure = tree_contraction_structure(2, bond_dimension=2, physical_dimension=2)
     leaf0 = jnp.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=jnp.float32)
     leaf1 = jnp.asarray([[0.5, 1.0], [1.5, 2.0]], dtype=jnp.float32)
@@ -298,7 +301,7 @@ def test_ttn_messages_equal_direct_exact_contraction():
     assert jnp.allclose(result.value, expected)
 
 
-def test_tree_claim_rejects_output_hyperedges_and_user_unary_steps():
+def test_tree_claim_rejects_output_hyperedges_and_user_unary_steps() -> None:
     output_hyperedge = ContractionStructure(
         (
             ContractionOperand("left", (ContractionLeg("open", 2),)),
@@ -322,7 +325,7 @@ def test_tree_claim_rejects_output_hyperedges_and_user_unary_steps():
         )
 
 
-def test_loopy_bp_residual_and_binary_mera_isometry():
+def test_loopy_bp_residual_and_binary_mera_isometry() -> None:
     pair = jnp.asarray([[2.0, 1.0], [1.0, 2.0]], dtype=jnp.float32)
     graph = FactorGraphNetwork(
         {"a": 2, "b": 2, "c": 2},

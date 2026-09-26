@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -57,7 +59,7 @@ from phydrax.equations.fem._viscous_conservation import (
 from phydrax.solver._fixed_step import SSPRK33FixedStepMethod
 
 
-def _quad_discretization(order=2, *, curved=False):
+def _quad_discretization(order: Any = 2, *, curved: Any = False) -> Any:
     vertices = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     mesh = CellMesh(
         vertices,
@@ -95,7 +97,7 @@ def _quad_discretization(order=2, *, curved=False):
     return system, discretization
 
 
-def _hex_discretization(order=1, *, curved=False):
+def _hex_discretization(order: Any = 1, *, curved: Any = False) -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -147,7 +149,7 @@ def _hex_discretization(order=1, *, curved=False):
     ).prepare()
 
 
-def _sampled_evidence(system, interface_flux):
+def _sampled_evidence(system: Any, interface_flux: Any) -> Any:
     entropy_pair = ideal_gas_euler_entropy_pair(system)
     left_primitive = jnp.asarray(
         (
@@ -174,7 +176,7 @@ def _sampled_evidence(system, interface_flux):
     return entropy_pair, volume_flux, certificate
 
 
-def _compiled(*, curved=False, stable=True, entropy=True):
+def _compiled(*, curved: Any = False, stable: Any = True, entropy: Any = True) -> Any:
     system, discretization = _quad_discretization(curved=curved)
     interface_flux = (
         EntropyStableEulerFluxPlan() if stable else EntropyConservativeEulerFluxPlan()
@@ -199,7 +201,7 @@ def _compiled(*, curved=False, stable=True, entropy=True):
     return compiled, system, discretization
 
 
-def _constant_state(system, discretization):
+def _constant_state(system: Any, discretization: Any) -> Any:
     primitive = jnp.asarray((1.0,) + (0.15,) * system.dimension + (1.0,))
     conserved = system.primitive_to_conserved(primitive)
     return jnp.broadcast_to(
@@ -208,7 +210,7 @@ def _constant_state(system, discretization):
     )
 
 
-def test_element_local_gll_sbp_has_positive_norm_and_exact_defect_evidence():
+def test_element_local_gll_sbp_has_positive_norm_and_exact_defect_evidence() -> None:
     sbp = TensorGLLSBPPlan(5).prepare()
     np.testing.assert_array_less(0.0, np.asarray(sbp.norm_weights))
     np.testing.assert_allclose(
@@ -232,7 +234,9 @@ def test_element_local_gll_sbp_has_positive_norm_and_exact_defect_evidence():
 
 
 @pytest.mark.parametrize("dimension", (2, 3))
-def test_mapped_tensor_metric_plan_has_discrete_gcl_and_free_stream_evidence(dimension):
+def test_mapped_tensor_metric_plan_has_discrete_gcl_and_free_stream_evidence(
+    dimension: Any,
+) -> None:
     sbp = TensorGLLSBPPlan(3).prepare()
     axes = np.meshgrid(*(np.asarray(sbp.nodes),) * dimension, indexing="ij")
     bubble = np.ones_like(axes[0])
@@ -261,8 +265,8 @@ def test_mapped_tensor_metric_plan_has_discrete_gcl_and_free_stream_evidence(dim
 
 @pytest.mark.parametrize("dimension", (2, 3))
 def test_mapped_tensor_shared_face_is_watertight_with_opposite_scaled_normals(
-    dimension,
-):
+    dimension: Any,
+) -> None:
     sbp = TensorGLLSBPPlan(2).prepare()
     axes = np.meshgrid(*(np.asarray(sbp.nodes),) * dimension, indexing="ij")
     first = np.stack(tuple(axes), axis=-1)
@@ -287,7 +291,7 @@ def test_mapped_tensor_shared_face_is_watertight_with_opposite_scaled_normals(
     )
 
 
-def test_arbitrary_normal_flux_has_conservative_orientation():
+def test_arbitrary_normal_flux_has_conservative_orientation() -> None:
     system = EulerSystem(2)
     flux = RusanovFluxPlan()
     left = system.primitive_to_conserved(jnp.asarray(((1.0, 0.3, -0.1, 1.0),)))
@@ -304,7 +308,7 @@ def test_arbitrary_normal_flux_has_conservative_orientation():
     np.testing.assert_allclose(forward.max_speed, reverse.max_speed)
 
 
-def test_sampled_flux_compatibility_separates_entropy_evidence():
+def test_sampled_flux_compatibility_separates_entropy_evidence() -> None:
     system = EulerSystem(2)
     pair, volume, certificate = _sampled_evidence(system, EntropyStableEulerFluxPlan())
     assert certificate.system_id == system.system_id
@@ -320,7 +324,7 @@ def test_sampled_flux_compatibility_separates_entropy_evidence():
 
 
 @pytest.mark.parametrize("curved", (False, True))
-def test_periodic_quad_free_stream_is_real_fem_compiler_execution(curved):
+def test_periodic_quad_free_stream_is_real_fem_compiler_execution(curved: Any) -> None:
     compiled, system, discretization = _compiled(curved=curved)
     state = _constant_state(system, discretization)
     weak = compiled.weak_residual(0.0, state)
@@ -354,7 +358,7 @@ def test_periodic_quad_free_stream_is_real_fem_compiler_execution(curved):
 
 
 @pytest.mark.parametrize("curved", (False, True))
-def test_periodic_hex_free_stream_and_opposite_face_normals(curved):
+def test_periodic_hex_free_stream_and_opposite_face_normals(curved: Any) -> None:
     system, discretization = _hex_discretization(order=2 if curved else 1, curved=curved)
     method = DGSEMConservationMethodPlan(
         EntropyConservativeEulerFluxPlan(),
@@ -363,16 +367,20 @@ def test_periodic_hex_free_stream_and_opposite_face_normals(curved):
     problem = ConservationProblemIR("periodic-hex-euler", "state", system, None)
     compiled = compile_conservation_problem(problem, discretization, method)
     state = _constant_state(system, discretization)
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=4.0e-5)
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         compiled.dynamics.metrics.report.opposite_scaled_normal_defect,
         0.0,
+        # ty: ignore[unresolved-attribute]
         atol=compiled.dynamics.metrics.report.tolerance,
     )
+    # ty: ignore[unresolved-attribute]
     assert compiled.dynamics.report.facet_route_count == 3
 
 
-def test_pair_fluxes_cancel_and_global_conservation_rate_is_zero():
+def test_pair_fluxes_cancel_and_global_conservation_rate_is_zero() -> None:
     compiled, system, discretization = _compiled(entropy=False)
     coordinates = discretization.dof_maps[0].dof_coordinates
     primitive = jnp.stack(
@@ -405,7 +413,7 @@ def test_pair_fluxes_cancel_and_global_conservation_rate_is_zero():
 
 
 @pytest.mark.parametrize("stable", (False, True))
-def test_sampled_entropy_rate_is_conservative_or_dissipative(stable):
+def test_sampled_entropy_rate_is_conservative_or_dissipative(stable: Any) -> None:
     compiled, system, discretization = _compiled(stable=stable)
     coordinates = discretization.dof_maps[0].dof_coordinates
     primitive = jnp.stack(
@@ -428,7 +436,7 @@ def test_sampled_entropy_rate_is_conservative_or_dissipative(stable):
         np.testing.assert_allclose(diagnostics.convective_entropy_rate, 0.0, atol=7.0e-5)
 
 
-def test_rate_and_weak_residual_linearizations_have_exact_jvp_vjp_pairing():
+def test_rate_and_weak_residual_linearizations_have_exact_jvp_vjp_pairing() -> None:
     compiled, system, discretization = _compiled()
     state = _constant_state(system, discretization)
     state = state.at[0].set(
@@ -456,7 +464,7 @@ def test_rate_and_weak_residual_linearizations_have_exact_jvp_vjp_pairing():
     )
 
 
-def test_stable_step_exposes_positive_rate_evidence():
+def test_stable_step_exposes_positive_rate_evidence() -> None:
     compiled, system, discretization = _compiled(entropy=False)
     evidence = compiled.dynamics.stable_step_evidence(
         _constant_state(system, discretization), cfl=0.3
@@ -470,7 +478,7 @@ def test_stable_step_exposes_positive_rate_evidence():
     )
 
 
-def test_compiler_rejects_unsupported_system_cell_metric_and_entropy_scope():
+def test_compiler_rejects_unsupported_system_cell_metric_and_entropy_scope() -> None:
     system, discretization = _quad_discretization()
     method = DGSEMConservationMethodPlan(
         EntropyConservativeEulerFluxPlan(), RusanovFluxPlan()
@@ -521,10 +529,11 @@ def test_compiler_rejects_unsupported_system_cell_metric_and_entropy_scope():
         )
 
 
-def test_prepared_dgsem_is_not_constructible_on_fd_sbp_discretization():
+def test_prepared_dgsem_is_not_constructible_on_fd_sbp_discretization() -> None:
     with pytest.raises(TypeError, match="FiniteElementDiscretization"):
         PreparedDGSEMConservationDynamics(
             EulerSystem(2),
+            # ty: ignore[invalid-argument-type]
             object(),
             DGSEMConservationMethodPlan(
                 EntropyConservativeEulerFluxPlan(), RusanovFluxPlan()
@@ -532,7 +541,7 @@ def test_prepared_dgsem_is_not_constructible_on_fd_sbp_discretization():
         )
 
 
-def test_finite_element_boundary_set_requires_exact_exterior_ownership():
+def test_finite_element_boundary_set_requires_exact_exterior_ownership() -> None:
     _system, discretization = _quad_discretization()
     exterior = np.asarray(
         discretization.exterior_facet_domain.entity_indices, dtype=np.int32
@@ -569,7 +578,7 @@ def test_finite_element_boundary_set_requires_exact_exterior_ownership():
         )
 
 
-def test_physical_slip_wall_disables_sampled_periodic_evidence():
+def test_physical_slip_wall_disables_sampled_periodic_evidence() -> None:
     system, discretization = _quad_discretization()
     exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
@@ -595,18 +604,26 @@ def test_physical_slip_wall_disables_sampled_periodic_evidence():
         system.primitive_to_conserved(primitive),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     rate, diagnostics = compiled.residual_with_diagnostics(0.0, state)
+    # ty: ignore[invalid-argument-type, unresolved-attribute]
     faces = compiled.dynamics.face_fluxes(0.0, state)
     np.testing.assert_allclose(rate, 0.0, atol=3.0e-6)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(diagnostics.conservation_balance_defect, 0.0, atol=3.0e-6)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(diagnostics.boundary_flux_rate[0], 0.0, atol=3.0e-6)
+    # ty: ignore[unresolved-attribute]
     assert np.all(np.asarray(faces.is_boundary))
+    # ty: ignore[unresolved-attribute]
     assert np.all(np.asarray(faces.neighbor_cells) == -1)
+    # ty: ignore[unresolved-attribute]
     assert not diagnostics.sampled_entropy_inequality
+    # ty: ignore[unresolved-attribute]
     assert compiled.dynamics.stable_step_evidence(state).positive
 
 
-def test_entropy_filter_preserves_weighted_mean_and_repairs_pressure():
+def test_entropy_filter_preserves_weighted_mean_and_repairs_pressure() -> None:
     compiled, system, discretization = _compiled()
     filter_ = EntropyFilterPlan(
         density_floor=1.0e-6,
@@ -640,16 +657,18 @@ def test_entropy_filter_preserves_weighted_mean_and_repairs_pressure():
     assert jnp.min(system.pressure(step_result.accepted_state)) >= filter_.pressure_floor
 
 
-def test_entropy_filter_is_identity_on_smooth_state_and_rejects_invalid_mean():
+def test_entropy_filter_is_identity_on_smooth_state_and_rejects_invalid_mean() -> None:
     compiled, system, discretization = _compiled()
     filter_ = EntropyFilterPlan().prepare(compiled.dynamics)
     state = _constant_state(system, discretization)
+    # ty: ignore[invalid-argument-type]
     filtered, evidence = filter_.filter(0.0, state)
     np.testing.assert_allclose(filtered, state, atol=3.0e-10)
     assert evidence.successful
     assert not evidence.applied
 
     invalid = state.at[:, 0].set(-1.0)
+    # ty: ignore[invalid-argument-type]
     rejected, rejected_evidence = filter_.filter(0.0, invalid)
     assert not rejected_evidence.successful
     assert jnp.array_equal(rejected, invalid)
@@ -668,10 +687,10 @@ def test_entropy_filter_is_identity_on_smooth_state_and_rejects_invalid_mean():
     assert jnp.array_equal(result.accepted_state, invalid)
 
 
-def test_compressible_navier_stokes_constitutive_gradient_and_flux():
+def test_compressible_navier_stokes_constitutive_gradient_and_flux() -> None:
     system = CompressibleNavierStokesSystem(ConstantTransport(0.2, 0.3), 2)
 
-    def conserved(coordinates):
+    def conserved(coordinates: Any) -> Any:
         density = jnp.asarray(1.0)
         velocity = jnp.asarray((coordinates[0], 2.0 * coordinates[1]))
         temperature = 1.0 + 3.0 * coordinates[0]
@@ -696,7 +715,7 @@ def test_compressible_navier_stokes_constitutive_gradient_and_flux():
     assert diffusion.nonnegative
 
 
-def test_tensor_ldg_constant_state_is_zero_and_has_positive_stability_step():
+def test_tensor_ldg_constant_state_is_zero_and_has_positive_stability_step() -> None:
     _euler, discretization = _quad_discretization()
     system = CompressibleNavierStokesSystem(ConstantTransport(0.2, 0.1), 2)
     method = DGSEMConservationMethodPlan(
@@ -714,16 +733,19 @@ def test_tensor_ldg_constant_state_is_zero_and_has_positive_stability_step():
         system.primitive_to_conserved(primitive),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type, unresolved-attribute]
     gradient = compiled.dynamics.viscous_operator.corrected_gradient(0.0, state)
+    # ty: ignore[invalid-argument-type]
     rate = compiled(0.0, state)
     np.testing.assert_allclose(gradient, 0.0, atol=3.0e-11)
     np.testing.assert_allclose(rate, 0.0, atol=3.0e-10)
+    # ty: ignore[unresolved-attribute]
     evidence = compiled.dynamics.stable_step_evidence(state)
     assert evidence.positive
     assert evidence.maximum_diffusive_rate > 0.0
 
 
-def test_tensor_ldg_stationary_no_slip_wall_preserves_rest_state():
+def test_tensor_ldg_stationary_no_slip_wall_preserves_rest_state() -> None:
     _euler, discretization = _quad_discretization()
     system = CompressibleNavierStokesSystem(ConstantTransport(0.2, 0.1), 2)
     exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
@@ -756,4 +778,5 @@ def test_tensor_ldg_stationary_no_slip_wall_preserves_rest_state():
         system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 0.0, 1.0))),
         discretization.field_spaces[0].vector_space.shape,
     )
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-10)

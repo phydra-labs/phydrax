@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -32,30 +34,30 @@ from phydrax.equations._les_closures import (
 )
 
 
-def _deviatoric_strain(features):
+def _deviatoric_strain(features: Any) -> Any:
     gradient = features.reshape(features.shape[:-1] + (3, 3))
     strain = 0.5 * (gradient + jnp.swapaxes(gradient, -1, -2))
     trace = jnp.trace(strain, axis1=-2, axis2=-1)
     return strain - (trace / 3.0)[..., None, None] * jnp.eye(3, dtype=strain.dtype)
 
 
-def _signed_viscosity_predictor(features, args):
+def _signed_viscosity_predictor(features: Any, args: Any) -> Any:
     strain = _deviatoric_strain(features)
     coefficient = features[..., 1] if args is None else jnp.asarray(args)
     return -2.0 * coefficient[..., None, None] * strain
 
 
-def _positive_viscosity_predictor(features, args):
+def _positive_viscosity_predictor(features: Any, args: Any) -> Any:
     strain = _deviatoric_strain(features)
     coefficient = jnp.asarray(0.2 if args is None else args, dtype=features.dtype)
     return -2.0 * coefficient * strain
 
 
-def _nonfinite_predictor(features, args):
+def _nonfinite_predictor(features: Any, args: Any) -> Any:
     return _positive_viscosity_predictor(features, args).at[0, 0, 0, 0, 0].set(jnp.nan)
 
 
-def _periodic_space(count=5):
+def _periodic_space(count: Any = 5) -> Any:
     return phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(count) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -65,7 +67,7 @@ def _periodic_space(count=5):
     )
 
 
-def _periodic_velocity(space):
+def _periodic_velocity(space: Any) -> Any:
     x, y, z = jnp.meshgrid(
         space.axes[0].nodes,
         space.axes[1].nodes,
@@ -82,7 +84,7 @@ def _periodic_velocity(space):
     )
 
 
-def _periodic_filter():
+def _periodic_filter() -> Any:
     return ResolvedLESFilter(
         "retained Fourier grid",
         family="sharp-fourier-projection",
@@ -95,7 +97,7 @@ def _periodic_filter():
     )
 
 
-def _mac_grid(*, counts=(4, 4, 4), nonuniform=False):
+def _mac_grid(*, counts: Any = (4, 4, 4), nonuniform: Any = False) -> Any:
     specs = (
         tuple(
             phx.discretization.NonuniformCellAxisSpec(
@@ -126,7 +128,7 @@ def _mac_grid(*, counts=(4, 4, 4), nonuniform=False):
     return discretization, operators, momentum, projection
 
 
-def _mac_velocity(discretization):
+def _mac_velocity(discretization: Any) -> Any:
     x_faces, y_faces, z_faces = discretization.face_centers
     return (
         jnp.sin(x_faces[..., 1]) * jnp.cos(x_faces[..., 2]),
@@ -135,7 +137,7 @@ def _mac_velocity(discretization):
     )
 
 
-def _mac_filter():
+def _mac_filter() -> Any:
     return ResolvedLESFilter(
         "mac-cell-volume",
         family="implicit-grid-volume",
@@ -150,17 +152,17 @@ def _mac_filter():
 
 def _binding(
     *,
-    sample_shape,
-    dtype,
-    resolved_filter,
-    discretization_id,
-    regime,
-    policy="signed",
-    fraction=None,
-    predictor=_positive_viscosity_predictor,
-    artifact="learned-stress-model",
-    component_names=LEARNED_STRESS_VELOCITY_GRADIENT_COMPONENTS,
-):
+    sample_shape: Any,
+    dtype: Any,
+    resolved_filter: Any,
+    discretization_id: Any,
+    regime: Any,
+    policy: Any = "signed",
+    fraction: Any = None,
+    predictor: Any = _positive_viscosity_predictor,
+    artifact: Any = "learned-stress-model",
+    component_names: Any = LEARNED_STRESS_VELOCITY_GRADIENT_COMPONENTS,
+) -> Any:
     flow_schema_id = f"flow-{discretization_id}"
     schema = LearnedStressFeatureSchema(
         name=LEARNED_STRESS_FEATURE_NAME,
@@ -222,11 +224,11 @@ def _binding(
 
 def _periodic_prepared(
     *,
-    policy="signed",
-    fraction=None,
-    predictor=_positive_viscosity_predictor,
-    artifact="periodic-learned-stress",
-):
+    policy: Any = "signed",
+    fraction: Any = None,
+    predictor: Any = _positive_viscosity_predictor,
+    artifact: Any = "periodic-learned-stress",
+) -> Any:
     space = _periodic_space()
     binding = _binding(
         sample_shape=space.physical_shape,
@@ -245,11 +247,11 @@ def _periodic_prepared(
 
 def _mac_prepared(
     *,
-    policy="signed",
-    fraction=None,
-    predictor=_positive_viscosity_predictor,
-    artifact="mac-learned-stress",
-):
+    policy: Any = "signed",
+    fraction: Any = None,
+    predictor: Any = _positive_viscosity_predictor,
+    artifact: Any = "mac-learned-stress",
+) -> Any:
     discretization, operators, momentum, projection = _mac_grid()
     binding = _binding(
         sample_shape=discretization.cell_shape,
@@ -266,7 +268,7 @@ def _mac_prepared(
     return discretization, operators, momentum, prepared
 
 
-def test_periodic_backend_owns_conservative_divergence_projection_and_work():
+def test_periodic_backend_owns_conservative_divergence_projection_and_work() -> None:
     space, prepared = _periodic_prepared(
         policy="dissipative", predictor=_signed_viscosity_predictor
     )
@@ -298,7 +300,7 @@ def test_periodic_backend_owns_conservative_divergence_projection_and_work():
     )
 
 
-def test_periodic_bounded_backscatter_preserves_policy_activity_jit_and_jvp():
+def test_periodic_bounded_backscatter_preserves_policy_activity_jit_and_jvp() -> None:
     space, prepared = _periodic_prepared(
         policy="bounded_backscatter",
         fraction=0.2,
@@ -324,7 +326,7 @@ def test_periodic_bounded_backscatter_preserves_policy_activity_jit_and_jvp():
     assert prepared.projector.divergence_norm(derivative) < 2.0e-9
 
 
-def test_mac_backend_owns_conservative_divergence_projection_and_work():
+def test_mac_backend_owns_conservative_divergence_projection_and_work() -> None:
     discretization, operators, momentum, prepared = _mac_prepared(policy="dissipative")
     velocity = _mac_velocity(discretization)
     result = prepared(velocity, momentum.boundaries.homogeneous_stage())
@@ -349,7 +351,7 @@ def test_mac_backend_owns_conservative_divergence_projection_and_work():
     np.testing.assert_array_equal(result.integrated_work, result.projected_work)
 
 
-def test_mac_signed_backend_is_jittable_and_forward_differentiable():
+def test_mac_signed_backend_is_jittable_and_forward_differentiable() -> None:
     discretization, _, momentum, prepared = _mac_prepared()
     velocity = _mac_velocity(discretization)
     boundary_stage = momentum.boundaries.homogeneous_stage()
@@ -372,7 +374,9 @@ def test_mac_signed_backend_is_jittable_and_forward_differentiable():
 
 
 @pytest.mark.parametrize("backend", ("periodic", "mac"))
-def test_invalid_learned_prediction_is_refused_without_zero_fallback(backend):
+def test_invalid_learned_prediction_is_refused_without_zero_fallback(
+    backend: Any,
+) -> None:
     if backend == "periodic":
         space, prepared = _periodic_prepared(predictor=_nonfinite_predictor)
         arguments = (
@@ -392,7 +396,7 @@ def test_invalid_learned_prediction_is_refused_without_zero_fallback(backend):
         jax.block_until_ready(result.learned_result.stress)
 
 
-def test_adapters_refuse_incompatible_abi_layout_filter_and_mac_grid():
+def test_adapters_refuse_incompatible_abi_layout_filter_and_mac_grid() -> None:
     space = _periodic_space()
     wrong_order = tuple(reversed(LEARNED_STRESS_VELOCITY_GRADIENT_COMPONENTS))
     wrong_abi = _binding(
@@ -449,7 +453,7 @@ def test_adapters_refuse_incompatible_abi_layout_filter_and_mac_grid():
         MACLearnedStressPlan(binding).prepare(momentum, projection)
 
 
-def test_learned_adapters_remain_separate_from_static_algebraic_models():
+def test_learned_adapters_remain_separate_from_static_algebraic_models() -> None:
     space, first = _periodic_prepared(artifact="learned-artifact-a")
     _, second = _periodic_prepared(artifact="learned-artifact-b")
     provenance = LESParameterProvenance(
@@ -465,4 +469,5 @@ def test_learned_adapters_remain_separate_from_static_algebraic_models():
     assert first.binding.predictor is _positive_viscosity_predictor
     assert not isinstance(first.binding, type(static_model))
     with pytest.raises(TypeError, match="PreparedLearnedStressBinding"):
+        # ty: ignore[invalid-argument-type]
         PeriodicLearnedStressPlan(static_model)

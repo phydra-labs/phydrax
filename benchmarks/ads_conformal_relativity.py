@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 
@@ -19,7 +21,7 @@ from benchmarks._runtime import (
 from phydrax.applications import numerical_relativity as nr
 
 
-def benchmark_case(point_count: int, repeats: int):
+def benchmark_case(point_count: int, repeats: int) -> Any:
     system = nr.ConformalEinsteinSystem(
         -3.0,
         scalar_curvature_gauge=-12.0,

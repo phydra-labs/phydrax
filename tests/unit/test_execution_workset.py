@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -40,7 +42,7 @@ def _plan(capacity: int = 2) -> ExecutionWorksetPlan:
     )
 
 
-def _operation(signature, item, key, semantic_index):
+def _operation(signature: Any, item: Any, key: Any, semantic_index: Any) -> Any:
     topology_scale = 2.0 if signature.topology_id == "fast-fiber" else 3.0
     noise = jax.random.uniform(key, shape=item.shape, minval=-0.25, maxval=0.25)
     return item * topology_scale + noise + semantic_index.astype(item.dtype) * 0.0
@@ -112,7 +114,7 @@ def test_filter_vmap_worksets_broadcast_static_module_leaves() -> None:
     )
     counters = jnp.arange(5, dtype=jnp.uint32)
 
-    def operation(signature, item, key, semantic_index):
+    def operation(signature: Any, item: Any, key: Any, semantic_index: Any) -> Any:
         del key, semantic_index
         factor = 2.0 if signature.topology_id == "fast-fiber" else 3.0
         assert item.label == "shared-static-label"
@@ -145,7 +147,7 @@ def test_filter_vmap_worksets_map_only_the_declared_item_lane() -> None:
     items = Normalized(jnp.asarray([2.0, 3.0]), shifts)
     counters = jnp.zeros((5,), dtype=jnp.uint32)
 
-    def operation(signature, item, key, semantic_index):
+    def operation(signature: Any, item: Any, key: Any, semantic_index: Any) -> Any:
         del signature, key, semantic_index
         return item.weight * (1.0 - item.shift)
 
@@ -255,13 +257,13 @@ def test_checkpoint_binds_the_numeric_revisions_of_bound_weights() -> None:
     "evaluate",
     [evaluate_execution_worksets_serial, evaluate_execution_worksets_vmap],
 )
-def test_failed_evaluation_preserves_counters_and_retry_keys(evaluate) -> None:
+def test_failed_evaluation_preserves_counters_and_retry_keys(evaluate: Any) -> None:
     prepared = _plan().prepare()
     counters = jnp.asarray([2, 1, 7, 0, 4], dtype=jnp.uint32)
     values = jnp.ones((5, 1))
     root_key = jax.random.key(0)
 
-    def operation(signature, item, key, index):
+    def operation(signature: Any, item: Any, key: Any, index: Any) -> Any:
         del signature, index
         return {
             "diagnostic": jax.random.key_data(key),

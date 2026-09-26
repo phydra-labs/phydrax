@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -31,11 +32,13 @@ from phydrax.operators.periodic import (
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
-def _ssh(intercell: float, intracell: float, mesh_size: int):
+def _ssh(intercell: float, intracell: float, mesh_size: int) -> Any:
+    # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[1.0]])
     basis = PeriodicOrbitalBasisPlan(
         cell,
         ("A", "B"),
+        # ty: ignore[invalid-argument-type]
         [[0.0], [0.5]],
         ANGSTROM,
         PeriodicBlochGauge("lattice"),
@@ -45,6 +48,7 @@ def _ssh(intercell: float, intracell: float, mesh_size: int):
     blocks[1, 1, 0, 0, 0] = intracell
     blocks[0, 0, 0, 1, 0] = intercell
     blocks[2, 1, 0, 0, 0] = intercell
+    # ty: ignore[invalid-argument-type]
     family = periodic_translation_family_from_dense_blocks([[-1], [0], [1]], blocks)
     pencil = PeriodicOrbitalPencilPlan.orthonormal(
         basis, family.plan, family.state, ELECTRONVOLT
@@ -62,7 +66,7 @@ def _ssh(intercell: float, intracell: float, mesh_size: int):
     return pencil, spectrum, wilson, manifold
 
 
-def qualify():
+def qualify() -> Any:
     calibration_pencil, calibration_spectrum, calibration_wilson, _ = _ssh(1.0, 0.4, 32)
     _, _, locked_wilson, locked_manifold = _ssh(0.9, 0.3, 48)
     finite = PeriodicFiniteOrbitalPlan(
@@ -128,7 +132,7 @@ def qualify():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()

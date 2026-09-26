@@ -116,6 +116,7 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
     )
     axis_4d = jnp.linspace(-1.0, 1.0, 8)
     mesh_4d = jnp.meshgrid(*(axis_4d,) * 4, indexing="ij")
+    # ty: ignore[not-subscriptable]
     rectilinear_4d_values = sum(
         (axis + 1.0) * coordinate for axis, coordinate in enumerate(mesh_4d)
     )[..., None]
@@ -336,7 +337,7 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
         / jnp.linalg.norm(dense_reference)
     )
 
-    def representative_curve(query):
+    def representative_curve(query: Any) -> Any:
         return bspline_evaluate(
             representative_knots,
             representative_values,

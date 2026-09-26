@@ -13,19 +13,19 @@ import phydrax as phx
 _GENERATOR = jnp.asarray([[0.0, -1.0], [1.0, 0.0]])
 
 
-def _rotation(angle):
+def _rotation(angle: Any) -> Any:
     cosine = jnp.cos(angle)
     sine = jnp.sin(angle)
     return jnp.asarray([[cosine, -sine], [sine, cosine]])
 
 
-def _so_delay_problem(*, rate=0.7, delay=0.2, t1=0.8):
+def _so_delay_problem(*, rate: Any = 0.7, delay: Any = 0.2, t1: Any = 0.8) -> Any:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
 
-    def history(time, parameter):
+    def history(time: Any, parameter: Any) -> Any:
         return _rotation(parameter * time)
 
-    def drift(time, state, memory, parameter):
+    def drift(time: Any, state: Any, memory: Any, parameter: Any) -> Any:
         del time
         angular_rate = parameter * (1.0 + 0.15 * memory["past"][1, 0])
         return angular_rate * (state @ _GENERATOR)
@@ -42,13 +42,13 @@ def _so_delay_problem(*, rate=0.7, delay=0.2, t1=0.8):
     )
 
 
-def _assert_so2(values, *, atol=2e-5):
+def _assert_so2(values: Any, *, atol: Any = 2e-5) -> None:
     products = jnp.swapaxes(values, -1, -2) @ values
     assert jnp.allclose(products, jnp.eye(2), atol=atol)
     assert jnp.all(jnp.linalg.det(values) > 0.0)
 
 
-def _geometric_solver(name, geometry):
+def _geometric_solver(name: Any, geometry: Any) -> Any:
     if name == "euler":
         return phx.solver.GeometricEuler(geometry)
     if name == "rkmk-midpoint":
@@ -72,7 +72,9 @@ def _geometric_solver(name, geometry):
         "deterministic-srkmk",
     ),
 )
-def test_fixed_geometric_delay_solvers_preserve_so_and_dense_history(solver_name):
+def test_fixed_geometric_delay_solvers_preserve_so_and_dense_history(
+    solver_name: Any,
+) -> None:
     problem = _so_delay_problem()
     solver = _geometric_solver(solver_name, problem.state_geometry)
     solution = phx.solver.solve_diffrax_delay(
@@ -100,7 +102,7 @@ def test_fixed_geometric_delay_solvers_preserve_so_and_dense_history(solver_name
     )
 
 
-def test_geometric_stage_contract_is_static_explicit_and_causal_bound_is_closed():
+def test_geometric_stage_contract_is_static_explicit_and_causal_bound_is_closed() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     euler = phx.solver.GeometricEuler(geometry)
     midpoint = phx.solver.RKMK(geometry, method="midpoint")
@@ -143,16 +145,16 @@ def test_geometric_stage_contract_is_static_explicit_and_causal_bound_is_closed(
         )
 
 
-def test_euclidean_matrix_geometric_delay_matches_euler_and_rkmk_converges():
+def test_euclidean_matrix_geometric_delay_matches_euler_and_rkmk_converges() -> None:
     geometry = phx.metrix.EuclideanStateGeometry()
     base = jnp.asarray([[1.0, -0.3], [0.2, 1.7]])
     rate = jnp.asarray(2.0)
     delay = 0.5
 
-    def history(time, parameter):
+    def history(time: Any, parameter: Any) -> Any:
         return jnp.exp(parameter * time) * base
 
-    def drift(time, state, memory, parameter):
+    def drift(time: Any, state: Any, memory: Any, parameter: Any) -> Any:
         del time, state
         return parameter * jnp.exp(parameter * delay) * memory["past"]
 
@@ -185,7 +187,7 @@ def test_euclidean_matrix_geometric_delay_matches_euler_and_rkmk_converges():
 
     exact = jnp.exp(rate * 0.4) * base
 
-    def error(dt):
+    def error(dt: Any) -> Any:
         terminal = phx.solver.solve_diffrax_delay(
             problem,
             save_times=jnp.asarray([0.4]),
@@ -201,15 +203,15 @@ def test_euclidean_matrix_geometric_delay_matches_euler_and_rkmk_converges():
     assert coarse_error / fine_error > 8.0
 
 
-def test_spd_geometric_delay_keeps_embedded_state_and_off_grid_history_positive():
+def test_spd_geometric_delay_keeps_embedded_state_and_off_grid_history_positive() -> None:
     geometry = phx.metrix.SymmetricPositiveDefiniteStateGeometry(2)
     base = jnp.asarray([[2.0, 0.25], [0.25, 1.1]])
 
-    def history(time, args):
+    def history(time: Any, args: Any) -> Any:
         del time, args
         return base
 
-    def drift(time, state, memory, args):
+    def drift(time: Any, state: Any, memory: Any, args: Any) -> Any:
         del time, args
         return 0.04 * (state + memory["past"])
 
@@ -236,10 +238,10 @@ def test_spd_geometric_delay_keeps_embedded_state_and_off_grid_history_positive(
     assert jnp.all(jax.vmap(geometry.contains)(dense))
 
 
-def test_geometric_delay_is_jittable_vectorizable_and_differentiable():
+def test_geometric_delay_is_jittable_vectorizable_and_differentiable() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
 
-    def terminal(rate):
+    def terminal(rate: Any) -> Any:
         problem = _so_delay_problem(rate=rate, delay=0.2, t1=0.4)
         return phx.solver.solve_diffrax_delay(
             problem,
@@ -263,7 +265,9 @@ def test_geometric_delay_is_jittable_vectorizable_and_differentiable():
     assert jnp.all(jnp.diff(batched) > 0.0)
 
 
-def test_geometric_delay_rejects_solver_geometry_drift_history_and_controller_mismatch():
+def test_geometric_delay_rejects_solver_geometry_drift_history_and_controller_mismatch() -> (
+    None
+):
     problem = _so_delay_problem(t1=0.4)
     times = jnp.asarray([0.4])
 
@@ -339,7 +343,7 @@ def test_geometric_delay_rejects_solver_geometry_drift_history_and_controller_mi
             state_geometry=problem.state_geometry,
         )
 
-    def invalid_prehistory(time, args):
+    def invalid_prehistory(time: Any, args: Any) -> Any:
         del args
         return jnp.where(time >= 0.0, jnp.eye(2), jnp.ones((2, 2)))
 
@@ -357,7 +361,7 @@ def test_geometric_delay_rejects_solver_geometry_drift_history_and_controller_mi
         )
 
 
-def test_non_euclidean_distributed_and_neutral_delays_require_geometry_maps():
+def test_non_euclidean_distributed_and_neutral_delays_require_geometry_maps() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     history = lambda time, args: jnp.eye(2)
     tangent_drift = lambda time, state, memory, args: state @ _GENERATOR
@@ -431,7 +435,7 @@ def test_non_euclidean_distributed_and_neutral_delays_require_geometry_maps():
     assert jnp.allclose(solution.states[0], jnp.eye(2))
 
 
-def test_stratonovich_geometric_delay_preserves_manifold_and_replays_path():
+def test_stratonovich_geometric_delay_preserves_manifold_and_replays_path() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     noise = phx.solver.DelayWienerTerm(
         "rotation",
@@ -496,18 +500,18 @@ def test_stratonovich_geometric_delay_preserves_manifold_and_replays_path():
     assert solution.stats["continuous_extension"] == "srkmk-wiener-path"
 
 
-def test_stratonovich_geometric_advanced_memory_replays_all_history_modes():
+def test_stratonovich_geometric_advanced_memory_replays_all_history_modes() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
 
     def distributed_reducer(
-        time,
-        state,
-        nodes,
-        weights,
-        kernels,
-        delayed_values,
-        args,
-    ):
+        time: Any,
+        state: Any,
+        nodes: Any,
+        weights: Any,
+        kernels: Any,
+        delayed_values: Any,
+        args: Any,
+    ) -> Any:
         del time, nodes, kernels, args
         local_values = jax.vmap(lambda point: geometry.inverse_retract(state, point))(
             delayed_values
@@ -597,7 +601,7 @@ def test_stratonovich_geometric_advanced_memory_replays_all_history_modes():
     assert full.metadata["distributed_delay_quadrature"][0]["node_count"] == 4
 
 
-def test_geometric_delay_rejects_stochastic_ito_geometry():
+def test_geometric_delay_rejects_stochastic_ito_geometry() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     noise = phx.solver.DelayWienerTerm(
         "rotation",
@@ -631,7 +635,7 @@ def test_geometric_delay_rejects_stochastic_ito_geometry():
         )
 
 
-def test_stratonovich_geometric_delay_rejects_normal_diffusion():
+def test_stratonovich_geometric_delay_rejects_normal_diffusion() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     noise = phx.solver.DelayWienerTerm(
         "normal",
@@ -670,7 +674,7 @@ def test_stratonovich_geometric_delay_rejects_normal_diffusion():
         )
 
 
-def test_commutator_free_tableau_rejects_noncausal_stage_abscissa():
+def test_commutator_free_tableau_rejects_noncausal_stage_abscissa() -> None:
     with pytest.raises(ValueError, match="finite and nonnegative"):
         phx.solver.CommutatorFreeTableau(
             abscissae=(0.0, -0.5),
@@ -681,7 +685,7 @@ def test_commutator_free_tableau_rejects_noncausal_stage_abscissa():
         )
 
 
-def test_quaternion_delay_uses_physical_tangent_and_local_spaces():
+def test_quaternion_delay_uses_physical_tangent_and_local_spaces() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
     angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
@@ -709,10 +713,11 @@ def test_quaternion_delay_uses_physical_tangent_and_local_spaces():
     assert problem.local_shape == (3,)
     assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
     assert jnp.all(jax.vmap(geometry.contains)(solution.states))
+    # ty: ignore[unresolved-attribute]
     assert solution.interpolation.derivative(jnp.asarray(0.15)).shape == (3,)
 
 
-def test_quaternion_delay_rejects_point_storage_drift_shape():
+def test_quaternion_delay_rejects_point_storage_drift_shape() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     with pytest.raises(ValueError, match="physical tangent shape"):
         phx.solver.DelayDifferentialProblem(

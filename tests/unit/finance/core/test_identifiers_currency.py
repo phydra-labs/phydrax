@@ -23,7 +23,7 @@ from phydrax.finance.core import (
 )
 
 
-def test_financial_references_preserve_namespaced_identity_and_quote_semantics():
+def test_financial_references_preserve_namespaced_identity_and_quote_semantics() -> None:
     usd = Currency("USD", 2)
     equity_id = FinancialIdentifier("figi", "BBG000B9XRY4")
     option_id = FinancialIdentifier("internal", "AAPL-202612-C200")
@@ -52,7 +52,7 @@ def test_financial_references_preserve_namespaced_identity_and_quote_semantics()
         )
 
 
-def test_exact_same_currency_arithmetic_rejects_cross_currency_substitution():
+def test_exact_same_currency_arithmetic_rejects_cross_currency_substitution() -> None:
     usd = Currency("USD", 2)
     eur = Currency("EUR", 2)
     left = CurrencyAmount(usd, 125)
@@ -71,7 +71,7 @@ def test_exact_same_currency_arithmetic_rejects_cross_currency_substitution():
         CurrencyAmount(usd, 2**63)
 
 
-def test_monetary_rounding_is_explicit_and_padding_is_neutral():
+def test_monetary_rounding_is_explicit_and_padding_is_neutral() -> None:
     usd = Currency("USD", 2)
     jpy = Currency("JPY", 0)
     monetary = MonetaryArray(
@@ -102,7 +102,7 @@ def test_monetary_rounding_is_explicit_and_padding_is_neutral():
         jax.block_until_ready(invalid.values)
 
 
-def test_fx_pair_is_ordered_identity_and_carries_no_numerical_rate():
+def test_fx_pair_is_ordered_identity_and_carries_no_numerical_rate() -> None:
     usd = Currency("USD", 2)
     eur = Currency("EUR", 2)
     direct = FXPair(eur, usd)

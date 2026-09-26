@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -20,7 +21,7 @@ _SOURCE_EPOCH = (11, 7)
 _TARGET_EPOCH = (12, 8)
 
 
-def _cardiac_mesh(cell_kind: str):
+def _cardiac_mesh(cell_kind: str) -> Any:
     if cell_kind == "tetrahedron":
         vertices = np.asarray(
             (
@@ -53,7 +54,7 @@ def _cardiac_mesh(cell_kind: str):
     return phx.discretization.CellMesh(vertices, (block,))
 
 
-def _curved_coordinates(element, amplitude: float):
+def _curved_coordinates(element: Any, amplitude: float) -> Any:
     reference = jnp.asarray(element.reference_nodes)
     x = reference[:, 0]
     y = reference[:, 1]
@@ -61,7 +62,7 @@ def _curved_coordinates(element, amplitude: float):
     return reference.at[:, 2].add(lift)
 
 
-def _prepare_geometry(cell_kind: str, amplitude: float, epoch):
+def _prepare_geometry(cell_kind: str, amplitude: float, epoch: Any) -> Any:
     mesh = _cardiac_mesh(cell_kind)
     element = phx.discretization.lagrange_element(cell_kind, 2)
     coordinate_spec = phx.discretization.CellGeometrySpec(
@@ -84,7 +85,7 @@ def _prepare_geometry(cell_kind: str, amplitude: float, epoch):
     return plan.prepare()
 
 
-def _geometry_transition(cell_kind: str):
+def _geometry_transition(cell_kind: str) -> Any:
     source = _prepare_geometry(cell_kind, 0.025, _SOURCE_EPOCH)
     source_candidate = source.evaluate(
         source.plan.coordinate_spec.coordinates,
@@ -116,7 +117,7 @@ def _geometry_transition(cell_kind: str):
     return source, source_candidate, target, target_candidate, stale_candidate
 
 
-def _ep_discretization(prepared_geometry, label: str):
+def _ep_discretization(prepared_geometry: Any, label: str) -> Any:
     element_by_block = dict(
         zip(
             prepared_geometry.plan.coordinate_spec.block_names,
@@ -134,7 +135,7 @@ def _ep_discretization(prepared_geometry, label: str):
     ).prepare(numeric_version=numeric_version)
 
 
-def _tensor_diffusion(discretization):
+def _tensor_diffusion(discretization: Any) -> Any:
     dtype = discretization.field_spaces[0].vector_space.dtype
     conductivity = jnp.asarray(
         ((0.0016, 0.0002, 0.0), (0.0002, 0.0007, 0.0), (0.0, 0.0, 0.0003)),
@@ -167,7 +168,7 @@ def _tensor_diffusion(discretization):
     return action, compiled.affine_operator(), conductivity
 
 
-def _regional_assignment(node_count: int):
+def _regional_assignment(node_count: int) -> Any:
     plan = electrophysiology.RegionalElectrophysiologyPlan(
         node_count,
         (electrophysiology.RegionalPhenotype("ventricular-myocardium", 0),),
@@ -178,12 +179,19 @@ def _regional_assignment(node_count: int):
     )
 
 
-def _node_volumes(candidate, node_count: int, dtype):
+def _node_volumes(candidate: Any, node_count: int, dtype: Any) -> Any:
     total_measure = jnp.sum(jnp.concatenate(tuple(candidate.block_cell_measures_mm3)))
     return jnp.full((node_count,), total_measure / node_count, dtype=dtype)
 
 
-def _physical_runtime(action, operator, assignment, volumes, integration_plan, label):
+def _physical_runtime(
+    action: Any,
+    operator: Any,
+    assignment: Any,
+    volumes: Any,
+    integration_plan: Any,
+    label: Any,
+) -> Any:
     diffusion = electrophysiology.TensorDiffusionOperatorInput(
         action,
         operator,
@@ -199,20 +207,21 @@ def _physical_runtime(action, operator, assignment, volumes, integration_plan, l
     dtype = np.dtype(volumes.dtype)
     model = electrophysiology.TenTusscherPanfilov2006Model()
     reaction = electrophysiology.prepare_reaction(
+        # ty: ignore[invalid-argument-type]
         electrophysiology.plan_reaction(model, assignment.node_count, dtype=dtype)
     )
     return integration_plan.prepare(spatial, assignment, (reaction,)), model
 
 
 def _cardiac_transfer(
-    source_discretization,
-    target_discretization,
-    source_geometry,
-    target_geometry,
+    source_discretization: Any,
+    target_discretization: Any,
+    source_geometry: Any,
+    target_geometry: Any,
     *,
     quantity_id: str,
     value_unit: str,
-):
+) -> Any:
     source_space = source_discretization.field_spaces[0]
     target_space = target_discretization.field_spaces[0]
     route_id = f"{source_discretization.prepared_id}-to-{target_discretization.prepared_id}-{quantity_id}"
@@ -264,7 +273,7 @@ def _cardiac_transfer(
     return cardiac, epoch
 
 
-def _apply_transfer(transfer, epoch, values):
+def _apply_transfer(transfer: Any, epoch: Any, values: Any) -> Any:
     return transfer.apply(
         values,
         epoch,
@@ -273,14 +282,14 @@ def _apply_transfer(transfer, epoch, values):
 
 
 def _transfer_monodomain_state(
-    source_state,
-    target_runtime,
-    voltage_transfer,
-    voltage_epoch,
-    lane_transfers,
-    current_transfer,
-    current_epoch,
-):
+    source_state: Any,
+    target_runtime: Any,
+    voltage_transfer: Any,
+    voltage_epoch: Any,
+    lane_transfers: Any,
+    current_transfer: Any,
+    current_epoch: Any,
+) -> Any:
     voltage_result = _apply_transfer(
         voltage_transfer, voltage_epoch, source_state.voltage_mV
     )
@@ -347,7 +356,7 @@ def _transfer_monodomain_state(
     return target_state, voltage_result, lane_results, current_result
 
 
-def _mechanics_qualification(target_geometry, target_candidate):
+def _mechanics_qualification(target_geometry: Any, target_candidate: Any) -> Any:
     frame = anatomy.CardiacMaterialFrame(
         jnp.asarray(((1.0, 0.0, 0.0),)),
         jnp.asarray(((0.0, 1.0, 0.0),)),

@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _segment_scene(gap=0.05):
+def _segment_scene(gap: Any = 0.05) -> Any:
     source = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
     moving_plan = phx.discretization.CollisionSurfacePlan(
         jnp.asarray((0, 1), dtype=jnp.int64),
@@ -38,7 +41,7 @@ def _segment_scene(gap=0.05):
     return source, phx.discretization.PreparedCollisionScene((moving, static))
 
 
-def test_collision_surface_map_has_exact_transpose_and_stable_boundary():
+def test_collision_surface_map_has_exact_transpose_and_stable_boundary() -> None:
     coordinates = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
     cells = jnp.asarray(((0, 1, 2),), dtype=jnp.int32)
     mesh = phx.discretization.CellMesh.from_triangles(coordinates, cells)
@@ -53,7 +56,7 @@ def test_collision_surface_map_has_exact_transpose_and_stable_boundary():
     np.testing.assert_allclose(evidence.residual, 0.0, atol=1.0e-14)
 
 
-def test_piecewise_distance_kernels_select_expected_features():
+def test_piecewise_distance_kernels_select_expected_features() -> None:
     edge = phx.discretization.point_edge_distance(
         jnp.asarray((0.25, 0.2)),
         jnp.asarray((0.0, 0.0)),
@@ -82,7 +85,7 @@ def test_piecewise_distance_kernels_select_expected_features():
     assert int(edges.feature) == int(phx.discretization.EdgeEdgeFeature.EDGE_EDGE)
 
 
-def test_dense_and_sweep_search_match_and_overflow_fails_closed():
+def test_dense_and_sweep_search_match_and_overflow_fails_closed() -> None:
     source, scene = _segment_scene()
     state = source.zeros()
     positions = scene.positions(state)
@@ -117,7 +120,7 @@ def test_dense_and_sweep_search_match_and_overflow_fails_closed():
     assert not bool(jnp.any(overflow.edge_vertex.valid))
 
 
-def test_conservative_ccd_and_simplex_inversion_limit_motion():
+def test_conservative_ccd_and_simplex_inversion_limit_motion() -> None:
     source, scene = _segment_scene(gap=0.5)
     start_state = source.zeros()
     end_state = jnp.broadcast_to(jnp.asarray((0.0, -1.0)), source.shape)

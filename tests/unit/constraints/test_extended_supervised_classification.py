@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_multilabel_term_masks_factors_and_excludes_empty_rows_from_case_mass():
+def test_multilabel_term_masks_factors_and_excludes_empty_rows_from_case_mass() -> None:
     logits = jnp.asarray(
         [[2.0, -1.0, jnp.nan], [jnp.nan, jnp.nan, jnp.nan], [-0.5, 1.2, 2.0]]
     )
@@ -21,7 +24,7 @@ def test_multilabel_term_masks_factors_and_excludes_empty_rows_from_case_mass():
     domain = phx.domain.DatasetDomain(jnp.arange(3.0)[:, None])
 
     @domain.Function("data")
-    def field(row):
+    def field(row: Any) -> Any:
         return logits[row[0].astype(jnp.int32)]
 
     term = phx.terms.SupervisedClassificationTerm(
@@ -53,13 +56,13 @@ def test_multilabel_term_masks_factors_and_excludes_empty_rows_from_case_mass():
     np.testing.assert_allclose(fixed.per_case_log_prob(None), -expected)
 
 
-def test_soft_classification_matches_expected_log_score_and_is_not_a_likelihood():
+def test_soft_classification_matches_expected_log_score_and_is_not_a_likelihood() -> None:
     logits = jnp.asarray([[2.0, -1.0, 0.0], [-0.5, 1.0, 0.3]])
     target = jnp.asarray([[0.7, 0.2, 0.1], [0.0, 0.4, 0.6]])
     domain = phx.domain.DatasetDomain(logits)
 
     @domain.Function("data")
-    def field(row):
+    def field(row: Any) -> Any:
         return row
 
     term = phx.terms.SupervisedSoftClassificationTerm(
@@ -76,16 +79,17 @@ def test_soft_classification_matches_expected_log_score_and_is_not_a_likelihood(
     assert "data_accuracy" not in metrics
     assert bool(metrics["data_valid"])
     with pytest.raises(TypeError, match="supervised likelihood"):
+        # ty: ignore[invalid-argument-type]
         phx.uq.FixedSupervisedLikelihood(term, lambda _: {"soft": field})
 
 
-def test_focal_gamma_zero_matches_hard_classification_term():
+def test_focal_gamma_zero_matches_hard_classification_term() -> None:
     logits = jnp.asarray([[2.0, -1.0], [-0.5, 1.0], [0.2, 0.7]])
     labels = jnp.asarray([0, 1, 1])
     domain = phx.domain.DatasetDomain(logits)
 
     @domain.Function("data")
-    def field(row):
+    def field(row: Any) -> Any:
         return row
 
     schema = phx.ml.TargetSchema("multiclass", class_labels=("left", "right"))
@@ -111,14 +115,14 @@ def test_focal_gamma_zero_matches_hard_classification_term():
     assert "data_focal_risk" in focal.data_metrics({"u": field}, batch=batch)
 
 
-def test_ordinal_term_matches_cumulative_link_likelihood_and_metrics():
+def test_ordinal_term_matches_cumulative_link_likelihood_and_metrics() -> None:
     location = jnp.asarray([-2.0, 0.0, 1.0, 3.0])
     labels = jnp.asarray([0, 1, 2, 3])
     thresholds = jnp.asarray([-1.0, 0.5, 2.0])
     domain = phx.domain.DatasetDomain(location[:, None])
 
     @domain.Function("data")
-    def field(row):
+    def field(row: Any) -> Any:
         return row[0]
 
     term = phx.terms.SupervisedOrdinalClassificationTerm(
@@ -141,7 +145,7 @@ def test_ordinal_term_matches_cumulative_link_likelihood_and_metrics():
     assert bool(metrics["data_valid"])
 
 
-def test_zero_weight_focal_short_circuits_nonfinite_logits_and_gradient():
+def test_zero_weight_focal_short_circuits_nonfinite_logits_and_gradient() -> None:
     domain = phx.domain.DatasetDomain(jnp.asarray([[1.0], [2.0]]))
     term = phx.terms.SupervisedFocalClassificationTerm(
         "u",
@@ -153,7 +157,7 @@ def test_zero_weight_focal_short_circuits_nonfinite_logits_and_gradient():
     )
     batch = term.observed_batch()
 
-    def objective(coefficient):
+    def objective(coefficient: Any) -> Any:
         field = domain.Function("data")(
             lambda row: coefficient * row[0] / jnp.asarray(0.0)
         )

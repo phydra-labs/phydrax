@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_implicit_sindy_recovers_rational_dynamics_as_sparse_equation():
+def test_implicit_sindy_recovers_rational_dynamics_as_sparse_equation() -> None:
     state = jnp.linspace(0.1, 2.0, 300)[:, None]
     derivative = -state / (1.0 + state)
     layout = phx.dynamics.StateLayout((1,), component_names=("x",))
@@ -46,7 +46,7 @@ def test_implicit_sindy_recovers_rational_dynamics_as_sparse_equation():
     assert result.selected.equation().endswith(" = 0")
 
 
-def test_pde_find_recovers_diffusion_from_structured_grid():
+def test_pde_find_recovers_diffusion_from_structured_grid() -> None:
     time = jnp.linspace(0.0, 1.0, 61)
     space = jnp.linspace(0.0, 2.0 * jnp.pi, 161)
     diffusivity = 0.1
@@ -95,7 +95,7 @@ def test_pde_find_recovers_diffusion_from_structured_grid():
     assert result.equations()[0].startswith("d(u)/dt = ")
 
 
-def test_structured_regression_enforces_groups_forbidden_terms_and_constraint():
+def test_structured_regression_enforces_groups_forbidden_terms_and_constraint() -> None:
     generator = np.random.default_rng(9)
     states = generator.normal(size=(400, 2))
     derivatives = np.stack((2.0 * states[:, 0], -2.0 * states[:, 0]), axis=-1)
@@ -154,7 +154,7 @@ def test_structured_regression_enforces_groups_forbidden_terms_and_constraint():
     )
 
 
-def test_symmetry_average_projects_odd_features_out():
+def test_symmetry_average_projects_odd_features_out() -> None:
     layout = phx.dynamics.StateLayout((1,), component_names=("x",))
     base = phx.dynamics.identification.PolynomialFeatureLibrary(layout, degree=2)
     symmetric = phx.dynamics.identification.SymmetryAveragedFeatureLibrary(

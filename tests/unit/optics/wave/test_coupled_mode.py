@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +22,7 @@ from phydrax.optics.wave._coupled_mode import (
 jax.config.update("jax_enable_x64", True)
 
 
-def test_uniform_no_grating_has_exact_phase_loss_and_power_closure():
+def test_uniform_no_grating_has_exact_phase_loss_and_power_closure() -> None:
     grid = jnp.linspace(0.0, 2.0, 9)
     plan = BidirectionalCoupledModePlan(
         grid,
@@ -46,7 +49,7 @@ def test_uniform_no_grating_has_exact_phase_loss_and_power_closure():
     assert result.status == int(BidirectionalCoupledModeStatus.SUCCESS)
 
 
-def test_exact_scattering_stays_finite_deep_inside_uniform_stop_band():
+def test_exact_scattering_stays_finite_deep_inside_uniform_stop_band() -> None:
     strength_length = 800.0
     plan = BidirectionalCoupledModePlan(
         jnp.asarray((0.0, 1.0)),
@@ -65,7 +68,7 @@ def test_exact_scattering_stays_finite_deep_inside_uniform_stop_band():
     assert result.successful
 
 
-def test_stable_section_composition_is_reciprocal_for_two_sided_batches():
+def test_stable_section_composition_is_reciprocal_for_two_sided_batches() -> None:
     sections = 128
     plan = BidirectionalCoupledModePlan(
         jnp.linspace(0.0, 0.08, sections + 1),
@@ -91,18 +94,22 @@ def test_stable_section_composition_is_reciprocal_for_two_sided_batches():
     assert result.successful
 
 
-def test_passive_plan_rejects_gain_instead_of_reinterpreting_its_sign():
+def test_passive_plan_rejects_gain_instead_of_reinterpreting_its_sign() -> None:
     with pytest.raises(ValueError, match="rejects gain"):
         BidirectionalCoupledModePlan(
+            # ty: ignore[invalid-argument-type]
             (0.0, 1.0),
             1.0,
+            # ty: ignore[invalid-argument-type]
             (0.0,),
+            # ty: ignore[invalid-argument-type]
             (0.0,),
+            # ty: ignore[invalid-argument-type]
             (-0.01,),
         )
 
 
-def test_fixed_branch_exact_map_has_finite_coupling_gradient():
+def test_fixed_branch_exact_map_has_finite_coupling_gradient() -> None:
     base = BidirectionalCoupledModePlan(
         jnp.asarray((0.0, 0.2, 0.5)),
         4.0,
@@ -111,7 +118,7 @@ def test_fixed_branch_exact_map_has_finite_coupling_gradient():
         jnp.asarray((0.01, 0.02)),
     )
 
-    def transmitted_power(coupling):
+    def transmitted_power(coupling: Any) -> Any:
         plan = eqx.tree_at(
             lambda value: value.coupling,
             base,

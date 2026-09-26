@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -35,7 +38,7 @@ from phydrax.discretization.fem import (
 from phydrax.discretization.fem._hp_runtime import _facet_vertices
 
 
-def _quad_mesh():
+def _quad_mesh() -> Any:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0),
@@ -59,7 +62,7 @@ def _quad_mesh():
     )
 
 
-def _hex_mesh(*, global_id=30):
+def _hex_mesh(*, global_id: Any = 30) -> Any:
     coordinates = jnp.asarray(
         tuple(
             (float(x), float(y), float(z))
@@ -81,7 +84,7 @@ def _hex_mesh(*, global_id=30):
     )
 
 
-def test_quad_refinement_builds_stable_forest_mortars_and_coarsens():
+def test_quad_refinement_builds_stable_forest_mortars_and_coarsens() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), (2, 3), 16)
     initial_interfaces = finite_element_hp_interface_plan(topology, geometry)
     balanced_ids, closure = balanced_hp_refinement_ids(
@@ -128,10 +131,10 @@ def test_quad_refinement_builds_stable_forest_mortars_and_coarsens():
     )
 
 
-def test_hex_refinement_allocates_eight_curved_children():
+def test_hex_refinement_allocates_eight_curved_children() -> None:
     topology, geometry = initial_finite_element_hp_topology(_hex_mesh(), 2, 12)
 
-    def curved(_slot, points):
+    def curved(_slot: Any, points: Any) -> Any:
         mapped = points.copy()
         mapped[:, 2] += 0.1 * points[:, 0] * (1.0 - points[:, 0]) * points[:, 1]
         return mapped
@@ -148,7 +151,7 @@ def test_hex_refinement_allocates_eight_curved_children():
     assert np.all(np.isfinite(np.asarray(refined.geometry.cell_vertices)[1:9]))
 
 
-def test_hex_hp_domains_use_the_canonical_mesh_face_order():
+def test_hex_hp_domains_use_the_canonical_mesh_face_order() -> None:
     topology, geometry = initial_finite_element_hp_topology(_hex_mesh(), 2, 12)
     epoch = prepare_finite_element_hp_epoch(topology, geometry, "u")
     _, exterior = finite_element_hp_domains(epoch)
@@ -168,7 +171,7 @@ def test_hex_hp_domains_use_the_canonical_mesh_face_order():
         }
 
 
-def test_hp_coarsening_rejects_geometry_from_another_topology():
+def test_hp_coarsening_rejects_geometry_from_another_topology() -> None:
     topology, geometry = initial_finite_element_hp_topology(_hex_mesh(), 2, 12)
     refined = refine_tensor_hp_cells(
         topology,
@@ -189,7 +192,7 @@ def test_hp_coarsening_rejects_geometry_from_another_topology():
         )
 
 
-def test_modal_decay_and_hp_decision_separate_p_from_h():
+def test_modal_decay_and_hp_decision_separate_p_from_h() -> None:
     nodes = np.linspace(-1.0, 1.0, 4)
     x, y = np.meshgrid(nodes, nodes, indexing="ij")
     decay = tensor_modal_decay_estimate(
@@ -221,7 +224,7 @@ def test_modal_decay_and_hp_decision_separate_p_from_h():
     assert not bool(np.asarray(decision.refine)[0])
 
 
-def test_hp_epoch_requires_matching_prepared_components():
+def test_hp_epoch_requires_matching_prepared_components() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 8)
     interfaces = finite_element_hp_interface_plan(topology, geometry)
     epoch = FiniteElementHPEpoch(_quad_mesh(), topology, geometry, interfaces)
@@ -230,7 +233,7 @@ def test_hp_epoch_requires_matching_prepared_components():
     assert epoch.worksets.topology_id == topology.topology_id
 
 
-def test_prepared_hp_epoch_uses_bucket_elements_and_overlay_domains():
+def test_prepared_hp_epoch_uses_bucket_elements_and_overlay_domains() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
     refined = refine_tensor_hp_cells(
         topology,
@@ -253,7 +256,7 @@ def test_prepared_hp_epoch_uses_bucket_elements_and_overlay_domains():
     assert np.count_nonzero(np.asarray(epoch.interfaces.relation_mask("mortar"))) == 2
 
 
-def test_p_and_h_trace_constraints_preserve_polynomials_and_raw_duals():
+def test_p_and_h_trace_constraints_preserve_polynomials_and_raw_duals() -> None:
     master_nodes = jnp.asarray(((0.0,), (0.5,), (1.0,)))
     p_slave_nodes = jnp.linspace(0.0, 1.0, 5)[:, None]
     interpolation = tensor_trace_interpolation(master_nodes, p_slave_nodes)
@@ -289,7 +292,7 @@ def test_p_and_h_trace_constraints_preserve_polynomials_and_raw_duals():
     )
 
 
-def test_prepared_h1_epoch_builds_master_trace_constraint_and_uniform_limit():
+def test_prepared_h1_epoch_builds_master_trace_constraint_and_uniform_limit() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
     refined = refine_tensor_hp_cells(
         topology,
@@ -299,25 +302,32 @@ def test_prepared_h1_epoch_builds_master_trace_constraint_and_uniform_limit():
     )
     epoch = prepare_finite_element_hp_epoch(refined.topology, refined.geometry, "u")
     trace_plan = dict(epoch.constraints)["u"]
+    # ty: ignore[unresolved-attribute]
     assert trace_plan.reduced_dof_count < trace_plan.full_dof_count
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         np.asarray(trace_plan.expand(jnp.ones((trace_plan.reduced_dof_count,)))),
         1.0,
         atol=2.0e-13,
     )
+    # ty: ignore[invalid-argument-type]
     constraint = finite_element_hp_constraint(epoch.discretization, "u", trace_plan)
+    # ty: ignore[unresolved-attribute]
     assert constraint.full_space.size == trace_plan.full_dof_count
+    # ty: ignore[unresolved-attribute]
     assert constraint.reduced_space.size == trace_plan.reduced_dof_count
 
     uniform_epoch = prepare_finite_element_hp_epoch(topology, geometry, "u")
     uniform_plan = dict(uniform_epoch.constraints)["u"]
+    # ty: ignore[unresolved-attribute]
     assert uniform_plan.full_dof_count == uniform_plan.reduced_dof_count
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(np.asarray(uniform_plan.prolongation), np.eye(15))
 
 
 def test_h_transfer_roles_and_epoch_transaction_are_distinct_and_conservative(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
     source = prepare_finite_element_hp_epoch(
         topology,
@@ -435,7 +445,7 @@ def test_h_transfer_roles_and_epoch_transaction_are_distinct_and_conservative(
     assert restored.geometry.geometry_id == target.geometry.geometry_id
 
 
-def test_residual_jump_ledger_budgets_hysteresis_and_balance_are_deterministic():
+def test_residual_jump_ledger_budgets_hysteresis_and_balance_are_deterministic() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
     interfaces = finite_element_hp_interface_plan(topology, geometry)
     ledger = FiniteElementHPResidualJumpLedger(
@@ -446,9 +456,11 @@ def test_residual_jump_ledger_budgets_hysteresis_and_balance_are_deterministic()
         jnp.ones((interfaces.capacity,)),
         jnp.ones((interfaces.capacity,)),
     )
+    # ty: ignore[unresolved-attribute]
     assert ledger.estimate.global_estimate > 0.0
     rough = FiniteElementHPErrorEstimate(
         topology,
+        # ty: ignore[unresolved-attribute]
         ledger.estimate.cell_indicators,
         smoothness=jnp.ones((topology.capacity, topology.dimension)),
     )

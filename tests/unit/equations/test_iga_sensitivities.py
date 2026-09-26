@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +14,7 @@ import phydrax as phx
 from phydrax.discretization import iga
 
 
-def test_fixed_topology_geometry_residual_gradient_matches_difference():
+def test_fixed_topology_geometry_residual_gradient_matches_difference() -> None:
     degree = 2
     grid = iga.BSplineGrid.open_uniform(degree, 1)
     coordinates = grid.greville_abscissae
@@ -48,7 +50,7 @@ def test_fixed_topology_geometry_residual_gradient_matches_difference():
     reduced = constraint.reduced_space.zeros()
     direction = jnp.zeros_like(control_points).at[1, 1, 0].set(1.0)
 
-    def objective(amplitude):
+    def objective(amplitude: Any) -> Any:
         geometry = iga.NURBSGeometryState(
             control_points + amplitude * direction,
             weights,

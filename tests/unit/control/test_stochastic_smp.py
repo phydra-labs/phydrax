@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -19,7 +22,14 @@ from phydrax.control.stochastic._smp import (
 from phydrax.dynamics import TimeGrid
 
 
-def _paths(states, actions, noise, *, clusters=None, problem_id="smp-test"):
+def _paths(
+    states: Any,
+    actions: Any,
+    noise: Any,
+    *,
+    clusters: Any = None,
+    problem_id: Any = "smp-test",
+) -> Any:
     states = jnp.asarray(states, dtype="float64")
     actions = jnp.asarray(actions, dtype="float64")
     noise = jnp.asarray(noise, dtype="float64")
@@ -63,7 +73,9 @@ def _paths(states, actions, noise, *, clusters=None, problem_id="smp-test"):
     )
 
 
-def _problem(*, sigma_action=0.0, terminal_gradient=None, bad_derivative=False):
+def _problem(
+    *, sigma_action: Any = 0.0, terminal_gradient: Any = None, bad_derivative: Any = False
+) -> Any:
     grid = TimeGrid(jnp.asarray([0.0, 1.0]), time_id="smp-grid")
     terminal = (
         (lambda time, state, args: state)
@@ -90,7 +102,14 @@ def _problem(*, sigma_action=0.0, terminal_gradient=None, bad_derivative=False):
     )
 
 
-def _evaluate(problem, paths, adjoints, integrands, labels=None, **kwargs):
+def _evaluate(
+    problem: Any,
+    paths: Any,
+    adjoints: Any,
+    integrands: Any,
+    labels: Any = None,
+    **kwargs: Any,
+) -> Any:
     count = paths.path_count
     return evaluate_stochastic_maximum_principle(
         problem,
@@ -106,7 +125,7 @@ def _evaluate(problem, paths, adjoints, integrands, labels=None, **kwargs):
     )
 
 
-def test_stochastic_smp_reduces_to_deterministic_pmp():
+def test_stochastic_smp_reduces_to_deterministic_pmp() -> None:
     paths = _paths(
         states=[[[1.0], [0.5]], [[1.0], [0.5]]],
         actions=[[[-0.5]], [[-0.5]]],
@@ -135,7 +154,9 @@ def test_stochastic_smp_reduces_to_deterministic_pmp():
 
 
 @pytest.mark.parametrize("sample_role", ["training", "holdout"])
-def test_zero_empirical_smp_residual_does_not_claim_global_optimality(sample_role):
+def test_zero_empirical_smp_residual_does_not_claim_global_optimality(
+    sample_role: Any,
+) -> None:
     paths = _paths(
         states=[[[1.0], [0.5]], [[1.0], [0.5]]],
         actions=[[[-0.5]], [[-0.5]]],
@@ -165,7 +186,7 @@ def test_zero_empirical_smp_residual_does_not_claim_global_optimality(sample_rol
     assert not result.feedback_claim
 
 
-def test_stochastic_smp_includes_q_sigma_action_term():
+def test_stochastic_smp_includes_q_sigma_action_term() -> None:
     paths = _paths(
         states=[[[0.0], [0.0]], [[0.0], [0.0]]],
         actions=[[[0.0]], [[0.0]]],
@@ -188,7 +209,7 @@ def test_stochastic_smp_includes_q_sigma_action_term():
     assert jnp.all(mutated_derivative.stationary)
 
 
-def test_stochastic_smp_reports_terminal_adjoint_mismatch():
+def test_stochastic_smp_reports_terminal_adjoint_mismatch() -> None:
     paths = _paths(
         states=[[[0.0], [2.0]]],
         actions=[[[2.0]]],
@@ -205,7 +226,7 @@ def test_stochastic_smp_reports_terminal_adjoint_mismatch():
     assert float(result.terminal_adjoint_rms_norms[0]) == 2.0
 
 
-def test_stochastic_smp_quarantines_nonfinite_derivative_evidence():
+def test_stochastic_smp_quarantines_nonfinite_derivative_evidence() -> None:
     paths = _paths(
         states=[[[0.0], [0.0]], [[1.0], [1.0]]],
         actions=[[[0.0]], [[0.0]]],
@@ -226,7 +247,7 @@ def test_stochastic_smp_quarantines_nonfinite_derivative_evidence():
     assert int(result.path_evidence.valid_path_count) == 1
 
 
-def test_stochastic_smp_emits_no_valid_paths_when_every_path_is_invalid():
+def test_stochastic_smp_emits_no_valid_paths_when_every_path_is_invalid() -> None:
     paths = _paths(
         states=[[[0.0], [0.0]], [[0.0], [0.0]]],
         actions=[[[0.0]], [[0.0]]],

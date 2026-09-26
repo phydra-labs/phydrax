@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     vertices = jnp.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -15,7 +17,7 @@ def _problem():
     return domain, boundary
 
 
-def test_adaptive_triangle_polynomial_converges_on_initial_partition():
+def test_adaptive_triangle_polynomial_converges_on_initial_partition() -> None:
     domain, boundary = _problem()
     function = domain.Function("x")(lambda x: jnp.sum(x * x))
     plan = phx.integration.AdaptiveTrianglePlan(
@@ -31,6 +33,7 @@ def test_adaptive_triangle_polynomial_converges_on_initial_partition():
 
     assert estimate.successful
     assert estimate.error_kind == "paired-reference-rule"
+    # ty: ignore[unsupported-operator]
     assert estimate.error_estimate < 2e-12
     assert estimate.diagnostics.partition.count == 4
     assert estimate.num_evaluations == 4 * (
@@ -38,11 +41,11 @@ def test_adaptive_triangle_polynomial_converges_on_initial_partition():
     )
 
 
-def test_adaptive_triangle_domain_targets_require_declared_domain_functions():
+def test_adaptive_triangle_domain_targets_require_declared_domain_functions() -> None:
     _, boundary = _problem()
     plan = phx.integration.AdaptiveTrianglePlan(max_cells=16)
 
-    def undeclared(x=jnp.ones((3,)), *, key=None):
+    def undeclared(x: Any = jnp.ones((3,)), *, key: Any = None) -> Any:
         del key
         return jnp.sum(x * x)
 
@@ -50,7 +53,7 @@ def test_adaptive_triangle_domain_targets_require_declared_domain_functions():
         phx.integration.integrate(undeclared, phx.integration.over(boundary), plan)
 
 
-def test_adaptive_callable_triangles_reuse_partition_and_diagnostics():
+def test_adaptive_callable_triangles_reuse_partition_and_diagnostics() -> None:
     triangles = jnp.asarray(
         [[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]],
     )
@@ -71,7 +74,7 @@ def test_adaptive_callable_triangles_reuse_partition_and_diagnostics():
     assert estimate.diagnostics.partition is not None
 
 
-def test_adaptive_triangle_reports_cell_exhaustion_without_throwing():
+def test_adaptive_triangle_reports_cell_exhaustion_without_throwing() -> None:
     domain, boundary = _problem()
     function = domain.Function("x")(lambda x: jnp.exp(8.0 * x[0]))
     plan = phx.integration.AdaptiveTrianglePlan(
@@ -92,7 +95,7 @@ def test_adaptive_triangle_reports_cell_exhaustion_without_throwing():
     assert estimate.diagnostics.partition.count == 4
 
 
-def test_adaptive_triangle_initial_budget_is_never_exceeded():
+def test_adaptive_triangle_initial_budget_is_never_exceeded() -> None:
     domain, boundary = _problem()
     plan = phx.integration.AdaptiveTrianglePlan(max_evaluations=1, throw=False)
     estimate = phx.integration.integrate(
@@ -107,7 +110,7 @@ def test_adaptive_triangle_initial_budget_is_never_exceeded():
     assert estimate.num_evaluations == 1
 
 
-def test_adaptive_triangle_nonfinite_integrand_has_distinct_status():
+def test_adaptive_triangle_nonfinite_integrand_has_distinct_status() -> None:
     domain, boundary = _problem()
     plan = phx.integration.AdaptiveTrianglePlan(max_cells=4, throw=False)
     estimate = phx.integration.integrate(
@@ -118,7 +121,7 @@ def test_adaptive_triangle_nonfinite_integrand_has_distinct_status():
     assert estimate.status == int(phx.integration.IntegrationStatus.NONFINITE_INTEGRAND)
 
 
-def test_adaptive_triangle_normalized_target_uses_paired_mass_integral():
+def test_adaptive_triangle_normalized_target_uses_paired_mass_integral() -> None:
     domain, boundary = _problem()
     plan = phx.integration.AdaptiveTrianglePlan(max_cells=16)
     estimate = phx.integration.integrate(
@@ -131,12 +134,12 @@ def test_adaptive_triangle_normalized_target_uses_paired_mass_integral():
     assert estimate.error_kind == "ratio-paired-reference-rule"
 
 
-def test_adaptive_triangle_is_jittable_and_differentiable():
+def test_adaptive_triangle_is_jittable_and_differentiable() -> None:
     domain, boundary = _problem()
     target = phx.integration.over(boundary)
     plan = phx.integration.AdaptiveTrianglePlan(max_cells=7)
 
-    def objective(scale):
+    def objective(scale: Any) -> Any:
         function = domain.Function("x")(lambda x: scale * jnp.sum(x * x))
         return phx.integration.integrate(function, target, plan).value.data
 
@@ -146,7 +149,7 @@ def test_adaptive_triangle_is_jittable_and_differentiable():
     assert derivative == pytest.approx(0.9330127018922193, rel=2e-13)
 
 
-def test_adaptive_triangle_ratio_must_meet_the_declared_tolerance():
+def test_adaptive_triangle_ratio_must_meet_the_declared_tolerance() -> None:
     domain, boundary = _problem()
     base = phx.integration.over(boundary)
     target = phx.integration.normalized_density(

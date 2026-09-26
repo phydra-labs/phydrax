@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def test_finite_top_k_pareto_and_landscape_are_index_stable():
+def test_finite_top_k_pareto_and_landscape_are_index_stable() -> None:
     space = phx.optim.FiniteProductSpace(
         phx.optim.FiniteAxis(jnp.asarray([3.0, 1.0, 1.0, 2.0]))
     )
@@ -20,6 +23,7 @@ def test_finite_top_k_pareto_and_landscape_are_index_stable():
     )
     assert top.exact
     assert jnp.array_equal(top.flat_indices, jnp.asarray([1, 2, 3]))
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(top.landscape_evaluated, jnp.ones((4,), dtype="bool"))
 
     pareto = phx.optim.search_finite(
@@ -34,7 +38,7 @@ def test_finite_top_k_pareto_and_landscape_are_index_stable():
     assert not jnp.any(dominates)
 
 
-def test_mixed_differential_evolution_decodes_domain_members_and_guards_invalid():
+def test_mixed_differential_evolution_decodes_domain_members_and_guards_invalid() -> None:
     space = phx.optim.DifferentialEvolutionSpace(
         {
             "integer": phx.optim.DifferentialEvolutionInteger(0, 3),
@@ -45,10 +49,10 @@ def test_mixed_differential_evolution_decodes_domain_members_and_guards_invalid(
     )
     search = phx.optim.DifferentialEvolutionSearch(8, 2)
 
-    def valid(candidate):
+    def valid(candidate: Any) -> Any:
         return candidate["integer"] >= 1
 
-    def objective(candidate):
+    def objective(candidate: Any) -> Any:
         return (candidate["integer"] - 2.0) ** 2 + (candidate["category"] != 20.0)
 
     result = phx.optim.search_differential_evolution(
@@ -61,7 +65,7 @@ def test_mixed_differential_evolution_decodes_domain_members_and_guards_invalid(
     )
 
 
-def test_sparse_conic_program_retains_relation_and_native_method_capability():
+def test_sparse_conic_program_retains_relation_and_native_method_capability() -> None:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1], dtype=jnp.int32),
         jnp.asarray([0, 1], dtype=jnp.int32),
@@ -79,10 +83,11 @@ def test_sparse_conic_program_retains_relation_and_native_method_capability():
     method = phx.optim.NativeHomogeneousConic()
     assert program.constraint_is_sparse
     assert method.capabilities.sparse
+    # ty: ignore[unresolved-attribute]
     assert program.constraint_matrix.sparse_storage().nnz == 2
 
 
-def test_bounded_mixed_integer_program_rejects_unbounded_discrete_roles():
+def test_bounded_mixed_integer_program_rejects_unbounded_discrete_roles() -> None:
     relaxation = phx.optim.LinearProgram(jnp.asarray([1.0, 0.0]))
     try:
         phx.optim.MixedIntegerProgram(relaxation, integer_indices=(0,))

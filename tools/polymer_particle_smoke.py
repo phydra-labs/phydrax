@@ -14,12 +14,18 @@ def main() -> int:
         bonds=[[10, 20], [20, 30]], bond_type_ids=[0, 0]
     )
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [10, 20, 30],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
         phx.atomistic.AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         element_mask=[False, False, False],
+        # ty: ignore[invalid-argument-type]
         molecule_ids=[0, 0, 0],
         topology=topology,
         cell=cell,
@@ -27,9 +33,15 @@ def main() -> int:
     cutoff = 2.0 ** (1.0 / 6.0)
     potential = phx.atomistic.AtomisticPotentialProgram(
         [
+            # ty: ignore[invalid-argument-type]
             phx.atomistic.FiniteExtensibleNonlinearElasticBondPotential([30.0], [1.5]),
             phx.atomistic.LennardJonesPotential(
-                [1.0], [1.0], cutoff, shift_energy_at_cutoff=True
+                # ty: ignore[invalid-argument-type]
+                [1.0],
+                # ty: ignore[invalid-argument-type]
+                [1.0],
+                cutoff,
+                shift_energy_at_cutoff=True,
             ),
         ]
     ).prepare(system)
@@ -48,7 +60,11 @@ def main() -> int:
         temperature=1.0,
     ).prepare(dynamics)
     layout = phx.atomistic.PolymerChainLayoutPlan(
-        [[0, 1, 2]], [[True, True, True]], maximum_frames=2
+        # ty: ignore[invalid-argument-type]
+        [[0, 1, 2]],
+        # ty: ignore[invalid-argument-type]
+        [[True, True, True]],
+        maximum_frames=2,
     )
     profile = phx.applications.polymer_liquids.KremerGrestProfilePlan(
         production_steps=2, maximum_particles=3, maximum_chains=1, minimum_fene_margin=0.1

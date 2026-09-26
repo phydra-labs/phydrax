@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _grid(count=4):
+def _grid(count: Any = 4) -> Any:
     return phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
         axis_names=("x",),
@@ -17,12 +20,12 @@ def _grid(count=4):
 
 def _compiled_entropy_problem(
     *,
-    entropy_pair=None,
-    system=None,
-    method=None,
-    source=None,
-    capacity=None,
-):
+    entropy_pair: Any = None,
+    system: Any = None,
+    method: Any = None,
+    source: Any = None,
+    capacity: Any = None,
+) -> Any:
     system_ = phx.equations.EulerSystem() if system is None else system
     grid = _grid()
     discretization = phx.discretization.FiniteVolumePlan(
@@ -56,7 +59,7 @@ def _compiled_entropy_problem(
     return compiled, discretization, system_
 
 
-def test_conservation_compiler_accepts_entropy_pair_and_fingerprints_it():
+def test_conservation_compiler_accepts_entropy_pair_and_fingerprints_it() -> None:
     system = phx.equations.EulerSystem()
     pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     without_pair, _, _ = _compiled_entropy_problem(system=system)
@@ -67,7 +70,9 @@ def test_conservation_compiler_accepts_entropy_pair_and_fingerprints_it():
     assert with_pair.compilation_id != without_pair.compilation_id
 
 
-def test_finite_volume_entropy_diagnostics_are_volume_weighted_and_source_separated():
+def test_finite_volume_entropy_diagnostics_are_volume_weighted_and_source_separated() -> (
+    None
+):
     system = phx.equations.EulerSystem()
     pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     source = lambda time, state, coordinates, args: jnp.broadcast_to(
@@ -112,7 +117,7 @@ def test_finite_volume_entropy_diagnostics_are_volume_weighted_and_source_separa
     assert jnp.allclose(entropy.convective_entropy_rate, 0.0)
 
 
-def test_entropy_total_uses_capacity_weighted_effective_volumes():
+def test_entropy_total_uses_capacity_weighted_effective_volumes() -> None:
     system = phx.equations.EulerSystem()
     pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     capacity = jnp.asarray([1.0, 1.5, 2.0, 2.5])
@@ -135,7 +140,7 @@ def test_entropy_total_uses_capacity_weighted_effective_volumes():
     )
 
 
-def test_entropy_pair_can_be_disabled_without_entropy_work():
+def test_entropy_pair_can_be_disabled_without_entropy_work() -> None:
     compiled, discretization, system = _compiled_entropy_problem()
     primitive = jnp.asarray([1.0, 0.0, 1.0])
     state = jnp.broadcast_to(
@@ -146,7 +151,7 @@ def test_entropy_pair_can_be_disabled_without_entropy_work():
     assert diagnostics.entropy is None
 
 
-def test_entropy_pair_mismatch_and_viscous_combinations_fail_at_compilation():
+def test_entropy_pair_mismatch_and_viscous_combinations_fail_at_compilation() -> None:
     system = phx.equations.EulerSystem()
     pair = phx.equations.ideal_gas_euler_entropy_pair(phx.equations.EulerSystem(2))
     with pytest.raises(ValueError, match="must target the conservation problem system"):
@@ -169,7 +174,7 @@ def test_entropy_pair_mismatch_and_viscous_combinations_fail_at_compilation():
         )
 
 
-def test_integrated_relative_entropy_uses_effective_cell_volumes():
+def test_integrated_relative_entropy_uses_effective_cell_volumes() -> None:
     system = phx.equations.EulerSystem()
     pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     _, discretization, _ = _compiled_entropy_problem(system=system)

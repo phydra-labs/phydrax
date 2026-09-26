@@ -2,18 +2,21 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _density(fields, geometry, context):
+def _density(fields: Any, geometry: Any, context: Any) -> Any:
     del geometry, context
     return fields["u"].value
 
 
-def test_functional_preserves_order_identity_and_signed_terms():
+def test_functional_preserves_order_identity_and_signed_terms() -> None:
     first = phx.variational.LocalIntegralTerm(
         "body",
         region="domain",
@@ -41,7 +44,7 @@ def test_functional_preserves_order_identity_and_signed_terms():
     assert first.term_id != second.term_id
 
 
-def test_functional_rejects_ambiguous_or_unused_declarations():
+def test_functional_rejects_ambiguous_or_unused_declarations() -> None:
     with pytest.raises(ValueError, match="value, gradient"):
         phx.variational.FieldJetSpec("u")
 
@@ -66,7 +69,7 @@ def test_functional_rejects_ambiguous_or_unused_declarations():
         )
 
 
-def test_functional_evaluation_requires_real_scalar_components():
+def test_functional_evaluation_requires_real_scalar_components() -> None:
     evaluation = phx.variational.FunctionalEvaluation(
         jnp.asarray(1.0),
         (jnp.asarray(1.0),),

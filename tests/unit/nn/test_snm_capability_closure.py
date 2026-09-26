@@ -31,7 +31,8 @@ from phydrax.nn.parameters import (
 )
 
 
-def test_ordered_cutpoints_and_soft_ordinal_one_hot_parity():
+def test_ordered_cutpoints_and_soft_ordinal_one_hot_parity() -> None:
+    # ty: ignore[invalid-argument-type]
     cutpoints = OrderedOrdinalCutpoints(4, initial=(-1.0, 0.0, 2.0))
     values = cutpoints()
     assert jnp.all(jnp.diff(values) > 0.0)
@@ -46,14 +47,14 @@ def test_ordered_cutpoints_and_soft_ordinal_one_hot_parity():
     assert jnp.allclose(hard, soft)
 
 
-def test_complex_low_rank_update_preserves_native_dtype():
+def test_complex_low_rank_update_preserves_native_dtype() -> None:
     base = jnp.eye(3, dtype=jnp.complex64)
     update = LowRankUpdate(base, rank=1, key=jax.random.key(0))
     assert update.materialize().dtype == jnp.complex64
     assert jnp.allclose(update.materialize(), base)
 
 
-def test_delayed_target_exact_accepted_update_lag():
+def test_delayed_target_exact_accepted_update_lag() -> None:
     state = TargetParameterState.initialize(
         {"x": jnp.asarray(0.0)},
         DelayedTargetPolicy(1),
@@ -64,7 +65,7 @@ def test_delayed_target_exact_accepted_update_lag():
     assert state.target["x"] == 1.0
 
 
-def test_constrained_polyconvex_reference_is_fixed_during_parameter_updates():
+def test_constrained_polyconvex_reference_is_fixed_during_parameter_updates() -> None:
     deformation = jnp.asarray(((1.2, 0.1), (0.0, 0.9)))
     reference = ReferenceConfiguration(deformation)
     model = ConstrainedPolyconvexPotential(
@@ -105,7 +106,7 @@ def test_constrained_polyconvex_reference_is_fixed_during_parameter_updates():
     assert updated_report.reference_stress_norm < 1.0e-4
 
 
-def test_static_wavelet_and_nonperiodic_support_policies():
+def test_static_wavelet_and_nonperiodic_support_policies() -> None:
     assert WaveletDecodePolicy().out_of_support == "error"
     support = ConvolutionSupportPlan(("dirichlet_sine", "neumann_cosine"))
     assert not support.periodic
@@ -116,14 +117,14 @@ class _Layout:
     layout_id = "test-layout"
 
 
-def test_modal_support_has_fixed_capacity_and_stable_top_energy():
+def test_modal_support_has_fixed_capacity_and_stable_top_energy() -> None:
     plan = ModalSupportDiscoveryPlan(_Layout(), 2)
     support = discover_modal_support(plan, jnp.asarray((1.0, 4.0, 2.0, 0.0)))
     assert support.multi_indices.shape == (2, 1)
     assert tuple(support.multi_indices[:, 0]) == (1, 2)
 
 
-def test_bundled_pretrained_weights_load_and_execute_without_io_in_predict():
+def test_bundled_pretrained_weights_load_and_execute_without_io_in_predict() -> None:
     fno = load_pretrained_operator("fno-diffusion-1d")
     result = jax.jit(lambda values: fno.predict(values, 24))(jnp.ones((16, 1)))
     assert result.shape == (24, 1)
@@ -135,7 +136,7 @@ def test_bundled_pretrained_weights_load_and_execute_without_io_in_predict():
     assert independent.shape == (7,)
 
 
-def test_bundled_pretrained_fno_preserves_retained_modes_across_resolutions():
+def test_bundled_pretrained_fno_preserves_retained_modes_across_resolutions() -> None:
     fno = load_pretrained_operator("fno-diffusion-1d")
     source_size = 16
     points = jnp.arange(source_size, dtype=jnp.float32)
@@ -155,7 +156,7 @@ def test_bundled_pretrained_fno_preserves_retained_modes_across_resolutions():
         assert jnp.allclose(transferred_modes, reference, rtol=1e-5, atol=5e-10)
 
 
-def test_hermitian_support_selection_is_pair_atomic():
+def test_hermitian_support_selection_is_pair_atomic() -> None:
     plan = ModalSupportDiscoveryPlan(
         _Layout(),
         2,
@@ -170,7 +171,7 @@ def test_hermitian_support_selection_is_pair_atomic():
     assert bool(jnp.all(support.active))
 
 
-def test_hermitian_support_marks_padding_inactive_with_energetic_zero_mode():
+def test_hermitian_support_marks_padding_inactive_with_energetic_zero_mode() -> None:
     plan = ModalSupportDiscoveryPlan(
         _Layout(),
         3,
@@ -190,7 +191,7 @@ def test_hermitian_support_marks_padding_inactive_with_energetic_zero_mode():
     assert support.energies[-1] == 0.0
 
 
-def test_hermitian_support_activates_conjugate_orbits_atomically():
+def test_hermitian_support_activates_conjugate_orbits_atomically() -> None:
     plan = ModalSupportDiscoveryPlan(
         _Layout(),
         2,
@@ -211,7 +212,7 @@ def test_hermitian_support_activates_conjugate_orbits_atomically():
     assert active_indices == {1, 3}
 
 
-def test_hermitian_omp_never_selects_a_partial_or_over_capacity_orbit():
+def test_hermitian_omp_never_selects_a_partial_or_over_capacity_orbit() -> None:
     plan = ModalSupportDiscoveryPlan(
         _Layout(),
         3,
@@ -238,7 +239,7 @@ class _AliasedTree(eqx.Module):
     alias: jax.Array
 
 
-def test_parameter_subspace_reconstructs_one_canonical_alias_leaf():
+def test_parameter_subspace_reconstructs_one_canonical_alias_leaf() -> None:
     tree = _AliasedTree(jnp.asarray(1.0), jnp.asarray(1.0))
     subspace = ParameterSubspace.from_leaf_paths(
         tree,

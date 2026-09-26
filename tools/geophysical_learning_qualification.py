@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--steps", type=int, default=40)
     parser.add_argument("--artifact-directory", type=Path)

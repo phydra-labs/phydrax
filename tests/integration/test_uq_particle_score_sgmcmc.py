@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _parameterized_problem():
+def _parameterized_problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[0.4], [0.8]]),
@@ -23,7 +26,7 @@ def _parameterized_problem():
         prior_id="state-prior",
     )
 
-    def offset(t0, t1, context):
+    def offset(t0: Any, t1: Any, context: Any) -> Any:
         del t0, t1
         return jnp.asarray([context.args["drift"]])
 
@@ -71,7 +74,7 @@ def _parameterized_problem():
     return stochastic_problem, source, parameterized
 
 
-def test_particle_genealogical_estimator_drives_jitted_sgld_end_to_end():
+def test_particle_genealogical_estimator_drives_jitted_sgld_end_to_end() -> None:
     problem, source, parameterized = _parameterized_problem()
     estimator = phx.uq.ParticleGenealogicalGradientEstimator(
         parameterized,
@@ -95,7 +98,7 @@ def test_particle_genealogical_estimator_drives_jitted_sgld_end_to_end():
     assert jnp.all(jnp.isfinite(result.gradient_norm))
 
 
-def test_explicit_autodiff_estimator_preserves_default_sgld_replay():
+def test_explicit_autodiff_estimator_preserves_default_sgld_replay() -> None:
     inputs = jnp.linspace(-1.0, 1.0, 6)
     source = phx.uq.ArrayMinibatchSource(inputs, batch_size=3, seed=2)
     space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
@@ -111,10 +114,12 @@ def test_explicit_autodiff_estimator_preserves_default_sgld_replay():
         num_burnin=2,
         num_samples=4,
     )
+    # ty: ignore[invalid-argument-type]
     default = phx.uq.sample_sgld(problem, source, **settings)
     explicit = phx.uq.sample_sgld(
         problem,
         source,
+        # ty: ignore[invalid-argument-type]
         **settings,
         gradient_estimator=phx.uq.AutodiffStochasticGradientEstimator(),
     )
@@ -123,7 +128,7 @@ def test_explicit_autodiff_estimator_preserves_default_sgld_replay():
     assert jnp.array_equal(default.gradient_norm, explicit.gradient_norm)
 
 
-def test_particle_gradient_estimator_rejects_existing_control_variate():
+def test_particle_gradient_estimator_rejects_existing_control_variate() -> None:
     problem, source, parameterized = _parameterized_problem()
     control = phx.uq.build_sgmcmc_control_variate(
         problem,

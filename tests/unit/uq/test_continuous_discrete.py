@@ -1,3 +1,5 @@
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -7,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def _affine_problem(*, mask=None, times=None, values=None):
+def _affine_problem(*, mask: Any = None, times: Any = None, values: Any = None) -> Any:
     resolved_times = (
         jnp.asarray([0.15, 0.6, 1.4]) if times is None else jnp.asarray(times)
     )
@@ -58,7 +60,7 @@ def _affine_problem(*, mask=None, times=None, values=None):
     )
 
 
-def test_gaussian_moment_conditioning_matches_scalar_closed_form():
+def test_gaussian_moment_conditioning_matches_scalar_closed_form() -> None:
     conditioned = phx.uq.condition_gaussian_moments(
         jnp.asarray((0.0,)),
         jnp.asarray(((2.0,),)),
@@ -77,7 +79,7 @@ def test_gaussian_moment_conditioning_matches_scalar_closed_form():
 
 
 @pytest.mark.parametrize("method", ["extended", "cubature", "unscented"])
-def test_affine_continuous_discrete_oracle_and_smoother(method):
+def test_affine_continuous_discrete_oracle_and_smoother(method: Any) -> None:
     problem = _affine_problem()
     expected_filter = phx.uq.kalman_filter(problem)
     expected_smoother = phx.uq.rts_smoother(expected_filter)
@@ -120,7 +122,7 @@ def test_affine_continuous_discrete_oracle_and_smoother(method):
     assert jnp.all(result.successful)
 
 
-def test_irregular_typed_inputs_preserve_case_axes_and_physical_times():
+def test_irregular_typed_inputs_preserve_case_axes_and_physical_times() -> None:
     times = jnp.asarray([[0.3, 0.9], [0.2, 0.8]])
     sequence = phx.stochastic.ObservationSequence(
         times,
@@ -148,7 +150,7 @@ def test_irregular_typed_inputs_preserve_case_axes_and_physical_times():
         input_id="case-forcing",
     )
 
-    def drift(time, state, context):
+    def drift(time: Any, state: Any, context: Any) -> Any:
         del state
         return context.evaluate_input(time).value
 
@@ -194,7 +196,9 @@ def test_irregular_typed_inputs_preserve_case_axes_and_physical_times():
     assert jnp.all(result.successful)
 
 
-def test_missing_observations_are_forecast_only_and_likelihood_increments_accumulate():
+def test_missing_observations_are_forecast_only_and_likelihood_increments_accumulate() -> (
+    None
+):
     mask = jnp.asarray([[True], [False], [True]])
     result = phx.uq.continuous_discrete_gaussian_filter(
         _affine_problem(mask=mask), method="extended"
@@ -210,7 +214,7 @@ def test_missing_observations_are_forecast_only_and_likelihood_increments_accumu
     )
 
 
-def test_nonlinear_observation_uses_declared_gaussian_transform():
+def test_nonlinear_observation_uses_declared_gaussian_transform() -> None:
     sequence = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5]),
         jnp.asarray([[1.2]]),
@@ -256,11 +260,11 @@ def test_nonlinear_observation_uses_declared_gaussian_transform():
 
 def _differential_problem(
     *,
-    max_steps=4096,
-    input_signal=None,
-    times=None,
-    solver=None,
-):
+    max_steps: Any = 4096,
+    input_signal: Any = None,
+    times: Any = None,
+    solver: Any = None,
+) -> Any:
     resolved_times = jnp.asarray([0.25]) if times is None else jnp.asarray(times)
     sequence = phx.stochastic.ObservationSequence(
         resolved_times,
@@ -273,7 +277,7 @@ def _differential_problem(
         state_shape=(1,),
     )
 
-    def drift(time, state, context):
+    def drift(time: Any, state: Any, context: Any) -> Any:
         forcing = (
             jnp.asarray([0.0])
             if context.input_signal is None
@@ -309,7 +313,7 @@ def _differential_problem(
     )
 
 
-def test_nonfinite_solver_output_has_precedence_without_fallback():
+def test_nonfinite_solver_output_has_precedence_without_fallback() -> None:
     problem = _differential_problem(max_steps=1)
     problem = eqx.tree_at(
         lambda node: node.args,
@@ -330,7 +334,7 @@ def test_nonfinite_solver_output_has_precedence_without_fallback():
     assert not result.successful
 
 
-def test_jit_parameter_and_typed_input_gradients_are_supported():
+def test_jit_parameter_and_typed_input_gradients_are_supported() -> None:
     signal = phx.stochastic.SampledStateSpaceInput(
         jnp.asarray([0.0, 0.25]),
         jnp.asarray([[0.2], [0.4]]),
@@ -342,13 +346,13 @@ def test_jit_parameter_and_typed_input_gradients_are_supported():
         lambda value: phx.uq.continuous_discrete_gaussian_filter(value, method="extended")
     )(problem)
 
-    def parameter_objective(rate):
+    def parameter_objective(rate: Any) -> Any:
         changed = eqx.tree_at(lambda node: node.args, problem, rate)
         return phx.uq.continuous_discrete_gaussian_filter(
             changed, method="extended"
         ).cumulative_log_likelihood[-1]
 
-    def input_objective(values):
+    def input_objective(values: Any) -> Any:
         changed = eqx.tree_at(
             lambda node: node.input_signal.values,
             problem,
@@ -368,7 +372,7 @@ def test_jit_parameter_and_typed_input_gradients_are_supported():
     assert jnp.linalg.norm(input_gradient) > 0.0
 
 
-def _provided_transition_problem(covariance):
+def _provided_transition_problem(covariance: Any) -> Any:
     sequence = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5]),
         jnp.zeros((1, 1)),
@@ -403,14 +407,14 @@ def _provided_transition_problem(covariance):
     )
 
 
-def test_incompatible_pathwise_sde_solver_is_rejected_before_dispatch():
+def test_incompatible_pathwise_sde_solver_is_rejected_before_dispatch() -> None:
     problem = _differential_problem(solver=dfx.ItoMilstein())
 
     with pytest.raises(ValueError, match="deterministic ODE-compatible"):
         phx.uq.continuous_discrete_gaussian_filter(problem)
 
 
-def test_diffrax_backend_result_code_is_retained():
+def test_diffrax_backend_result_code_is_retained() -> None:
     signal = phx.stochastic.SampledStateSpaceInput(
         jnp.asarray([0.0, 5.0, 10.0]),
         jnp.zeros((3, 1)),
@@ -437,7 +441,7 @@ def test_diffrax_backend_result_code_is_retained():
     assert result.status[0] == phx.uq.CONTINUOUS_DISCRETE_GAUSSIAN_NONFINITE
 
 
-def test_nonfinite_analytic_covariance_has_precedence_and_no_solver_code():
+def test_nonfinite_analytic_covariance_has_precedence_and_no_solver_code() -> None:
     problem = _provided_transition_problem(
         lambda start, end, context: jnp.full((2, 2), jnp.nan)
     )
@@ -456,7 +460,9 @@ def test_nonfinite_analytic_covariance_has_precedence_and_no_solver_code():
         jnp.asarray([[-1.0, 0.0], [0.0, 0.0]]),
     ),
 )
-def test_invalid_analytic_transition_covariance_is_a_transform_failure(covariance):
+def test_invalid_analytic_transition_covariance_is_a_transform_failure(
+    covariance: Any,
+) -> None:
     result = phx.uq.continuous_discrete_gaussian_filter(
         _provided_transition_problem(covariance)
     )
@@ -471,7 +477,7 @@ def test_invalid_analytic_transition_covariance_is_a_transform_failure(covarianc
         )
 
 
-def test_nonsymmetric_nonlinear_observation_covariance_is_not_repaired():
+def test_nonsymmetric_nonlinear_observation_covariance_is_not_repaired() -> None:
     sequence = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5]),
         jnp.zeros((1, 2)),
@@ -514,7 +520,7 @@ def test_nonsymmetric_nonlinear_observation_covariance_is_not_repaired():
     )
 
 
-def test_skipped_active_step_preserves_original_backend_provenance():
+def test_skipped_active_step_preserves_original_backend_provenance() -> None:
     problem = _differential_problem(
         max_steps=1,
         times=jnp.asarray([10.0, 20.0]),
@@ -540,7 +546,7 @@ def test_skipped_active_step_preserves_original_backend_provenance():
     )
 
 
-def test_backward_smoothing_failure_invalidates_every_dependent_step():
+def test_backward_smoothing_failure_invalidates_every_dependent_step() -> None:
     sequence = phx.stochastic.ObservationSequence(
         jnp.asarray([0.2, 0.5, 0.9]),
         jnp.zeros((3, 1)),

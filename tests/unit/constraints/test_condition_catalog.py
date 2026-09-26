@@ -2,25 +2,28 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _source(component):
+def _source(component: Any) -> Any:
     return phx.integration.per_step(
         phx.integration.over(component),
         phx.integration.MonteCarloPlan(16),
     )
 
 
-def _loss(condition, source, functions):
+def _loss(condition: Any, source: Any, functions: Any) -> Any:
     penalty = phx.terms.ResidualPenalty(condition, source)
     return penalty.loss(functions, key=jr.key(0))
 
 
-def test_boundary_and_initial_conditions_are_treatment_independent():
+def test_boundary_and_initial_conditions_are_treatment_independent() -> None:
     geometry = phx.domain.Interval1d(0.0, 1.0)
     boundary = geometry.component({"x": phx.domain.Boundary()})
     zero = geometry.Function()(0.0)
@@ -55,7 +58,7 @@ def test_boundary_and_initial_conditions_are_treatment_independent():
     )
 
 
-def test_cfd_thermal_solid_and_electromagnetic_catalogs_preserve_formulas():
+def test_cfd_thermal_solid_and_electromagnetic_catalogs_preserve_formulas() -> None:
     geometry = phx.domain.Interval1d(0.0, 1.0)
     boundary = geometry.component({"x": phx.domain.Boundary()})
     source = _source(boundary)
@@ -97,7 +100,7 @@ def test_cfd_thermal_solid_and_electromagnetic_catalogs_preserve_formulas():
         assert jnp.allclose(_loss(condition, source, functions), 0.0)
 
 
-def test_stochastic_and_conservation_catalogs_use_generic_penalties():
+def test_stochastic_and_conservation_catalogs_use_generic_penalties() -> None:
     geometry = phx.domain.Interval1d(0.0, 1.0)
     interior = geometry.component()
     boundary = geometry.component({"x": phx.domain.Boundary()})

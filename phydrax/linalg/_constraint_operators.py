@@ -756,7 +756,10 @@ def _bind_prepared_constraint(
     )
     factorization_kind = factorization.policy.kind
     # Constraint factorizations are only built with an explicit "svd" or "qr" kind.
-    assert factorization_kind == "svd" or factorization_kind == "qr"
+    if not (factorization_kind == "svd" or factorization_kind == "qr"):
+        raise RuntimeError(
+            "Internal invariant failed: factorization_kind == 'svd' or factorization_kind == 'qr'."
+        )
     evidence = ConstraintOperatorEvidence(
         singular_values=singular_values,
         generalized_right_inverse_residual_norm=generalized_norm,

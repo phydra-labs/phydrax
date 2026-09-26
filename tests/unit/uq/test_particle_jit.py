@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([[0.5, 1.0], [0.5, 1.0]]),
         jnp.asarray([[[1.0], [2.0]], [[-1.0], [-2.0]]]),
@@ -48,7 +51,7 @@ def _problem():
     )
 
 
-def test_bootstrap_particle_filter_runs_as_one_jitted_scan():
+def test_bootstrap_particle_filter_runs_as_one_jitted_scan() -> None:
     problem = _problem()
     compiled = jax.jit(
         lambda key: phx.uq.bootstrap_particle_filter(
@@ -70,7 +73,7 @@ def test_bootstrap_particle_filter_runs_as_one_jitted_scan():
     assert jnp.array_equal(result.resampled, replay.resampled)
 
 
-def test_jitted_scan_matches_streaming_particle_steps_exactly():
+def test_jitted_scan_matches_streaming_particle_steps_exactly() -> None:
     problem = _problem()
     key = jax.random.key(2)
     scan = phx.uq.bootstrap_particle_filter(

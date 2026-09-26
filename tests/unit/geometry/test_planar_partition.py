@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -64,7 +66,7 @@ def _rectangle(
 
 def _operand(
     operand_id: str,
-    source,
+    source: Any,
     role: BRepPartitionRole = BRepPartitionRole.REGION,
     *,
     targets: tuple[str, ...] = (),
@@ -78,7 +80,7 @@ def _operand(
 
 
 def _plan(
-    operands,
+    operands: Any,
     precedence: tuple[str, ...],
     *,
     embedding: PlanarEmbedding = _EMBEDDING,
@@ -91,7 +93,7 @@ def _plan(
     )
 
 
-def _execute(plan: PlanarPartitionPlan, destination: Path):
+def _execute(plan: PlanarPartitionPlan, destination: Path) -> Any:
     return partition_planar(
         plan,
         destination=destination,
@@ -100,13 +102,14 @@ def _execute(plan: PlanarPartitionPlan, destination: Path):
     )
 
 
-def _face_areas(result) -> dict[BRepEntityId, float]:
+def _face_areas(result: Any) -> dict[BRepEntityId, float]:
     shape, source_format, source_digest = read_occt_shape(result.model.source_id)
     assert source_format == "brep"
     assert source_digest == result.model.source_digest
     explorer = TopExp_Explorer(shape, TopAbs_FACE)
     faces = []
     while explorer.More():
+        # ty: ignore[unresolved-attribute]
         candidate = TopoDS.Face_s(explorer.Current())
         if not any(value.IsSame(candidate) for value in faces):
             faces.append(candidate)
@@ -119,12 +122,12 @@ def _face_areas(result) -> dict[BRepEntityId, float]:
     return areas
 
 
-def _region_area(result, name: str) -> float:
+def _region_area(result: Any, name: str) -> float:
     areas = _face_areas(result)
     return sum(areas[value] for value in result.region(name).entity_ids)
 
 
-def test_embedding_roundtrip_and_signed_plane_residual():
+def test_embedding_roundtrip_and_signed_plane_residual() -> None:
     embedding = PlanarEmbedding(
         (3.0, -2.0, 5.0),
         (0.0, 1.0, 0.0),
@@ -147,7 +150,9 @@ def test_embedding_roundtrip_and_signed_plane_residual():
         )
 
 
-def test_adjacent_regions_publish_shared_edges_with_opposite_incidence(tmp_path):
+def test_adjacent_regions_publish_shared_edges_with_opposite_incidence(
+    tmp_path: Any,
+) -> None:
     result = _execute(
         _plan(
             (
@@ -201,7 +206,7 @@ def test_adjacent_regions_publish_shared_edges_with_opposite_incidence(tmp_path)
     assert {patch.topological_dimension for patch in result.patches} == {2}
 
 
-def test_oriented_hole_is_preserved_as_exact_face_wires(tmp_path):
+def test_oriented_hole_is_preserved_as_exact_face_wires(tmp_path: Any) -> None:
     region = PlanarMeshRegion(
         np.asarray(
             (
@@ -230,7 +235,7 @@ def test_oriented_hole_is_preserved_as_exact_face_wires(tmp_path):
     assert set(result.model.topology.edge_faces) == {(face_index,)}
 
 
-def test_precedence_is_independent_of_planar_operand_order(tmp_path):
+def test_precedence_is_independent_of_planar_operand_order(tmp_path: Any) -> None:
     high = _rectangle(0.0, 2.0, feature_id="high")
     low = _rectangle(1.0, 3.0, feature_id="low")
     forward = _execute(
@@ -254,7 +259,7 @@ def test_precedence_is_independent_of_planar_operand_order(tmp_path):
     assert _region_area(forward, "low") == pytest.approx(1.0)
 
 
-def test_void_subtracts_only_its_declared_planar_target(tmp_path):
+def test_void_subtracts_only_its_declared_planar_target(tmp_path: Any) -> None:
     result = _execute(
         _plan(
             (
@@ -276,7 +281,9 @@ def test_void_subtracts_only_its_declared_planar_target(tmp_path):
     assert _region_area(result, "right") == pytest.approx(2.0)
 
 
-def test_exact_face_and_edge_histories_cover_split_and_deleted_sources(tmp_path):
+def test_exact_face_and_edge_histories_cover_split_and_deleted_sources(
+    tmp_path: Any,
+) -> None:
     result = _execute(
         _plan(
             (
@@ -328,7 +335,7 @@ def test_exact_face_and_edge_histories_cover_split_and_deleted_sources(tmp_path)
     )
 
 
-def test_persisted_root_faces_reenter_the_same_partition_contract(tmp_path):
+def test_persisted_root_faces_reenter_the_same_partition_contract(tmp_path: Any) -> None:
     first = _execute(
         _plan(
             (_operand("source", _rectangle(0.0, 2.0, feature_id="source")),),
@@ -364,7 +371,7 @@ def test_persisted_root_faces_reenter_the_same_partition_contract(tmp_path):
         )
 
 
-def test_planar_sources_must_share_the_declared_embedding_plane(tmp_path):
+def test_planar_sources_must_share_the_declared_embedding_plane(tmp_path: Any) -> None:
     first = _execute(
         _plan(
             (_operand("source", _rectangle(0.0, 1.0, feature_id="source")),),
@@ -387,9 +394,11 @@ def test_planar_sources_must_share_the_declared_embedding_plane(tmp_path):
     assert not (tmp_path / "wrong-plane.brep").exists()
 
 
-def test_missing_live_planar_history_publishes_nothing(tmp_path, monkeypatch):
+def test_missing_live_planar_history_publishes_nothing(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     class NoHistoryCellsBuilder(BOPAlgo_CellsBuilder):
-        def HasHistory(self):
+        def HasHistory(self) -> bool:
             return False
 
     destination = tmp_path / "unresolved-history.brep"
@@ -416,7 +425,7 @@ def test_missing_live_planar_history_publishes_nothing(tmp_path, monkeypatch):
     assert not tuple(tmp_path.glob(f".{destination.name}.partition-*"))
 
 
-def test_holes_must_be_strictly_inside_the_outer_loop(tmp_path):
+def test_holes_must_be_strictly_inside_the_outer_loop(tmp_path: Any) -> None:
     invalid = PlanarMeshRegion(
         np.asarray(
             (

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -10,7 +13,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_nonlinear_inverse_compares_pathfinder_nuts_and_laplace():
+def test_nonlinear_inverse_compares_pathfinder_nuts_and_laplace() -> None:
     x = jnp.linspace(0.0, 2.0, 30)
     query = jnp.linspace(0.0, 2.5, 37)
     true_amplitude = 1.7
@@ -100,7 +103,7 @@ def test_nonlinear_inverse_compares_pathfinder_nuts_and_laplace():
     )
 
 
-def test_fixed_physics_residual_likelihood_identifies_hidden_source():
+def test_fixed_physics_residual_likelihood_identifies_hidden_source() -> None:
     sensor_x = jnp.linspace(0.05, 0.95, 20)
     basis_values = 0.5 * sensor_x * (1.0 - sensor_x)
     true_source = 1.5
@@ -110,14 +113,14 @@ def test_fixed_physics_residual_likelihood_identifies_hidden_source():
     geometry = phx.domain.Interval1d(0.0, 1.0)
 
     @geometry.Function("x")
-    def poisson_basis(x):
+    def poisson_basis(x: Any) -> Any:
         return 0.5 * x[0] * (1.0 - x[0])
 
     residual_points = {
         "x": cx.AxisArray(jnp.linspace(0.1, 0.9, 11)[:, None], dims=("point", None))
     }
 
-    def pde_residual(parameters):
+    def pde_residual(parameters: Any) -> Any:
         state = parameters["amplitude"] * poisson_basis
         residual = -phx.operators.laplacian(state, var="x") - parameters["source"]
         return residual(residual_points).data
@@ -186,7 +189,7 @@ def test_fixed_physics_residual_likelihood_identifies_hidden_source():
     assert report.passed
 
 
-def test_repeated_omitted_physics_discrepancy_improves_predictions_and_scores():
+def test_repeated_omitted_physics_discrepancy_improves_predictions_and_scores() -> None:
     observation_x = jnp.linspace(0.0, 1.0, 18)
     test_x = jnp.linspace(0.025, 0.975, 25)
     true_parameter = 1.2
@@ -194,7 +197,7 @@ def test_repeated_omitted_physics_discrepancy_improves_predictions_and_scores():
     fixed_amplitude = 0.25
     fixed_length_scale = 0.22
 
-    def truth(x):
+    def truth(x: Any) -> Any:
         return true_parameter * x + 0.3 * jnp.sin(jnp.pi * x)
 
     no_discrepancy_rmse = []
@@ -211,7 +214,7 @@ def test_repeated_omitted_physics_discrepancy_improves_predictions_and_scores():
     joint_parameter_gp_correlations = []
     observation_likelihood = phx.uq.GaussianLikelihood(observation_scale)
 
-    def gp_state(amplitude, length_scale, noise_scale):
+    def gp_state(amplitude: Any, length_scale: Any, noise_scale: Any) -> Any:
         return phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.AmplitudeKernel(
                 phx.kernels.Matern32Kernel(length_scale=length_scale),

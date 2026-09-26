@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -29,7 +32,7 @@ from phydrax.equations._mixture_transport import (
 )
 
 
-def _gas_model():
+def _gas_model() -> Any:
     schema = ChemicalSpeciesSchema.from_unique_species(
         ("light", "middle", "heavy"),
         (ChemicalPhaseKind.GAS,) * 3,
@@ -54,14 +57,14 @@ def _gas_model():
     )
 
 
-def _pressure_state(model, temperature, pressure, mass):
+def _pressure_state(model: Any, temperature: Any, pressure: Any, mass: Any) -> Any:
     molar_mass = 1.0 / jnp.sum(mass / model.schema.molar_masses)
     mole = mass * molar_mass / model.schema.molar_masses
     molar_density = pressure / (UNIVERSAL_GAS_CONSTANT * temperature)
     return model.evaluate(temperature, molar_density, mole)
 
 
-def _transport(plan_type):
+def _transport(plan_type: Any) -> Any:
     model = _gas_model()
     diffusion = jnp.asarray(
         (
@@ -78,7 +81,7 @@ def _transport(plan_type):
     return plan_type(model, properties)
 
 
-def test_catalog_gas_phase_standard_pressure_and_homogeneous_energy_inversion():
+def test_catalog_gas_phase_standard_pressure_and_homogeneous_energy_inversion() -> None:
     model = _gas_model()
     schema = model.schema
     species_density = jnp.asarray((0.24, 0.36, 0.60))
@@ -102,7 +105,7 @@ def test_catalog_gas_phase_standard_pressure_and_homogeneous_energy_inversion():
     )
 
 
-def test_homogeneous_euler_state_uses_every_species_density_slot():
+def test_homogeneous_euler_state_uses_every_species_density_slot() -> None:
     model = _gas_model()
     system = HomogeneousMixtureEulerSystem(model, 2)
     species_density = jnp.asarray((0.24, 0.36, 0.60))
@@ -119,7 +122,7 @@ def test_homogeneous_euler_state_uses_every_species_density_slot():
     assert not system.admissible(invalid)
 
 
-def test_mixture_averaged_transport_conserves_mass_and_carries_full_enthalpy():
+def test_mixture_averaged_transport_conserves_mass_and_carries_full_enthalpy() -> None:
     plan = _transport(MixtureAveragedTransportPlan)
     temperature = jnp.asarray(1000.0)
     pressure = jnp.asarray(101325.0)
@@ -163,7 +166,7 @@ def test_mixture_averaged_transport_conserves_mass_and_carries_full_enthalpy():
     np.testing.assert_allclose(inert.total_heat_flux, 0.0, atol=0.0)
 
 
-def test_mixture_transport_absent_species_velocity_has_finite_derivative():
+def test_mixture_transport_absent_species_velocity_has_finite_derivative() -> None:
     plan = _transport(MixtureAveragedTransportPlan)
     temperature = jnp.asarray(1000.0)
     pressure = jnp.asarray(101325.0)
@@ -173,7 +176,7 @@ def test_mixture_transport_absent_species_velocity_has_finite_derivative():
     ).mass_density
     gradient = jnp.asarray(((0.05, -0.03), (-0.02, 0.01), (-0.03, 0.02)))
 
-    def velocities(absent_fraction):
+    def velocities(absent_fraction: Any) -> Any:
         composition = jnp.stack(
             (absent_fraction, 0.4 - absent_fraction, jnp.asarray(0.6))
         )
@@ -196,7 +199,7 @@ def test_mixture_transport_absent_species_velocity_has_finite_derivative():
     assert jnp.all(jnp.isfinite(tangent))
 
 
-def test_stefan_maxwell_matches_reference_system_mass_and_enthalpy_constraints():
+def test_stefan_maxwell_matches_reference_system_mass_and_enthalpy_constraints() -> None:
     plan = _transport(StefanMaxwellTransportPlan)
     temperature = jnp.asarray(1000.0)
     pressure = jnp.asarray(101325.0)
@@ -229,7 +232,7 @@ def test_stefan_maxwell_matches_reference_system_mass_and_enthalpy_constraints()
     )
 
 
-def test_complete_mixture_transport_drives_canonical_navier_stokes_flux():
+def test_complete_mixture_transport_drives_canonical_navier_stokes_flux() -> None:
     plan = _transport(MixtureAveragedTransportPlan)
     system = HomogeneousMixtureCompressibleNavierStokesSystem(
         plan.thermodynamics, plan, 1
@@ -240,7 +243,7 @@ def test_complete_mixture_transport_drives_canonical_navier_stokes_flux():
     temperature = jnp.asarray(1000.0)
     temperature_gradient = jnp.asarray(5.0)
 
-    def state_at(coordinate):
+    def state_at(coordinate: Any) -> Any:
         composition = mass + coordinate * mass_gradient
         primitive = jnp.concatenate(
             (

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +16,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _positive_definite_properties():
+def _positive_definite_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -28,21 +31,21 @@ def _positive_definite_properties():
 class _DensePairing(la.AbstractPairing):
     matrix: jax.Array
 
-    def __init__(self, matrix):
+    def __init__(self, matrix: Any) -> None:
         self.matrix = jnp.asarray(matrix)
         self.pairing_id = "test-dense-pairing"
 
-    def inner(self, left, right, /):
+    def inner(self, left: Any, right: Any, /) -> Any:
         return jnp.vdot(left, self.matrix @ right)
 
-    def riesz(self, vector, /):
+    def riesz(self, vector: Any, /) -> Any:
         return self.matrix @ vector
 
-    def inverse_riesz(self, covector, /):
+    def inverse_riesz(self, covector: Any, /) -> Any:
         return jnp.linalg.solve(self.matrix, covector)
 
 
-def test_structured_spaces_pairings_and_duals_preserve_coordinate_semantics():
+def test_structured_spaces_pairings_and_duals_preserve_coordinate_semantics() -> None:
     weights = {
         "field": jnp.asarray([2.0, 3.0]),
         "parameter": jnp.asarray(5.0),
@@ -97,7 +100,7 @@ def test_structured_spaces_pairings_and_duals_preserve_coordinate_semantics():
     )
 
 
-def test_operator_algebra_materialization_and_pairing_aware_adjoint():
+def test_operator_algebra_materialization_and_pairing_aware_adjoint() -> None:
     source = la.ArraySpace(
         (3,),
         dtype=jnp.complex128,
@@ -138,7 +141,7 @@ def test_operator_algebra_materialization_and_pairing_aware_adjoint():
     )
 
 
-def test_block_and_jacobian_operators_share_the_solve_runtime():
+def test_block_and_jacobian_operators_share_the_solve_runtime() -> None:
     vector_space = la.ArraySpace((2,), dtype=jnp.float64)
     scalar_space = la.ArraySpace((1,), dtype=jnp.float64)
     block_space = la.BlockSpace((vector_space, scalar_space))
@@ -245,7 +248,7 @@ def test_block_and_jacobian_operators_share_the_solve_runtime():
     )
 
 
-def test_dense_prepare_solve_many_update_batches_and_jit():
+def test_dense_prepare_solve_many_update_batches_and_jit() -> None:
     properties = _positive_definite_properties()
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])
     problem = la.LinearSystem(
@@ -328,7 +331,7 @@ def test_dense_prepare_solve_many_update_batches_and_jit():
     )
 
 
-def test_cholesky_and_cg_respect_non_euclidean_positive_definiteness():
+def test_cholesky_and_cg_respect_non_euclidean_positive_definiteness() -> None:
     metric = jnp.asarray([1.0, 4.0])
     space = la.ArraySpace(
         (2,),
@@ -379,7 +382,7 @@ def test_cholesky_and_cg_respect_non_euclidean_positive_definiteness():
     assert jnp.allclose(iterative.value, expected, rtol=1e-9, atol=1e-10)
 
 
-def test_weighted_regularized_least_squares_and_minimum_norm():
+def test_weighted_regularized_least_squares_and_minimum_norm() -> None:
     matrix = jnp.asarray(
         [[1.0, 0.0], [1.0, 1.0], [1.0, 2.0], [1.0, 3.0]],
         dtype=jnp.float64,
@@ -444,7 +447,7 @@ def test_weighted_regularized_least_squares_and_minimum_norm():
     assert jnp.allclose(minimum_norm.value, expected_minimum_norm)
 
 
-def test_dense_svd_scalar_damping_matches_tikhonov_solution_and_diagnostics():
+def test_dense_svd_scalar_damping_matches_tikhonov_solution_and_diagnostics() -> None:
     matrix = jnp.asarray([[1.0 + 0.5j, 2.0], [2.0 - 0.25j, -1.0j], [0.5, 3.0 + 2.0j]])
     rhs = jnp.asarray([1.0 - 0.5j, 2.0 + 1.0j, -1.0 + 0.25j])
     damping = 0.3
@@ -461,17 +464,18 @@ def test_dense_svd_scalar_damping_matches_tikhonov_solution_and_diagnostics():
     assert bool(result.successful)
     assert result.diagnostics.rank == 2
     assert jnp.allclose(
+        # ty: ignore[invalid-argument-type]
         result.diagnostics.singular_values,
         jnp.linalg.svd(matrix, compute_uv=False),
     )
     assert jnp.allclose(result.value, expected, rtol=1e-10, atol=1e-10)
 
 
-def test_dense_svd_damping_has_regularized_rank_deficient_gradients():
+def test_dense_svd_damping_has_regularized_rank_deficient_gradients() -> None:
     matrix = jnp.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
     rhs = jnp.asarray([1.0, 2.0, 3.0])
 
-    def objective(candidate, target):
+    def objective(candidate: Any, target: Any) -> Any:
         result = la.solve(
             la.LeastSquaresProblem(la.DenseLinearOperator(candidate)),
             target,
@@ -493,7 +497,7 @@ def test_dense_svd_damping_has_regularized_rank_deficient_gradients():
     assert jnp.all(jnp.isfinite(rhs_gradient))
 
 
-def test_dense_svd_rejects_invalid_or_minimum_norm_damping():
+def test_dense_svd_rejects_invalid_or_minimum_norm_damping() -> None:
     with pytest.raises(ValueError, match="damping"):
         la.DenseSVD(damping=-1.0)
     with pytest.raises(ValueError, match="least-squares"):
@@ -503,7 +507,7 @@ def test_dense_svd_rejects_invalid_or_minimum_norm_damping():
         )
 
 
-def test_rank_policy_retains_solution_but_reports_rank_deficiency():
+def test_rank_policy_retains_solution_but_reports_rank_deficiency() -> None:
     matrix = jnp.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
     rhs = jnp.asarray([2.0, 4.0, 6.0])
     problem = la.LeastSquaresProblem(la.DenseLinearOperator(matrix))
@@ -528,7 +532,7 @@ def test_rank_policy_retains_solution_but_reports_rank_deficiency():
     assert strict.diagnostics.rank == 1
 
 
-def test_matrix_free_iterative_system_and_least_squares_backends():
+def test_matrix_free_iterative_system_and_least_squares_backends() -> None:
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])
     space = la.ArraySpace((2,), dtype=jnp.float64)
     operator = la.FunctionLinearOperator(
@@ -605,7 +609,7 @@ def test_matrix_free_iterative_system_and_least_squares_backends():
     assert pcg.diagnostics.adjoint_matvec_count == 0
 
 
-def test_prepared_native_krylov_accepts_dynamic_per_solve_controls():
+def test_prepared_native_krylov_accepts_dynamic_per_solve_controls() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
     space = la.ArraySpace((4,), dtype=matrix.dtype)
     operator = la.FunctionLinearOperator(
@@ -657,7 +661,7 @@ def test_prepared_native_krylov_accepts_dynamic_per_solve_controls():
     assert jnp.allclose(default.value, empty_control.value)
 
     @jax.jit
-    def run(relative_tolerance, absolute_tolerance, maximum_steps):
+    def run(relative_tolerance: Any, absolute_tolerance: Any, maximum_steps: Any) -> Any:
         result = la.solve(
             prepared,
             rhs,
@@ -691,7 +695,7 @@ def test_prepared_native_krylov_accepts_dynamic_per_solve_controls():
     )
 
 
-def test_linear_iteration_control_stops_native_krylov_at_a_safe_update():
+def test_linear_iteration_control_stops_native_krylov_at_a_safe_update() -> None:
     diagonal = jnp.asarray([1.0, 2.0, 4.0, 8.0])
     problem = la.LinearSystem(
         la.DenseLinearOperator(
@@ -734,7 +738,7 @@ def test_linear_iteration_control_stops_native_krylov_at_a_safe_update():
     assert bool(trace.terminal.coordinates.terminal)
 
 
-def test_direct_linear_solve_exposes_certified_terminal_evidence_only():
+def test_direct_linear_solve_exposes_certified_terminal_evidence_only() -> None:
     problem = la.LinearSystem(la.DenseLinearOperator(jnp.eye(2)))
     result = la.solve(
         problem,
@@ -755,7 +759,7 @@ def test_direct_linear_solve_exposes_certified_terminal_evidence_only():
     )
 
 
-def test_linear_solve_control_validates_runtime_values():
+def test_linear_solve_control_validates_runtime_values() -> None:
     with pytest.raises(
         ValueError,
         match="relative_tolerance must be finite and non-negative",
@@ -772,7 +776,7 @@ def test_linear_solve_control_validates_runtime_values():
         la.LinearSolveControl(maximum_steps=1.5)
 
 
-def test_auto_planner_routes_general_pairings_to_native_krylov():
+def test_auto_planner_routes_general_pairings_to_native_krylov() -> None:
     metric = jnp.asarray([[2.0, 0.5], [0.5, 1.0]])
     space = la.ArraySpace(
         (2,),
@@ -862,11 +866,11 @@ def test_auto_planner_routes_general_pairings_to_native_krylov():
     )
 
 
-def test_dense_solve_is_differentiable_with_respect_to_operator_values():
+def test_dense_solve_is_differentiable_with_respect_to_operator_values() -> None:
     rhs = jnp.asarray([2.0, -3.0])
     properties = _positive_definite_properties()
 
-    def objective(log_diagonal):
+    def objective(log_diagonal: Any) -> Any:
         diagonal = jnp.exp(log_diagonal)
         operator = la.DenseLinearOperator(jnp.diag(diagonal), properties=properties)
         return jnp.sum(la.solve(la.LinearSystem(operator), rhs).value)
@@ -877,7 +881,7 @@ def test_dense_solve_is_differentiable_with_respect_to_operator_values():
     assert jnp.allclose(gradient, expected)
 
 
-def test_space_operator_and_preconditioner_constructors_enforce_invariants():
+def test_space_operator_and_preconditioner_constructors_enforce_invariants() -> None:
     with jax.enable_x64(False):
         canonical = la.ArraySpace((2,), dtype=jnp.float64)
         assert canonical.dtype == jnp.dtype(jnp.float32)
@@ -971,7 +975,7 @@ def test_space_operator_and_preconditioner_constructors_enforce_invariants():
         )
 
 
-def test_batched_pairing_aware_adjoint_preserves_hilbert_identity():
+def test_batched_pairing_aware_adjoint_preserves_hilbert_identity() -> None:
     source = la.ArraySpace(
         (2,),
         dtype=jnp.complex128,
@@ -1009,7 +1013,7 @@ def test_batched_pairing_aware_adjoint_preserves_hilbert_identity():
     )
 
 
-def test_matrix_free_jit_and_implicit_gradients_track_dynamic_coefficients():
+def test_matrix_free_jit_and_implicit_gradients_track_dynamic_coefficients() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     policy = la.LinearSolvePolicy(
         la.GMRES(),
@@ -1020,7 +1024,7 @@ def test_matrix_free_jit_and_implicit_gradients_track_dynamic_coefficients():
         ),
     )
 
-    def objective(coefficients, rhs):
+    def objective(coefficients: Any, rhs: Any) -> Any:
         operator = la.FunctionLinearOperator(
             lambda vector: coefficients * vector,
             source=space,
@@ -1042,7 +1046,7 @@ def test_matrix_free_jit_and_implicit_gradients_track_dynamic_coefficients():
     )
 
 
-def test_mathematical_derivative_solve_fails_closed_when_work_is_insufficient():
+def test_mathematical_derivative_solve_fails_closed_when_work_is_insufficient() -> None:
     matrix = jnp.asarray([[2.0, 1.0], [0.5, 4.0]])
     problem = la.LinearSystem(la.DenseLinearOperator(matrix))
     policy = la.LinearSolvePolicy(
@@ -1069,7 +1073,7 @@ def test_mathematical_derivative_solve_fails_closed_when_work_is_insufficient():
     assert jnp.all(jnp.isnan(tangent))
 
 
-def test_mathematical_derivative_error_mode_raises_on_failed_tangent_solve():
+def test_mathematical_derivative_error_mode_raises_on_failed_tangent_solve() -> None:
     matrix = jnp.asarray([[2.0, 1.0], [0.5, 4.0]])
     problem = la.LinearSystem(la.DenseLinearOperator(matrix))
     policy = la.LinearSolvePolicy(
@@ -1096,7 +1100,7 @@ def test_mathematical_derivative_error_mode_raises_on_failed_tangent_solve():
         jax.block_until_ready(tangent)
 
 
-def test_linear_plan_identity_includes_derivative_solve_contract():
+def test_linear_plan_identity_includes_derivative_solve_contract() -> None:
     problem = la.LinearSystem(la.DenseLinearOperator(jnp.eye(2)))
     first = la.plan(
         problem,
@@ -1114,7 +1118,7 @@ def test_linear_plan_identity_includes_derivative_solve_contract():
     assert first.plan_id != second.plan_id
 
 
-def test_complex_iterative_transposes_and_normal_residuals_use_conjugation():
+def test_complex_iterative_transposes_and_normal_residuals_use_conjugation() -> None:
     matrix = jnp.asarray([[2.0, 1.0j], [-1.0j, 2.0]])
     space = la.ArraySpace((2,), dtype=matrix.dtype)
     operator = la.FunctionLinearOperator(
@@ -1169,7 +1173,7 @@ def test_complex_iterative_transposes_and_normal_residuals_use_conjugation():
     )
 
 
-def test_plans_validate_reuse_rank_configuration_and_transformed_batches():
+def test_plans_validate_reuse_rank_configuration_and_transformed_batches() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     operator = la.FunctionLinearOperator(
         lambda vector: jnp.asarray([[2.0, 0.0], [0.0, 3.0]]) @ vector,
@@ -1264,7 +1268,7 @@ def test_plans_validate_reuse_rank_configuration_and_transformed_batches():
     assert condition_limited.status == int(la.LinearSolveStatus.CONDITION_LIMIT_REACHED)
 
 
-def test_rhs_layout_and_pre_regularization_rank_cutoff_are_explicit():
+def test_rhs_layout_and_pre_regularization_rank_cutoff_are_explicit() -> None:
     matrices = jnp.asarray([[[2.0, 0.0], [0.0, 3.0]], [[4.0, 0.0], [0.0, 5.0]]])
     prepared = la.prepare(la.LinearSystem(la.DenseLinearOperator(matrices)))
     right_hand_sides = jnp.asarray([[2.0, 4.0], [3.0, 6.0]])
@@ -1295,12 +1299,12 @@ def test_rhs_layout_and_pre_regularization_rank_cutoff_are_explicit():
     assert jnp.allclose(truncated.value, jnp.asarray([0.5, 0.0]))
 
 
-def test_weighted_least_squares_construction_is_jittable_and_differentiable():
+def test_weighted_least_squares_construction_is_jittable_and_differentiable() -> None:
     matrix = jnp.asarray([[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]])
     operator = la.DenseLinearOperator(matrix)
     rhs = jnp.asarray([1.0, 2.0, 2.5])
 
-    def objective(weights):
+    def objective(weights: Any) -> Any:
         result = la.solve(
             la.LeastSquaresProblem(operator, weights=weights),
             rhs,
@@ -1313,7 +1317,7 @@ def test_weighted_least_squares_construction_is_jittable_and_differentiable():
     assert jnp.all(jnp.isfinite(jax.grad(objective)(weights)))
 
 
-def test_structured_adjoint_actions_respect_declared_pairings():
+def test_structured_adjoint_actions_respect_declared_pairings() -> None:
     source = la.ArraySpace(
         (2,),
         dtype=jnp.float64,
@@ -1403,7 +1407,9 @@ def test_structured_adjoint_actions_respect_declared_pairings():
         la.TensorProductSpace((dense_pairing_space,))
 
 
-def test_generalized_lsmr_respects_weights_regularizers_and_minimum_norm_pairings():
+def test_generalized_lsmr_respects_weights_regularizers_and_minimum_norm_pairings() -> (
+    None
+):
     matrix = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
     rhs = jnp.asarray([1.0, 2.0, 4.0])
     weights = jnp.asarray([1.0, 3.0, 2.0])
@@ -1481,11 +1487,11 @@ def test_generalized_lsmr_respects_weights_regularizers_and_minimum_norm_pairing
         jax.block_until_ready(nonzero.value)
 
 
-def test_multi_rhs_batched_and_rhs_only_derivatives_preserve_contracts():
+def test_multi_rhs_batched_and_rhs_only_derivatives_preserve_contracts() -> None:
     right_hand_sides = jnp.asarray([[1.0, 2.0], [3.0, 4.0]])
     coefficients = jnp.asarray([2.0, 5.0])
 
-    def objective(dynamic):
+    def objective(dynamic: Any) -> Any:
         prepared = la.prepare(
             la.LinearSystem(
                 la.DenseLinearOperator(
@@ -1507,7 +1513,7 @@ def test_multi_rhs_batched_and_rhs_only_derivatives_preserve_contracts():
         differentiation=la.DifferentiationPolicy("rhs-only")
     )
 
-    def rhs_only_objective(dynamic):
+    def rhs_only_objective(dynamic: Any) -> Any:
         prepared = la.prepare(
             la.LinearSystem(
                 la.DenseLinearOperator(
@@ -1527,7 +1533,7 @@ def test_multi_rhs_batched_and_rhs_only_derivatives_preserve_contracts():
     batched_rhs = jnp.asarray([[2.0, 3.0], [4.0, 5.0]])
     batched_coefficients = jnp.asarray([[2.0, 3.0], [4.0, 5.0]])
 
-    def batched_objective(dynamic):
+    def batched_objective(dynamic: Any) -> Any:
         matrices = jax.vmap(jnp.diag)(dynamic)
         result = la.solve(
             la.LinearSystem(
@@ -1546,7 +1552,7 @@ def test_multi_rhs_batched_and_rhs_only_derivatives_preserve_contracts():
     )
 
 
-def test_nullspace_preconditioner_and_structured_plans_use_primal_coordinates():
+def test_nullspace_preconditioner_and_structured_plans_use_primal_coordinates() -> None:
     metric = jnp.asarray([2.0, 5.0])
     space = la.ArraySpace(
         (2,),
@@ -1621,12 +1627,14 @@ def test_nullspace_preconditioner_and_structured_plans_use_primal_coordinates():
         )
 
 
-def test_structured_construction_and_preconditioners_are_jittable():
+def test_structured_construction_and_preconditioners_are_jittable() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     residual = jnp.asarray([6.0, 8.0])
 
     @jax.jit
-    def apply_all(diagonal, block, lower, upper, core, permutation):
+    def apply_all(
+        diagonal: Any, block: Any, lower: Any, upper: Any, core: Any, permutation: Any
+    ) -> Any:
         return (
             la.DiagonalPreconditioner(
                 diagonal,
@@ -1691,14 +1699,14 @@ def test_structured_construction_and_preconditioners_are_jittable():
     assert jnp.allclose(nested_inner(), 20.0)
 
 
-def test_batched_rank_deficient_svd_has_correct_implicit_derivative():
+def test_batched_rank_deficient_svd_has_correct_implicit_derivative() -> None:
     right_hand_side = jnp.asarray([[2.0, 7.0], [6.0, -1.0]])
     policy = la.LinearSolvePolicy(
         la.DenseSVD(),
         rank=la.RankPolicy(relative_cutoff=1e-8),
     )
 
-    def objective(scales):
+    def objective(scales: Any) -> Any:
         matrices = scales[:, None, None] * jnp.asarray([[[1.0, 0.0], [0.0, 0.0]]])
         result = la.solve(
             la.LeastSquaresProblem(
@@ -1718,7 +1726,9 @@ def test_batched_rank_deficient_svd_has_correct_implicit_derivative():
     assert jnp.allclose(jax.jit(jax.grad(objective))(scales), expected_gradient)
 
 
-def test_planner_accounts_for_densification_and_batched_resources(monkeypatch):
+def test_planner_accounts_for_densification_and_batched_resources(
+    monkeypatch: Any,
+) -> None:
     diagonal_values = jnp.asarray([2.0, 3.0])
     diagonal = la.DiagonalLinearOperator(diagonal_values)
     structured_plan = la.plan(la.LinearSystem(diagonal))
@@ -1792,7 +1802,7 @@ def test_planner_accounts_for_densification_and_batched_resources(monkeypatch):
     with pytest.raises(ValueError, match="workspace bytes for 2 right-hand sides"):
         la.solve_adjoint(direct, jnp.eye(2))
 
-    def unexpected_preparation(*args, **kwargs):
+    def unexpected_preparation(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("Numerical preparation ran before RHS resource rejection.")
 
     monkeypatch.setattr(
@@ -1810,7 +1820,7 @@ def test_planner_accounts_for_densification_and_batched_resources(monkeypatch):
         )
 
 
-def test_operator_action_costs_account_for_shared_state_and_iterative_scratch():
+def test_operator_action_costs_account_for_shared_state_and_iterative_scratch() -> None:
     values = jnp.asarray([2.0, 3.0, 4.0])
     diagonal = la.DiagonalLinearOperator(values)
     shared_sum = la.SumLinearOperator(diagonal, diagonal)
@@ -1848,7 +1858,7 @@ def test_operator_action_costs_account_for_shared_state_and_iterative_scratch():
     )
 
 
-def test_planner_accounts_for_preconditioner_state_and_workspace():
+def test_planner_accounts_for_preconditioner_state_and_workspace() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     operator = la.DenseLinearOperator(
         jnp.asarray([[4.0, 1.0], [1.0, 3.0]]),
@@ -1928,7 +1938,7 @@ def test_planner_accounts_for_preconditioner_state_and_workspace():
     assert tight_materialization_plan.preconditioner_plan.cost.setup_matvec_count == 0
 
 
-def test_composites_do_not_upgrade_unknown_property_evidence():
+def test_composites_do_not_upgrade_unknown_property_evidence() -> None:
     matrix = jnp.asarray([[2.0, 1.0], [1.0, 3.0]])
     unverified = la.DenseLinearOperator(
         matrix,
@@ -1962,7 +1972,7 @@ def test_composites_do_not_upgrade_unknown_property_evidence():
     assert (verified + verified).properties.evidence_for("self_adjoint") == "transformed"
 
 
-def test_dense_qr_reports_rank_from_singular_values_not_diagonal_pivots():
+def test_dense_qr_reports_rank_from_singular_values_not_diagonal_pivots() -> None:
     design = jnp.asarray([[1.0, 1.0e8], [0.0, 1.0]])
     result = la.solve(
         la.LeastSquaresProblem(la.DenseLinearOperator(design)),
@@ -1978,7 +1988,7 @@ def test_dense_qr_reports_rank_from_singular_values_not_diagonal_pivots():
     assert not bool(result.successful)
 
 
-def test_block_diagonal_dense_factors_use_structured_direct_execution():
+def test_block_diagonal_dense_factors_use_structured_direct_execution() -> None:
     first = la.DenseLinearOperator(jnp.asarray([[3.0, 1.0], [1.0, 2.0]]))
     second = la.DenseLinearOperator(jnp.asarray([[4.0]]))
     operator = la.BlockDiagonalLinearOperator((first, second))
@@ -1994,7 +2004,9 @@ def test_block_diagonal_dense_factors_use_structured_direct_execution():
     assert jnp.allclose(result.value[1], jnp.asarray([0.5]))
 
 
-def test_kronecker_sum_structured_direct_matches_dense_and_propagates_properties():
+def test_kronecker_sum_structured_direct_matches_dense_and_propagates_properties() -> (
+    None
+):
     properties = la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -2065,7 +2077,7 @@ def test_kronecker_sum_structured_direct_matches_dense_and_propagates_properties
     assert jnp.allclose(jitted, expected)
 
 
-def test_kronecker_sum_structured_direct_respects_weighted_complex_pairings():
+def test_kronecker_sum_structured_direct_respects_weighted_complex_pairings() -> None:
     weights = jnp.asarray([2.0, 5.0])
     metric_sqrt = jnp.sqrt(weights)
     weighted_space = la.ArraySpace(
@@ -2117,7 +2129,9 @@ def test_kronecker_sum_structured_direct_respects_weighted_complex_pairings():
     assert jnp.allclose(result.value, expected)
 
 
-def test_kronecker_sum_structured_direct_is_differentiable_and_reports_singularity():
+def test_kronecker_sum_structured_direct_is_differentiable_and_reports_singularity() -> (
+    None
+):
     positive_properties = la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -2133,7 +2147,7 @@ def test_kronecker_sum_structured_direct_is_differentiable_and_reports_singulari
     rhs = jnp.arange(1.0, 7.0).reshape((2, 3))
     policy = la.LinearSolvePolicy(la.StructuredDirect())
 
-    def objective(parameter):
+    def objective(parameter: Any) -> Any:
         first = la.DenseLinearOperator(
             jnp.diag(jnp.asarray([parameter, parameter + 1.0])),
             properties=positive_properties,

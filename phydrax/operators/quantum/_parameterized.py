@@ -15,6 +15,7 @@ from jax.typing import ArrayLike, DTypeLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model import register_artifact_value
 from ..._strict import StrictModule
+from ...typing import parse
 from ._operations import (
     LocalKrausChannelOperation,
     LocalUnitaryOperation,
@@ -116,8 +117,7 @@ class QuantumProgramTemplate(StrictModule):
     ) -> None:
         if not isinstance(layout, HilbertRegisterLayout):
             raise TypeError("layout must be a HilbertRegisterLayout.")
-        if state_kind not in ("state-vector", "density-matrix"):
-            raise ValueError("Unknown quantum-program state kind.")
+        state_kind = parse(state_kind, QuantumStateKind, "state_kind")
         selected_dtype = jnp.dtype(dtype)
         if selected_dtype not in (jnp.dtype(jnp.complex64), jnp.dtype(jnp.complex128)):
             raise TypeError("Quantum program templates require complex64 or complex128.")

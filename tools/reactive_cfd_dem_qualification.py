@@ -5,13 +5,14 @@
 """Atomic-balance campaign for nondistributed reactive CFD-DEM coupling."""
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.ones((1,)), ambient_dimension=2
     ).prepare()
@@ -122,7 +123,7 @@ def _problem():
     return coupling, state, boundary
 
 
-def _sample(fluid_state):
+def _sample(fluid_state: Any) -> Any:
     return phx.solver.ReactiveFluidFields(
         jnp.zeros((1, 2)),
         jnp.ones((1,)),
@@ -133,12 +134,12 @@ def _sample(fluid_state):
     )
 
 
-def _update(fluid, momentum, energy, species, step_size):
+def _update(fluid: Any, momentum: Any, energy: Any, species: Any, step_size: Any) -> Any:
     del momentum, step_size
     return fluid[0] + energy, fluid[1] + species
 
 
-def _case(mode, iterations):
+def _case(mode: Any, iterations: Any) -> Any:
     coupling, state, boundary = _problem()
     schedule = phx.solver.ReactiveParticleCouplingSchedulePlan(
         phx.solver.ParticleConversionSolverPlan(
@@ -179,7 +180,7 @@ def _case(mode, iterations):
     }
 
 
-def main():
+def main() -> Any:
     cases = [
         _case(phx.solver.ReactiveCouplingMode.STRANG_FROZEN_FLUID, 1),
         _case(phx.solver.ReactiveCouplingMode.ITERATED_STAGGERED, 2),

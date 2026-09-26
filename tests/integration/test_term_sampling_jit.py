@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -24,7 +27,9 @@ from phydrax.terms import RandomizedMomentPenalty, ResidualPenalty
 
 
 class _KeyConsumingResidual(BatchEvaluator):
-    def __call_batch__(self, batch, /, *, key=jr.key(0), **kwargs):
+    def __call_batch__(
+        self, batch: Any, /, *, key: Any = jr.key(0), **kwargs: Any
+    ) -> Any:
         del kwargs
         reference = batch["x"]
         draw = jr.uniform(key)
@@ -34,11 +39,11 @@ class _KeyConsumingResidual(BatchEvaluator):
         )
 
 
-def _jit_loss(term, functions):
+def _jit_loss(term: Any, functions: Any) -> Any:
     return eqx.filter_jit(lambda key: term.loss(functions, key=key))(jr.key(0))
 
 
-def test_sampling_jit_boundary_constraint():
+def test_sampling_jit_boundary_constraint() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
     condition = Dirichlet("u", component, target=0.0)
@@ -51,13 +56,13 @@ def test_sampling_jit_boundary_constraint():
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 0.0
 
     assert jnp.allclose(_jit_loss(term, {"u": u}), 0.0)
 
 
-def test_sampling_jit_initial_constraint():
+def test_sampling_jit_initial_constraint() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
@@ -72,13 +77,13 @@ def test_sampling_jit_initial_constraint():
     )
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> float:
         return 0.0
 
     assert jnp.allclose(_jit_loss(term, {"u": u}), 0.0)
 
 
-def test_sampling_jit_interior_constraint():
+def test_sampling_jit_interior_constraint() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     condition = Residual("u", component, lambda u: u)
@@ -91,13 +96,13 @@ def test_sampling_jit_interior_constraint():
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 0.0
 
     assert jnp.allclose(_jit_loss(term, {"u": u}), 0.0)
 
 
-def test_sampling_jit_interior_constraint_coord_separable_fourier_axis_spec():
+def test_sampling_jit_interior_constraint_coord_separable_fourier_axis_spec() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     sampling = phx.domain.GridSampling({"x": FourierAxisSpec(8)})
@@ -114,13 +119,13 @@ def test_sampling_jit_interior_constraint_coord_separable_fourier_axis_spec():
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 0.0
 
     assert jnp.allclose(_jit_loss(term, {"u": u}), 0.0)
 
 
-def test_sampling_jit_integral_constraint():
+def test_sampling_jit_integral_constraint() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     condition = Moment("u", component, lambda u: u)
@@ -133,13 +138,13 @@ def test_sampling_jit_integral_constraint():
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 0.0
 
     assert jnp.allclose(_jit_loss(term, {"u": u}), 0.0)
 
 
-def test_residual_penalty_splits_sampling_and_evaluation_keys():
+def test_residual_penalty_splits_sampling_and_evaluation_keys() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     structure = SampleLayout((("x",),))
@@ -170,7 +175,7 @@ def test_residual_penalty_splits_sampling_and_evaluation_keys():
     assert jnp.allclose(supplied_loss, jr.uniform(caller_key) ** 2, atol=1e-14)
 
 
-def test_integral_constraint_splits_sampling_and_evaluation_keys():
+def test_integral_constraint_splits_sampling_and_evaluation_keys() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     SampleLayout((("x",),))
@@ -193,7 +198,7 @@ def test_integral_constraint_splits_sampling_and_evaluation_keys():
     assert jnp.allclose(loss, expected, atol=1e-14)
 
 
-def test_geometry_domain_point_and_grid_sampling_share_constraint_contract():
+def test_geometry_domain_point_and_grid_sampling_share_constraint_contract() -> None:
     geometry = phx.domain.GeometryDomain(
         phx.geometry.Square(
             center=(0.0, 0.0),
@@ -209,7 +214,7 @@ def test_geometry_domain_point_and_grid_sampling_share_constraint_contract():
     )
 
     @domain.Function("x", "t")
-    def exact(x, t):
+    def exact(x: Any, t: Any) -> Any:
         return jnp.sum(x**2) + t
 
     residual = lambda field: (

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_antoine_pressure_temperature_inverse_and_domain_evidence():
+def test_antoine_pressure_temperature_inverse_and_domain_evidence() -> None:
     plan = phx.equations.AntoineSaturationPressurePlan(
         8.07131,
         1730.63,
@@ -26,7 +29,7 @@ def test_antoine_pressure_temperature_inverse_and_domain_evidence():
     assert not bool(plan.evaluate_pressure(jnp.asarray(400.0)).successful)
 
 
-def _solid_liquid_material(*, width=0.0):
+def _solid_liquid_material(*, width: Any = 0.0) -> Any:
     return phx.equations.SolidLiquidEnthalpyPlan(
         1000.0,
         273.15,
@@ -42,7 +45,7 @@ def _solid_liquid_material(*, width=0.0):
     )
 
 
-def test_solid_liquid_enthalpy_roundtrip_and_isothermal_latent_plateau():
+def test_solid_liquid_enthalpy_roundtrip_and_isothermal_latent_plateau() -> None:
     material = _solid_liquid_material()
     latent_fraction = jnp.asarray([0.0, 0.25, 0.75, 1.0])
     enthalpy = material.enthalpy_from_temperature(
@@ -69,7 +72,7 @@ def test_solid_liquid_enthalpy_roundtrip_and_isothermal_latent_plateau():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_binary_alloy_closure_conserves_declared_enthalpy_and_partitions_solute():
+def test_binary_alloy_closure_conserves_declared_enthalpy_and_partitions_solute() -> None:
     plan = phx.equations.BinaryAlloyPhaseDiagramPlan(
         1000.0,
         273.15,
@@ -115,7 +118,9 @@ def test_binary_alloy_closure_conserves_declared_enthalpy_and_partitions_solute(
     assert jnp.all(state.successful)
 
 
-def test_homogeneous_equilibrium_cavitation_barotrope_is_hyperbolic_and_energetic():
+def test_homogeneous_equilibrium_cavitation_barotrope_is_hyperbolic_and_energetic() -> (
+    None
+):
     material = phx.equations.HomogeneousEquilibriumCavitationMaterial(
         1.0e5,
         1.0,
@@ -153,7 +158,7 @@ def test_homogeneous_equilibrium_cavitation_barotrope_is_hyperbolic_and_energeti
     assert jnp.all(jnp.isfinite(system.physical_flux(conserved, 0)))
 
 
-def _two_material_system():
+def _two_material_system() -> Any:
     eos = phx.equations.TwoMaterialEOSClosure(
         phx.equations.StiffenedGasMaterial(4.4, 2.0e5, 1800.0),
         phx.equations.StiffenedGasMaterial(1.33, 0.0, 1400.0, reference_energy=2.0e6),
@@ -161,7 +166,7 @@ def _two_material_system():
     return phx.equations.TwoMaterialVOFSystem(1, eos=eos)
 
 
-def test_vof_phase_transfer_has_one_mass_owner_and_preserves_total_energy():
+def test_vof_phase_transfer_has_one_mass_owner_and_preserves_total_energy() -> None:
     system = _two_material_system()
     primitive = jnp.asarray([[900.0, 2.0, 0.0, 8.0e4, 0.8]])
     state = system.primitive_to_conserved(primitive)
@@ -192,7 +197,7 @@ def test_vof_phase_transfer_has_one_mass_owner_and_preserves_total_energy():
     assert jnp.all(jnp.isfinite(source.state_rate))
 
 
-def test_unstructured_thermal_boundaries_close_heat_content_balance():
+def test_unstructured_thermal_boundaries_close_heat_content_balance() -> None:
     eos = phx.equations.TwoMaterialEOSClosure(
         phx.equations.IdealGasMaterial(1.4),
         phx.equations.StiffenedGasMaterial(4.4, 2.0, 1.0),

@@ -232,7 +232,10 @@ def _cut_plan_record(plan: MultivaluedBlockAMRCheckpointPlan, /) -> dict[str, An
 def _state_arrays(state: MovingCutCellState, dtype: np.dtype, /) -> dict[str, np.ndarray]:
     complex_ = state.complex
     connectivity = complex_.mesh.connectivity
-    assert isinstance(connectivity, PolyhedralConnectivity)
+    if not (isinstance(connectivity, PolyhedralConnectivity)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(connectivity, PolyhedralConnectivity)."
+        )
     return {
         "content": np.asarray(state.content, dtype=dtype),
         "component_active": np.asarray(complex_.component_active, dtype=np.bool_),

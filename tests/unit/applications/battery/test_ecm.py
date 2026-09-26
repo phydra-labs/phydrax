@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from types import SimpleNamespace
+from typing import Any
 
 import diffrax as dfx
 import equinox as eqx
@@ -44,12 +46,12 @@ from phydrax.linalg import prepare_real_coordinate_tree
 from phydrax.solver import solve_diffrax
 
 
-def _identity_coordinates(state):
+def _identity_coordinates(state: Any) -> Any:
     maps = jax.tree.map(lambda _: None, state)
     return prepare_real_coordinate_tree(state, maps)
 
 
-def _constant_law(value, support, *, quantity, unit):
+def _constant_law(value: Any, support: Any, *, quantity: Any, unit: Any) -> Any:
     return ConstantPropertyLaw(
         value,
         support,
@@ -63,18 +65,18 @@ def _constant_law(value, support, *, quantity, unit):
 
 def _parameters(
     *,
-    resistances=(0.1, 0.2),
-    capacitances=(10.0, 20.0),
-    series_resistance=0.05,
-    capacity=1000.0,
-    heat_capacity=100.0,
-    conductance=0.5,
-    ambient_temperature=300.0,
-    reference_temperature=300.0,
-    ocv=3.7,
-    entropic=0.0,
-    support=(0.0, 1.0),
-):
+    resistances: Any = (0.1, 0.2),
+    capacitances: Any = (10.0, 20.0),
+    series_resistance: Any = 0.05,
+    capacity: Any = 1000.0,
+    heat_capacity: Any = 100.0,
+    conductance: Any = 0.5,
+    ambient_temperature: Any = 300.0,
+    reference_temperature: Any = 300.0,
+    ocv: Any = 3.7,
+    entropic: Any = 0.0,
+    support: Any = (0.0, 1.0),
+) -> Any:
     return ThermalEquivalentCircuitParameters(
         series_resistance,
         jnp.asarray(resistances),
@@ -99,7 +101,7 @@ def _parameters(
     )
 
 
-def _runtime(parameters, current, *, duration=10.0):
+def _runtime(parameters: Any, current: Any, *, duration: Any = 10.0) -> Any:
     protocol = BatteryProtocolPlan((CurrentStepPlan(duration),))
     values = BatteryProtocolValues(protocol, jnp.asarray((current,)))
     return BatteryRuntimeInputs(
@@ -111,14 +113,21 @@ def _runtime(parameters, current, *, duration=10.0):
     )
 
 
-def _problem(adapter, parameters, initial_condition, current, *, duration=10.0):
+def _problem(
+    adapter: Any,
+    parameters: Any,
+    initial_condition: Any,
+    current: Any,
+    *,
+    duration: Any = 10.0,
+) -> Any:
     prepared = adapter.prepare()
     state = adapter.initial_state(prepared, parameters, initial_condition)
     runtime = _runtime(parameters, current, duration=duration)
     return prepared, runtime, adapter.problem(prepared, state, runtime)
 
 
-def test_constant_current_and_rest_states_match_closed_forms():
+def test_constant_current_and_rest_states_match_closed_forms() -> None:
     parameters = _parameters()
     adapter = ThermalEquivalentCircuitAdapter(ThermalEquivalentCircuitPlan(2))
     current = 2.0
@@ -207,7 +216,7 @@ def test_constant_current_and_rest_states_match_closed_forms():
     assert isinstance(rest_prepared, PreparedThermalEquivalentCircuit)
 
 
-def test_passive_sign_reversal_voltage_power_and_heat_are_explicit():
+def test_passive_sign_reversal_voltage_power_and_heat_are_explicit() -> None:
     parameters = _parameters(entropic=1.0e-3)
     adapter = ThermalEquivalentCircuitAdapter(ThermalEquivalentCircuitPlan(2))
     prepared = adapter.prepare()
@@ -241,7 +250,7 @@ def test_passive_sign_reversal_voltage_power_and_heat_are_explicit():
     np.testing.assert_allclose(negative_rate.charge_c, -2.0)
 
 
-def test_boundary_observation_side_is_separate_from_forward_execution_current():
+def test_boundary_observation_side_is_separate_from_forward_execution_current() -> None:
     parameters = _parameters()
     adapter = ThermalEquivalentCircuitAdapter(ThermalEquivalentCircuitPlan(2))
     prepared = adapter.prepare()
@@ -275,7 +284,7 @@ def test_boundary_observation_side_is_separate_from_forward_execution_current():
     np.testing.assert_allclose(rate.charge_c, -2.0)
 
 
-def test_property_support_refuses_without_clipping_and_supports_temperature_ocv():
+def test_property_support_refuses_without_clipping_and_supports_temperature_ocv() -> None:
     ocv = TabulatedPropertyLaw(
         jnp.asarray((0.2, 0.5, 0.8)),
         jnp.asarray((3.2, 3.7, 4.1)),
@@ -346,7 +355,7 @@ def test_property_support_refuses_without_clipping_and_supports_temperature_ocv(
         jax.block_until_ready(mismatched.series_resistance_ohm)
 
 
-def test_arbitrary_branch_topology_and_initial_polarization_are_shape_safe():
+def test_arbitrary_branch_topology_and_initial_polarization_are_shape_safe() -> None:
     plan = ThermalEquivalentCircuitPlan(3)
     adapter = ThermalEquivalentCircuitAdapter(plan)
     prepared = adapter.prepare()
@@ -416,7 +425,7 @@ def test_arbitrary_branch_topology_and_initial_polarization_are_shape_safe():
     assert other.prepare().prepared_id != prepared.prepared_id
 
 
-def test_ledger_integrates_charge_rc_dissipation_and_thermal_storage():
+def test_ledger_integrates_charge_rc_dissipation_and_thermal_storage() -> None:
     parameters = _parameters(
         resistances=(0.1, 0.2),
         capacitances=(10.0, 20.0),
@@ -510,7 +519,7 @@ def test_ledger_integrates_charge_rc_dissipation_and_thermal_storage():
     assert not bool(adapter.ledger(prepared, nonfinite, runtime).successful)
 
 
-def test_adapter_orchestration_uses_native_ode_and_exact_observables():
+def test_adapter_orchestration_uses_native_ode_and_exact_observables() -> None:
     parameters = _parameters(resistances=(0.1,), capacitances=(20.0,))
     adapter = ThermalEquivalentCircuitAdapter(ThermalEquivalentCircuitPlan(1))
     protocol = BatteryProtocolPlan(
@@ -526,6 +535,7 @@ def test_adapter_orchestration_uses_native_ode_and_exact_observables():
         "terminal_power_w",
     )
     experiment = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         BatteryOutputPlan(output_names),
@@ -564,13 +574,13 @@ def test_adapter_orchestration_uses_native_ode_and_exact_observables():
     )
 
 
-def test_observation_is_jittable_vmappable_and_has_fixed_path_derivatives():
+def test_observation_is_jittable_vmappable_and_has_fixed_path_derivatives() -> None:
     parameters = _parameters(resistances=(0.2,), capacitances=(5.0,))
     adapter = ThermalEquivalentCircuitAdapter(ThermalEquivalentCircuitPlan(1))
     prepared = adapter.prepare()
     runtime = _runtime(parameters, 1.5, duration=2.0)
 
-    def voltage_at_charge(charge):
+    def voltage_at_charge(charge: Any) -> Any:
         state = ThermalEquivalentCircuitState(
             charge, jnp.asarray((0.1,)), jnp.asarray(305.0)
         )
@@ -583,7 +593,7 @@ def test_observation_is_jittable_vmappable_and_has_fixed_path_derivatives():
 
     state = ThermalEquivalentCircuitState(500.0, jnp.asarray((0.1,)), 305.0)
 
-    def voltage_for_series_resistance(resistance):
+    def voltage_for_series_resistance(resistance: Any) -> Any:
         varied = eqx.tree_at(
             lambda profile: profile.series_resistance_ohm,
             parameters,
@@ -603,7 +613,7 @@ def test_observation_is_jittable_vmappable_and_has_fixed_path_derivatives():
         1.5,
     )
 
-    def final_polarization(initial_polarization):
+    def final_polarization(initial_polarization: Any) -> Any:
         initial = ThermalEquivalentCircuitState(
             500.0,
             jnp.reshape(initial_polarization, (1,)),

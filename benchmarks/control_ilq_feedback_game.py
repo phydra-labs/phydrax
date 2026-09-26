@@ -31,7 +31,7 @@ def _problem(
     control_sizes: tuple[int, ...],
     case_count: int,
     /,
-):
+) -> Any:
     control_size = sum(control_sizes)
     players = len(control_sizes)
     partition = phx.control.games.PlayerControlPartition(
@@ -52,12 +52,12 @@ def _problem(
         (state_index[:, None] + 1.0) * (control_index[None, :] + 1.0)
     )
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context
         return args["A"] @ state + args["B"] @ control + 0.015 * jnp.sin(state)
 
-    def stage_cost(player, start, stop):
-        def cost(context, state, control, args):
+    def stage_cost(player: Any, start: Any, stop: Any) -> Any:
+        def cost(context: Any, state: Any, control: Any, args: Any) -> Any:
             del context, state, args
             target = 0.18 + 0.02 * player
             error = control[start:stop] - target
@@ -65,7 +65,7 @@ def _problem(
 
         return cost
 
-    def terminal_cost(time, state, args):
+    def terminal_cost(time: Any, state: Any, args: Any) -> Any:
         del time, state, args
         return jnp.asarray(0.0)
 
@@ -204,7 +204,7 @@ def _case(
     }
 
 
-def _specifications():
+def _specifications() -> Any:
     return (
         ("baseline", 6, 4, (1, 1), 1),
         ("horizon-2", 2, 4, (1, 1), 1),

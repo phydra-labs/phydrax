@@ -6,6 +6,7 @@
 
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -14,7 +15,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _timed(function, *arguments, repeats=16):
+def _timed(function: Any, *arguments: Any, repeats: Any = 16) -> Any:
     compiled = eqx.filter_jit(function)
     start = time.perf_counter()
     value = compiled(*arguments)
@@ -28,7 +29,7 @@ def _timed(function, *arguments, repeats=16):
     return value, compile_seconds, elapsed / repeats
 
 
-def _rigid_case(body_count=8):
+def _rigid_case(body_count: Any = 8) -> Any:
     body_ids = jnp.arange(body_count, dtype=jnp.int64)
     particles = phx.discretization.ParticleSetPlan(
         body_ids,
@@ -73,7 +74,7 @@ def _rigid_case(body_count=8):
     return dynamics, state
 
 
-def _rod_case(node_count=17):
+def _rod_case(node_count: Any = 17) -> Any:
     positions = jnp.stack(
         (jnp.arange(node_count, dtype="float64"), jnp.zeros((node_count,))), axis=-1
     )
@@ -95,7 +96,7 @@ def _rod_case(node_count=17):
     return rod, rod.initialize_state()
 
 
-def main():
+def main() -> None:
     dynamics, rigid_state = _rigid_case()
     rigid_result, rigid_compile, rigid_step = _timed(
         lambda state: dynamics.step(state, jnp.asarray(0.0), jnp.asarray(1.0e-3)),

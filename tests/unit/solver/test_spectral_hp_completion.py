@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _epoch():
+def _epoch() -> Any:
     mesh = phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         (
@@ -26,7 +29,7 @@ def _epoch():
     return phx.discretization.fem.prepare_finite_element_hp_epoch(topology, geometry, "u")
 
 
-def test_newton_condensation_schwarz_and_trace_coarse_plans():
+def test_newton_condensation_schwarz_and_trace_coarse_plans() -> None:
     newton = phx.solver.HPNewtonKrylovBuilder(12, 1.0e-12)
     result = newton.solve(lambda value: value**2 - 2.0, jnp.asarray((1.0,)))
     assert bool(result.converged)
@@ -57,7 +60,7 @@ def test_newton_condensation_schwarz_and_trace_coarse_plans():
     assert trace.coarse_matrix.shape == (1, 1)
 
 
-def test_relaxed_marking_uq_cache_fusion_and_memory_plans(tmp_path):
+def test_relaxed_marking_uq_cache_fusion_and_memory_plans(tmp_path: Any) -> None:
     marking = phx.solver.RelaxedHPMarking(2, 0.2)
     indicators = jnp.asarray((1.0, 3.0, 2.0, 0.5))
     valid = jnp.asarray((True, True, True, False))
@@ -103,7 +106,7 @@ def test_relaxed_marking_uq_cache_fusion_and_memory_plans(tmp_path):
     assert 0 < memory.planned_bytes <= 4096
 
 
-def test_adaptive_high_order_io_and_mesh_import(tmp_path):
+def test_adaptive_high_order_io_and_mesh_import(tmp_path: Any) -> None:
     epoch = _epoch()
     vtk = tmp_path / "epoch.vtk"
     xdmf = tmp_path / "epoch.xdmf"

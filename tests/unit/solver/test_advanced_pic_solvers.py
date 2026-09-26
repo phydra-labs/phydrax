@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_open_boundary_absorbs_particle_and_closes_surface_ledgers():
+def test_open_boundary_absorbs_particle_and_closes_surface_ledgers() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(2), jnp.ones((2,)), ambient_dimension=1
     ).prepare()
@@ -41,7 +41,7 @@ def test_open_boundary_absorbs_particle_and_closes_surface_ledgers():
     assert jnp.sum(result.boundary_mass_flux) == 1.0
 
 
-def test_field_ionization_is_charge_neutral_when_event_occurs():
+def test_field_ionization_is_charge_neutral_when_event_occurs() -> None:
     ion_support = phx.discretization.ParticleSetPlan(
         jnp.arange(2), jnp.ones((2,)), ambient_dimension=3
     ).prepare()
@@ -100,7 +100,7 @@ def test_field_ionization_is_charge_neutral_when_event_occurs():
     assert jnp.abs(result.charge_defect) < 1e-12
 
 
-def test_nonzero_response_semi_implicit_pic_preserves_physical_gauss_law():
+def test_nonzero_response_semi_implicit_pic_preserves_physical_gauss_law() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(2, periodic=True) for _ in range(3)),
         axis_names=("x", "y", "z"),

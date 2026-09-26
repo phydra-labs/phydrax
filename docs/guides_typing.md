@@ -140,9 +140,10 @@ A `StrictModule` opts in by declaring `__strict_contract__ = True`; subclasses
 inherit the opt-in and cannot withdraw it. After Equinox construction (custom or
 generated `__init__`, converters, and `__check_init__`), the strict metaclass
 checks every contract field in declaration order, read-only, in one scope per
-module. Nested modules check their own fields in their own scopes. The check
-never converts, mutates, allocates, synchronizes, or adds JAX operations, so
-selector fields must hold the exact declared literal type.
+module. Nested modules check their own fields in their own scopes. The check never
+converts or mutates checked values, allocates no device buffers, synchronizes
+nothing, and adds no JAX operations; selector fields must hold the exact declared
+literal type.
 
 ```python
 import equinox as eqx
@@ -199,9 +200,10 @@ and nonnegative composition stay explicit host checks owned by the catalog.
 
 ## Transformations
 
-Checks read only shape and dtype metadata, so they run on tracers at trace time
-and add no operations to the compiled program. Under `vmap` a check sees the per-example
-shape. Symbolic (shape-polymorphic) extents are refused. Transformations such as
+Checks read only object kind, shape, dtype, and declared static metadata, so they
+run on tracers at trace time and add no operations to the compiled program. Under
+`vmap` a check sees the per-example shape. Symbolic (shape-polymorphic) extents are
+refused. Transformations such as
 `jax.tree_util.tree_map` and `equinox.tree_at` rebuild modules without running
 constructors; consumers call `validate` explicitly where a transformed value
 must satisfy its declared contract.
@@ -221,9 +223,11 @@ python tools/check_typing.py check
 ```
 
 The gate requires zero ty diagnostics and complete annotations: every function,
-method, and nested helper annotates all parameters and its return type. Only
-`ty: ignore[rule]` suppressions are honored, and only for proven checker or
-third-party stub defects.
+method, and nested helper in package code, tests, tools, examples, and benchmarks
+annotates all parameters and its return type. Only line-local
+`ty: ignore[rule]` suppressions are honored, unused suppressions are errors, and
+suppressions are limited to deliberate negative tests, runtime-dynamic or external
+provider contracts that static stubs cannot express, and proven checker/stub defects.
 
 The installed distribution is typed too: the wheel carries the PEP 561
 `py.typed` marker, and

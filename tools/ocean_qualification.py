@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _ocean(*, shape, coriolis=0.0, temperature_flux=None):
+def _ocean(*, shape: Any, coriolis: Any = 0.0, temperature_flux: Any = None) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(shape[0], periodic=True),
@@ -35,7 +36,7 @@ def _ocean(*, shape, coriolis=0.0, temperature_flux=None):
     ).prepare(discretization)
 
 
-def _state(ocean, *, u=0.0, temperature=None):
+def _state(ocean: Any, *, u: Any = 0.0, temperature: Any = None) -> Any:
     discretization = ocean.operators.discretization
     velocity = (
         jnp.full(discretization.face_layouts[0].shape, u),
@@ -52,7 +53,7 @@ def _state(ocean, *, u=0.0, temperature=None):
     return ocean.initial_state(velocity, temperature_, salinity)
 
 
-def _rest(shape):
+def _rest(shape: Any) -> Any:
     ocean = _ocean(shape=shape)
     coordinates = _state(ocean)
     stage = ocean.dynamics.stage(0.0, coordinates)
@@ -68,7 +69,7 @@ def _rest(shape):
     }
 
 
-def _inertial(shape, steps, dt):
+def _inertial(shape: Any, steps: Any, dt: Any) -> Any:
     ocean = _ocean(shape=shape, coriolis=0.5)
     continuation = phx.applications.ocean.OceanBoussinesqContinuationState.initialize(
         _state(ocean, u=1.0)
@@ -105,7 +106,7 @@ def _inertial(shape, steps, dt):
     }
 
 
-def _stratified(shape):
+def _stratified(shape: Any) -> Any:
     ocean = _ocean(shape=shape, coriolis=1.0e-4)
     z = ocean.operators.discretization.grid.structured_axes[2].interval_centers
     temperature = 10.0 + jnp.broadcast_to(z.reshape((1, 1, z.size)), shape)
@@ -122,7 +123,7 @@ def _stratified(shape):
     }
 
 
-def _surface_flux(shape, dt):
+def _surface_flux(shape: Any, dt: Any) -> Any:
     flux = phx.discretization.MACScalarBoundaryCondition("flux", 1.0e-5)
     ocean = _ocean(shape=shape, temperature_flux=flux)
     coordinates = _state(ocean)
@@ -149,7 +150,7 @@ def _surface_flux(shape, dt):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--case",

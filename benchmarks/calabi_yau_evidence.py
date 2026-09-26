@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 
@@ -13,7 +15,7 @@ import phydrax as phx
 from benchmarks._runtime import capture_environment, logical_array_bytes, measure_host
 
 
-def benchmark_case(line_count: int):
+def benchmark_case(line_count: int) -> Any:
     training, training_seconds = measure_host(
         lambda: phx.solver.prepare_elliptic_curve(
             jax.random.key(811), line_count=line_count

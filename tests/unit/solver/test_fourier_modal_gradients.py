@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,7 +10,7 @@ from phydrax.discretization.spectral import LatticeHarmonicPlan
 from phydrax.solver.maxwell import fourier_modal as fm
 
 
-def _operator():
+def _operator() -> Any:
     harmonics = LatticeHarmonicPlan.parallelogramic((1,), (3,)).prepare(
         jnp.asarray(((1.0, 0.0),))
     )
@@ -36,7 +38,7 @@ def _operator():
 def test_boundary_thickness_gradient_matches_finite_difference() -> None:
     operator, policy = _operator()
 
-    def objective(thickness):
+    def objective(thickness: Any) -> Any:
         relation = fm.prepare_layer_boundary(operator, thickness, policy)
         return jnp.real(jnp.sum(jnp.abs(relation.a) ** 2))
 

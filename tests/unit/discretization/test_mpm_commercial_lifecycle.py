@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def test_one_dimensional_mpm_translation_and_visualization_output(tmp_path):
+def test_one_dimensional_mpm_translation_and_visualization_output(tmp_path: Any) -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(16, periodic=True, endpoint=False),),
         axis_names=("x",),
@@ -61,7 +63,7 @@ def test_one_dimensional_mpm_translation_and_visualization_output(tmp_path):
     assert vtk.exists()
 
 
-def test_runtime_lifecycle_mass_and_activity_are_authoritative():
+def test_runtime_lifecycle_mass_and_activity_are_authoritative() -> None:
     plan = phx.discretization.MPMParticleLifecyclePlan(3)
     lifecycle, valid = plan.initialize(
         jnp.asarray((10, 11, 12)),
@@ -110,12 +112,13 @@ def test_runtime_lifecycle_mass_and_activity_are_authoritative():
         detail.diagnostics.transfer.particle_mass, 0.03, atol=1e-12
     )
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         detail.accepted_state.lifecycle_state.particle_ids,
         lifecycle.particle_ids,
     )
 
 
-def test_cpic_coverage_ignores_runtime_inactive_particles():
+def test_cpic_coverage_ignores_runtime_inactive_particles() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(8, periodic=True, endpoint=False),),
         axis_names=("x",),

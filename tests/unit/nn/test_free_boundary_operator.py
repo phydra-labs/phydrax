@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _reference_samples():
+def _reference_samples() -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 5),
@@ -18,14 +21,14 @@ def _reference_samples():
     return phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
 
 
-def _simple_batch(values):
+def _simple_batch(values: Any) -> Any:
     coordinates = jnp.linspace(0.0, 1.0, values.size)[:, None]
     samples = phx.nn.operator.FunctionSamples(values=values, coordinates=coordinates)
     query = phx.nn.operator.FunctionSamples(values=None, coordinates=coordinates)
     return phx.nn.operator.OperatorBatch(inputs={"state": samples}, queries={"q": query})
 
 
-def test_reference_map_jacobian_gcl_and_gradient_pullback():
+def test_reference_map_jacobian_gcl_and_gradient_pullback() -> None:
     reference = _reference_samples()
     nodes = reference.coordinates_array()
     current = nodes
@@ -51,7 +54,7 @@ def test_reference_map_jacobian_gcl_and_gradient_pullback():
     np.testing.assert_allclose(pulled, 1.0, atol=1.0e-14)
 
 
-def test_free_boundary_operator_spec_rejects_topology_changing_reference_map():
+def test_free_boundary_operator_spec_rejects_topology_changing_reference_map() -> None:
     with np.testing.assert_raises(ValueError):
         phx.nn.operator.FreeBoundaryOperatorSpec(
             "reference_map",
@@ -62,14 +65,14 @@ def test_free_boundary_operator_spec_rejects_topology_changing_reference_map():
         )
 
 
-def test_solver_corrected_rollout_uses_only_accepted_improving_states():
+def test_solver_corrected_rollout_uses_only_accepted_improving_states() -> None:
     initial = _simple_batch(jnp.asarray((0.0, 1.0, 2.0)))
 
-    def model(batch, *, key):
+    def model(batch: Any, *, key: Any) -> Any:
         del key
         return batch.input("state").values + 1.0
 
-    def correct(prediction, batch, index):
+    def correct(prediction: Any, batch: Any, index: Any) -> Any:
         del batch, index
         return phx.nn.operator.CorrectedOperatorStep(
             values=prediction - 0.5,
@@ -79,7 +82,7 @@ def test_solver_corrected_rollout_uses_only_accepted_improving_states():
             accepted=jnp.asarray(True),
         )
 
-    def advance(batch, values, index):
+    def advance(batch: Any, values: Any, index: Any) -> Any:
         del batch, index
         return _simple_batch(values)
 
@@ -97,7 +100,7 @@ def test_solver_corrected_rollout_uses_only_accepted_improving_states():
     assert bool(jnp.all(result.accepted))
 
 
-def test_sph_free_surface_adapter_preserves_surface_measure_and_mask():
+def test_sph_free_surface_adapter_preserves_surface_measure_and_mask() -> None:
     geometry = phx.discretization.FreeSurfaceGeometryState(
         surface_point=jnp.asarray(((0.0, 0.0), (1.0, 0.0))),
         normal=jnp.asarray(((0.0, 1.0), (0.0, 1.0))),
@@ -117,11 +120,13 @@ def test_sph_free_surface_adapter_preserves_surface_measure_and_mask():
 
     surface = batch.input("free_surface")
     np.testing.assert_array_equal(surface.mask, jnp.asarray((True, False)))
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(surface.quadrature_weights, jnp.asarray((1.0, 1.0)))
+    # ty: ignore[unresolved-attribute]
     assert surface.values.shape == (2, 5)
 
 
-def test_vof_adapter_preserves_plic_interface_branch():
+def test_vof_adapter_preserves_plic_interface_branch() -> None:
     plic = phx.discretization.JAXPLICStageReconstruction(
         volume_fraction=jnp.asarray((0.25, 0.75)),
         normals=jnp.asarray(((1.0, 0.0), (1.0, 0.0))),
@@ -159,6 +164,8 @@ def test_vof_adapter_preserves_plic_interface_branch():
         {"pressure": jnp.asarray((1.0, 2.0))},
     )
 
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(batch.input("volume_fraction").values, (0.25, 0.75))
     np.testing.assert_array_equal(batch.input("interface").mask, (True, False))
+    # ty: ignore[unresolved-attribute]
     assert batch.input("interface").values.shape == (2, 4)

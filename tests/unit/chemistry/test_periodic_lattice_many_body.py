@@ -6,7 +6,7 @@ import phydrax as phx
 periodic = phx.chemistry.periodic
 
 
-def test_supplied_diagonal_gw_and_bse_retain_provider_provenance():
+def test_supplied_diagonal_gw_and_bse_retain_provider_provenance() -> None:
     gw_manifest = periodic.PeriodicProvenanceManifest.for_bytes(
         b"analytic-diagonal-self-energy",
         "analytic-gw-provider",

@@ -407,7 +407,10 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         storage_state: SparseBlockTopologyState | None,
     ) -> ParticleGridSplatState:
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
-            assert storage_state is not None
+            if not (storage_state is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: storage_state is not None."
+                )
             return self.nodal_storage.mapped_routes(routes, storage_state)
         return routes
 
@@ -418,7 +421,10 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         content: ArrayLike,
     ) -> SplatDepositResult:
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
-            assert storage_state is not None
+            if not (storage_state is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: storage_state is not None."
+                )
             return self.nodal_storage.deposit_content(
                 self.splat, routes, storage_state, content
             )
@@ -431,7 +437,10 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         payload: ArrayLike,
     ) -> SplatRouteScatterResult:
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
-            assert storage_state is not None
+            if not (storage_state is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: storage_state is not None."
+                )
             return self.nodal_storage.scatter_route_payload(
                 self.splat, routes, storage_state, payload
             )
@@ -441,7 +450,10 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         self, storage_state: SparseBlockTopologyState | None
     ) -> Array:
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
-            assert storage_state is not None
+            if not (storage_state is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: storage_state is not None."
+                )
             return self.nodal_storage.coordinates(storage_state)
         return self.grid_coordinates
 
@@ -449,7 +461,10 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         self, storage_state: SparseBlockTopologyState | None
     ) -> Array:
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
-            assert storage_state is not None
+            if not (storage_state is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: storage_state is not None."
+                )
             return storage_state.node_valid.reshape((-1,))
         return jnp.ones((self.grid_count,), dtype=jnp.bool_)
 
@@ -459,7 +474,10 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         if self.boundary is None:
             return None
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
-            assert storage_state is not None
+            if not (storage_state is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: storage_state is not None."
+                )
             logical = storage_state.logical_node_ids.reshape((-1,))
             valid = storage_state.node_valid.reshape((-1,))
             mask = self.boundary.mask.reshape((-1, self.dimension))[logical]
@@ -1066,7 +1084,10 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     )
                 else:
                     if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
-                        assert storage_state is not None
+                        if not (storage_state is not None):
+                            raise RuntimeError(
+                                "Internal invariant failed: storage_state is not None."
+                            )
                         boundary_result = self.boundary.apply_indexed(
                             contact_result.velocity,
                             grid_mass,
@@ -1176,7 +1197,10 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                         )
                     else:
                         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
-                            assert storage_state is not None
+                            if not (storage_state is not None):
+                                raise RuntimeError(
+                                    "Internal invariant failed: storage_state is not None."
+                                )
                             second_boundary = self.boundary.apply_indexed(
                                 second_contact.velocity,
                                 second_mass.content,

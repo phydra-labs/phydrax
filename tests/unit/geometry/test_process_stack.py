@@ -8,8 +8,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from OCP.BRepGProp import BRepGProp  # ty: ignore[unresolved-import]
-from OCP.GProp import GProp_GProps  # ty: ignore[unresolved-import]
+from OCP.BRepGProp import BRepGProp
+from OCP.GProp import GProp_GProps
 
 from phydrax import SpatialCoordinateContract
 from phydrax.geometry.brep import read_occt_shape
@@ -52,7 +52,7 @@ def _volume(path: Path) -> float:
     return float(properties.Mass())
 
 
-def test_process_stack_requires_total_precedence_and_explicit_void_targets():
+def test_process_stack_requires_total_precedence_and_explicit_void_targets() -> None:
     contract = SpatialCoordinateContract(MILLIMETER)
     footprint = _rectangle(0, 0, 1, 1, "footprint")
 
@@ -80,7 +80,9 @@ def test_process_stack_requires_total_precedence_and_explicit_void_targets():
         )
 
 
-def test_vertical_stack_lowers_to_persisted_exact_partition_history(tmp_path: Path):
+def test_vertical_stack_lowers_to_persisted_exact_partition_history(
+    tmp_path: Path,
+) -> None:
     contract = SpatialCoordinateContract(MILLIMETER)
     stack = ProcessStack(
         contract,

@@ -1680,7 +1680,12 @@ def fit_global_substitution_baseline(
     coefficients, covariance, residual, status, reasons = result
     if reasons:
         return _failed_fit(None, reasons, selected_measurements, status, **metadata)
-    assert coefficients is not None and covariance is not None and residual is not None
+    if not (
+        coefficients is not None and covariance is not None and (residual is not None)
+    ):
+        raise RuntimeError(
+            "Internal invariant failed: coefficients is not None and covariance is not None and (residual is not None)."
+        )
     predictor = GlobalSubstitutionBaseline(
         coefficients,
         covariance,
@@ -1780,7 +1785,12 @@ def fit_regularized_environment_model(
     )
     if reasons:
         return _failed_fit(None, reasons, selected_measurements, status, **metadata)
-    assert coefficients is not None and covariance is not None and residual is not None
+    if not (
+        coefficients is not None and covariance is not None and (residual is not None)
+    ):
+        raise RuntimeError(
+            "Internal invariant failed: coefficients is not None and covariance is not None and (residual is not None)."
+        )
     family_start = 1 + rows.shape[1]
     family_effects = coefficients[family_start:] * family_scale
     unseen_family_variance = (
@@ -1976,7 +1986,12 @@ def fit_regularized_pair_interaction_model(
     )
     if reasons:
         return _failed_fit(None, reasons, measurements, status, **metadata)
-    assert coefficients is not None and covariance is not None and residual is not None
+    if not (
+        coefficients is not None and covariance is not None and (residual is not None)
+    ):
+        raise RuntimeError(
+            "Internal invariant failed: coefficients is not None and covariance is not None and (residual is not None)."
+        )
     predictor = RegularizedPairInteractionModel(
         coefficients,
         covariance,

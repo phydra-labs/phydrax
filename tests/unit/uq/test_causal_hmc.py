@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import blackjax
 import jax
 import jax.numpy as jnp
@@ -11,14 +14,14 @@ import phydrax as phx
 from phydrax.uq._causal_hmc import build_causal_hmc_kernel
 
 
-def _logdensity(position):
+def _logdensity(position: Any) -> Any:
     precision = jnp.asarray([[4.0, 1.2], [1.2, 2.5]], dtype=position.dtype)
     center = jnp.asarray([0.4, -0.7], dtype=position.dtype)
     residual = position - center
     return -0.5 * residual @ precision @ residual
 
 
-def _posterior_problem():
+def _posterior_problem() -> Any:
     return phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             jnp.zeros((2,)),
@@ -29,7 +32,9 @@ def _posterior_problem():
 
 
 @pytest.mark.parametrize("block_size", (3, 8))
-def test_dense_causal_hmc_matches_blackjax_endpoint_energy_and_decision(block_size):
+def test_dense_causal_hmc_matches_blackjax_endpoint_energy_and_decision(
+    block_size: Any,
+) -> None:
     state = blackjax.hmc.init(jnp.asarray([0.3, -0.2]), _logdensity)
     key = jax.random.key(11)
     step_size = jnp.asarray(0.1)
@@ -86,7 +91,7 @@ def test_dense_causal_hmc_matches_blackjax_endpoint_energy_and_decision(block_si
     assert jnp.allclose(causal_state.position, sequential_state.position, atol=2e-11)
 
 
-def test_pair_hutchinson_causal_hmc_converges_to_sequential_trace():
+def test_pair_hutchinson_causal_hmc_converges_to_sequential_trace() -> None:
     state = blackjax.hmc.init(jnp.asarray([0.3, -0.2]), _logdensity)
     key = jax.random.key(12)
     step_size = jnp.asarray(0.08)
@@ -120,6 +125,7 @@ def test_pair_hutchinson_causal_hmc_converges_to_sequential_trace():
     assert bool(causal_info.causal_converged)
     assert float(causal_info.causal_maximum_residual) < 1e-8
     assert jnp.allclose(
+        # ty: ignore[invalid-argument-type]
         causal_info.proposal.position,
         sequential_info.proposal.position,
         atol=2e-8,
@@ -128,7 +134,7 @@ def test_pair_hutchinson_causal_hmc_converges_to_sequential_trace():
     assert bool(causal_info.is_accepted) == bool(sequential_info.is_accepted)
 
 
-def test_sample_hmc_causal_result_preserves_standard_contract():
+def test_sample_hmc_causal_result_preserves_standard_contract() -> None:
     problem = _posterior_problem()
     settings = dict(
         key=jax.random.key(13),
@@ -139,9 +145,11 @@ def test_sample_hmc_causal_result_preserves_standard_contract():
         initial_step_size=0.1,
         chain_method="vectorized",
     )
+    # ty: ignore[invalid-argument-type]
     sequential = phx.uq.sample_hmc(problem, **settings)
     causal = phx.uq.sample_hmc(
         problem,
+        # ty: ignore[invalid-argument-type]
         **settings,
         trajectory_method="causal",
         causal_config=phx.uq.CausalHMCConfig(
@@ -165,7 +173,7 @@ def test_sample_hmc_causal_result_preserves_standard_contract():
     assert jnp.array_equal(causal.divergent, sequential.divergent)
 
 
-def test_causal_hmc_configuration_rejects_unsupported_combinations():
+def test_causal_hmc_configuration_rejects_unsupported_combinations() -> None:
     problem = _posterior_problem()
     settings = dict(
         key=jax.random.key(14),
@@ -177,6 +185,7 @@ def test_causal_hmc_configuration_rejects_unsupported_combinations():
     with pytest.raises(ValueError, match="dense-exact"):
         phx.uq.sample_hmc(
             problem,
+            # ty: ignore[invalid-argument-type]
             **settings,
             kinetic=phx.uq.MCMCMassAdaptationPlan.blocks((("",),), max_block_size=2),
             trajectory_method="causal",
@@ -184,12 +193,13 @@ def test_causal_hmc_configuration_rejects_unsupported_combinations():
     with pytest.raises(ValueError, match="requires trajectory_method"):
         phx.uq.sample_hmc(
             problem,
+            # ty: ignore[invalid-argument-type]
             **settings,
             causal_config=phx.uq.CausalHMCConfig(),
         )
 
 
-def test_default_pair_hutchinson_causal_hmc_produces_draws():
+def test_default_pair_hutchinson_causal_hmc_produces_draws() -> None:
     result = phx.uq.sample_hmc(
         _posterior_problem(),
         key=jax.random.key(15),
@@ -210,7 +220,7 @@ def test_default_pair_hutchinson_causal_hmc_produces_draws():
     assert jnp.all(result.causal_diagnostics.transition_evaluations > 0)
 
 
-def test_causal_hmc_and_nuts_report_solver_fallback_records():
+def test_causal_hmc_and_nuts_report_solver_fallback_records() -> None:
     recurrence = phx.uq.CausalHMCConfig(
         linearization="dense-exact",
         trajectory_block_size=4,
@@ -262,7 +272,7 @@ def test_causal_hmc_and_nuts_report_solver_fallback_records():
         assert jnp.all(diagnostics.transition_evaluations > result.num_integration_steps)
 
 
-def test_causal_nuts_rejects_conflicting_execution_capacity_before_sampling():
+def test_causal_nuts_rejects_conflicting_execution_capacity_before_sampling() -> None:
     with pytest.raises(ValueError, match="must agree"):
         phx.uq.sample_nuts(
             _posterior_problem(),

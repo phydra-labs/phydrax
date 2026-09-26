@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def test_hermitian_spectrum_functions_and_sylvester_action():
+def test_hermitian_spectrum_functions_and_sylvester_action() -> None:
     matrix = jnp.asarray([[2.0 + 0.0j, 0.2j], [-0.2j, 1.0 + 0.0j]])
     spectrum = phx.linalg.HermitianSpectrum(matrix)
     assert bool(spectrum.valid)
@@ -24,7 +27,7 @@ def test_hermitian_spectrum_functions_and_sylvester_action():
     assert solution.residual_norm < 1e-7
 
 
-def test_bures_density_geometry_sld_distance_and_uhlmann():
+def test_bures_density_geometry_sld_distance_and_uhlmann() -> None:
     density = 0.5 * jnp.eye(2, dtype="complex128")
     tangent = jnp.asarray([[0.2, 0.1j], [-0.1j, -0.2]])
     manifold = phx.metrix.BuresDensityManifold(2)
@@ -46,7 +49,7 @@ def test_bures_density_geometry_sld_distance_and_uhlmann():
     assert stratum.rank_residual(pure) == 0
 
 
-def test_fixed_rank_density_projection_is_horizontal_for_nonuniform_gram():
+def test_fixed_rank_density_projection_is_horizontal_for_nonuniform_gram() -> None:
     manifold = phx.metrix.FixedRankDensityManifold(3, 2)
     factor = jnp.asarray(
         [
@@ -69,7 +72,7 @@ def test_fixed_rank_density_projection_is_horizontal_for_nonuniform_gram():
     assert jnp.allclose(jnp.real(jnp.vdot(factor, projected)), 0.0, atol=1e-10)
 
 
-def test_density_rank_stratification_rejects_non_density_inputs():
+def test_density_rank_stratification_rejects_non_density_inputs() -> None:
     stratification = phx.metrix.DensityRankStratification(2)
     density = jnp.diag(jnp.asarray([0.7, 0.3], dtype="complex128"))
     anti_hermitian = jnp.diag(jnp.asarray([10.0j, -10.0j]))
@@ -79,7 +82,7 @@ def test_density_rank_stratification_rejects_non_density_inputs():
     assert not bool(stratification.classify(jnp.diag(jnp.asarray([0.75, 0.75]))).valid)
 
 
-def test_homogeneous_hypersurface_patch_residue_and_measure():
+def test_homogeneous_hypersurface_patch_residue_and_measure() -> None:
     polynomial = phx.geometry.complex.fermat_polynomial(2)
     point = jnp.asarray([1.0 + 0.0j, -1.0 + 0.0j, 0.0j])
     report = polynomial.validate(point)
@@ -113,7 +116,7 @@ def test_homogeneous_hypersurface_patch_residue_and_measure():
     assert jnp.allclose(integral.normalized_value, 1.0)
 
 
-def test_density_manifolds_preserve_product_batch_semantics():
+def test_density_manifolds_preserve_product_batch_semantics() -> None:
     bures = phx.metrix.BuresDensityManifold(2)
     densities = jnp.stack(
         (
@@ -169,7 +172,7 @@ def test_density_manifolds_preserve_product_batch_semantics():
 
 
 @pytest.mark.parametrize("hbar", [0.0, -1.0, float("nan")])
-def test_bosonic_gaussian_constructors_reject_invalid_hbar(hbar):
+def test_bosonic_gaussian_constructors_reject_invalid_hbar(hbar: Any) -> None:
     with pytest.raises(ValueError, match="hbar"):
         phx.metrix.BosonicGaussianState(
             jnp.zeros((2,)),

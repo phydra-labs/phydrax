@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -31,15 +34,15 @@ from phydrax.equations._les_closures import (
 
 
 def _filter(
-    name,
+    name: Any,
     *,
-    family="implicit-grid-volume",
-    axis_names=("x", "y", "z"),
-    topology="tensor-product",
-    boundary_class="periodic",
-    commutation_status="unmodeled",
-    repeated_filter_semantics="unmodeled",
-):
+    family: Any = "implicit-grid-volume",
+    axis_names: Any = ("x", "y", "z"),
+    topology: Any = "tensor-product",
+    boundary_class: Any = "periodic",
+    commutation_status: Any = "unmodeled",
+    repeated_filter_semantics: Any = "unmodeled",
+) -> Any:
     scale_rule = {
         "implicit-grid-volume": "volume-equivalent",
         "explicit-filter": "kernel-equivalent",
@@ -51,6 +54,7 @@ def _filter(
         axis_names=axis_names,
         topology=topology,
         boundary_class=boundary_class,
+        # ty: ignore[invalid-argument-type]
         scale_rule=scale_rule,
         commutation_status=commutation_status,
         repeated_filter_semantics=repeated_filter_semantics,
@@ -59,10 +63,10 @@ def _filter(
 
 def _provenance(
     *,
-    resolved_filter=None,
-    test_filter=None,
-    ratio=(2.0, 2.0, 2.0),
-):
+    resolved_filter: Any = None,
+    test_filter: Any = None,
+    ratio: Any = (2.0, 2.0, 2.0),
+) -> Any:
     if resolved_filter is None:
         resolved_filter = _filter("resolved")
     if test_filter is None:
@@ -86,14 +90,14 @@ def _provenance(
 
 
 def _inputs(
-    leonard,
-    modeled,
+    leonard: Any,
+    modeled: Any,
     *,
-    gradient=None,
-    widths=(0.2, 0.3, 0.4),
-    provenance=None,
-    accepted=True,
-):
+    gradient: Any = None,
+    widths: Any = (0.2, 0.3, 0.4),
+    provenance: Any = None,
+    accepted: Any = True,
+) -> Any:
     leonard = jnp.asarray(leonard)
     modeled = jnp.asarray(modeled)
     if gradient is None:
@@ -113,12 +117,12 @@ def _inputs(
 
 
 def _prepared(
-    provenance,
+    provenance: Any,
     *,
-    averaging=None,
-    regularization=None,
-    backscatter=None,
-):
+    averaging: Any = None,
+    regularization: Any = None,
+    backscatter: Any = None,
+) -> Any:
     if averaging is None:
         averaging = GlobalDynamicLESAveraging()
     if regularization is None:
@@ -130,11 +134,11 @@ def _prepared(
     )
 
 
-def _trace_free_basis():
+def _trace_free_basis() -> Any:
     return jnp.asarray(((1.0, 0.25, -0.5), (0.25, -0.4, 0.3), (-0.5, 0.3, -0.6)))
 
 
-def test_exact_global_germano_coefficient_and_ready_stress():
+def test_exact_global_germano_coefficient_and_ready_stress() -> None:
     provenance = _provenance(ratio=(2.0, 2.5, 3.0))
     modeled = jnp.stack((_trace_free_basis(), 2.0 * _trace_free_basis()))
     coefficient = 0.37
@@ -180,7 +184,7 @@ def test_exact_global_germano_coefficient_and_ready_stress():
     )
 
 
-def test_exact_zero_denominator_is_finite_zero_without_floor():
+def test_exact_zero_denominator_is_finite_zero_without_floor() -> None:
     provenance = _provenance()
     inputs = _inputs(jnp.eye(3), jnp.zeros((3, 3)), provenance=provenance)
 
@@ -198,7 +202,7 @@ def test_exact_zero_denominator_is_finite_zero_without_floor():
     assert bool(result.evidence.finite)
 
 
-def test_additive_regularization_is_explicit_smooth_and_counted():
+def test_additive_regularization_is_explicit_smooth_and_counted() -> None:
     provenance = _provenance()
     modeled = jnp.diag(jnp.asarray((1.0, -1.0, 0.0)))
     inputs = _inputs(4.0 * modeled, modeled, provenance=provenance)
@@ -217,7 +221,7 @@ def test_additive_regularization_is_explicit_smooth_and_counted():
     assert result.evidence.differentiation == "smooth"
 
 
-def test_global_and_homogeneous_axis_averaging_are_ratio_of_averages():
+def test_global_and_homogeneous_axis_averaging_are_ratio_of_averages() -> None:
     provenance = _provenance()
     basis = jnp.diag(jnp.asarray((1.0, -1.0, 0.0)))
     modeled = jnp.broadcast_to(basis, (2, 3, 4, 3, 3))
@@ -238,7 +242,7 @@ def test_global_and_homogeneous_axis_averaging_are_ratio_of_averages():
     )
 
 
-def test_local_fixed_kernel_averaging_is_periodic_and_normalized():
+def test_local_fixed_kernel_averaging_is_periodic_and_normalized() -> None:
     provenance = _provenance()
     basis = jnp.diag(jnp.asarray((1.0, -1.0, 0.0)))
     modeled = jnp.broadcast_to(basis, (3, 1, 1, 3, 3))
@@ -256,7 +260,7 @@ def test_local_fixed_kernel_averaging_is_periodic_and_normalized():
     np.testing.assert_allclose(np.sum(np.asarray(averaging.kernel_weights)), 1.0)
 
 
-def test_lagrangian_mask_accepts_rejects_and_blends_immutable_history():
+def test_lagrangian_mask_accepts_rejects_and_blends_immutable_history() -> None:
     provenance = _provenance()
     averaging = LagrangianDynamicLESAveraging(0.25)
     prepared = _prepared(provenance, averaging=averaging)
@@ -300,7 +304,7 @@ def test_lagrangian_mask_accepts_rejects_and_blends_immutable_history():
     assert third.evidence.differentiation == "branchwise"
 
 
-def test_lagrangian_restart_state_reconstructs_identical_continuation():
+def test_lagrangian_restart_state_reconstructs_identical_continuation() -> None:
     provenance = _provenance()
     prepared = _prepared(provenance, averaging=LagrangianDynamicLESAveraging(0.4))
     modeled = _trace_free_basis()
@@ -331,7 +335,7 @@ def test_lagrangian_restart_state_reconstructs_identical_continuation():
     )
 
 
-def test_signed_clipped_and_bounded_backscatter_are_explicit_and_counted():
+def test_signed_clipped_and_bounded_backscatter_are_explicit_and_counted() -> None:
     provenance = _provenance()
     modeled = _trace_free_basis()
     inputs = _inputs(
@@ -363,7 +367,7 @@ def test_signed_clipped_and_bounded_backscatter_are_explicit_and_counted():
     assert bounded.evidence.backscatter_limit_count == 1
 
 
-def test_coordinate_permutation_preserves_inference_and_permutes_stress():
+def test_coordinate_permutation_preserves_inference_and_permutes_stress() -> None:
     axes = ("x", "y", "z")
     permutation = np.asarray((2, 0, 1))
     provenance = _provenance(ratio=(2.0, 2.5, 3.0))
@@ -416,7 +420,7 @@ def test_coordinate_permutation_preserves_inference_and_permutes_stress():
     )
 
 
-def test_smooth_path_is_jittable_and_has_expected_jvp():
+def test_smooth_path_is_jittable_and_has_expected_jvp() -> None:
     provenance = _provenance()
     modeled = _trace_free_basis()
     denominator = jnp.sum(modeled * modeled)
@@ -431,7 +435,7 @@ def test_smooth_path_is_jittable_and_has_expected_jvp():
         LESFilterScale(jnp.asarray((0.2, 0.3, 0.4))),
     )
 
-    def infer(scale):
+    def infer(scale: Any) -> Any:
         inputs = DynamicLESInputs(
             scale * modeled,
             modeled,
@@ -449,12 +453,12 @@ def test_smooth_path_is_jittable_and_has_expected_jvp():
     np.testing.assert_allclose(tangent, expected_derivative, rtol=2e-6)
 
 
-def test_exact_zero_branch_has_finite_zero_jvp():
+def test_exact_zero_branch_has_finite_zero_jvp() -> None:
     provenance = _provenance()
     modeled = jnp.zeros((3, 3))
     prepared = _prepared(provenance)
 
-    def infer(scale):
+    def infer(scale: Any) -> Any:
         return prepared.evaluate(
             _inputs(scale * jnp.eye(3), modeled, provenance=provenance)
         ).coefficient
@@ -465,7 +469,7 @@ def test_exact_zero_branch_has_finite_zero_jvp():
     assert jnp.isfinite(tangent)
 
 
-def test_filter_pair_refuses_identity_axis_and_semantic_mismatches():
+def test_filter_pair_refuses_identity_axis_and_semantic_mismatches() -> None:
     resolved = _filter("resolved")
     parameter_provenance = LESParameterProvenance(
         resolved, "grid-a", "dynamic", source_kind="user", evidence_ids=()
@@ -495,12 +499,12 @@ def test_filter_pair_refuses_identity_axis_and_semantic_mismatches():
         np.nan,
     ),
 )
-def test_test_filter_ratio_refuses_invalid_shape_scale_and_finiteness(ratio):
+def test_test_filter_ratio_refuses_invalid_shape_scale_and_finiteness(ratio: Any) -> None:
     with pytest.raises(ValueError):
         _provenance(ratio=ratio)
 
 
-def test_dynamic_inputs_refuse_shape_finite_scale_and_mask_mismatches():
+def test_dynamic_inputs_refuse_shape_finite_scale_and_mask_mismatches() -> None:
     provenance = _provenance()
     basis = _trace_free_basis()
     algebraic = AlgebraicLESInputs(basis, LESFilterScale(jnp.ones(3)))
@@ -548,7 +552,7 @@ def test_dynamic_inputs_refuse_shape_finite_scale_and_mask_mismatches():
         _inputs(basis, basis, provenance=provenance, widths=widths)
 
 
-def test_policy_constructors_refuse_invalid_averaging_and_bounds():
+def test_policy_constructors_refuse_invalid_averaging_and_bounds() -> None:
     for axes in ((), ("x", "x"), ("x", "y", "z", "w")):
         with pytest.raises((TypeError, ValueError)):
             HomogeneousPlaneDynamicLESAveraging(axes)
@@ -572,7 +576,7 @@ def test_policy_constructors_refuse_invalid_averaging_and_bounds():
             BoundedFractionBackscatter(fraction, reference)
 
 
-def test_averaging_and_restart_refuse_incompatible_runtime_use():
+def test_averaging_and_restart_refuse_incompatible_runtime_use() -> None:
     provenance = _provenance()
     basis = _trace_free_basis()
     scalar_inputs = _inputs(basis, basis, provenance=provenance)
@@ -602,7 +606,7 @@ def test_averaging_and_restart_refuse_incompatible_runtime_use():
         global_prepared.evaluate(_inputs(basis, basis, provenance=other_provenance))
 
 
-def test_axis_and_boundary_dependent_averaging_refuses_unsupported_fields():
+def test_axis_and_boundary_dependent_averaging_refuses_unsupported_fields() -> None:
     provenance = _provenance()
     basis = _trace_free_basis()
     inputs = _inputs(basis, basis, provenance=provenance)

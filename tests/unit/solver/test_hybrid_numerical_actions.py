@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,10 +15,10 @@ from phydrax.solver import (
 )
 
 
-def test_numerical_root_differentiates_segment_not_continuous_vector_field():
+def test_numerical_root_differentiates_segment_not_continuous_vector_field() -> None:
     # One backward-Euler segment for y'=a*y, not the exact exponential flow.
     # Its numerical time slope is a*y0/(1-a*h)^2, not a*y.
-    def localized(parameters):
+    def localized(parameters: Any) -> Any:
         initial, rate, threshold, guard_time = parameters
         return localize_numerical_event(
             lambda time: {
@@ -50,8 +52,8 @@ def test_numerical_root_differentiates_segment_not_continuous_vector_field():
     )
 
 
-def test_numerical_root_vmap_and_bracket_endpoints_are_branch_selectors():
-    def root(threshold, left, right):
+def test_numerical_root_vmap_and_bracket_endpoints_are_branch_selectors() -> None:
+    def root(threshold: Any, left: Any, right: Any) -> Any:
         return localize_numerical_event(
             lambda time: time * time,
             lambda time, state: state - threshold,
@@ -73,8 +75,8 @@ def test_numerical_root_vmap_and_bracket_endpoints_are_branch_selectors():
     assert jax.grad(lambda left: root(2.0, left, 2.0))(1.0) == 0.0
 
 
-def test_grazing_primal_root_and_invalid_brackets_poison_both_derivative_modes():
-    def grazing(parameter):
+def test_grazing_primal_root_and_invalid_brackets_poison_both_derivative_modes() -> None:
+    def grazing(parameter: Any) -> Any:
         return localize_numerical_event(
             lambda time: (time - 0.5) ** 3,
             lambda time, state: state - parameter,
@@ -89,7 +91,7 @@ def test_grazing_primal_root_and_invalid_brackets_poison_both_derivative_modes()
         jax.jvp(lambda parameter: grazing(parameter).event_time, (0.0,), (1.0,))[1]
     )
 
-    def unbracketed(parameter):
+    def unbracketed(parameter: Any) -> Any:
         return localize_numerical_event(
             lambda time: time, lambda time, state: state - parameter, 0.0, 1.0
         )
@@ -104,8 +106,8 @@ def test_grazing_primal_root_and_invalid_brackets_poison_both_derivative_modes()
         assert not invalid.derivative_valid
 
 
-def _parameter_event():
-    def guard(time, state, args):
+def _parameter_event() -> Any:
+    def guard(time: Any, state: Any, args: Any) -> Any:
         return state[0] + time * args[0] - args[1]
 
     return HybridEventPlan(
@@ -119,7 +121,7 @@ def _parameter_event():
     )
 
 
-def test_physical_matrix_free_actions_include_time_and_reset_parameters():
+def test_physical_matrix_free_actions_include_time_and_reset_parameters() -> None:
     plan = _parameter_event()
     time = jnp.asarray(0.25)
     state = jnp.asarray([0.5, 1.0, 2.0])
@@ -162,14 +164,22 @@ def test_physical_matrix_free_actions_include_time_and_reset_parameters():
         rtol=1.0e-6,
     )
     dense = localize_hybrid_event(
-        plan, lambda t, a: state + (t - time) * before, 0.0, 0.5, args=args
+        plan,
+        lambda t, a: state + (t - time) * before,
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        # ty: ignore[invalid-argument-type]
+        0.5,
+        args=args,
     )
     assert dense.successful & dense.log_jacobian_valid
     state_only = hybrid_event_jvp(plan, time, state, tangent, args=args)
     np.testing.assert_allclose(state_only.action, dense.saltation_matrix @ tangent)
 
 
-def test_singular_reset_retains_action_but_not_density_and_invalid_actions_are_nan():
+def test_singular_reset_retains_action_but_not_density_and_invalid_actions_are_nan() -> (
+    None
+):
     guard = HybridGuardPlan(
         lambda time, state, args: state[0], guard_id="absorbing-reset"
     )
@@ -183,6 +193,7 @@ def test_singular_reset_retains_action_but_not_density_and_invalid_actions_are_n
     )
     trajectory = lambda time, args: jnp.asarray([time - 0.5])
     root = localize_hybrid_event_root(plan, trajectory, 0.0, 1.0)
+    # ty: ignore[invalid-argument-type]
     dense = localize_hybrid_event(plan, trajectory, 0.0, 1.0)
     action = hybrid_event_jvp(plan, 0.5, root.state_before, jnp.ones((1,)))
     assert root.successful & dense.successful & action.successful

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def artifact(kind):
+def artifact(kind: Any) -> Any:
     return phx.applications.cosmology.ScientificArtifactEnvelope(
         artifact_kind=kind,
         content_digest=f"{kind}-example",
@@ -35,7 +37,12 @@ def main() -> None:
         negative_boundaries=("massive-relic", "curvature", "lensing"),
     )
     parity = cosmo.ParityEvidence(
-        profile, [1.0e-5, 2.0e-5], [2.0e-5, 2.0e-5], artifact("parity")
+        profile,
+        # ty: ignore[invalid-argument-type]
+        [1.0e-5, 2.0e-5],
+        # ty: ignore[invalid-argument-type]
+        [2.0e-5, 2.0e-5],
+        artifact("parity"),
     )
 
     positions = jnp.asarray(
@@ -56,11 +63,17 @@ def main() -> None:
     population = cosmo.CosmologicalPopulationPlan(4, 3).empty()
     stars = cosmo.StochasticStarFormationPlan(star_mass=0.5, maximum_events=1).apply(
         population,
+        # ty: ignore[invalid-argument-type]
         [1.0],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0],
+        # ty: ignore[invalid-argument-type]
         [0.01],
+        # ty: ignore[invalid-argument-type]
         [[0.5, 0.5, 0.5]],
+        # ty: ignore[invalid-argument-type]
         [True],
         0.5,
         jax.random.key(1),

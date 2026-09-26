@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _context(grid, fields, args=None, *, time=0.0):
+def _context(grid: Any, fields: Any, args: Any = None, *, time: Any = 0.0) -> Any:
     return phx.discretization.BoundaryStageContext(
         time,
         fields,
@@ -20,7 +23,7 @@ def _context(grid, fields, args=None, *, time=0.0):
     )
 
 
-def _diffusion_problem(lower_target, upper_target):
+def _diffusion_problem(lower_target: Any, upper_target: Any) -> Any:
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0))
     t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
     field = phx.equations.PDEField("u", coordinates=("x", "t"))
@@ -70,7 +73,7 @@ def _diffusion_problem(lower_target, upper_target):
     )
 
 
-def test_arbitrary_depth_cell_ghosts_extend_linear_field_exactly():
+def test_arbitrary_depth_cell_ghosts_extend_linear_field_exactly() -> None:
     runtime = phx.discretization.CellGhostBoundary(
         0,
         "dirichlet",
@@ -90,7 +93,9 @@ def test_arbitrary_depth_cell_ghosts_extend_linear_field_exactly():
     )
 
 
-def test_stage_boundary_program_evaluates_time_parameter_and_tangential_coordinate():
+def test_stage_boundary_program_evaluates_time_parameter_and_tangential_coordinate() -> (
+    None
+):
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),
@@ -142,7 +147,7 @@ def test_stage_boundary_program_evaluates_time_parameter_and_tangential_coordina
     assert workspace.for_axis("x").shape == (8, 3)
 
 
-def test_corner_policy_requires_explicit_tensor_product_realization():
+def test_corner_policy_requires_explicit_tensor_product_realization() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),
@@ -197,7 +202,7 @@ def test_corner_policy_requires_explicit_tensor_product_realization():
     assert workspace.tensor_values.shape == (6, 7)
 
 
-def test_conforming_interface_runtime_enforces_field_and_outward_flux_jumps():
+def test_conforming_interface_runtime_enforces_field_and_outward_flux_jumps() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(5),),
         axis_names=("x",),
@@ -248,7 +253,7 @@ def test_conforming_interface_runtime_enforces_field_and_outward_flux_jumps():
     np.testing.assert_allclose(left_flux + right_flux, 3.0)
 
 
-def test_native_cell_compiler_uses_boundary_ghosts_for_second_derivative():
+def test_native_cell_compiler_uses_boundary_ghosts_for_second_derivative() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(32),),
         axis_names=("x",),
@@ -267,7 +272,7 @@ def test_native_cell_compiler_uses_boundary_ghosts_for_second_derivative():
     np.testing.assert_allclose(derivative, 0.0, rtol=0.0, atol=2e-11)
 
 
-def test_native_nodal_compiler_differentiates_time_dependent_dirichlet_data():
+def test_native_nodal_compiler_differentiates_time_dependent_dirichlet_data() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(33),),
         axis_names=("x",),

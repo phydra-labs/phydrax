@@ -6,6 +6,7 @@ import argparse
 import json
 import platform
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -223,7 +224,7 @@ def _retrieval_case() -> dict[str, object]:
     }
 
 
-def _local_sweep(thickness: float, polarization: str, bloch_x: float):
+def _local_sweep(thickness: float, polarization: str, bloch_x: float) -> Any:
     cases = []
     revisions = []
     harmonic_mode_id = ""
@@ -263,6 +264,7 @@ def _local_sweep(thickness: float, polarization: str, bloch_x: float):
         tuple(revisions),
         slab_thickness=thickness,
         harmonic_mode_id=harmonic_mode_id,
+        # ty: ignore[invalid-argument-type]
         polarization=polarization,
     )
     if bloch_x != 0.0:
@@ -278,7 +280,7 @@ def _local_sweep(thickness: float, polarization: str, bloch_x: float):
     )
 
 
-def _local_loss_evidence():
+def _local_loss_evidence() -> Any:
     evidence = []
     for mode_count, sample_count in ((1, 3), (3, 7)):
         harmonics = LatticeHarmonicPlan.parallelogramic(

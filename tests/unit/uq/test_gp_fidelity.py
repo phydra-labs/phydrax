@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _model_and_state():
+def _model_and_state() -> Any:
     low = phx.fidelity.FidelityLevelSpec(
         "low",
         problem_id="response",
@@ -88,7 +91,7 @@ def _model_and_state():
     return model, state
 
 
-def test_autoregressive_fidelity_gp_is_psd_and_conditions_target():
+def test_autoregressive_fidelity_gp_is_psd_and_conditions_target() -> None:
     model, state = _model_and_state()
     covariance = state.kernel.matrix(model.design, model.design)
     assert jnp.min(jnp.linalg.eigvalsh(covariance)) > -1e-9
@@ -100,7 +103,7 @@ def test_autoregressive_fidelity_gp_is_psd_and_conditions_target():
     assert jnp.all(jnp.isfinite(condition.mean))
 
 
-def test_cost_aware_acquisition_selects_informative_low_fidelity(tmp_path):
+def test_cost_aware_acquisition_selects_informative_low_fidelity(tmp_path: Any) -> None:
     model, state = _model_and_state()
     policy = phx.uq.TargetVarianceAcquisitionPolicy(
         model.path,

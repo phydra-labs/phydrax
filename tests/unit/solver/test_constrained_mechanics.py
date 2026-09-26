@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _plan():
+def _plan() -> Any:
     return phx.solver.SHAKERATTLEPlan(
         jnp.ones((2,)),
         lambda configuration, _: configuration,

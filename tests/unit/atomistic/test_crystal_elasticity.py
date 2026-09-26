@@ -15,14 +15,24 @@ from phydrax.discretization import DenseParticleNeighborhoodPlan, PeriodicCell
 from phydrax.units import derived_unit
 
 
-def test_eam_crystal_elasticity_has_minor_major_symmetry_and_explicit_units():
+def test_eam_crystal_elasticity_has_minor_major_symmetry_and_explicit_units() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(4.0 * np.eye(3))
     system = AtomisticSystemPlan(
-        [0, 1], [1, 1], [1.0, 1.0], units, atom_type_ids=[0, 0], cell=cell
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        units,
+        # ty: ignore[invalid-argument-type]
+        atom_type_ids=[0, 0],
+        cell=cell,
     ).prepare()
     neighborhood = DenseParticleNeighborhoodPlan(1, box=cell).prepare(system.particles)
     potential = AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [EAMPotential([2.0, 1.0, 1.0, 0.5, 2.0], 1.5)]
     ).prepare(
         system,
@@ -31,6 +41,7 @@ def test_eam_crystal_elasticity_has_minor_major_symmetry_and_explicit_units():
     result = CrystalElasticityPlan(
         potential,
         neighborhood,
+        # ty: ignore[invalid-argument-type]
         [[0.25, 0.5, 0.5], [0.5, 0.5, 0.5]],
     ).evaluate()
 
@@ -43,14 +54,16 @@ def test_eam_crystal_elasticity_has_minor_major_symmetry_and_explicit_units():
     assert result.potential_kind_ids == ("eam",)
 
 
-def test_crystal_nve_evidence_retains_raw_chain_and_detects_drift():
+def test_crystal_nve_evidence_retains_raw_chain_and_detects_drift() -> None:
     units = AtomisticUnitSystem.reduced()
     momentum_unit = derived_unit(
         "reduced_mass*reduced_length/reduced_time",
         ((units.mass_unit, 1), (units.scale.length_unit, 1), (units.time_unit, -1)),
     )
     stable = CrystalNVEEvidence(
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0, 2.0],
+        # ty: ignore[invalid-argument-type]
         [2.0, 2.0 + 1.0e-8, 2.0],
         np.zeros((3, 3)),
         units.scale.energy_unit,
@@ -60,7 +73,9 @@ def test_crystal_nve_evidence_retains_raw_chain_and_detects_drift():
         maximum_momentum_drift=1.0e-8,
     )
     drifting = CrystalNVEEvidence(
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0, 2.0],
+        # ty: ignore[invalid-argument-type]
         [2.0, 2.1, 2.2],
         np.zeros((3, 3)),
         units.scale.energy_unit,

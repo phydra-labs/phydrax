@@ -1,12 +1,14 @@
 """Analytic, adaptive, and symplectic two-body propagation with one JVP."""
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def build_workflow():
+def build_workflow() -> Any:
     astro = phx.applications.astrodynamics
     context = astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),
@@ -24,7 +26,7 @@ def build_workflow():
     return context, initial, plan
 
 
-def main():
+def main() -> None:
     _, initial, plan = build_workflow()
     result = plan.solve_analytic_two_body(initial)
     if not bool(result.successful):

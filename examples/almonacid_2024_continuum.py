@@ -17,7 +17,7 @@ import jax
 from phydrax.applications.skeletal_muscle.continuum import almonacid_2024_repository_case
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--inputs",

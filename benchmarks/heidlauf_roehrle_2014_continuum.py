@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -28,7 +30,7 @@ from phydrax.discretization import (
 )
 
 
-def _time(function, value, repetitions):
+def _time(function: Any, value: Any, repetitions: Any) -> Any:
     started = time.perf_counter()
     result = function(value)
     jax.block_until_ready(result)
@@ -40,7 +42,7 @@ def _time(function, value, repetitions):
     return result, first, (time.perf_counter() - started) / repetitions
 
 
-def run(points, repetitions):
+def run(points: Any, repetitions: Any) -> Any:
     parameters = HeidlaufRoehrle2014Parameters.published_table_2()
     material = HeidlaufRoehrle2014Plan(
         "benchmark-2014", "benchmark-prescribed-stress"
@@ -100,7 +102,7 @@ def run(points, repetitions):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--points", type=int, default=10000)

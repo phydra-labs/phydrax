@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -7,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def test_q_batch_mixed_constrained_bo_has_exact_budget_and_replay():
+def test_q_batch_mixed_constrained_bo_has_exact_budget_and_replay() -> None:
     categorical = phx.optim.FiniteProductSpace(
         {"model": phx.optim.FiniteAxis(jnp.asarray([0.0, 1.0, 2.0]))}
     )
@@ -18,7 +21,7 @@ def test_q_batch_mixed_constrained_bo_has_exact_budget_and_replay():
         categorical=categorical,
     )
 
-    def objective(point):
+    def objective(point: Any) -> Any:
         category = point.categorical["model"]
         return (point.continuous[0] - 0.25) ** 2 + 0.1 * category
 
@@ -53,7 +56,7 @@ def test_q_batch_mixed_constrained_bo_has_exact_budget_and_replay():
     assert jnp.all(jnp.isfinite(first.acquisition_standard_errors))
 
 
-def test_no_pending_bo_starts_and_reports_finite_acquisition_error():
+def test_no_pending_bo_starts_and_reports_finite_acquisition_error() -> None:
     domain = phx.uq.BayesianOptimizationDomain(
         jnp.asarray([0.5]),
         lower_bounds=jnp.asarray([0.0]),
@@ -82,7 +85,7 @@ def test_no_pending_bo_starts_and_reports_finite_acquisition_error():
     assert jnp.all(jnp.isfinite(result.acquisition_standard_errors))
 
 
-def test_bo_requires_two_fantasies_for_sample_standard_error():
+def test_bo_requires_two_fantasies_for_sample_standard_error() -> None:
     surrogate = phx.uq.GaussianProcessLikelihoodState(
         kernel=phx.kernels.SquaredExponentialKernel(length_scale=0.4),
         noise_scale=0.01,
@@ -97,7 +100,7 @@ def test_bo_requires_two_fantasies_for_sample_standard_error():
         )
 
 
-def test_pending_point_is_excluded_from_initial_and_space_filling_proposals():
+def test_pending_point_is_excluded_from_initial_and_space_filling_proposals() -> None:
     categorical = phx.optim.FiniteProductSpace(
         {"choice": phx.optim.FiniteAxis(jnp.arange(4.0))}
     )

@@ -60,7 +60,9 @@ def _thb() -> dict[str, object]:
 
     hierarchy = THBHierarchy(
         (
+            # ty: ignore[invalid-argument-type]
             THBLevel(0, "coarse", (True,), (True, False)),
+            # ty: ignore[invalid-argument-type]
             THBLevel(1, "fine", (True, True), (False, True, True)),
         ),
         (np.asarray(((1.0, 0.0), (0.5, 0.5), (0.0, 1.0))),),

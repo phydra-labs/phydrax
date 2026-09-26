@@ -200,7 +200,10 @@ def candidate_radiation_lesions(
             )
         elif policy.indirect_rules:
             record = chemical_records[hit.event_key]
-            assert requested_endpoint is not None
+            if not (requested_endpoint is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: requested_endpoint is not None."
+                )
             if record.time is not None and record.time > requested_endpoint:
                 continue
             matched = [

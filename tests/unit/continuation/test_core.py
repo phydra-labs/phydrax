@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _termination(*, residual=1e-8, maximum_steps=30):
+def _termination(*, residual: Any = 1e-8, maximum_steps: Any = 30) -> Any:
     return phx.nonlinear.NonlinearTermination(
         absolute_residual=residual,
         relative_residual=0.0,
@@ -19,7 +22,7 @@ def _termination(*, residual=1e-8, maximum_steps=30):
     )
 
 
-def _fold_problem():
+def _fold_problem() -> Any:
     return phx.continuation.ParameterContinuationProblem(
         lambda state, parameter, _: {
             "x": state["x"] ** 2 + parameter - 1.0,
@@ -28,7 +31,7 @@ def _fold_problem():
     )
 
 
-def test_public_prepare_refresh_run_contract_preserves_symbolic_identity():
+def test_public_prepare_refresh_run_contract_preserves_symbolic_identity() -> None:
     problem = _fold_problem()
     plan = phx.continuation.plan_continuation(
         problem,
@@ -67,7 +70,7 @@ def test_public_prepare_refresh_run_contract_preserves_symbolic_identity():
     assert result.provenance.corrector_preconditioner_plan_id == ""
 
 
-def test_preconditioned_corrector_reports_preserved_linear_plan_identity():
+def test_preconditioned_corrector_reports_preserved_linear_plan_identity() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - jnp.asarray([coordinate, 2.0 * coordinate]),
         problem_id="preconditioned-linear-curve",
@@ -99,8 +102,8 @@ def test_preconditioned_corrector_reports_preserved_linear_plan_identity():
     assert int(result.provenance.corrector_linear_numeric_version) >= 1
 
 
-def test_generic_nonlinear_corrector_runs_without_prepared_root_reuse():
-    def operator(state, args):
+def test_generic_nonlinear_corrector_runs_without_prepared_root_reuse() -> None:
+    def operator(state: Any, args: Any) -> Any:
         del args
         space = phx.linalg.PyTreeSpace(state)
         return phx.linalg.FunctionLinearOperator(
@@ -137,7 +140,7 @@ def test_generic_nonlinear_corrector_runs_without_prepared_root_reuse():
     )
 
 
-def test_pseudo_arclength_traverses_fold_with_uncertified_explicit_bracket():
+def test_pseudo_arclength_traverses_fold_with_uncertified_explicit_bracket() -> None:
     result = phx.continuation.continue_branch(
         _fold_problem(),
         {"x": jnp.asarray(1.0)},
@@ -165,7 +168,7 @@ def test_pseudo_arclength_traverses_fold_with_uncertified_explicit_bracket():
     assert any(event.kind == "fold-candidate" for event in result.events)
 
 
-def test_event_localization_refines_fold_indicator_without_certifying_it():
+def test_event_localization_refines_fold_indicator_without_certifying_it() -> None:
     problem = _fold_problem()
     result = phx.continuation.continue_branch(
         problem,
@@ -221,7 +224,7 @@ def test_event_localization_refines_fold_indicator_without_certifying_it():
     assert invalid.point is None
 
 
-def test_natural_parameter_continuation_exposes_turning_point_limitation():
+def test_natural_parameter_continuation_exposes_turning_point_limitation() -> None:
     result = phx.continuation.continue_branch(
         _fold_problem(),
         {"x": jnp.asarray(1.0)},
@@ -245,7 +248,7 @@ def test_natural_parameter_continuation_exposes_turning_point_limitation():
     assert any(event.kind == "corrector-failure" for event in result.events)
 
 
-def test_hopf_monitoring_records_conjugate_pair_crossing_bracket():
+def test_hopf_monitoring_records_conjugate_pair_crossing_bracket() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, parameter, _: (
             jnp.asarray([[parameter, -1.0], [1.0, parameter]]) @ state
@@ -280,7 +283,7 @@ def test_hopf_monitoring_records_conjugate_pair_crossing_bracket():
     assert "not a certified bifurcation" in event.message
 
 
-def test_general_krylov_stability_uses_public_restarted_arnoldi_contract():
+def test_general_krylov_stability_uses_public_restarted_arnoldi_contract() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: (
             jnp.asarray(
@@ -318,7 +321,7 @@ def test_general_krylov_stability_uses_public_restarted_arnoldi_contract():
     assert evidence.analyzer_id == "general-krylov-stability"
 
 
-def test_self_adjoint_krylov_stability_reports_leading_unstable_mode():
+def test_self_adjoint_krylov_stability_reports_leading_unstable_mode() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: jnp.asarray([-2.0, -1.0, 0.5]) * state - coordinate,
         problem_id="self-adjoint-krylov-diagonal",
@@ -333,7 +336,7 @@ def test_self_adjoint_krylov_stability_reports_leading_unstable_mode():
     assert int(evidence.unstable_count) == 1
 
 
-def test_rejected_correctors_contract_step_deterministically():
+def test_rejected_correctors_contract_step_deterministically() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, parameter, _: state**2 + parameter + 1.0,
         problem_id="no-real-root",
@@ -370,10 +373,10 @@ def test_rejected_correctors_contract_step_deterministically():
     assert int(result.diagnostics.attempted_steps) == 4
 
 
-def test_branch_monitor_and_switch_hook_consume_explicit_branch_models():
+def test_branch_monitor_and_switch_hook_consume_explicit_branch_models() -> None:
     observed = []
 
-    def monitor(problem, previous, current, args):
+    def monitor(problem: Any, previous: Any, current: Any, args: Any) -> Any:
         del problem, previous, args
         observed.append(current.point_id)
         return (
@@ -398,7 +401,7 @@ def test_branch_monitor_and_switch_hook_consume_explicit_branch_models():
     assert int(result.diagnostics.monitor_events) == len(result.points)
     assert result.provenance.monitor_ids == ("callable-branch-monitor",)
 
-    def propose(branch, event, args):
+    def propose(branch: Any, event: Any, args: Any) -> Any:
         del args
         if event.kind != "user":
             return ()
@@ -421,7 +424,7 @@ def test_branch_monitor_and_switch_hook_consume_explicit_branch_models():
     assert len(seeds) == len(result.points)
 
 
-def test_natural_continuation_lands_on_exact_terminal_coordinate():
+def test_natural_continuation_lands_on_exact_terminal_coordinate() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - coordinate,
         parameter_lower=0.0,
@@ -449,7 +452,7 @@ def test_natural_continuation_lands_on_exact_terminal_coordinate():
     assert any(event.kind == "coordinate-target" for event in result.events)
 
 
-def test_corrected_initial_point_may_be_terminal_coordinate():
+def test_corrected_initial_point_may_be_terminal_coordinate() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - coordinate,
         problem_id="initial-target",
@@ -469,7 +472,7 @@ def test_corrected_initial_point_may_be_terminal_coordinate():
     assert any(event.kind == "coordinate-target" for event in result.events)
 
 
-def test_natural_target_rejects_opposite_direction():
+def test_natural_target_rejects_opposite_direction() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - coordinate,
     )
@@ -489,7 +492,7 @@ def test_natural_target_rejects_opposite_direction():
         )
 
 
-def test_pseudo_arclength_localizes_corrected_terminal_section():
+def test_pseudo_arclength_localizes_corrected_terminal_section() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - coordinate,
         problem_id="pseudo-target",
@@ -515,7 +518,7 @@ def test_pseudo_arclength_localizes_corrected_terminal_section():
     assert result.termination_reason == "terminal coordinate reached"
 
 
-def test_required_target_reports_exhaustion_and_target_corrector_failure():
+def test_required_target_reports_exhaustion_and_target_corrector_failure() -> None:
     linear = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - coordinate,
     )
@@ -555,7 +558,7 @@ def test_required_target_reports_exhaustion_and_target_corrector_failure():
     assert any(event.kind == "target-corrector-retry" for event in failed.events)
 
 
-def test_natural_tangent_predictor_is_exact_for_affine_branch():
+def test_natural_tangent_predictor_is_exact_for_affine_branch() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - 2.0 * coordinate,
         problem_id="affine-tangent-predictor",
@@ -579,7 +582,7 @@ def test_natural_tangent_predictor_is_exact_for_affine_branch():
     )
 
 
-def test_bordered_tangent_crosses_fold_with_small_tangent_residual():
+def test_bordered_tangent_crosses_fold_with_small_tangent_residual() -> None:
     result = phx.continuation.continue_branch(
         _fold_problem(),
         {"x": jnp.asarray(1.0)},
@@ -598,7 +601,7 @@ def test_bordered_tangent_crosses_fold_with_small_tangent_residual():
     assert min(float(point.tangent_alignment) for point in result.points) > 0.0
 
 
-def test_curvature_controller_rejects_and_recovers_sharp_branch_steps():
+def test_curvature_controller_rejects_and_recovers_sharp_branch_steps() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state**3 - state + coordinate,
         problem_id="curved-cubic-branch",
@@ -622,19 +625,21 @@ def test_curvature_controller_rejects_and_recovers_sharp_branch_steps():
     assert all(float(point.tangent_alignment) >= 0.999 for point in result.points[1:])
 
 
-def test_application_transactions_commit_once_and_checkpoint_only_accepted_state():
+def test_application_transactions_commit_once_and_checkpoint_only_accepted_state() -> (
+    None
+):
     counts = {"freeze": 0, "evaluate": 0, "commit": 0, "rollback": 0}
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, args: state - coordinate,
         problem_id="transactional-linear-curve",
     )
 
-    def freeze(application_state, args):
+    def freeze(application_state: Any, args: Any) -> Any:
         del args
         counts["freeze"] += 1
         return dict(application_state)
 
-    def evaluate(transaction, source, candidate, args):
+    def evaluate(transaction: Any, source: Any, candidate: Any, args: Any) -> Any:
         del transaction, args
         counts["evaluate"] += 1
         return phx.continuation.ParameterTransferEvidence.for_candidate(
@@ -644,17 +649,21 @@ def test_application_transactions_commit_once_and_checkpoint_only_accepted_state
             message="accept only the initial corrected point",
         )
 
-    def commit(transaction, source, candidate, evidence, args):
+    def commit(
+        transaction: Any, source: Any, candidate: Any, evidence: Any, args: Any
+    ) -> Any:
         del source, candidate, evidence, args
         counts["commit"] += 1
         return {"version": transaction["version"] + 1}
 
-    def rollback(transaction, source, candidate, evidence, args):
+    def rollback(
+        transaction: Any, source: Any, candidate: Any, evidence: Any, args: Any
+    ) -> Any:
         del transaction, candidate, evidence, args
         counts["rollback"] += 1
         return source.application_state
 
-    def identity(application_state, args):
+    def identity(application_state: Any, args: Any) -> Any:
         del args
         return f"application-state-{application_state['version']}"
 
@@ -691,14 +700,19 @@ def test_application_transactions_commit_once_and_checkpoint_only_accepted_state
         step.source_application_state_id == "application-state-1"
         for step in result.steps[1:]
     )
+    # ty: ignore[unresolved-attribute]
     assert result.accepted_state.application_state == {"version": 1}
+    # ty: ignore[unresolved-attribute]
     assert result.checkpoint.application_data == {"version": 1}
+    # ty: ignore[unresolved-attribute]
     assert result.checkpoint.accepted_decision_ids == (result.steps[0].decision_id,)
+    # ty: ignore[unresolved-attribute]
     assert result.checkpoint.attempt_decision_ids == tuple(
         step.decision_id for step in result.steps
     )
 
     restored, evidence = phx.continuation.restore_continuation_checkpoint(
+        # ty: ignore[invalid-argument-type]
         result.checkpoint,
         adapter,
         plan_id=result.provenance.plan_id,
@@ -707,9 +721,11 @@ def test_application_transactions_commit_once_and_checkpoint_only_accepted_state
     )
     assert bool(evidence.matches)
     assert restored.application_state == {"version": 1}
+    # ty: ignore[unresolved-attribute]
     assert restored.decision_id == result.accepted_state.decision_id
     with pytest.raises(ValueError, match="did not match"):
         phx.continuation.restore_continuation_checkpoint(
+            # ty: ignore[invalid-argument-type]
             result.checkpoint,
             adapter,
             plan_id=result.provenance.plan_id,
@@ -719,13 +735,13 @@ def test_application_transactions_commit_once_and_checkpoint_only_accepted_state
         )
 
 
-def test_rejected_initial_candidate_is_not_published_or_checkpointed():
+def test_rejected_initial_candidate_is_not_published_or_checkpointed() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, args: state - coordinate,
         problem_id="rejected-initial-candidate",
     )
 
-    def evaluate(transaction, source, candidate, args):
+    def evaluate(transaction: Any, source: Any, candidate: Any, args: Any) -> Any:
         del transaction, args
         return phx.continuation.ParameterTransferEvidence.for_candidate(
             source,
@@ -734,7 +750,9 @@ def test_rejected_initial_candidate_is_not_published_or_checkpointed():
             message="reject initial candidate",
         )
 
-    def commit(transaction, source, candidate, evidence, args):
+    def commit(
+        transaction: Any, source: Any, candidate: Any, evidence: Any, args: Any
+    ) -> None:
         del transaction, source, candidate, evidence, args
         raise AssertionError("A rejected initial candidate must not commit.")
 

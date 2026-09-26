@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,13 +22,15 @@ from phydrax.sampling.collocation import (
 from phydrax.solver import FunctionalSolver
 
 
-def _square_constraint(policy, *, counts=(12, 10), trainable=False):
+def _square_constraint(
+    policy: Any, *, counts: Any = (12, 10), trainable: Any = False
+) -> Any:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @domain.Function("x")
-    def shifted_x(x):
+    def shifted_x(x: Any) -> Any:
         x0, _x1 = x
         return x0 + 1.0
 
@@ -45,13 +50,13 @@ def _square_constraint(policy, *, counts=(12, 10), trainable=False):
     return domain, term, functions
 
 
-def _axis(population, index):
+def _axis(population: Any, index: Any) -> Any:
     values = population.batch.points["x"]
     assert isinstance(values, tuple)
     return jnp.asarray(values[index].data)
 
 
-def test_separable_population_tracks_logical_and_active_counts():
+def test_separable_population_tracks_logical_and_active_counts() -> None:
     policy = PeriodicSeparableCollocation(refresh_every=2)
     domain = phx.domain.GeometryDomain(phx.geometry.Circle((0.0, 0.0), 1.0).compile())
     component = domain.component()
@@ -69,7 +74,7 @@ def test_separable_population_tracks_logical_and_active_counts():
     assert tuple(population.axis_age_by_axis) == population.batch.coord_axes_by_label["x"]
 
 
-def test_periodic_separable_refresh_preserves_shape_and_changes_axes():
+def test_periodic_separable_refresh_preserves_shape_and_changes_axes() -> None:
     policy = PeriodicSeparableCollocation(refresh_every=1)
     _domain, constraint, functions = _square_constraint(policy)
     initial = policy.initialize(constraint, key=jr.key(1))
@@ -87,7 +92,7 @@ def test_periodic_separable_refresh_preserves_shape_and_changes_axes():
     assert int(refreshed.last_refresh) == 1
 
 
-def test_nested_dyadic_axis_materializes_fixed_capacity_metadata():
+def test_nested_dyadic_axis_materializes_fixed_capacity_metadata() -> None:
     discretization = NestedDyadicAxisSpec(9, initial_level=1).materialize(
         jnp.asarray(-1.0),
         jnp.asarray(1.0),
@@ -107,7 +112,7 @@ def test_nested_dyadic_axis_materializes_fixed_capacity_metadata():
     assert jnp.allclose(jnp.sum(activated.quad_weights), 2.0)
 
 
-def test_hierarchical_axes_activate_nested_nodes_without_shape_changes():
+def test_hierarchical_axes_activate_nested_nodes_without_shape_changes() -> None:
     policy = HierarchicalAxisCollocation(
         refresh_every=1,
         refinement_fraction=0.25,
@@ -118,7 +123,7 @@ def test_hierarchical_axes_activate_nested_nodes_without_shape_changes():
     )
 
     @domain.Function("x")
-    def shifted_x(x):
+    def shifted_x(x: Any) -> Any:
         x0, _x1 = x
         return x0 + 1.0
 
@@ -150,7 +155,7 @@ def test_hierarchical_axes_activate_nested_nodes_without_shape_changes():
         assert jnp.allclose(jnp.sum(discretization.quad_weights), 2.0)
 
 
-def test_solver_trains_with_separable_population():
+def test_solver_trains_with_separable_population() -> None:
     policy = PeriodicSeparableCollocation(refresh_every=1)
     domain, term, functions = _square_constraint(policy, counts=(6, 5), trainable=True)
     solver = FunctionalSolver(functions=functions, terms=[term])

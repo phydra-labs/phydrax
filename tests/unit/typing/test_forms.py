@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
@@ -13,13 +13,13 @@ class BatchDims(pt.VariadicDim):
     pass
 
 
-def test_dimensions_are_nominal_tokens_with_validated_minimums():
+def test_dimensions_are_nominal_tokens_with_validated_minimums() -> None:
     assert ComponentDim.minimum == 1
     assert BatchDims.minimum == 0
     with pytest.raises(TypeError):
         ComponentDim()
     with pytest.raises(TypeError):
-
+        # ty: ignore[invalid-argument-type]
         class FractionalDim(pt.Dim, minimum=1.5):
             pass
 
@@ -29,7 +29,7 @@ def test_dimensions_are_nominal_tokens_with_validated_minimums():
             pass
 
 
-def test_dimension_naming_is_a_convention_not_a_runtime_rule():
+def test_dimension_naming_is_a_convention_not_a_runtime_rule() -> None:
     class components(pt.Dim):
         pass
 
@@ -37,7 +37,7 @@ def test_dimension_naming_is_a_convention_not_a_runtime_rule():
 
 
 @pytest.mark.parametrize("token", [pt.AnyDim, pt.AnyShape, pt.Scalar])
-def test_shape_tokens_cannot_be_instantiated_or_extended(token):
+def test_shape_tokens_cannot_be_instantiated_or_extended(token: Any) -> None:
     with pytest.raises(TypeError):
         token()
     with pytest.raises(TypeError):
@@ -50,6 +50,7 @@ def test_shape_tokens_cannot_be_instantiated_or_extended(token):
         pt.Float64,
         pt.Size,
         pt.Identifiers,
+        # ty: ignore[invalid-type-form]
         pt.Float64[3],
         pt.Float64[Literal[-1]],
         pt.Float64[Literal[1, 2]],
@@ -64,6 +65,6 @@ def test_shape_tokens_cannot_be_instantiated_or_extended(token):
         pt.Float64[ComponentDim] | int,
     ],
 )
-def test_malformed_or_unsupported_forms_are_refused(form):
+def test_malformed_or_unsupported_forms_are_refused(form: Any) -> None:
     with pytest.raises(TypeError):
         pt.parse(None, form, "value")

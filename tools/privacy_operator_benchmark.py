@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -20,26 +21,26 @@ class _LinearOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.weight = jnp.asarray([[1.0]], dtype=jnp.float32)
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         values = batch.input("state").values
         assert values is not None
         return (values[..., None] @ self.weight)[..., 0]
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _dataset(cases: int = 8, resolution: int = 16):
+def _dataset(cases: int = 8, resolution: int = 16) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, resolution),
@@ -54,7 +55,7 @@ def _dataset(cases: int = 8, resolution: int = 16):
     )
 
 
-def _privacy(iterations: int):
+def _privacy(iterations: int) -> Any:
     definition = phx.privacy.PrivacyDefinition(
         phx.privacy.PrivacyUnit("operator-case"),
         phx.privacy.NeighboringRelation.ADD_OR_REMOVE_ONE,
@@ -73,7 +74,7 @@ def _privacy(iterations: int):
     )
 
 
-def _fit(dataset, privacy):
+def _fit(dataset: Any, privacy: Any) -> Any:
     result = phx.nn.operator.training.fit_operator(
         _LinearOperator(),
         dataset,
@@ -84,6 +85,7 @@ def _fit(dataset, privacy):
         key=jr.key(7),
         jit=True,
     )
+    # ty: ignore[unresolved-attribute]
     jax.block_until_ready(result.execution_model.weight)
     return result
 

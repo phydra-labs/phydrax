@@ -2,13 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _geometry(*, periodic_x=True, vertical_coordinate="zstar", depth=None):
+def _geometry(
+    *, periodic_x: Any = True, vertical_coordinate: Any = "zstar", depth: Any = None
+) -> Any:
     shape = (6, 4, 3)
     grid = phx.discretization.TensorGridPlan(
         (
@@ -29,7 +34,7 @@ def _geometry(*, periodic_x=True, vertical_coordinate="zstar", depth=None):
     ).prepare()
 
 
-def _state(ocean, eta):
+def _state(ocean: Any, eta: Any) -> Any:
     return ocean.initialize_state(
         eta,
         tracers={
@@ -39,7 +44,7 @@ def _state(ocean, eta):
     )
 
 
-def test_implicit_hydrostatic_external_wave_is_volume_conservative():
+def test_implicit_hydrostatic_external_wave_is_volume_conservative() -> None:
     geometry = _geometry()
     ocean = phx.applications.ocean.HydrostaticPrimitiveEquationPlan(
         geometry,
@@ -76,7 +81,7 @@ def test_implicit_hydrostatic_external_wave_is_volume_conservative():
     assert jnp.all(jnp.isfinite(result.accepted_state.state.transports[0]))
 
 
-def test_split_explicit_wetdry_keeps_nonnegative_depth_and_inventory():
+def test_split_explicit_wetdry_keeps_nonnegative_depth_and_inventory() -> None:
     x = jnp.linspace(0.0, 1.0, 6)[:, None]
     depth = jnp.broadcast_to(0.02 + 0.98 * x, (6, 4))
     geometry = _geometry(depth=depth)
@@ -116,7 +121,7 @@ def test_split_explicit_wetdry_keeps_nonnegative_depth_and_inventory():
     assert result.accepted_state.ledger.limiter_correction >= 0.0
 
 
-def test_flather_boundary_and_freshwater_share_volume_ledger():
+def test_flather_boundary_and_freshwater_share_volume_ledger() -> None:
     geometry = _geometry(periodic_x=False)
     boundary = phx.applications.ocean.HydrostaticOpenBoundary(
         0,
@@ -149,7 +154,7 @@ def test_flather_boundary_and_freshwater_share_volume_ledger():
     assert jnp.isfinite(result.accepted_state.ledger.freshwater_volume)
 
 
-def test_nonlinear_eos_and_kpp_like_closure_advance_finitely():
+def test_nonlinear_eos_and_kpp_like_closure_advance_finitely() -> None:
     geometry = _geometry(vertical_coordinate="partial-z")
     ocean = phx.applications.ocean.HydrostaticPrimitiveEquationPlan(
         geometry,

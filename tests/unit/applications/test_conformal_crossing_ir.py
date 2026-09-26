@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -19,7 +22,7 @@ from phydrax.applications.conformal_bootstrap import (
 from phydrax.tensor_network import Irrep, RepresentationCategory
 
 
-def _z2_category():
+def _z2_category() -> Any:
     unit = Irrep("even", 1, dual_label="even")
     odd = Irrep("odd", 1, dual_label="odd")
     return RepresentationCategory(
@@ -34,7 +37,7 @@ def _z2_category():
     )
 
 
-def _data(dimension, *, category=None):
+def _data(dimension: Any, *, category: Any = None) -> Any:
     representation = "odd" if category is not None else "scalar"
     external = tuple(
         ExternalScalarOperator(f"phi-{index}", 0.6, representation) for index in range(4)
@@ -59,11 +62,12 @@ def _data(dimension, *, category=None):
     )
 
 
-def test_conformal_data_validates_category_fusion_and_crossing_gauge():
+def test_conformal_data_validates_category_fusion_and_crossing_gauge() -> None:
     data = _data(3.0, category=_z2_category())
     plan = CrossingSectorPlan(
         data,
         ("symmetric", "antisymmetric"),
+        # ty: ignore[invalid-argument-type]
         (((0.0, 1.0), (1.0, 0.0)),),
         basis_gauge_id="z2-explicit-gauge",
     )
@@ -77,11 +81,12 @@ def test_conformal_data_validates_category_fusion_and_crossing_gauge():
     np.testing.assert_allclose(prepared.evidence.involution_residuals, 0.0)
 
 
-def test_crossing_compiler_rejects_false_involution():
+def test_crossing_compiler_rejects_false_involution() -> None:
     data = _data(3.0)
     plan = CrossingSectorPlan(
         data,
         ("a", "b"),
+        # ty: ignore[invalid-argument-type]
         (((1.0, 1.0), (0.0, 1.0)),),
         basis_gauge_id="invalid-involution",
     )
@@ -89,11 +94,12 @@ def test_crossing_compiler_rejects_false_involution():
         prepare_crossing_sectors(plan)
 
 
-def test_two_dimensional_global_block_matches_factorized_closed_reference():
+def test_two_dimensional_global_block_matches_factorized_closed_reference() -> None:
     data = _data(2.0)
     prepared = prepare_global_scalar_blocks(
         GlobalScalarBlockPlan(
             data,
+            # ty: ignore[invalid-argument-type]
             ((0.2, 0.2),),
             (0,),
             ((0, 0), (1, 0)),
@@ -111,11 +117,12 @@ def test_two_dimensional_global_block_matches_factorized_closed_reference():
     assert "finite" in evidence.claim
 
 
-def test_three_dimensional_radial_recursion_is_symmetric_and_finite():
+def test_three_dimensional_radial_recursion_is_symmetric_and_finite() -> None:
     data = _data(3.0)
     prepared = prepare_global_scalar_blocks(
         GlobalScalarBlockPlan(
             data,
+            # ty: ignore[invalid-argument-type]
             ((0.2, 0.3), (0.3, 0.2)),
             (0, 2),
             ((0, 0),),
@@ -130,10 +137,11 @@ def test_three_dimensional_radial_recursion_is_symmetric_and_finite():
     assert np.all(np.isfinite(np.asarray(evidence.casimir_residuals)))
 
 
-def test_four_dimensional_diagonal_limit_and_derivative_are_finite():
+def test_four_dimensional_diagonal_limit_and_derivative_are_finite() -> None:
     prepared = prepare_global_scalar_blocks(
         GlobalScalarBlockPlan(
             _data(4.0),
+            # ty: ignore[invalid-argument-type]
             ((0.3, 0.3),),
             (0,),
             ((0, 0), (1, 0)),

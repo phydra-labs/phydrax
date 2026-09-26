@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -26,8 +29,9 @@ from phydrax.series import SampledSeries, SeriesSupport
 from phydrax.units import KILOMETER, PASCAL
 
 
-def _survey(steps=19, absorber=3):
+def _survey(steps: Any = 19, absorber: Any = 3) -> Any:
     grid = AcousticGrid((13, 13), (0.25, 0.25))
+    # ty: ignore[invalid-argument-type]
     acquisition = SeismicAcquisition(grid, [[1.5, 1.5]], [[2.0, 1.5], [1.5, 2.0]])
     plan = ConstantDensityAcousticPlan(
         grid, 0.05, steps, 2.0, 2.0, absorber_cells=absorber
@@ -37,7 +41,7 @@ def _survey(steps=19, absorber=3):
     return plan, acquisition, rates
 
 
-def test_prepared_sampling_affine_fields_and_exact_transpose():
+def test_prepared_sampling_affine_fields_and_exact_transpose() -> None:
     grid = AcousticGrid((7, 9), (0.002, 0.003), (0.01, -0.02), length_unit=KILOMETER)
     points = np.asarray([[11.2, -18.1], [17.3, 1.8], [22.0, 4.0]])
     sampling = PreparedAcousticSampling(grid, points)
@@ -51,13 +55,15 @@ def test_prepared_sampling_affine_fields_and_exact_transpose():
     rhs = jnp.sum(field * sampling.transpose(cotangent))
     np.testing.assert_allclose(lhs, rhs, rtol=2e-6)
     with pytest.raises(ValueError, match="within"):
+        # ty: ignore[invalid-argument-type]
         PreparedAcousticSampling(grid, [[9.0, 0.0]])
 
 
 @pytest.mark.parametrize("dimensions", [2, 3])
-def test_monopole_volume_rate_scaling_and_axis_symmetry(dimensions):
+def test_monopole_volume_rate_scaling_and_axis_symmetry(dimensions: Any) -> None:
     grid = AcousticGrid((7,) * dimensions, (0.5,) * dimensions)
     center = [1.5] * dimensions
+    # ty: ignore[invalid-argument-type]
     acquisition = SeismicAcquisition(grid, [center], [center])
     plan = ConstantDensityAcousticPlan(grid, 0.05, 3, 2.0, 3.0)
     initial = plan.initial_state()
@@ -84,9 +90,10 @@ def test_monopole_volume_rate_scaling_and_axis_symmetry(dimensions):
     )
 
 
-def test_rigid_wall_standing_wave_matches_discrete_dispersion():
+def test_rigid_wall_standing_wave_matches_discrete_dispersion() -> None:
     nx, steps, dt, speed = 32, 40, 0.1, 2.0
     grid = AcousticGrid((nx, 4), (1.0, 1.0), (0.5, 0.5))
+    # ty: ignore[invalid-argument-type]
     acquisition = SeismicAcquisition(grid, [[15.5, 1.5]], [[4.5, 1.5]])
     plan = ConstantDensityAcousticPlan(grid, dt, steps, speed, 1.0)
     mode = 3
@@ -110,7 +117,7 @@ def test_rigid_wall_standing_wave_matches_discrete_dispersion():
     assert float(jnp.max(jnp.abs(result.final_state.pressure - continuum))) < 0.02
 
 
-def test_cfl_preparation_and_dynamic_material_fail_closed():
+def test_cfl_preparation_and_dynamic_material_fail_closed() -> None:
     grid = AcousticGrid((7, 7), (1.0, 1.0))
     with pytest.raises(ValueError, match="CFL"):
         ConstantDensityAcousticPlan(grid, 0.8, 2, 1.0)
@@ -126,7 +133,7 @@ def test_cfl_preparation_and_dynamic_material_fail_closed():
             jax.block_until_ready(forward(speed))
 
 
-def test_full_step_block_and_scheduled_discrete_adjoint_equivalence():
+def test_full_step_block_and_scheduled_discrete_adjoint_equivalence() -> None:
     plan, acquisition, rates = _survey()
     weights = jnp.linspace(-0.3, 1.2, 2 * (plan.step_count + 1)).reshape((2, -1))
     state = plan.initial_state()
@@ -141,12 +148,12 @@ def test_full_step_block_and_scheduled_discrete_adjoint_equivalence():
         AdaptiveReplayPreparationPolicy(3 * state_bytes, 2 * plan.step_count),
     )
 
-    def action(speed, mode, **kwargs):
+    def action(speed: Any, mode: Any, **kwargs: Any) -> Any:
         return plan.simulate(
             speed, acquisition, rates, replay=mode, **kwargs
         ).traces.values
 
-    def loss(speed, mode, **kwargs):
+    def loss(speed: Any, mode: Any, **kwargs: Any) -> Any:
         return jnp.sum(weights * action(speed, mode, **kwargs))
 
     speed = jnp.full(plan.grid.shape, 1.5)
@@ -180,7 +187,7 @@ def test_full_step_block_and_scheduled_discrete_adjoint_equivalence():
     )
 
 
-def test_checkpoint_continuation_preserves_split_absorber_state():
+def test_checkpoint_continuation_preserves_split_absorber_state() -> None:
     plan, acquisition, _ = _survey(steps=9)
     full_plan = ConstantDensityAcousticPlan(
         plan.grid,
@@ -226,8 +233,9 @@ def test_checkpoint_continuation_preserves_split_absorber_state():
         wrong_plan.restart(checkpoint, acquisition, jnp.zeros((9, 1)))
 
 
-def test_split_damping_reduces_late_box_energy_without_perfect_pml_claim():
+def test_split_damping_reduces_late_box_energy_without_perfect_pml_claim() -> None:
     grid = AcousticGrid((41, 41), (0.5, 0.5))
+    # ty: ignore[invalid-argument-type]
     acquisition = SeismicAcquisition(grid, [[10.0, 10.0]], [[10.0, 10.0]])
     wall = ConstantDensityAcousticPlan(grid, 0.15, 240, 1.0, 1.0)
     layer = ConstantDensityAcousticPlan(
@@ -248,7 +256,7 @@ def test_split_damping_reduces_late_box_energy_without_perfect_pml_claim():
     assert float(reflected_energy / wall.energy(wall.initial_state(pressure), 1.0)) > 0.95
 
 
-def test_masked_native_pressure_likelihood_gradient_and_time_transpose():
+def test_masked_native_pressure_likelihood_gradient_and_time_transpose() -> None:
     plan, acquisition, rates = _survey()
     true = plan.simulate(1.35, acquisition, rates)
     active = np.ones(true.traces.values.shape, dtype="bool")

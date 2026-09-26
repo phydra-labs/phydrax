@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _program():
+def _program() -> Any:
     return phx.optim.MixedIntegerProgram(
         phx.optim.LinearProgram(
             jnp.asarray([-1.0, 0.0]),
@@ -23,7 +26,7 @@ def _program():
     )
 
 
-def test_learned_proposal_is_audited_before_becoming_solver_input():
+def test_learned_proposal_is_audited_before_becoming_solver_input() -> None:
     program = _program()
     manifest = phx.ml.optimization.MixedIntegerProposalManifest(
         program.structure_id,
@@ -48,7 +51,7 @@ def test_learned_proposal_is_audited_before_becoming_solver_input():
     np.testing.assert_allclose(result.primal, [1.0, 0.25], atol=1e-7)
 
 
-def test_support_refusal_and_infeasible_continuous_value_block_admission():
+def test_support_refusal_and_infeasible_continuous_value_block_admission() -> None:
     program = _program()
     manifest = phx.ml.optimization.MixedIntegerProposalManifest(
         program.structure_id,

@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import platform
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -17,7 +19,7 @@ Q = phx.operators.quantum
 X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
 
 
-def _state_vector_rows():
+def _state_vector_rows() -> Any:
     rows = []
     for wire_count in (4, 8, 10):
         wire_ids = tuple(f"q{index}" for index in range(wire_count))
@@ -66,7 +68,7 @@ def _state_vector_rows():
     return rows
 
 
-def _density_row():
+def _density_row() -> Any:
     wire_ids = tuple(f"q{index}" for index in range(6))
     layout = Q.HilbertRegisterLayout(wire_ids, (2,) * len(wire_ids))
     gamma = jnp.asarray(0.2)
@@ -115,7 +117,7 @@ def _density_row():
     }
 
 
-def main():
+def main() -> None:
     print(
         json.dumps(
             {

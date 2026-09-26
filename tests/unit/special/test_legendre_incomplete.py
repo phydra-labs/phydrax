@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -9,7 +10,7 @@ import scipy.special
 import phydrax as phx
 
 
-def test_incomplete_first_and_second_kind_match_scipy_over_periods():
+def test_incomplete_first_and_second_kind_match_scipy_over_periods() -> None:
     amplitudes = np.asarray([-20.0, -7.2, -math.pi / 2, -0.3, 0.0, 0.8, 4.0, 19.0])
     parameters = np.asarray([-2.0, -0.5, 0.0, 0.2, 0.8, 0.99])
     phi, m = np.meshgrid(amplitudes, parameters, indexing="ij")
@@ -22,7 +23,7 @@ def test_incomplete_first_and_second_kind_match_scipy_over_periods():
         np.testing.assert_allclose(actual, expected, rtol=8e-13, atol=3e-14)
 
 
-def test_incomplete_third_kind_matches_high_precision_reference():
+def test_incomplete_third_kind_matches_high_precision_reference() -> None:
     characteristics = np.asarray([-3.0, -0.2, 0.0, 0.4, 0.9])
     amplitudes = np.asarray([-7.0, -1.2, 0.2, 1.4, 8.0])
     parameters = np.asarray([-1.0, 0.0, 0.3, 0.8, 0.99])
@@ -43,7 +44,7 @@ def test_incomplete_third_kind_matches_high_precision_reference():
     np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=3e-14)
 
 
-def test_incomplete_third_kind_large_negative_characteristic_is_factored():
+def test_incomplete_third_kind_large_negative_characteristic_is_factored() -> None:
     characteristic = -1e300
     amplitudes = np.asarray([0.3, 4.0, -7.0])
     periods = np.floor((amplitudes + 0.5 * math.pi) / math.pi)
@@ -76,7 +77,7 @@ def test_incomplete_third_kind_large_negative_characteristic_is_factored():
     )
 
 
-def test_incomplete_legendre_amplitude_derivatives_are_integrands():
+def test_incomplete_legendre_amplitude_derivatives_are_integrands() -> None:
     phi = jnp.asarray([-4.0, -0.7, 0.3, 1.2, 5.0])
     m = jnp.asarray([-0.5, 0.0, 0.2, 0.8, 0.95])
     n = jnp.asarray([-1.0, -0.2, 0.0, 0.4, 0.8])
@@ -93,10 +94,10 @@ def test_incomplete_legendre_amplitude_derivatives_are_integrands():
     )
 
 
-def test_incomplete_legendre_parameter_derivatives_compose_across_modes():
+def test_incomplete_legendre_parameter_derivatives_compose_across_modes() -> None:
     point = jnp.asarray([0.2, 4.0, 0.4])
 
-    def observable(arguments):
+    def observable(arguments: Any) -> Any:
         n, phi, m = arguments
         return (
             phx.special.ellipkinc(phi, m)
@@ -121,7 +122,7 @@ def test_incomplete_legendre_parameter_derivatives_compose_across_modes():
     )
 
 
-def test_incomplete_second_kind_endpoint_parameter_derivatives():
+def test_incomplete_second_kind_endpoint_parameter_derivatives() -> None:
     amplitude = 0.5
     for parameter, direction in ((0.0, 1), (1.0, -1)):
         function = lambda value: phx.special.ellipeinc(amplitude, value)
@@ -141,13 +142,13 @@ def test_incomplete_second_kind_endpoint_parameter_derivatives():
         )
 
 
-def test_incomplete_second_kind_endpoint_period_amplitude_derivative():
+def test_incomplete_second_kind_endpoint_period_amplitude_derivative() -> None:
     function = lambda phi: phx.special.ellipeinc(phi, 1.0)
     np.testing.assert_allclose(jax.jacfwd(function)(math.pi), 1.0, rtol=0.0, atol=0.0)
     np.testing.assert_allclose(jax.jacrev(function)(math.pi), 1.0, rtol=0.0, atol=0.0)
 
 
-def test_incomplete_legendre_period_reductions_and_oddness():
+def test_incomplete_legendre_period_reductions_and_oddness() -> None:
     phi = jnp.asarray([-2.0, -0.4, 0.3, 1.7])
     m = 0.6
     n = 0.3
@@ -171,7 +172,7 @@ def test_incomplete_legendre_period_reductions_and_oddness():
         )
 
 
-def test_incomplete_legendre_domains_and_broadcasting():
+def test_incomplete_legendre_domains_and_broadcasting() -> None:
     values = phx.special.ellipkinc(
         jnp.asarray([0.2, 0.4])[:, None], jnp.asarray([0.0, 0.5])
     )

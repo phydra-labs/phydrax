@@ -6,18 +6,25 @@ import phydrax as phx
 
 units = phx.atomistic.AtomisticUnitSystem.reduced()
 system_plan = phx.atomistic.AtomisticSystemPlan(
+    # ty: ignore[invalid-argument-type]
     [10, 20, 30],
+    # ty: ignore[invalid-argument-type]
     [1, 1, 1],
+    # ty: ignore[invalid-argument-type]
     [1.0, 1.0, 1.0],
     units,
+    # ty: ignore[invalid-argument-type]
     atom_type_ids=[0, 0, 1],
+    # ty: ignore[invalid-argument-type]
     charges=[1.0, -1.0, 0.0],
+    # ty: ignore[invalid-argument-type]
     region_ids=[1, 1, 0],
 )
 force_field = phx.atomistic.AtomisticForceFieldPlan(
     system_plan,
     phx.atomistic.AtomisticPotentialProgram(
         [
+            # ty: ignore[invalid-argument-type]
             phx.atomistic.LennardJonesPotential([0.4, 0.8], [1.0, 1.2], 3.0),
             phx.atomistic.DirectCoulombPotential(),
         ]
@@ -44,7 +51,9 @@ schedule = phx.atomistic.AlchemicalControlSchedulePlan(
 )
 partition = phx.atomistic.AlchemicalInteractionPartitionPlan(
     schedule.control_ids,
+    # ty: ignore[invalid-argument-type]
     ([10, 20], [10, 20]),
+    # ty: ignore[invalid-argument-type]
     mapped_particle_ids=[[10, 10], [20, 20]],
 )
 hamiltonian = phx.atomistic.ControlledHamiltonianPlan(
@@ -84,6 +93,7 @@ lanes = tuple(
 )
 runtime = phx.atomistic.sampling.AtomisticMultistatePlan(
     thermodynamic,
+    # ty: ignore[invalid-argument-type]
     [100, 200, 300],
     qualification=phx.atomistic.sampling.AtomisticCanonicalSamplingQualification(
         dynamics,
@@ -95,6 +105,7 @@ runtime = phx.atomistic.sampling.AtomisticMultistatePlan(
     exchange=phx.atomistic.sampling.AtomisticReplicaExchangePlan(1),
     run_id="controlled-free-energy-example",
 ).prepare(dynamics)
+# ty: ignore[invalid-argument-type]
 initial = runtime.initialize(lanes, [0, 1, 2], jax.random.key(21))
 segment = phx.atomistic.sampling.AtomisticMultistateSegmentPlan(
     runtime,

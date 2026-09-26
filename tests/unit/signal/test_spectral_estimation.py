@@ -5,7 +5,7 @@ import pytest
 from phydrax.signal import WelchSpectrumPlan
 
 
-def test_welch_recovers_sinusoid_frequency_and_variance():
+def test_welch_recovers_sinusoid_frequency_and_variance() -> None:
     sample_interval = 0.01
     time = jnp.arange(1000) * sample_interval
     signal = jnp.sin(2.0 * jnp.pi * 10.0 * time)
@@ -19,7 +19,7 @@ def test_welch_recovers_sinusoid_frequency_and_variance():
     assert result.segment_count == 9
 
 
-def test_welch_preserves_leading_signal_axes():
+def test_welch_preserves_leading_signal_axes() -> None:
     sample_interval = 0.02
     time = jnp.arange(256) * sample_interval
     signals = jnp.stack(
@@ -42,14 +42,17 @@ def test_welch_rejects_invalid_axes_and_fractional_topology() -> None:
     with pytest.raises(ValueError, match="out of bounds"):
         plan.evaluate(values, axis=2)
     with pytest.raises(TypeError, match="integer"):
+        # ty: ignore[invalid-argument-type]
         plan.evaluate(values, axis=1.5)
     with pytest.raises(TypeError, match="integer"):
+        # ty: ignore[invalid-argument-type]
         WelchSpectrumPlan(0.1, 4.5)
     with pytest.raises(TypeError, match="integer"):
+        # ty: ignore[invalid-argument-type]
         WelchSpectrumPlan(0.1, 4, overlap=1.5)
 
 
-def test_welch_tukey_median_policy_retains_one_sided_power():
+def test_welch_tukey_median_policy_retains_one_sided_power() -> None:
     sample_interval = 0.01
     time = jnp.arange(1200) * sample_interval
     signal = jnp.sin(2.0 * jnp.pi * 8.0 * time)

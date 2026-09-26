@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -20,7 +21,7 @@ from benchmarks._runtime import (
 )
 
 
-def _affine_geometry(grid: phx.discretization.iga.BSplineGrid):
+def _affine_geometry(grid: phx.discretization.iga.BSplineGrid) -> Any:
     coordinates = grid.greville_abscissae
     xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
     return phx.discretization.iga.NURBSGeometryState(
@@ -29,7 +30,7 @@ def _affine_geometry(grid: phx.discretization.iga.BSplineGrid):
     )
 
 
-def _case(degree: int, span_count: int, *, warmup: int, repeats: int):
+def _case(degree: int, span_count: int, *, warmup: int, repeats: int) -> Any:
     grid = phx.discretization.iga.BSplineGrid.open_uniform(
         degree,
         span_count,
@@ -95,6 +96,7 @@ def _case(degree: int, span_count: int, *, warmup: int, repeats: int):
     )
     residual = compiled.residual(result.value)
     residual_norm = jnp.sqrt(jnp.real(jnp.vdot(residual, residual)))
+    # ty: ignore[invalid-argument-type]
     right_hand_side_norm = jnp.sqrt(jnp.real(jnp.vdot(right_hand_side, right_hand_side)))
     evidence = discretization.default_geometry_evidence
     return {
@@ -121,7 +123,7 @@ def _case(degree: int, span_count: int, *, warmup: int, repeats: int):
     }
 
 
-def run(*, smoke: bool, warmup: int, repeats: int):
+def run(*, smoke: bool, warmup: int, repeats: int) -> Any:
     spans = (2, 4) if smoke else (4, 8, 16)
     rows = [
         _case(degree, span_count, warmup=warmup, repeats=repeats)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._sharp_measures import exact_sharp_geometry
 
 
-def test_fixed_population_flip_workflow_is_jittable_and_transactional():
+def test_fixed_population_flip_workflow_is_jittable_and_transactional() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(8) for _ in range(2)),
         axis_names=("x", "y"),
@@ -43,7 +46,7 @@ def test_fixed_population_flip_workflow_is_jittable_and_transactional():
     assert result.accepted_state.particles.position.shape == position.shape
 
 
-def _qualified_flip_problem():
+def _qualified_flip_problem() -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(8) for _ in range(2)),
         axis_names=("x", "y"),
@@ -88,11 +91,11 @@ def _qualified_flip_problem():
         operators, boundaries=boundaries, tolerance=1.0e-7
     )
 
-    def plane(points, time, args):
+    def plane(points: Any, time: Any, args: Any) -> Any:
         del time, args
         return points[..., 0] - 0.125
 
-    def wall(points, time, args):
+    def wall(points: Any, time: Any, args: Any) -> Any:
         del time, args
         return jnp.zeros_like(points)
 
@@ -118,7 +121,7 @@ def _qualified_flip_problem():
     return finite_volume, geometry, transfer, compiled
 
 
-def test_qualified_flip_transfer_normalizes_only_over_open_support():
+def test_qualified_flip_transfer_normalizes_only_over_open_support() -> None:
     _, geometry, transfer, _ = _qualified_flip_problem()
     position = jnp.asarray([[0.20, 0.25], [0.30, 0.25], [0.20, 0.40], [0.30, 0.40]])
     routes = transfer.build(position)
@@ -133,7 +136,7 @@ def test_qualified_flip_transfer_normalizes_only_over_open_support():
     assert jnp.isclose(jnp.sum(result.particle_volume_content), 4.0)
 
 
-def test_qualified_flip_geometry_failure_rolls_back_whole_state():
+def test_qualified_flip_geometry_failure_rolls_back_whole_state() -> None:
     _, geometry, _, compiled = _qualified_flip_problem()
     position = jnp.asarray([[0.20, 0.25], [0.30, 0.25], [0.20, 0.40], [0.30, 0.40]])
     state = compiled.initialize_state(position, jnp.zeros_like(position))

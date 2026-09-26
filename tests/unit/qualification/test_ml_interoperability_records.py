@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from phydrax._fingerprint import canonical_fingerprint
@@ -36,13 +38,15 @@ def _outcome(
     )
 
 
-def _passing(gate_ids=_ALL_GATES) -> list[runner.ScenarioOutcome]:
+def _passing(gate_ids: Any = _ALL_GATES) -> list[runner.ScenarioOutcome]:
     return [
         _outcome(gate_id, name) for gate_id in gate_ids for name in ("first", "second")
     ]
 
 
-def _report(scenarios, gate_ids=None, *, collection_failed=False):
+def _report(
+    scenarios: Any, gate_ids: Any = None, *, collection_failed: Any = False
+) -> Any:
     return runner.qualification_report(
         runner.ScenarioRun(tuple(scenarios), collection_failed),
         gate_ids,
@@ -53,7 +57,7 @@ def _report(scenarios, gate_ids=None, *, collection_failed=False):
     )
 
 
-def _chain(entry):
+def _chain(entry: Any) -> Any:
     """Reconstruct one serialized gate chain, verifying every content address."""
     support = SupportTuple.from_record(entry["support_tuple"])
     criterion = QualificationCriterion.from_record(entry["criterion"])
@@ -63,12 +67,12 @@ def _chain(entry):
     return support, criterion, start, observation, evidence
 
 
-def _gate(report, gate_id):
+def _gate(report: Any, gate_id: Any) -> Any:
     (entry,) = [entry for entry in report["gates"] if entry["gate"] == gate_id]
     return entry
 
 
-def test_all_passing_gates_qualify_with_distinct_revalidated_chains():
+def test_all_passing_gates_qualify_with_distinct_revalidated_chains() -> None:
     report = _report(_passing())
 
     assert report["outcome"] == "passed"
@@ -94,7 +98,7 @@ def test_all_passing_gates_qualify_with_distinct_revalidated_chains():
     assert len(support_ids) == len(criterion_ids) == len(_ALL_GATES)
 
 
-def test_one_failed_scenario_fails_only_its_gate_and_the_report():
+def test_one_failed_scenario_fails_only_its_gate_and_the_report() -> None:
     scenarios = _passing()
     scenarios[4] = _outcome("G3", "first", "failed", "AssertionError: work grew")
     report = _report(scenarios)
@@ -109,7 +113,7 @@ def test_one_failed_scenario_fails_only_its_gate_and_the_report():
     assert report["outcome"] == "failed"
 
 
-def test_skipped_scenario_does_not_qualify_its_gate():
+def test_skipped_scenario_does_not_qualify_its_gate() -> None:
     scenarios = _passing()
     scenarios[0] = _outcome("G1", "first", "skipped", "Skipped: provider missing")
     report = _report(scenarios)
@@ -118,7 +122,7 @@ def test_skipped_scenario_does_not_qualify_its_gate():
     assert report["outcome"] == "failed"
 
 
-def test_selected_gate_without_scenarios_fails():
+def test_selected_gate_without_scenarios_fails() -> None:
     scenarios = [s for s in _passing() if runner.scenario_gate(s.nodeid) != "G21"]
     report = _report(scenarios)
 
@@ -128,7 +132,7 @@ def test_selected_gate_without_scenarios_fails():
     assert report["outcome"] == "failed"
 
 
-def test_collection_failure_makes_every_gate_inconclusive():
+def test_collection_failure_makes_every_gate_inconclusive() -> None:
     report = _report([], collection_failed=True)
 
     assert report["inconclusive_gates"] == list(_ALL_GATES)
@@ -138,7 +142,7 @@ def test_collection_failure_makes_every_gate_inconclusive():
     assert report["outcome"] == "inconclusive"
 
 
-def test_report_is_independent_of_scenario_observation_order():
+def test_report_is_independent_of_scenario_observation_order() -> None:
     scenarios = _passing()
 
     assert runner.serialize_report(_report(scenarios)) == runner.serialize_report(
@@ -146,7 +150,7 @@ def test_report_is_independent_of_scenario_observation_order():
     )
 
 
-def test_changing_one_outcome_changes_only_that_gates_observation_and_evidence():
+def test_changing_one_outcome_changes_only_that_gates_observation_and_evidence() -> None:
     baseline = _report(_passing())
     scenarios = _passing()
     scenarios[10] = _outcome("G6", "first", "failed", "refusal missing")
@@ -164,7 +168,7 @@ def test_changing_one_outcome_changes_only_that_gates_observation_and_evidence()
             assert before[key] == after[key]
 
 
-def test_records_of_different_gates_cannot_be_combined():
+def test_records_of_different_gates_cannot_be_combined() -> None:
     report = _report(_passing())
     _, _, g1_start, g1_observation, _ = _chain(_gate(report, "G1"))
     _, g2_criterion, _, _, g2_evidence = _chain(_gate(report, "G2"))
@@ -175,7 +179,7 @@ def test_records_of_different_gates_cannot_be_combined():
         )
 
 
-def test_scenario_gate_maps_parametrized_nodes_to_their_gate():
+def test_scenario_gate_maps_parametrized_nodes_to_their_gate() -> None:
     assert runner.scenario_gate(f"{_SUITE}::test_g12_rollback[PHYSICAL_MAY_COMMIT]") == (
         "G12"
     )
@@ -191,12 +195,12 @@ def test_scenario_gate_maps_parametrized_nodes_to_their_gate():
         "tests/integration/test_other.py::test_g1_closure",
     ],
 )
-def test_scenario_gate_rejects_nodes_outside_the_gate_contract(nodeid):
+def test_scenario_gate_rejects_nodes_outside_the_gate_contract(nodeid: Any) -> None:
     with pytest.raises(ValueError):
         runner.scenario_gate(nodeid)
 
 
-def test_subset_selection_reports_missing_gates_and_is_inconclusive():
+def test_subset_selection_reports_missing_gates_and_is_inconclusive() -> None:
     selection = ("G22", "G17")
     report = _report(_passing(selection), selection)
 
@@ -208,6 +212,6 @@ def test_subset_selection_reports_missing_gates_and_is_inconclusive():
     assert report["outcome"] == "inconclusive"
 
 
-def test_scenario_of_an_unselected_gate_is_refused():
+def test_scenario_of_an_unselected_gate_is_refused() -> None:
     with pytest.raises(ValueError):
         _report(_passing(("G17", "G22")), ("G17",))

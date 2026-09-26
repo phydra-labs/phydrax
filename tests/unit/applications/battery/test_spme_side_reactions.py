@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -48,7 +51,7 @@ from phydrax.applications.battery._spme_side_reactions import (
 FARADAY = 96485.33212
 
 
-def _constant(value, support, *, quantity, value_unit):
+def _constant(value: Any, support: Any, *, quantity: Any, value_unit: Any) -> Any:
     return ConstantPropertyLaw(
         jnp.asarray(value),
         jnp.asarray(support),
@@ -61,7 +64,7 @@ def _constant(value, support, *, quantity, value_unit):
     )
 
 
-def _spm_parameters(*, maximum_current=20.0):
+def _spm_parameters(*, maximum_current: Any = 20.0) -> Any:
     return SpmParameters(
         electrode_area_m2=0.1,
         negative_electrode_thickness_m=1.0e-4,
@@ -117,7 +120,7 @@ def _spm_parameters(*, maximum_current=20.0):
     )
 
 
-def _marquis_parameters(*, maximum_current=20.0):
+def _marquis_parameters(*, maximum_current: Any = 20.0) -> Any:
     return Marquis2019SpmeParameters(
         _spm_parameters(maximum_current=maximum_current),
         separator_thickness_m=5.0e-5,
@@ -166,11 +169,11 @@ def _marquis_parameters(*, maximum_current=20.0):
 
 def _parameters(
     *,
-    rate=1.0e-14,
-    initial_film=1.0e-9,
-    conductivity=1.0e-6,
-    maximum_current=20.0,
-):
+    rate: Any = 1.0e-14,
+    initial_film: Any = 1.0e-9,
+    conductivity: Any = 1.0e-6,
+    maximum_current: Any = 20.0,
+) -> Any:
     return BrosaPlanellaSpmeSeiParameters(
         _marquis_parameters(maximum_current=maximum_current),
         sei_reaction_rate_m_s=rate,
@@ -198,13 +201,13 @@ def _parameters(
 
 def _adapter(
     *,
-    shells=5,
-    negative_cells=4,
-    separator_cells=3,
-    positive_cells=4,
-    weak_threshold=0.1,
-    overpotential_threshold=0.1,
-):
+    shells: Any = 5,
+    negative_cells: Any = 4,
+    separator_cells: Any = 3,
+    positive_cells: Any = 4,
+    weak_threshold: Any = 0.1,
+    overpotential_threshold: Any = 0.1,
+) -> Any:
     adapter = BrosaPlanellaSpmeSeiAdapter(
         BrosaPlanellaSpmeSeiPlan(
             shells,
@@ -218,7 +221,7 @@ def _adapter(
     return adapter, adapter.prepare()
 
 
-def _runtime(parameters, current, *, duration=2.0):
+def _runtime(parameters: Any, current: Any, *, duration: Any = 2.0) -> Any:
     protocol = BatteryProtocolPlan((CurrentStepPlan(duration),))
     values = BatteryProtocolValues(protocol, jnp.asarray((current,)))
     return BatteryRuntimeInputs(
@@ -230,7 +233,7 @@ def _runtime(parameters, current, *, duration=2.0):
     )
 
 
-def _state(adapter, prepared, parameters):
+def _state(adapter: Any, prepared: Any, parameters: Any) -> Any:
     return adapter.initial_state(
         prepared,
         parameters,
@@ -238,11 +241,13 @@ def _state(adapter, prepared, parameters):
     )
 
 
-def _observable(adapter, output, name):
+def _observable(adapter: Any, output: Any, name: Any) -> Any:
     return output.values[..., adapter.observable_names.index(name)]
 
 
-def test_local_side_current_uses_electrode_average_only_at_particle_boundary_and_rest_cancels():
+def test_local_side_current_uses_electrode_average_only_at_particle_boundary_and_rest_cancels() -> (
+    None
+):
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -287,7 +292,7 @@ def test_local_side_current_uses_electrode_average_only_at_particle_boundary_and
     )
 
 
-def test_porosity_changes_storage_effective_transport_and_local_film_voltage():
+def test_porosity_changes_storage_effective_transport_and_local_film_voltage() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -374,7 +379,7 @@ def test_porosity_changes_storage_effective_transport_and_local_film_voltage():
     )
 
 
-def test_zero_sei_is_exact_marquis_reduction_for_state_rate_and_observables():
+def test_zero_sei_is_exact_marquis_reduction_for_state_rate_and_observables() -> None:
     parameters = _parameters(rate=0.0, initial_film=0.0)
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -421,7 +426,7 @@ def test_zero_sei_is_exact_marquis_reduction_for_state_rate_and_observables():
     assert bool(_observable(adapter, output, "spme_sr:zero_sei_reduction"))
 
 
-def test_domain_and_two_spme_sr_asymptotic_assumptions_fail_explicitly():
+def test_domain_and_two_spme_sr_asymptotic_assumptions_fail_explicitly() -> None:
     parameters = _parameters(rate=1.0e-11, maximum_current=0.02)
     adapter, prepared = _adapter(weak_threshold=1.0e-5, overpotential_threshold=1.0e-5)
     state = _state(adapter, prepared, parameters)
@@ -454,7 +459,7 @@ def test_domain_and_two_spme_sr_asymptotic_assumptions_fail_explicitly():
     assert bool(jnp.all(jnp.isfinite(invalid_output.values)))
 
 
-def test_jit_vmap_and_gradients_keep_fixed_local_field_shapes():
+def test_jit_vmap_and_gradients_keep_fixed_local_field_shapes() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -475,7 +480,7 @@ def test_jit_vmap_and_gradients_keep_fixed_local_field_shapes():
     )(states)
     assert mapped.shape == (2, 4)
 
-    def side_current_for_rate(rate):
+    def side_current_for_rate(rate: Any) -> Any:
         candidate = eqx.tree_at(
             lambda value: value.sei_reaction_rate_m_s,
             parameters,
@@ -488,7 +493,7 @@ def test_jit_vmap_and_gradients_keep_fixed_local_field_shapes():
     assert float(derivative) > 0.0
 
 
-def test_orchestration_closes_lithium_charge_product_film_and_porosity_ledgers():
+def test_orchestration_closes_lithium_charge_product_film_and_porosity_ledgers() -> None:
     parameters = _parameters()
     adapter = BrosaPlanellaSpmeSeiAdapter(
         BrosaPlanellaSpmeSeiPlan(
@@ -508,6 +513,7 @@ def test_orchestration_closes_lithium_charge_product_film_and_porosity_ledgers()
     profile = BROSA_PLANELLA_SPME_SEI_CANDIDATE
     save_times = jnp.asarray((0.0, 0.25, 0.5, 0.75, 1.0))
     experiment = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         BatteryOutputPlan(
@@ -557,7 +563,9 @@ def test_orchestration_closes_lithium_charge_product_film_and_porosity_ledgers()
     )
 
 
-def test_state_is_strictly_isothermal_sei_only_without_thermal_or_plating_fields():
+def test_state_is_strictly_isothermal_sei_only_without_thermal_or_plating_fields() -> (
+    None
+):
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)

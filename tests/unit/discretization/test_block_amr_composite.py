@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +18,7 @@ from phydrax.discretization.finite_volume._amr_diffusion import (
 )
 
 
-def _hierarchy(*, periodic=False):
+def _hierarchy(*, periodic: Any = False) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=periodic),),
         axis_names=("x",),
@@ -29,7 +32,7 @@ def _hierarchy(*, periodic=False):
     )
 
 
-def _topology(*, periodic=False, tagged_cell=2):
+def _topology(*, periodic: Any = False, tagged_cell: Any = 2) -> Any:
     hierarchy = _hierarchy(periodic=periodic)
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     initial = compiler.initial_topology()
@@ -40,34 +43,39 @@ def _topology(*, periodic=False, tagged_cell=2):
     return result.topology
 
 
-def _operator(*, periodic=False, dirichlet=False, coefficient=1.0):
+def _operator(
+    *, periodic: Any = False, dirichlet: Any = False, coefficient: Any = 1.0
+) -> Any:
     layout = CompositeAMRCellLayout(_topology(periodic=periodic), dtype=jnp.float64)
     boundaries = None
     if dirichlet:
         boundaries = {"x": ("dirichlet", "dirichlet")}
+    # ty: ignore[invalid-argument-type]
     plan = CompositeAMRDiffusionPlan(layout, boundaries=boundaries)
     return plan.prepare(coefficient)
 
 
-def _vector(layout, *, phase=0.0):
+def _vector(layout: Any, *, phase: Any = 0.0) -> Any:
     coordinates = jnp.sin(
         jnp.arange(layout.space.size, dtype=layout.dtype) * 0.37 + phase
     )
     return layout.space.unflatten(coordinates)
 
 
-def _assert_tree_allclose(left, right, *, rtol=1.0e-12, atol=1.0e-12):
+def _assert_tree_allclose(
+    left: Any, right: Any, *, rtol: Any = 1.0e-12, atol: Any = 1.0e-12
+) -> None:
     for left_leaf, right_leaf in zip(
         jax.tree.leaves(left), jax.tree.leaves(right), strict=True
     ):
         np.testing.assert_allclose(left_leaf, right_leaf, rtol=rtol, atol=atol)
 
 
-def _norm(space, value):
+def _norm(space: Any, value: Any) -> Any:
     return jnp.sqrt(jnp.real(space.inner(value, value)))
 
 
-def test_composite_layout_uses_leaf_volumes_and_positive_dummy_weights():
+def test_composite_layout_uses_leaf_volumes_and_positive_dummy_weights() -> None:
     layout = CompositeAMRCellLayout(_topology(), dtype=jnp.float64)
     leaf = np.asarray(layout.flat_leaf_mask)
     measures = np.asarray(layout.cell_measures)
@@ -80,7 +88,7 @@ def test_composite_layout_uses_leaf_volumes_and_positive_dummy_weights():
     assert layout.layout_id
 
 
-def test_composite_operator_is_linear_and_masked_identity_is_decoupled():
+def test_composite_operator_is_linear_and_masked_identity_is_decoupled() -> None:
     operator = _operator(dirichlet=True)
     layout = operator.layout
     left = _vector(layout, phase=0.1)
@@ -120,7 +128,7 @@ def test_composite_operator_is_linear_and_masked_identity_is_decoupled():
         layout.require_zero_masked(bad_rhs)
 
 
-def test_energy_weighted_adjoint_and_euclidean_transpose_are_exact_routes():
+def test_energy_weighted_adjoint_and_euclidean_transpose_are_exact_routes() -> None:
     operator = _operator(periodic=True, coefficient=2.5)
     layout = operator.layout
     left = _vector(layout, phase=0.2)
@@ -168,8 +176,8 @@ def test_energy_weighted_adjoint_and_euclidean_transpose_are_exact_routes():
 
 @pytest.mark.parametrize("periodic", [False, True])
 def test_periodic_and_neumann_constant_kernel_compatibility_and_zero_mean_gauge(
-    periodic,
-):
+    periodic: Any,
+) -> None:
     operator = _operator(periodic=periodic)
     layout = operator.layout
     constant = layout.space.unflatten(layout.constant_mode_coordinates()[:, 0])
@@ -202,7 +210,7 @@ def test_periodic_and_neumann_constant_kernel_compatibility_and_zero_mean_gauge(
     assert system.nullspace_policy.right is system.nullspace_policy.left
 
 
-def test_dirichlet_operator_is_definite_and_boundary_data_is_only_rhs_lift():
+def test_dirichlet_operator_is_definite_and_boundary_data_is_only_rhs_lift() -> None:
     operator = _operator(dirichlet=True, coefficient=3.0)
     layout = operator.layout
     policy = phx.linalg.MaterializationPolicy(max_entries=10_000, max_bytes=1_000_000)
@@ -225,7 +233,7 @@ def test_dirichlet_operator_is_definite_and_boundary_data_is_only_rhs_lift():
     assert operator.operator_id == operator.plan.prepare(3.0).operator_id
 
 
-def test_harmonic_mortar_weights_and_integrated_interface_flux_cancel():
+def test_harmonic_mortar_weights_and_integrated_interface_flux_cancel() -> None:
     topology = _topology()
     layout = CompositeAMRCellLayout(topology, dtype=jnp.float64)
     coefficients = tuple(
@@ -255,7 +263,7 @@ def test_harmonic_mortar_weights_and_integrated_interface_flux_cancel():
     assert operator.numeric_fingerprint
 
 
-def test_composite_topology_mismatch_is_refused():
+def test_composite_topology_mismatch_is_refused() -> None:
     first = _topology(tagged_cell=2)
     second = _topology(tagged_cell=5)
     layout = CompositeAMRCellLayout(first, dtype=jnp.float64)
@@ -267,7 +275,7 @@ def test_composite_topology_mismatch_is_refused():
         plan.require_topology(second)
 
 
-def test_dirichlet_composite_operator_solves_with_ordinary_krylov():
+def test_dirichlet_composite_operator_solves_with_ordinary_krylov() -> None:
     operator = _operator(dirichlet=True)
     rhs = operator.prepare_rhs(1.0, boundary_data={"x": (0.0, 1.0)})
     result = phx.linalg.solve(
@@ -294,7 +302,7 @@ def test_dirichlet_composite_operator_solves_with_ordinary_krylov():
     )
 
 
-def test_fv_side_native_v_cycle_contracts_composite_residual():
+def test_fv_side_native_v_cycle_contracts_composite_residual() -> None:
     operator = _operator(dirichlet=True)
     fine_size = operator.source.size
     coarse_size = (fine_size + 1) // 2

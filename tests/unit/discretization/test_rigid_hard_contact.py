@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,7 +23,9 @@ from phydrax.discretization.particle._rigid_unilateral import (
 )
 
 
-def _prepared_bodies(count=1, *, dimension=2, fixed_mask=None):
+def _prepared_bodies(
+    count: Any = 1, *, dimension: Any = 2, fixed_mask: Any = None
+) -> Any:
     ids = jnp.arange(100, 100 + count, dtype=jnp.int64)
     particles = phx.discretization.ParticleSetPlan(
         ids,
@@ -45,7 +50,7 @@ def _prepared_bodies(count=1, *, dimension=2, fixed_mask=None):
     return ids, bodies
 
 
-def _kinematics(bodies, velocity, *, angular_velocity=None):
+def _kinematics(bodies: Any, velocity: Any, *, angular_velocity: Any = None) -> Any:
     velocity = jnp.asarray(velocity, dtype=bodies.particles.safe_masses.dtype)
     position = jnp.zeros_like(velocity)
     if bodies.ambient_dimension == 2:
@@ -69,16 +74,16 @@ def _kinematics(bodies, velocity, *, angular_velocity=None):
 
 
 def _geometry(
-    normal,
-    relative_velocity,
+    normal: Any,
+    relative_velocity: Any,
     *,
-    gap=0.0,
-    left_arm=None,
-    right_arm=None,
-    key=17,
-    valid=True,
-    successful=True,
-):
+    gap: Any = 0.0,
+    left_arm: Any = None,
+    right_arm: Any = None,
+    key: Any = 17,
+    valid: Any = True,
+    successful: Any = True,
+) -> Any:
     normal = jnp.asarray(normal, dtype="float64").reshape((1, -1))
     relative = jnp.asarray(relative_velocity, dtype=normal.dtype).reshape((1, -1))
     dimension = normal.shape[-1]
@@ -127,10 +132,10 @@ def _geometry(
 
 def _prepared_plane_contact(
     *,
-    dimension=2,
-    friction=0.0,
-    restitution=0.0,
-):
+    dimension: Any = 2,
+    friction: Any = 0.0,
+    restitution: Any = 0.0,
+) -> Any:
     _, bodies = _prepared_bodies(1, dimension=dimension)
     plan = HardContactRoutePlan(
         jnp.asarray([0]),
@@ -143,7 +148,7 @@ def _prepared_plane_contact(
     return bodies, plan.prepare(bodies)
 
 
-def test_joint_limit_free_active_and_release():
+def test_joint_limit_free_active_and_release() -> None:
     ids, bodies = _prepared_bodies(2, dimension=3, fixed_mask=[True, False])
     reference = _kinematics(bodies, jnp.zeros((2, 3)))
     hinge = phx.discretization.HingeJointSetPlan(
@@ -211,7 +216,7 @@ def test_joint_limit_free_active_and_release():
 
 
 @pytest.mark.parametrize("restitution", [0.0, 0.5, 1.0])
-def test_sphere_plane_velocity_restitution_and_energy(restitution):
+def test_sphere_plane_velocity_restitution_and_energy(restitution: Any) -> None:
     bodies, prepared = _prepared_plane_contact(restitution=restitution)
     kinematics = _kinematics(bodies, [[0.0, -2.0]])
     geometry = _geometry(
@@ -237,7 +242,7 @@ def test_sphere_plane_velocity_restitution_and_energy(restitution):
     )
 
 
-def test_sphere_sphere_equal_mass_normal_impulse():
+def test_sphere_sphere_equal_mass_normal_impulse() -> None:
     _, bodies = _prepared_bodies(2, dimension=3)
     prepared = HardContactRoutePlan(
         jnp.asarray([0]),
@@ -258,7 +263,7 @@ def test_sphere_sphere_equal_mass_normal_impulse():
     assert jnp.allclose(result.accepted_kinematics.velocity, 0.0, atol=1.0e-7)
 
 
-def test_resting_contact_does_not_reapply_restitution():
+def test_resting_contact_does_not_reapply_restitution() -> None:
     bodies, prepared = _prepared_plane_contact(restitution=1.0)
     impact_kinematics = _kinematics(bodies, [[0.0, -1.0]])
     impact_geometry = _geometry([0.0, 1.0], [-0.0, -1.0], left_arm=[0.0, -1.0])
@@ -277,7 +282,7 @@ def test_resting_contact_does_not_reapply_restitution():
     assert jnp.allclose(resting.evaluation.normal_velocity_after, 0.0, atol=1.0e-8)
 
 
-def test_zero_friction_reduces_to_normal_contact():
+def test_zero_friction_reduces_to_normal_contact() -> None:
     bodies, prepared = _prepared_plane_contact(friction=0.0)
     kinematics = _kinematics(bodies, [[3.0, -1.0]])
     geometry = _geometry([0.0, 1.0], [3.0, -1.0], left_arm=[0.0, -1.0])
@@ -292,7 +297,7 @@ def test_zero_friction_reduces_to_normal_contact():
     ("friction", "expect_stick"),
     [(1.0, True), (0.1, False)],
 )
-def test_incline_contact_stick_and_slip(friction, expect_stick):
+def test_incline_contact_stick_and_slip(friction: Any, expect_stick: Any) -> None:
     bodies, prepared = _prepared_plane_contact(friction=friction)
     normal = jnp.asarray([-0.5, jnp.sqrt(0.75)])
     tangent = jnp.asarray([jnp.sqrt(0.75), 0.5])
@@ -309,7 +314,7 @@ def test_incline_contact_stick_and_slip(friction, expect_stick):
     assert result.evaluation.energy.friction_dissipation >= -1.0e-9
 
 
-def test_exact_cone_projection_and_spatial_basis_invariance():
+def test_exact_cone_projection_and_spatial_basis_invariance() -> None:
     planar = project_isotropic_coulomb_impulse(
         jnp.asarray([1.0]), jnp.asarray([[2.0]]), jnp.asarray([0.5])
     )
@@ -339,7 +344,7 @@ def test_exact_cone_projection_and_spatial_basis_invariance():
     assert jnp.all(jnp.isfinite(ball.derivative_tangent))
 
 
-def test_capacity_validation_and_geometry_failure_roll_back_atomically():
+def test_capacity_validation_and_geometry_failure_roll_back_atomically() -> None:
     _, bodies = _prepared_bodies(1, dimension=2)
     with pytest.raises(ValueError, match="capacity"):
         HardContactRoutePlan(
@@ -392,7 +397,7 @@ def test_capacity_validation_and_geometry_failure_roll_back_atomically():
     )
 
 
-def test_hard_contact_is_jittable_with_static_capacity():
+def test_hard_contact_is_jittable_with_static_capacity() -> None:
     bodies, prepared = _prepared_plane_contact(friction=0.4, restitution=0.5)
     state = prepared.initial_state()
     kinematics = _kinematics(bodies, [[0.25, -1.0]])

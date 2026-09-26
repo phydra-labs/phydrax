@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 
 
@@ -44,7 +46,14 @@ from phydrax.finance.exposure._xva import (
 )
 
 
-def _agreement(currency, *, netting_set_id="netting", threshold=100.0, mta=0.0, lag=0.0):
+def _agreement(
+    currency: Any,
+    *,
+    netting_set_id: Any = "netting",
+    threshold: Any = 100.0,
+    mta: Any = 0.0,
+    lag: Any = 0.0,
+) -> Any:
     return CollateralAgreement(
         currency,
         netting_set_id=netting_set_id,
@@ -58,7 +67,14 @@ def _agreement(currency, *, netting_set_id="netting", threshold=100.0, mta=0.0, 
     )
 
 
-def _defaults(times, occurred, *, law_id, recovery=0.4, coupling_id=None):
+def _defaults(
+    times: Any,
+    occurred: Any,
+    *,
+    law_id: Any,
+    recovery: Any = 0.4,
+    coupling_id: Any = None,
+) -> Any:
     path_count = len(times)
     occurred_mask = jnp.asarray(occurred, dtype="bool")
     return DefaultEventState(
@@ -75,13 +91,13 @@ def _defaults(times, occurred, *, law_id, recovery=0.4, coupling_id=None):
     )
 
 
-def _closeout():
+def _closeout() -> Any:
     return CloseoutConvention(
         "risk_free", "mpor_end", "counterparty", convention_id="closeout"
     )
 
 
-def _binding(cp_law, own_law, *, cp_coupling=None):
+def _binding(cp_law: Any, own_law: Any, *, cp_coupling: Any = None) -> Any:
     return CloseoutIdentityBinding(
         netting_set_id="netting",
         counterparty_reference_entity_id=f"entity-{cp_law}",
@@ -97,7 +113,7 @@ def _binding(cp_law, own_law, *, cp_coupling=None):
     )
 
 
-def _discount(times, currency, law_id):
+def _discount(times: Any, currency: Any, law_id: Any) -> Any:
     return DiscountFactorPath(
         times,
         jnp.ones_like(times),
@@ -108,7 +124,7 @@ def _discount(times, currency, law_id):
     )
 
 
-def test_collateral_threshold_mta_and_lag_boundaries_are_exact():
+def test_collateral_threshold_mta_and_lag_boundaries_are_exact() -> None:
     currency = Currency("USD", 2)
     agreement = _agreement(currency, threshold=10.0, mta=5.0)
     np.testing.assert_allclose(
@@ -128,7 +144,7 @@ def test_collateral_threshold_mta_and_lag_boundaries_are_exact():
     np.testing.assert_allclose(lagged_path.balances, [[0.0, 10.0, 10.0]])
 
 
-def test_grid_boundary_default_is_closed_out_after_mpor_before_positive_part():
+def test_grid_boundary_default_is_closed_out_after_mpor_before_positive_part() -> None:
     currency = Currency("USD", 2)
     times = jnp.asarray([0.0, 1.0, 2.0, 3.0])
     netting = NettingSet(
@@ -186,7 +202,7 @@ def test_grid_boundary_default_is_closed_out_after_mpor_before_positive_part():
     np.testing.assert_allclose(exposure.positive_exposure, [[10.0, 0.0, 20.0, 0.0]])
 
 
-def test_invalid_path_weights_are_rejected_and_explicit_wwr_changes_exposure():
+def test_invalid_path_weights_are_rejected_and_explicit_wwr_changes_exposure() -> None:
     with pytest.raises(ValueError, match="Invalid paths"):
         PathWeighting(
             jnp.asarray([0.5, 0.5]),
@@ -297,7 +313,7 @@ def test_invalid_path_weights_are_rejected_and_explicit_wwr_changes_exposure():
     np.testing.assert_allclose(wwr.expected_positive_exposure, [2.5, 2.5])
 
 
-def _profile():
+def _profile() -> Any:
     return ExposureProfile(
         jnp.asarray([0.0, 1.0, 2.0]),
         jnp.asarray([0.0, 10.0, 20.0]),
@@ -317,7 +333,7 @@ def _profile():
     )
 
 
-def test_xva_sign_decomposition_and_independent_corruption_replay():
+def test_xva_sign_decomposition_and_independent_corruption_replay() -> None:
     profile = _profile()
     discount = jnp.ones((3,))
     funding = FundingPolicy(

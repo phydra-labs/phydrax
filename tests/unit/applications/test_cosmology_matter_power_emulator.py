@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import sys
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -174,9 +175,12 @@ def _request(
         power_field=field,
     )
     descriptor = cosmology.MatterPowerDescriptor(
+        # ty: ignore[invalid-argument-type]
         field,
+        # ty: ignore[invalid-argument-type]
         field,
         gauge="synchronous",
+        # ty: ignore[invalid-argument-type]
         stage=stage,
         shot_noise="none",
         spatial_dimension=3,
@@ -193,7 +197,7 @@ def _backend(
     worker: Path,
     manifest: ReferenceArtifactManifest,
     mode: str = "ok",
-    **options,
+    **options: Any,
 ) -> SubprocessMatterPowerBackend:
     return SubprocessMatterPowerBackend(
         sys.executable,
@@ -215,7 +219,7 @@ def _backend(
 )
 def test_analytic_provider_preserves_power_semantics_and_external_evidence(
     tmp_path: Path, field: str, stage: str, field_factor: float
-):
+) -> None:
     worker = _write_worker(tmp_path)
     manifest = _manifest(worker)
     request = _request(field, stage)
@@ -261,7 +265,9 @@ def test_analytic_provider_preserves_power_semantics_and_external_evidence(
     assert mapping["power_unit"] == request.cosmology.scale.power_spectrum_unit.to_dict()
 
 
-def test_rectangular_range_and_incomplete_provider_support_are_distinct(tmp_path: Path):
+def test_rectangular_range_and_incomplete_provider_support_are_distinct(
+    tmp_path: Path,
+) -> None:
     worker = _write_worker(tmp_path)
     manifest = _manifest(worker)
     request = _request()
@@ -299,7 +305,7 @@ def test_rectangular_range_and_incomplete_provider_support_are_distinct(tmp_path
 )
 def test_provider_semantic_and_malformed_outputs_fail_closed(
     tmp_path: Path, mode: str, reason: str
-):
+) -> None:
     worker = _write_worker(tmp_path)
     manifest = _manifest(worker)
 
@@ -309,7 +315,7 @@ def test_provider_semantic_and_malformed_outputs_fail_closed(
     assert error.value.reason == reason
 
 
-def test_subprocess_bounds_rights_and_checksum_are_enforced(tmp_path: Path):
+def test_subprocess_bounds_rights_and_checksum_are_enforced(tmp_path: Path) -> None:
     worker = _write_worker(tmp_path)
     manifest = _manifest(worker)
     request = _request()

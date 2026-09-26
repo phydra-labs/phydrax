@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import mpmath as mp
@@ -12,28 +15,28 @@ import phydrax as phx
 from phydrax.optim._programming._cone_root import safeguarded_newton_bisection
 
 
-def _mp_power_projection(value, exponent):
+def _mp_power_projection(value: Any, exponent: Any) -> Any:
     with mp.workdps(100):
         x, y, z = (mp.mpf(str(component)) for component in value)
         alpha = mp.mpf(str(exponent))
         complement = 1 - alpha
         absolute_z = abs(z)
 
-        def positive_root(source, weight, root, gap):
+        def positive_root(source: Any, weight: Any, root: Any, gap: Any) -> Any:
             product = weight * root * gap
             radical = mp.sqrt(source * source + 4 * product)
             if source >= 0:
                 return (source + radical) / 2
             return 2 * product / (radical - source)
 
-        def coordinates(transformed):
+        def coordinates(transformed: Any) -> Any:
             root = absolute_z / (1 + mp.exp(-transformed))
             gap = absolute_z / (1 + mp.exp(transformed))
             projected_x = positive_root(x, alpha, root, gap)
             projected_y = positive_root(y, complement, root, gap)
             return root, projected_x, projected_y
 
-        def function(transformed):
+        def function(transformed: Any) -> Any:
             root, projected_x, projected_y = coordinates(transformed)
             return (
                 alpha * mp.log(projected_x)
@@ -61,7 +64,7 @@ def _mp_power_projection(value, exponent):
         )
 
 
-def test_psd_scaled_upper_column_packing_is_frobenius_isometric():
+def test_psd_scaled_upper_column_packing_is_frobenius_isometric() -> None:
     cone = phx.optim.PositiveSemidefiniteCone(3)
     matrix = jnp.asarray([[1.0, 2.0, 3.0], [2.0, 4.0, 5.0], [3.0, 5.0, 6.0]])
     other = jnp.asarray([[2.0, -1.0, 0.5], [-1.0, 3.0, 4.0], [0.5, 4.0, -2.0]])
@@ -83,7 +86,7 @@ def test_psd_scaled_upper_column_packing_is_frobenius_isometric():
         jax.block_until_ready(cone.pack(matrix.at[0, 1].set(7.0)))
 
 
-def test_psd_projection_and_frechet_derivative_handle_repeated_nonzero_spectrum():
+def test_psd_projection_and_frechet_derivative_handle_repeated_nonzero_spectrum() -> None:
     cone = phx.optim.PositiveSemidefiniteCone(3)
     matrix = jnp.diag(jnp.asarray([2.0, 2.0, -1.0]))
     direction = jnp.asarray([[0.3, -0.2, 0.4], [-0.2, 0.1, -0.5], [0.4, -0.5, 0.7]])
@@ -106,7 +109,7 @@ def test_psd_projection_and_frechet_derivative_handle_repeated_nonzero_spectrum(
     assert cone.dual_projection_smoothness_margin(boundary) == 0.0
 
 
-def test_exponential_projection_matches_primary_reference_values():
+def test_exponential_projection_matches_primary_reference_values() -> None:
     cone = phx.optim.ExponentialCone()
     values = jnp.asarray(
         [
@@ -133,7 +136,7 @@ def test_exponential_projection_matches_primary_reference_values():
     assert jnp.all(cone.contains(projected, tolerance=2e-7))
 
 
-def test_exponential_and_power_cones_satisfy_moreau_and_regular_derivatives():
+def test_exponential_and_power_cones_satisfy_moreau_and_regular_derivatives() -> None:
     cones = (phx.optim.ExponentialCone(), phx.optim.PowerCone(0.4))
     value = jnp.asarray([1.0, 2.0, 3.0])
     first = jnp.asarray([0.2, -0.1, 0.3])
@@ -162,7 +165,7 @@ def test_exponential_and_power_cones_satisfy_moreau_and_regular_derivatives():
         assert cone.dual_projection_smoothness_margin(jnp.zeros(3)) == 0.0
 
 
-def test_power_cone_projection_is_idempotent_and_exponent_swap_equivariant():
+def test_power_cone_projection_is_idempotent_and_exponent_swap_equivariant() -> None:
     value = jnp.asarray([-1.0, 2.0, 1.0])
     for exponent in (0.01, 0.1, 0.5, 0.9, 0.99):
         cone = phx.optim.PowerCone(exponent)
@@ -182,7 +185,7 @@ def test_power_cone_projection_is_idempotent_and_exponent_swap_equivariant():
         )
 
 
-def test_psd_float32_cross_sign_divided_difference_uses_regular_ratio():
+def test_psd_float32_cross_sign_divided_difference_uses_regular_ratio() -> None:
     cone = phx.optim.PositiveSemidefiniteCone(2)
     matrix = jnp.diag(jnp.asarray([-2e-4, 1e-4], dtype=jnp.float32))
     direction = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.float32)
@@ -209,7 +212,7 @@ def test_psd_float32_cross_sign_divided_difference_uses_regular_ratio():
     assert cone.dual_projection_smoothness_margin(packed) > 0.0
 
 
-def test_asymmetric_projectors_do_not_widen_mathematical_membership_regions():
+def test_asymmetric_projectors_do_not_widen_mathematical_membership_regions() -> None:
     epsilon = jnp.finfo(jnp.float64).eps
     cases = (
         (
@@ -227,7 +230,7 @@ def test_asymmetric_projectors_do_not_widen_mathematical_membership_regions():
         assert not jnp.array_equal(projected, value)
 
 
-def test_exponential_log_domain_membership_handles_tiny_scale_large_ratio():
+def test_exponential_log_domain_membership_handles_tiny_scale_large_ratio() -> None:
     cone = phx.optim.ExponentialCone()
     tiny = jnp.finfo(jnp.float64).tiny
     primal = jnp.asarray([800.0 * tiny, tiny, 1e40])
@@ -246,7 +249,9 @@ def test_exponential_log_domain_membership_handles_tiny_scale_large_ratio():
     assert not jnp.array_equal(cone.project(outside), outside)
 
 
-def test_power_float32_matches_high_precision_oracle_across_scales_and_exponents():
+def test_power_float32_matches_high_precision_oracle_across_scales_and_exponents() -> (
+    None
+):
     base = np.asarray([-1.0, 2.0, 1.0])
     direction = jnp.asarray([0.2, -0.1, 0.3], dtype=jnp.float32)
     scales = (1e-30, 1e-15, 1e-3, 1.0, 1e3, 1e15, 1e30)
@@ -296,7 +301,7 @@ def test_power_float32_matches_high_precision_oracle_across_scales_and_exponents
             )
 
 
-def test_power_float32_preserves_mixed_magnitude_coordinates():
+def test_power_float32_preserves_mixed_magnitude_coordinates() -> None:
     cone = phx.optim.PowerCone(0.99)
     project = jax.jit(cone.project)
     direction = jnp.asarray([0.2, -0.1, 0.3], dtype=jnp.float32)
@@ -327,6 +332,7 @@ def test_power_float32_preserves_mixed_magnitude_coordinates():
         atol=0.0,
         rtol=5e-5,
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         derivative.astype(jnp.float64),
         reference_derivative,
@@ -335,7 +341,7 @@ def test_power_float32_preserves_mixed_magnitude_coordinates():
     )
 
 
-def test_power_float32_extreme_scale_smoothness_margin_is_homogeneous():
+def test_power_float32_extreme_scale_smoothness_margin_is_homogeneous() -> None:
     cone = phx.optim.PowerCone(0.4)
     value = jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float32)
     reference = cone.dual_projection_smoothness_margin(value)
@@ -353,7 +359,7 @@ def test_power_float32_extreme_scale_smoothness_margin_is_homogeneous():
         )
 
 
-def test_safeguarded_root_requires_residual_and_bracket_certificates():
+def test_safeguarded_root_requires_residual_and_bracket_certificates() -> None:
     dtype = jnp.float64
     absolute = jnp.asarray(1e-6, dtype=dtype)
     relative = jnp.asarray(0.0, dtype=dtype)
@@ -395,7 +401,7 @@ def test_safeguarded_root_requires_residual_and_bracket_certificates():
     assert endpoint.bracket_width == 0.0
 
 
-def test_advanced_cone_topology_validation_and_identity():
+def test_advanced_cone_topology_validation_and_identity() -> None:
     with pytest.raises(ValueError, match="matrix_size"):
         phx.optim.PositiveSemidefiniteCone(0)
     for exponent in (0.0, 1.0, -0.2, jnp.nan, jnp.inf):

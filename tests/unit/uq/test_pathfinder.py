@@ -12,7 +12,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _gaussian_problem():
+def _gaussian_problem() -> Any:
     mean = jnp.array([0.4, -0.8])
     covariance = jnp.array([[0.5, 0.15], [0.15, 0.8]])
     precision = jnp.linalg.inv(covariance)
@@ -27,7 +27,7 @@ def _gaussian_problem():
     return problem, mean, covariance
 
 
-def test_pathfinder_recovers_correlated_gaussian_and_reports_density_ratios():
+def test_pathfinder_recovers_correlated_gaussian_and_reports_density_ratios() -> None:
     problem, mean, covariance = _gaussian_problem()
     result = phx.uq.fit_pathfinder(
         problem,
@@ -52,7 +52,7 @@ def test_pathfinder_recovers_correlated_gaussian_and_reports_density_ratios():
     )
 
 
-def test_pathfinder_is_key_deterministic_and_supports_fresh_constrained_draws():
+def test_pathfinder_is_key_deterministic_and_supports_fresh_constrained_draws() -> None:
     problem, _, _ = _gaussian_problem()
     settings: dict[str, Any] = dict(
         key=jr.key(8),
@@ -70,7 +70,7 @@ def test_pathfinder_is_key_deterministic_and_supports_fresh_constrained_draws():
     assert jnp.all(jnp.isfinite(fresh))
 
 
-def test_pathfinder_rejects_invalid_configuration_and_nonfinite_initial_density():
+def test_pathfinder_rejects_invalid_configuration_and_nonfinite_initial_density() -> None:
     problem, _, _ = _gaussian_problem()
     with pytest.raises(ValueError, match="num_samples"):
         phx.uq.fit_pathfinder(problem, key=jr.key(0), num_samples=0)
@@ -85,7 +85,7 @@ def test_pathfinder_rejects_invalid_configuration_and_nonfinite_initial_density(
         phx.uq.fit_pathfinder(invalid, key=jr.key(1))
 
 
-def test_pathfinder_observation_prediction_preserves_draw_and_observation_axes():
+def test_pathfinder_observation_prediction_preserves_draw_and_observation_axes() -> None:
     space = phx.uq.ParameterSpace(
         jnp.asarray(0.0),
         priors=phx.uq.Normal(0.0, 1.0),

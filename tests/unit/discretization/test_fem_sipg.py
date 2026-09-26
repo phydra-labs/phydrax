@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _sipg_discretization():
+def _sipg_discretization() -> Any:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     cells = jnp.asarray([[0, 1, 3], [1, 2, 3]], dtype=jnp.int32)
     mesh = phx.discretization.CellMesh.from_triangles(vertices, cells)
@@ -17,14 +20,16 @@ def _sipg_discretization():
     return phx.discretization.FiniteElementPlan(mesh, field).prepare()
 
 
-def test_sipg_nitsche_reproduces_affine_solution_with_reversed_neighbor():
+def test_sipg_nitsche_reproduces_affine_solution_with_reversed_neighbor() -> None:
     discretization = _sipg_discretization()
     data = phx.equations.coefficient(
         lambda points, context: points[..., 0] + points[..., 1],
         coefficient_id="sipg-affine-boundary",
     )
     boundary = phx.equations.fem.sipg_dirichlet(
-        discretization.exterior_facet_domain, data
+        discretization.exterior_facet_domain,
+        # ty: ignore[invalid-argument-type]
+        data,
     )
     form = phx.equations.fem.sipg_poisson_form(
         "u",
@@ -42,7 +47,7 @@ def test_sipg_nitsche_reproduces_affine_solution_with_reversed_neighbor():
     assert jnp.linalg.norm(compiled.full_residual(state)) < 1.0e-12
 
 
-def test_sipg_operator_is_symmetric_with_harmonic_cell_coefficient():
+def test_sipg_operator_is_symmetric_with_harmonic_cell_coefficient() -> None:
     discretization = _sipg_discretization()
     cells = discretization.mesh.topology.entity_sets[
         discretization.mesh.topological_dimension
@@ -55,6 +60,7 @@ def test_sipg_operator_is_symmetric_with_harmonic_cell_coefficient():
     )
     form = phx.equations.fem.sipg_poisson_form(
         "u",
+        # ty: ignore[invalid-argument-type]
         coefficient,
         phx.equations.fem.SIPGPenaltyPolicy(20.0),
         discretization.cell_domain,
@@ -70,7 +76,7 @@ def test_sipg_operator_is_symmetric_with_harmonic_cell_coefficient():
     assert jnp.abs(defect) < 1.0e-10
 
 
-def test_pure_neumann_sipg_attaches_verified_component_nullspace():
+def test_pure_neumann_sipg_attaches_verified_component_nullspace() -> None:
     discretization = _sipg_discretization()
     form = phx.equations.fem.sipg_poisson_form(
         "u",
@@ -83,7 +89,9 @@ def test_pure_neumann_sipg_attaches_verified_component_nullspace():
     compiled = phx.equations.compile_finite_element_problem(form, discretization)
     system, right_hand_side = compiled.linear_system()
 
+    # ty: ignore[unresolved-attribute]
     assert int(system.nullspace_policy.right.dimension) == 1
+    # ty: ignore[unresolved-attribute]
     assert bool(system.nullspace_policy.certificate.valid)
     assert jnp.linalg.norm(system.operator.mv(jnp.ones((6,)))) < 1.0e-12
     assert jnp.linalg.norm(right_hand_side) < 1.0e-12

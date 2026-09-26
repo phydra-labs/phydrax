@@ -110,10 +110,11 @@ def parse(
     example ``numpy.str_("dense")`` returns ``"dense"``).
     """
     contract = parse_contract(form)
-    violation, result = check(
-        contract, value, Scope() if scope is None else scope, name, canonicalize=True
-    )
+    active_scope = Scope() if scope is None else scope
+    mark = active_scope._mark()
+    violation, result = check(contract, value, active_scope, name, canonicalize=True)
     if violation is not None:
+        active_scope._rollback(mark)
         raise_violation(violation)
     # The structural check above establishes that `result` inhabits `form`.
     return cast(_T, result)

@@ -408,7 +408,10 @@ class UpwindConstrainedTransportPlan(StrictModule):
         else:
             # Layouts of dimension two or more always carry an electromotive degree.
             electromotive_degree = self.layout.electromotive_degree
-            assert electromotive_degree is not None
+            if not (electromotive_degree is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: electromotive_degree is not None."
+                )
             edge_circulation = self.bridge.pack_electromotive(electromotive_components)
             magnetic_rate = -self.bridge.exterior_derivative(
                 int(electromotive_degree), edge_circulation

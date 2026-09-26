@@ -14,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _dataset():
+def _dataset() -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 4),
@@ -29,7 +29,7 @@ def _dataset():
     )
 
 
-def _model():
+def _model() -> Any:
     return phx.nn.operator.architectures.FNO(
         in_channels="scalar",
         out_channels="scalar",
@@ -40,11 +40,11 @@ def _model():
     )
 
 
-def _schedule_free():
+def _schedule_free() -> Any:
     return optax.contrib.schedule_free(optax.sgd(1e-3), 1e-3)
 
 
-def _schedule_free_fit(model, dataset, **kwargs):
+def _schedule_free_fit(model: Any, dataset: Any, **kwargs: Any) -> Any:
     return phx.nn.operator.training.fit_operator(
         model,
         dataset,
@@ -59,7 +59,7 @@ def _schedule_free_fit(model, dataset, **kwargs):
     )
 
 
-def _assert_array_trees_equal(left, right):
+def _assert_array_trees_equal(left: Any, right: Any) -> None:
     left_leaves = jax.tree_util.tree_leaves(left)
     right_leaves = jax.tree_util.tree_leaves(right)
     for left_leaf, right_leaf in zip(left_leaves, right_leaves, strict=True):
@@ -67,11 +67,11 @@ def _assert_array_trees_equal(left, right):
             assert jnp.array_equal(left_leaf, right_leaf)
 
 
-def test_fit_operator_returns_and_validates_on_evaluation_model():
+def test_fit_operator_returns_and_validates_on_evaluation_model() -> None:
     dataset = _dataset()
     model = _model()
 
-    def shifted(_state, parameters):
+    def shifted(_state: Any, parameters: Any) -> Any:
         return jax.tree.map(lambda value: value + 1.0, parameters)
 
     baseline = phx.nn.operator.training.fit_operator(
@@ -103,7 +103,9 @@ def test_fit_operator_returns_and_validates_on_evaluation_model():
     assert evaluated.final_loss != baseline.final_loss
 
 
-def test_schedule_free_checkpoint_resume_matches_uninterrupted_training(tmp_path):
+def test_schedule_free_checkpoint_resume_matches_uninterrupted_training(
+    tmp_path: Any,
+) -> None:
     dataset = _dataset()
     model = _model()
     uninterrupted = _schedule_free_fit(
@@ -141,9 +143,9 @@ def test_schedule_free_checkpoint_resume_matches_uninterrupted_training(tmp_path
 
 @pytest.mark.parametrize("resume_id", ["changed-evaluator", None])
 def test_schedule_free_resume_rejects_changed_or_missing_evaluator_id(
-    tmp_path,
-    resume_id,
-):
+    tmp_path: Any,
+    resume_id: Any,
+) -> None:
     dataset = _dataset()
     model = _model()
     checkpoint = tmp_path / "schedule-free-contract"
@@ -176,7 +178,7 @@ def test_schedule_free_resume_rejects_changed_or_missing_evaluator_id(
         phx.nn.operator.training.fit_operator(model, dataset, **kwargs)
 
 
-def test_checkpointed_evaluation_transform_requires_stable_id(tmp_path):
+def test_checkpointed_evaluation_transform_requires_stable_id(tmp_path: Any) -> None:
     with pytest.raises(ValueError, match="stable evaluation_parameters_id"):
         phx.nn.operator.training.fit_operator(
             _model(),
@@ -190,7 +192,7 @@ def test_checkpointed_evaluation_transform_requires_stable_id(tmp_path):
         )
 
 
-def test_operator_evaluation_transform_must_preserve_parameter_structure():
+def test_operator_evaluation_transform_must_preserve_parameter_structure() -> None:
     with pytest.raises(ValueError, match="PyTree structure"):
         phx.nn.operator.training.fit_operator(
             _model(),

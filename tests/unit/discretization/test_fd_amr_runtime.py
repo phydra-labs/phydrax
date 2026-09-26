@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _prepared(*, periodic=False, levels=2, halo=1):
+def _prepared(*, periodic: Any = False, levels: Any = 2, halo: Any = 1) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=periodic),),
         axis_names=("x",),
@@ -21,7 +24,7 @@ def _prepared(*, periodic=False, levels=2, halo=1):
     return phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
 
 
-def _state(topology, level_values):
+def _state(topology: Any, level_values: Any) -> Any:
     levels = tuple(
         phx.discretization.BlockLevelState(plan, metadata, values)
         for plan, metadata, values in zip(
@@ -31,7 +34,7 @@ def _state(topology, level_values):
     return phx.discretization.BlockHierarchyState(topology, levels)
 
 
-def _refined_topology(prepared, tagged_cell):
+def _refined_topology(prepared: Any, tagged_cell: Any) -> Any:
     initial = prepared.initial_topology()
     tags = jnp.zeros((2, 4), dtype="bool").at[tagged_cell // 4, tagged_cell % 4].set(True)
     result = prepared.compile_topology(initial, (tags,))
@@ -39,7 +42,7 @@ def _refined_topology(prepared, tagged_cell):
     return result.topology
 
 
-def test_entity_transfer_seam_preserves_declared_cell_and_noncell_invariants():
+def test_entity_transfer_seam_preserves_declared_cell_and_noncell_invariants() -> None:
     cell = phx.discretization.AMREntityTransferPlan.cells(2)
     node = phx.discretization.AMREntityTransferPlan.nodes(1)
     coarse_cell = jnp.arange(16.0).reshape((4, 4))
@@ -55,7 +58,7 @@ def test_entity_transfer_seam_preserves_declared_cell_and_noncell_invariants():
     assert cell.report.passed and node.report.passed
 
 
-def test_fill_patch_classifies_same_level_and_periodic_before_other_sources():
+def test_fill_patch_classifies_same_level_and_periodic_before_other_sources() -> None:
     prepared = _prepared(periodic=True, levels=1)
     topology = prepared.initial_topology()
     state = _state(
@@ -75,7 +78,7 @@ def test_fill_patch_classifies_same_level_and_periodic_before_other_sources():
     )
 
 
-def test_fill_patch_uses_multiple_coarse_blocks_and_old_new_time_interpolation():
+def test_fill_patch_uses_multiple_coarse_blocks_and_old_new_time_interpolation() -> None:
     prepared = _prepared(halo=2)
     topology = _refined_topology(prepared, 3)
     fine_fill_plan = prepared.prepare_fill_patch(topology)[1]
@@ -130,7 +133,7 @@ def test_fill_patch_uses_multiple_coarse_blocks_and_old_new_time_interpolation()
     )
 
 
-def test_fill_patch_same_level_data_precedes_available_coarse_data():
+def test_fill_patch_same_level_data_precedes_available_coarse_data() -> None:
     prepared = _prepared(halo=2)
     initial = prepared.initial_topology()
     tags = jnp.zeros((2, 4), dtype="bool").at[0, 2].set(True).at[0, 3].set(True)
@@ -157,7 +160,9 @@ def test_fill_patch_same_level_data_precedes_available_coarse_data():
     )
 
 
-def test_physical_boundary_values_remain_caller_owned_and_incomplete_is_rejected():
+def test_physical_boundary_values_remain_caller_owned_and_incomplete_is_rejected() -> (
+    None
+):
     prepared = _prepared(levels=1)
     topology = prepared.initial_topology()
     state = _state(
@@ -180,7 +185,9 @@ def test_physical_boundary_values_remain_caller_owned_and_incomplete_is_rejected
     assert workspace.values[1, -1] == 5.0
 
 
-def test_componentwise_topology_transition_is_conservative_and_zeroes_inactive_slots():
+def test_componentwise_topology_transition_is_conservative_and_zeroes_inactive_slots() -> (
+    None
+):
     prepared = _prepared()
     prepared.initial_topology()
     source = _refined_topology(prepared, 1)
@@ -211,7 +218,7 @@ def test_componentwise_topology_transition_is_conservative_and_zeroes_inactive_s
     assert jnp.all(result.state.levels[1].values[1:] == 0.0)
 
 
-def test_fill_patch_preparation_rejects_unresolved_coarse_routes():
+def test_fill_patch_preparation_rejects_unresolved_coarse_routes() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -235,7 +242,7 @@ def test_fill_patch_preparation_rejects_unresolved_coarse_routes():
         prepared.prepare_fill_patch(target)
 
 
-def test_prepared_fill_patch_explicitly_refuses_noncell_entity_routes():
+def test_prepared_fill_patch_explicitly_refuses_noncell_entity_routes() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -253,7 +260,7 @@ def test_prepared_fill_patch_explicitly_refuses_noncell_entity_routes():
         )
 
 
-def test_block_stencil_execution_accepts_only_complete_fill_patch_workspace():
+def test_block_stencil_execution_accepts_only_complete_fill_patch_workspace() -> None:
     prepared = _prepared(periodic=True, levels=1)
     topology = prepared.initial_topology()
     values = jnp.arange(8.0, dtype=jnp.float64).reshape((2, 4))

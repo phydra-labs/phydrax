@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _lorenz_problem():
+def _lorenz_problem() -> Any:
     generator = np.random.default_rng(91)
     states = generator.normal(size=(256, 3))
     sigma = 10.0
@@ -40,7 +43,7 @@ def _lorenz_problem():
     )
 
 
-def test_stlsq_recovers_lorenz_and_executes_through_continuous_system():
+def test_stlsq_recovers_lorenz_and_executes_through_continuous_system() -> None:
     result = phx.dynamics.identification.fit_sindy(
         _lorenz_problem(),
         phx.dynamics.identification.SequentialThresholdedLeastSquares(
@@ -67,13 +70,14 @@ def test_stlsq_recovers_lorenz_and_executes_through_continuous_system():
 
     state = jnp.asarray([1.2, -0.7, 2.5])
     system = result.to_system(system_id="identified-lorenz")
+    # ty: ignore[invalid-argument-type]
     predicted = eqx.filter_jit(system.evaluate)(jnp.asarray(0.0), state, None)
     direct = result.evaluate(state)
     np.testing.assert_allclose(np.asarray(predicted), np.asarray(direct), atol=1e-12)
     assert result.render_equations()[0].startswith("dx/dtime =")
 
 
-def test_physical_coefficients_are_unscaled_after_feature_normalization():
+def test_physical_coefficients_are_unscaled_after_feature_normalization() -> None:
     state = jnp.linspace(-0.002, 0.002, 101)[:, None]
     derivative = 3.5 + 1200.0 * state
     layout = phx.dynamics.StateLayout((1,), component_names=("x",))
@@ -106,7 +110,7 @@ def test_physical_coefficients_are_unscaled_after_feature_normalization():
     )
 
 
-def test_empty_sparse_model_requires_explicit_zero_tolerance():
+def test_empty_sparse_model_requires_explicit_zero_tolerance() -> None:
     time = jnp.linspace(0.0, 1.0, 20)
     layout = phx.dynamics.StateLayout((1,))
     data = phx.dynamics.TrajectoryData(

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +17,7 @@ from phydrax.nn.quantum._ferminet import (
 )
 
 
-def _structure(positions, *, name="molecule"):
+def _structure(positions: Any, *, name: Any = "molecule") -> Any:
     scale = phx.atomistic.AtomisticScaleContract(phx.units.BOHR, phx.units.HARTREE)
     return phx.atomistic.AtomicStructure(
         jnp.ones((len(positions),), dtype=jnp.int32),
@@ -26,7 +28,9 @@ def _structure(positions, *, name="molecule"):
     )
 
 
-def _network(nuclei, *, spin_up=2, electrons=2, determinants=4):
+def _network(
+    nuclei: Any, *, spin_up: Any = 2, electrons: Any = 2, determinants: Any = 4
+) -> Any:
     return phx.nn.quantum.FermiNet(
         nuclei,
         electrons,
@@ -40,7 +44,7 @@ def _network(nuclei, *, spin_up=2, electrons=2, determinants=4):
     )
 
 
-def test_same_spin_exchange_is_antisymmetric_and_batched_float64_is_canonical():
+def test_same_spin_exchange_is_antisymmetric_and_batched_float64_is_canonical() -> None:
     network = _network(_structure([[0.0, 0.0, 0.0]], name="He"))
     electrons = jnp.asarray([[-0.8, 0.2, 0.1], [1.1, -0.3, 0.4]], dtype=jnp.float64)
     value = network(electrons)
@@ -57,7 +61,7 @@ def test_same_spin_exchange_is_antisymmetric_and_batched_float64_is_canonical():
     assert jnp.all(batch.valid)
 
 
-def test_opposite_spin_exchange_is_not_forced_to_a_spatial_sign_rule():
+def test_opposite_spin_exchange_is_not_forced_to_a_spatial_sign_rule() -> None:
     network = _network(_structure([[0.0, 0.0, 0.0]], name="He"), spin_up=1, electrons=2)
     electrons = jnp.asarray([[-0.6, 0.4, 0.2], [1.2, -0.2, 0.3]], dtype=jnp.float64)
     value = network(electrons)
@@ -68,7 +72,9 @@ def test_opposite_spin_exchange_is_not_forced_to_a_spatial_sign_rule():
     assert not forced_antisymmetry
 
 
-def test_joint_nuclear_electron_translation_and_rotation_leave_amplitude_invariant():
+def test_joint_nuclear_electron_translation_and_rotation_leave_amplitude_invariant() -> (
+    None
+):
     nuclei = _structure([[-0.7, 0.0, 0.0], [0.7, 0.0, 0.0]], name="H2")
     network = _network(nuclei, spin_up=1, electrons=2)
     electrons = jnp.asarray([[-0.4, 0.6, 0.1], [0.8, -0.2, -0.3]], dtype=jnp.float64)
@@ -89,7 +95,7 @@ def test_joint_nuclear_electron_translation_and_rotation_leave_amplitude_invaria
     assert jnp.allclose(transformed.phase, baseline.phase)
 
 
-def test_determinant_combination_is_log_stable_and_envelopes_decay():
+def test_determinant_combination_is_log_stable_and_envelopes_decay() -> None:
     nuclei = _structure([[0.0, 0.0, 0.0]], name="H")
     network = _network(nuclei, spin_up=1, electrons=1, determinants=8)
     decaying = eqx.tree_at(
@@ -118,7 +124,7 @@ def test_determinant_combination_is_log_stable_and_envelopes_decay():
     assert far.log_abs < near.log_abs
 
 
-def test_sparse_two_by_two_large_decay_determinant_remains_nonzero():
+def test_sparse_two_by_two_large_decay_determinant_remains_nonzero() -> None:
     raw_orbitals = jnp.asarray([[[1.0, 0.0], [0.0, 1.0]]], dtype=jnp.float64)
     log_envelope = jnp.asarray([[[-1000.0, -1.0], [-1.0, -1000.0]]], dtype=jnp.float64)
     sign, log_abs = _scaled_log_determinants(raw_orbitals, log_envelope)
@@ -127,10 +133,10 @@ def test_sparse_two_by_two_large_decay_determinant_remains_nonzero():
     assert jnp.allclose(log_abs[0], -2000.0)
 
 
-def test_zero_dynamic_orbital_entry_retains_exact_logdet_gradient():
+def test_zero_dynamic_orbital_entry_retains_exact_logdet_gradient() -> None:
     log_envelope = jnp.zeros((1, 2, 2), dtype=jnp.float64)
 
-    def logdet(entry):
+    def logdet(entry: Any) -> Any:
         raw_orbitals = (
             jnp.asarray([[[1.0, 0.0], [1.0, 1.0]]], dtype=jnp.float64)
             .at[0, 0, 1]
@@ -142,13 +148,13 @@ def test_zero_dynamic_orbital_entry_retains_exact_logdet_gradient():
     assert jnp.allclose(jax.grad(jax.grad(logdet))(jnp.asarray(0.0)), -1.0)
 
 
-def test_subnormal_orbital_value_and_relative_jvp_do_not_overflow():
+def test_subnormal_orbital_value_and_relative_jvp_do_not_overflow() -> None:
     subnormal = jnp.asarray(1e-320, dtype=jnp.float64)
     raw_orbitals = jnp.asarray([[[subnormal, 0.0], [0.0, 1.0]]], dtype=jnp.float64)
     log_envelope = jnp.asarray([[[736.0, 0.0], [0.0, 0.0]]], dtype=jnp.float64)
     tangent = jnp.asarray([[[subnormal, 0.0], [0.0, 0.0]]], dtype=jnp.float64)
 
-    def logdet(values):
+    def logdet(values: Any) -> Any:
         return _scaled_log_determinants(values, log_envelope)[1]
 
     value, directional = jax.jvp(logdet, (raw_orbitals,), (tangent,))
@@ -156,7 +162,7 @@ def test_subnormal_orbital_value_and_relative_jvp_do_not_overflow():
     assert jnp.allclose(directional[0], 1.0)
 
 
-def test_extreme_log_scale_tangents_remain_representable_and_inactive():
+def test_extreme_log_scale_tangents_remain_representable_and_inactive() -> None:
     value = jnp.asarray(1.0, dtype=jnp.float64)
     large_tangent = jnp.asarray(1e300, dtype=jnp.float64)
     negative_scale = jnp.asarray(-1000.0, dtype=jnp.float64)
@@ -209,12 +215,12 @@ def test_extreme_log_scale_tangents_remain_representable_and_inactive():
     assert zero_bilinear_value_tangent == 0.0
 
 
-def test_zero_multiplier_mixed_derivative_stays_in_signed_log_domain():
+def test_zero_multiplier_mixed_derivative_stays_in_signed_log_domain() -> None:
     log_scale = jnp.asarray(-1000.0, dtype=jnp.float64)
     large_tangent = jnp.asarray(1e300, dtype=jnp.float64)
     zero = jnp.asarray(0.0, dtype=jnp.float64)
 
-    def left_direction(right):
+    def left_direction(right: Any) -> Any:
         return jax.jvp(
             lambda left: _stable_signed_bilinear_product(left, right, log_scale),
             (zero,),
@@ -227,10 +233,10 @@ def test_zero_multiplier_mixed_derivative_stays_in_signed_log_domain():
     assert jnp.allclose(mixed_derivative, expected, rtol=1e-12, atol=0.0)
 
 
-def test_singular_determinant_term_retains_mixture_derivative():
+def test_singular_determinant_term_retains_mixture_derivative() -> None:
     log_envelope = jnp.zeros((2, 2, 2), dtype=jnp.float64)
 
-    def mixture_log_abs(entry):
+    def mixture_log_abs(entry: Any) -> Any:
         singular = (
             jnp.asarray([[0.0, 0.0], [0.0, 1.0]], dtype=jnp.float64).at[0, 0].set(entry)
         )
@@ -251,11 +257,11 @@ def test_singular_determinant_term_retains_mixture_derivative():
     assert jnp.allclose(gradient, 1.0)
 
 
-def test_zero_large_scale_term_does_not_hide_nonzero_small_scale_term():
+def test_zero_large_scale_term_does_not_hide_nonzero_small_scale_term() -> None:
     log_scale = jnp.asarray([0.0, -1000.0], dtype=jnp.float64)
     coefficients = jnp.ones((2,), dtype=jnp.float64)
 
-    def mixture(nonzero_determinant):
+    def mixture(nonzero_determinant: Any) -> Any:
         determinants = jnp.stack((jnp.asarray(0.0), nonzero_determinant))
         return _stable_determinant_mixture(determinants, log_scale, coefficients)
 
@@ -268,11 +274,11 @@ def test_zero_large_scale_term_does_not_hide_nonzero_small_scale_term():
     assert jnp.allclose(gradient, 1.0)
 
 
-def test_zero_coefficient_large_scale_term_does_not_set_mixture_shift():
+def test_zero_coefficient_large_scale_term_does_not_set_mixture_shift() -> None:
     determinants = jnp.ones((2,), dtype=jnp.float64)
     log_scale = jnp.asarray([0.0, -1000.0], dtype=jnp.float64)
 
-    def mixture(coefficients):
+    def mixture(coefficients: Any) -> Any:
         return _stable_determinant_mixture(determinants, log_scale, coefficients)
 
     coefficients = jnp.asarray([0.0, 1.0], dtype=jnp.float64)
@@ -285,11 +291,11 @@ def test_zero_coefficient_large_scale_term_does_not_set_mixture_shift():
     assert jnp.allclose(gradient[1], 1.0)
 
 
-def test_inactive_huge_coefficient_does_not_hide_tiny_active_product():
+def test_inactive_huge_coefficient_does_not_hide_tiny_active_product() -> None:
     coefficients = jnp.asarray([1e300, 1e-300], dtype=jnp.float64)
     log_scale = jnp.zeros((2,), dtype=jnp.float64)
 
-    def mixture(determinants):
+    def mixture(determinants: Any) -> Any:
         return _stable_determinant_mixture(determinants, log_scale, coefficients)
 
     determinants = jnp.asarray([0.0, 1.0], dtype=jnp.float64)
@@ -302,7 +308,7 @@ def test_inactive_huge_coefficient_does_not_hide_tiny_active_product():
     assert jnp.allclose(gradient[1], 1.0)
 
 
-def test_polynomial_determinant_resource_admission_and_limit_rejection():
+def test_polynomial_determinant_resource_admission_and_limit_rejection() -> None:
     resource_plan = phx.operators.ElectronicVMCResourcePlan(
         4,
         determinant_count=1,
@@ -361,7 +367,7 @@ def test_polynomial_determinant_resource_admission_and_limit_rejection():
         )
 
 
-def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude():
+def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude() -> None:
     nuclei = _structure([[0.0, 0.0, 0.0]], name="H-large-decay")
     network = _network(nuclei, spin_up=1, electrons=1, determinants=1)
     network = eqx.tree_at(
@@ -384,7 +390,7 @@ def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude():
     assert value.log_abs < -900.0
 
 
-def test_envelope_decay_floor_survives_softplus_underflow_and_normalizes_tail():
+def test_envelope_decay_floor_survives_softplus_underflow_and_normalizes_tail() -> None:
     nuclei = _structure([[0.0, 0.0, 0.0]], name="H-decay-floor")
     network = _network(nuclei, spin_up=1, electrons=1, determinants=1)
     network = eqx.tree_at(
@@ -408,7 +414,7 @@ def test_envelope_decay_floor_survives_softplus_underflow_and_normalizes_tail():
     assert far.log_abs < near.log_abs
 
 
-def test_zero_determinant_coefficient_has_finite_reactivation_gradient():
+def test_zero_determinant_coefficient_has_finite_reactivation_gradient() -> None:
     nuclei = _structure([[0.0, 0.0, 0.0]], name="H-zero-coefficient")
     network = _network(nuclei, spin_up=1, electrons=1, determinants=2)
     network = eqx.tree_at(
@@ -422,7 +428,7 @@ def test_zero_determinant_coefficient_has_finite_reactivation_gradient():
     coefficients = jnp.asarray([1.0, 0.0], dtype=jnp.float64)
     electrons = jnp.asarray([[0.8, 0.0, 0.0]], dtype=jnp.float64)
 
-    def log_amplitude(values):
+    def log_amplitude(values: Any) -> Any:
         model = eqx.tree_at(lambda value: value.determinant_coefficients, network, values)
         return model(electrons).log_abs
 
@@ -431,7 +437,7 @@ def test_zero_determinant_coefficient_has_finite_reactivation_gradient():
     assert gradient[1] != 0.0
 
 
-def test_parameter_gradients_coordinate_gradients_and_laplacian_are_finite():
+def test_parameter_gradients_coordinate_gradients_and_laplacian_are_finite() -> None:
     network = _network(_structure([[0.0, 0.0, 0.0]], name="He"), spin_up=1, electrons=2)
     electrons = jnp.asarray([[-0.7, 0.2, 0.4], [0.9, -0.3, 0.1]], dtype=jnp.float64)
     coordinate_gradient = jax.grad(lambda value: network(value).log_abs)(electrons)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _compiled_pair():
+def _compiled_pair() -> Any:
     count = 8
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
@@ -17,6 +20,7 @@ def _compiled_pair():
         jnp.full((count,), spacing),
         ambient_dimension=1,
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     method = phx.discretization.BarotropicSPHMethodPlan(
         phx.discretization.WendlandC2SPHKernel(1),
@@ -51,14 +55,14 @@ def _compiled_pair():
     return dense, cell, position
 
 
-def _edge_ids(graph):
+def _edge_ids(graph: Any) -> Any:
     mask = np.asarray(graph.edge_mask, dtype="bool")
     left = np.asarray(graph.edges["left_particle_id"])[mask, 0]
     right = np.asarray(graph.edges["right_particle_id"])[mask, 0]
     return set(zip(left.tolist(), right.tolist(), strict=True))
 
 
-def test_dense_and_cell_physical_graphs_have_identical_undirected_edges():
+def test_dense_and_cell_physical_graphs_have_identical_undirected_edges() -> None:
     dense, cell, position = _compiled_pair()
     dense_graph = dense.dynamics.graph_view(position, directed=False)
     cell_graph = cell.dynamics.graph_view(position, directed=False)
@@ -75,7 +79,7 @@ def test_dense_and_cell_physical_graphs_have_identical_undirected_edges():
     assert jnp.array_equal(relation.valid, cell_graph.edge_mask)
 
 
-def test_directed_particle_graph_duplicates_and_reverses_every_route():
+def test_directed_particle_graph_duplicates_and_reverses_every_route() -> None:
     _, cell, position = _compiled_pair()
     graph = cell.dynamics.graph_view(position, directed=True)
     half = graph.senders.shape[0] // 2
@@ -91,11 +95,12 @@ def test_directed_particle_graph_duplicates_and_reverses_every_route():
     assert jnp.allclose(graph.edges["distance"][:half], graph.edges["distance"][half:])
 
 
-def test_graph_view_refuses_an_overflowed_relation():
+def test_graph_view_refuses_an_overflowed_relation() -> None:
     count = 4
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.ones((count,)), ambient_dimension=1
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     prepared = phx.discretization.CellListParticleNeighborhoodPlan(
         0.4,

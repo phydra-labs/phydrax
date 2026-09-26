@@ -953,7 +953,12 @@ def _audit_gmsh_mesh(
         )
     if semantic_volume:
         # Semantic volume execution always resolves canonical solid ownership.
-        assert isinstance(specification, VolumeMeshingSpec) and cell_solid_ids is not None
+        if not (
+            isinstance(specification, VolumeMeshingSpec) and cell_solid_ids is not None
+        ):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(specification, VolumeMeshingSpec) and cell_solid_ids is not None."
+            )
         size_issues, local_requested, local_achieved = _semantic_size_compliance(
             mesh, specification, cell_solid_ids
         )

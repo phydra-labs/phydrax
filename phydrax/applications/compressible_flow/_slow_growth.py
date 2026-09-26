@@ -114,10 +114,18 @@ def _one_temperature_system(
 ) -> HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem:
     system = case.system
     # CompressiblePlaneBaseflowPlan admits only one-temperature canonical systems.
-    assert isinstance(
-        system,
-        (HomogeneousMixtureEulerSystem, HomogeneousMixtureCompressibleNavierStokesSystem),
-    )
+    if not (
+        isinstance(
+            system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+            ),
+        )
+    ):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(system, (HomogeneousMixtureEulerSystem, HomogeneousMixtureCompressibleNavierStokesSystem))."
+        )
     return system
 
 

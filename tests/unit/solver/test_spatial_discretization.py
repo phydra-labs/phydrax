@@ -6,7 +6,7 @@ import phydrax as phx
 import phydrax.discretization as spectral
 
 
-def test_periodic_finite_difference_laplacian_matches_discrete_mode():
+def test_periodic_finite_difference_laplacian_matches_discrete_mode() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(
@@ -29,9 +29,12 @@ def test_periodic_finite_difference_laplacian_matches_discrete_mode():
     assert jnp.allclose(actual, eigenvalue * state, atol=1e-12)
 
 
-def test_fourier_sine_and_cosine_laplacians_respect_boundary_semantics():
+def test_fourier_sine_and_cosine_laplacians_respect_boundary_semantics() -> None:
+    # ty: ignore[invalid-argument-type]
     fourier_axis = phx.discretization.FourierAxisSpec(16).materialize(0.0, 1.0)
+    # ty: ignore[invalid-argument-type]
     sine_axis = phx.discretization.SineAxisSpec(15).materialize(0.0, 1.0)
+    # ty: ignore[invalid-argument-type]
     cosine_axis = phx.discretization.CosineAxisSpec(16).materialize(0.0, 1.0)
     fourier = phx.discretization.TensorSpectralDiscretization.from_axes((fourier_axis,))
     sine = phx.discretization.TensorSpectralDiscretization.from_axes((sine_axis,))
@@ -60,8 +63,10 @@ def test_fourier_sine_and_cosine_laplacians_respect_boundary_semantics():
     )
 
 
-def test_tensor_grid_laplacian_preserves_channels_and_compiles():
+def test_tensor_grid_laplacian_preserves_channels_and_compiles() -> None:
+    # ty: ignore[invalid-argument-type]
     x_axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
+    # ty: ignore[invalid-argument-type]
     y_axis = phx.discretization.FourierAxisSpec(10).materialize(0.0, 1.0)
     discretization = phx.discretization.TensorSpectralDiscretization.from_axes(
         (x_axis, y_axis)
@@ -83,8 +88,10 @@ def test_tensor_grid_laplacian_preserves_channels_and_compiles():
     assert jnp.allclose(actual, expected, atol=5e-11)
 
 
-def test_tensor_eigenpairs_use_exact_separable_modes_and_stable_ordering():
+def test_tensor_eigenpairs_use_exact_separable_modes_and_stable_ordering() -> None:
+    # ty: ignore[invalid-argument-type]
     x_axis = phx.discretization.FourierAxisSpec(32).materialize(0.0, 1.0)
+    # ty: ignore[invalid-argument-type]
     y_axis = phx.discretization.CosineAxisSpec(33).materialize(0.0, 1.0)
     discretization = phx.discretization.TensorSpectralDiscretization.from_axes(
         (x_axis, y_axis)
@@ -108,9 +115,11 @@ def test_tensor_eigenpairs_use_exact_separable_modes_and_stable_ordering():
     )
 
 
-def test_tensor_eigenpairs_scale_to_large_product_grids_at_low_rank():
+def test_tensor_eigenpairs_scale_to_large_product_grids_at_low_rank() -> None:
     axes = tuple(
-        phx.discretization.FourierAxisSpec(64).materialize(0.0, 1.0) for _ in range(2)
+        # ty: ignore[invalid-argument-type]
+        phx.discretization.FourierAxisSpec(64).materialize(0.0, 1.0)
+        for _ in range(2)
     )
     discretization = phx.discretization.TensorSpectralDiscretization.from_axes(axes)
 
@@ -120,6 +129,7 @@ def test_tensor_eigenpairs_scale_to_large_product_grids_at_low_rank():
     assert eigenvalues.shape == (6,)
     assert modes.shape == (64, 64, 6)
 
+    # ty: ignore[invalid-argument-type]
     long_axis = phx.discretization.FourierAxisSpec(10_000).materialize(0.0, 1.0)
     long_grid = phx.discretization.TensorSpectralDiscretization.from_axes((long_axis,))
     long_eigenvalues, long_modes = long_grid.eigenpairs(rank=4)
@@ -127,7 +137,7 @@ def test_tensor_eigenpairs_scale_to_large_product_grids_at_low_rank():
     assert long_modes.shape == (10_000, 4)
 
 
-def test_explicit_laplacian_agrees_with_matrix_free_application():
+def test_explicit_laplacian_agrees_with_matrix_free_application() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(
@@ -146,7 +156,7 @@ def test_explicit_laplacian_agrees_with_matrix_free_application():
     assert jnp.allclose(matrix @ state, discretization.laplacian(state))
 
 
-def test_existing_spectral_plan_is_reused_without_a_second_basis_convention():
+def test_existing_spectral_plan_is_reused_without_a_second_basis_convention() -> None:
     eigenvalues = jnp.asarray([0.0, 1.0, 4.0])
     eigenvectors = jnp.eye(3)
     plan = spectral.SpectralDecomposition.from_eigenpairs(
@@ -173,15 +183,17 @@ def test_existing_spectral_plan_is_reused_without_a_second_basis_convention():
     assert retained_modes.shape == (3, 2)
 
 
-def test_spatial_discretization_rejects_unsupported_grids_and_state_shapes():
+def test_spatial_discretization_rejects_unsupported_grids_and_state_shapes() -> None:
     nonperiodic_uniform = phx.discretization.UniformAxisSpec(
         6,
         endpoint=True,
         periodic=False,
+        # ty: ignore[invalid-argument-type]
     ).materialize(0.0, 1.0)
     with pytest.raises(ValueError, match="require FiniteDifferencePlan"):
         phx.discretization.TensorSpectralDiscretization.from_axes((nonperiodic_uniform,))
 
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(6).materialize(0.0, 1.0)
     discretization = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     with pytest.raises(ValueError, match="Physical values must begin with shape"):

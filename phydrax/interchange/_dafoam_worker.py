@@ -254,7 +254,10 @@ def main() -> None:
                                 result["total_derivatives"] = []
                                 break
                             # A missing total always records a failure and breaks above.
-                            assert totals is not None
+                            if not (totals is not None):
+                                raise RuntimeError(
+                                    "Internal invariant failed: totals is not None."
+                                )
                             for variable in design:
                                 result["total_derivatives"].append(
                                     {

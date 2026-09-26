@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _phase(name, offset, density):
+def _phase(name: Any, offset: Any, density: Any) -> Any:
     count = 4
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.full((count,), 1.0 / count), ambient_dimension=1, name=name
@@ -32,7 +35,7 @@ def _phase(name, offset, density):
     return phx.discretization.PhaseDefinition(name, compiled.dynamics), position, state
 
 
-def test_interface_geometry_rejects_phases_without_continuity_density():
+def test_interface_geometry_rejects_phases_without_continuity_density() -> None:
     target, target_position, target_state = _phase(
         "phase-a", 0.25, phx.discretization.ContinuityDensityPlan()
     )

@@ -66,11 +66,11 @@ class _Scenario:
 
 
 class _ModelCounter:
-    def __init__(self, model: Callable[..., Any]):
+    def __init__(self, model: Callable[..., Any]) -> None:
         self.model = model
         self.calls = 0
 
-    def __call__(self, *values):
+    def __call__(self, *values: Any) -> Any:
         self.calls += 1
         return self.model(*values)
 
@@ -83,7 +83,7 @@ def _ishigami() -> _Scenario:
     a = 7.0
     b = 0.1
 
-    def model(x1, x2, x3):
+    def model(x1: Any, x2: Any, x3: Any) -> Any:
         return jnp.sin(x1) + a * jnp.sin(x2) ** 2 + b * x3**4 * jnp.sin(x1)
 
     variance = 0.5 + a**2 / 8.0 + b * math.pi**4 / 5.0 + b**2 * math.pi**8 / 18.0
@@ -103,7 +103,7 @@ def _gaussian_polynomial() -> _Scenario:
     x = phx.domain.ProbabilityDomain(phx.uq.Normal(1.0, 2.0), label="x")
     y = phx.domain.ProbabilityDomain(phx.uq.Normal(-0.5, 1.5), label="y")
 
-    def model(x_value, y_value):
+    def model(x_value: Any, y_value: Any) -> Any:
         first = (x_value - 1.0) / 2.0
         second = (y_value + 0.5) / 1.5
         return 1.0 + 2.0 * first - 0.5 * second + 0.75 * (first**2 - 1.0) + first * second
@@ -120,7 +120,7 @@ def _gaussian_polynomial() -> _Scenario:
     )
 
 
-def _solver_model(first, second):
+def _solver_model(first: Any, second: Any) -> Any:
     matrix = jnp.asarray([[2.0 + 0.2 * first, 0.25], [0.25, 1.5 + 0.1 * second]])
     right_hand_side = jnp.asarray([1.0 + 0.1 * second, 2.0 - 0.1 * first])
     result = phx.linalg.solve(
@@ -159,7 +159,7 @@ def _solver_scenario() -> _Scenario:
     )
 
 
-def _projection_plan(scenario: _Scenario, basis: phx.uq.PolynomialChaosBasis):
+def _projection_plan(scenario: _Scenario, basis: phx.uq.PolynomialChaosBasis) -> Any:
     plans = {}
     for factor in scenario.factors:
         if isinstance(factor.distribution, phx.uq.Uniform):
@@ -170,13 +170,16 @@ def _projection_plan(scenario: _Scenario, basis: phx.uq.PolynomialChaosBasis):
             raise TypeError("Benchmark scenarios support only Uniform and Normal laws.")
         plans[factor.label] = phx.integration.FixedQuadraturePlan(rule)
     return phx.uq.PolynomialChaosProjectionPlan(
-        basis, phx.integration.ProductIntegrationPlan(plans)
+        basis,
+        # ty: ignore[invalid-argument-type]
+        phx.integration.ProductIntegrationPlan(plans),
     )
 
 
-def _samples(scenario: _Scenario, *, sampler: str, key):
+def _samples(scenario: _Scenario, *, sampler: str, key: Any) -> Any:
     distributions = {factor.label: factor.distribution for factor in scenario.factors}
     return phx.uq.sample_joint(
+        # ty: ignore[invalid-argument-type]
         distributions,
         num_samples=scenario.budget,
         key=key,
@@ -184,13 +187,13 @@ def _samples(scenario: _Scenario, *, sampler: str, key):
     )
 
 
-def _point_matrix(scenario: _Scenario, samples: phx.uq.RandomSampleBatch):
+def _point_matrix(scenario: _Scenario, samples: phx.uq.RandomSampleBatch) -> Any:
     return jnp.stack(
         tuple(samples.values[factor.label] for factor in scenario.factors), axis=-1
     )
 
 
-def _evaluate_samples(scenario: _Scenario, points: jax.Array):
+def _evaluate_samples(scenario: _Scenario, points: jax.Array) -> Any:
     return jax.vmap(scenario.model)(
         *tuple(points[:, index] for index in range(points.shape[1]))
     )
@@ -229,7 +232,9 @@ def _record(
     )
 
 
-def _run_scenario(scenario: _Scenario, key) -> tuple[PolynomialChaosBenchmarkRecord, ...]:
+def _run_scenario(
+    scenario: _Scenario, key: Any
+) -> tuple[PolynomialChaosBenchmarkRecord, ...]:
     basis = phx.uq.PolynomialChaosBasis(scenario.factors, scenario.degree)
 
     projection_counter = _ModelCounter(scenario.model)

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -7,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_array_complex_and_pytree_event_layouts_round_trip():
+def test_array_complex_and_pytree_event_layouts_round_trip() -> None:
     array_layout = phx.stochastic.ArrayEventLayout((2, 2))
     array = jnp.arange(12.0).reshape((3, 2, 2))
     assert jnp.array_equal(
@@ -40,7 +42,7 @@ def test_array_complex_and_pytree_event_layouts_round_trip():
     assert restored["right"].dtype == jnp.dtype(jnp.float64)
 
 
-def test_gaussian_factor_law_distinguishes_lebesgue_and_hausdorff_scores():
+def test_gaussian_factor_law_distinguishes_lebesgue_and_hausdorff_scores() -> None:
     full = phx.uq.GaussianFactorLaw(
         jnp.zeros((2,)),
         phx.uq.GaussianFactor(jnp.asarray([[1.0, 0.0], [0.2, 0.8]])),
@@ -62,7 +64,9 @@ def test_gaussian_factor_law_distinguishes_lebesgue_and_hausdorff_scores():
         singular.score(jnp.asarray([0.3, 0.0]))
 
 
-def test_matrix_and_state_dependent_reverse_drift_include_correct_covariance_terms():
+def test_matrix_and_state_dependent_reverse_drift_include_correct_covariance_terms() -> (
+    None
+):
     matrix = phx.stochastic.MatrixGaussianDiffusion(
         -0.2 * jnp.eye(2), jnp.asarray([[0.5, 0.0], [0.1, 0.4]])
     )
@@ -84,7 +88,7 @@ def test_matrix_and_state_dependent_reverse_drift_include_correct_covariance_ter
     assert jnp.allclose(process.covariance_divergence(0.2, state), expected)
 
 
-def test_multiple_structured_wiener_blocks_solve_without_dense_concatenation():
+def test_multiple_structured_wiener_blocks_solve_without_dense_concatenation() -> None:
     scalar_layout = phx.solver.WienerNoiseLayout((("scalar", (), None),))
     assert scalar_layout.blocks[0].shape == ()
     assert scalar_layout.total_size == 1
@@ -110,6 +114,7 @@ def test_multiple_structured_wiener_blocks_solve_without_dense_concatenation():
             ),
         ),
     )
+    # ty: ignore[unresolved-attribute]
     assert problem.noise_layout.total_size == 4
     realization = phx.stochastic.WienerRealization.independent(
         jr.key(0),
@@ -127,7 +132,7 @@ def test_multiple_structured_wiener_blocks_solve_without_dense_concatenation():
     assert jnp.all(result.successful)
 
 
-def test_discrete_gaussian_prediction_conversions_and_samplers_are_consistent():
+def test_discrete_gaussian_prediction_conversions_and_samplers_are_consistent() -> None:
     schedule = phx.stochastic.DiscreteGaussianDiffusionSchedule.linear(8)
     clean = jnp.asarray([[0.2, -0.1], [0.4, 0.7]])
     noise = jr.normal(jr.key(1), clean.shape)
@@ -136,7 +141,7 @@ def test_discrete_gaussian_prediction_conversions_and_samplers_are_consistent():
     assert jnp.allclose(schedule.clean_from_epsilon(noisy, noise, timestep), clean)
     assert jnp.allclose(schedule.epsilon_from_clean(noisy, clean, timestep), noise)
 
-    def predictor(state, time, *, key=None):
+    def predictor(state: Any, time: Any, *, key: Any = None) -> Any:
         del time, key
         return jnp.zeros_like(state)
 
@@ -155,7 +160,9 @@ def test_discrete_gaussian_prediction_conversions_and_samplers_are_consistent():
     assert ddim.terminal_reference_id == "standard-normal"
 
 
-def test_categorical_diffusion_exact_posterior_normalizes_and_respects_absorbing_state():
+def test_categorical_diffusion_exact_posterior_normalizes_and_respects_absorbing_state() -> (
+    None
+):
     schedule = phx.stochastic.CategoricalDiffusionSchedule.absorbing(5, 3, 2)
     clean = jnp.asarray([[0, 1], [1, 0]], dtype=jnp.int32)
     timestep = jnp.asarray([1, 3])
@@ -178,7 +185,7 @@ def test_categorical_diffusion_exact_posterior_normalizes_and_respects_absorbing
     assert jnp.allclose(jnp.sum(probabilities, axis=-1), 1.0)
     assert jnp.array_equal(schedule.transition[:, 2, 2], jnp.ones((5,)))
 
-    def predictor(state, time, *, key=None):
+    def predictor(state: Any, time: Any, *, key: Any = None) -> Any:
         del time, key
         return jnp.zeros(state.shape + (schedule.num_classes,))
 

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -14,7 +16,7 @@ import phydrax as phx
         (jnp.float64, 8e-11, 2e-13),
     ],
 )
-def test_modified_bessel_family_matches_scipy(dtype, rtol, atol):
+def test_modified_bessel_family_matches_scipy(dtype: Any, rtol: Any, atol: Any) -> None:
     orders = np.asarray([0.0, 1e-8, 0.3, 0.5, 1.0, 2.3, 10.0, 29.9, 30.0, 50.0, 100.0])
     arguments = np.geomspace(1e-8, 1e3, 60)
     v, x = np.meshgrid(orders, arguments, indexing="ij")
@@ -40,7 +42,9 @@ def test_modified_bessel_family_matches_scipy(dtype, rtol, atol):
         (jnp.float64, 3e-15),
     ],
 )
-def test_modified_bessel_small_orders_at_smallest_positive_argument(dtype, rtol):
+def test_modified_bessel_small_orders_at_smallest_positive_argument(
+    dtype: Any, rtol: Any
+) -> None:
     x = jnp.nextafter(jnp.asarray(0.0, dtype=dtype), jnp.asarray(1.0, dtype=dtype))
     for function in (phx.special.iv, phx.special.ive):
         actual = np.asarray(function(0.0, x))
@@ -70,7 +74,7 @@ def test_modified_bessel_small_orders_at_smallest_positive_argument(dtype, rtol)
     assert np.isneginf(kve_derivative)
 
 
-def test_modified_bessel_half_order_gradient_at_smallest_float64_is_finite():
+def test_modified_bessel_half_order_gradient_at_smallest_float64_is_finite() -> None:
     x = jnp.nextafter(
         jnp.asarray(0.0, dtype=jnp.float64),
         jnp.asarray(1.0, dtype=jnp.float64),
@@ -87,7 +91,7 @@ def test_modified_bessel_half_order_gradient_at_smallest_float64_is_finite():
         np.testing.assert_allclose(derivative, expected, rtol=3e-14)
 
 
-def test_scaled_and_unscaled_modified_bessel_values_agree_when_representable():
+def test_scaled_and_unscaled_modified_bessel_values_agree_when_representable() -> None:
     v = jnp.asarray([0.0, 0.3, 2.0, 10.0, 30.0])[:, None]
     x = jnp.geomspace(1e-4, 100.0, 60)[None, :]
     np.testing.assert_allclose(
@@ -104,7 +108,7 @@ def test_scaled_and_unscaled_modified_bessel_values_agree_when_representable():
     )
 
 
-def test_modified_bessel_argument_derivatives_follow_recurrences():
+def test_modified_bessel_argument_derivatives_follow_recurrences() -> None:
     orders = jnp.asarray([0.0, 0.3, 2.3, 10.0, 30.0, 50.0])
     arguments = jnp.asarray([0.2, 1.0, 3.0, 10.0, 20.0, 100.0])
     cases = [
@@ -142,7 +146,7 @@ def test_modified_bessel_argument_derivatives_follow_recurrences():
         assert np.isfinite(jax.grad(jax.grad(lambda value: function(2.3, value)))(3.0))
 
 
-def test_scaled_modified_bessel_extreme_gradients_do_not_cancel():
+def test_scaled_modified_bessel_extreme_gradients_do_not_cancel() -> None:
     argument = jnp.asarray(1e200)
     for order in (0.0, 30.0):
         for function in (phx.special.ive, phx.special.kve):
@@ -155,7 +159,7 @@ def test_scaled_modified_bessel_extreme_gradients_do_not_cancel():
             )
 
 
-def test_modified_bessel_zero_argument_derivatives_compose():
+def test_modified_bessel_zero_argument_derivatives_compose() -> None:
     assert jax.grad(jax.grad(lambda x: phx.special.iv(0.0, x)))(0.0) == pytest.approx(0.5)
     assert jax.grad(jax.grad(lambda x: phx.special.ive(0.0, x)))(0.0) == pytest.approx(
         1.5
@@ -168,7 +172,7 @@ def test_modified_bessel_zero_argument_derivatives_compose():
         assert np.isposinf(jax.grad(jax.grad(lambda x: function(0.0, x)))(0.0))
 
 
-def test_modified_bessel_order_derivatives_match_scipy():
+def test_modified_bessel_order_derivatives_match_scipy() -> None:
     order = 0.3
     argument = 2.0
     step = np.cbrt(np.finfo(np.float64).eps) * (1.0 + abs(order))
@@ -190,7 +194,7 @@ def test_modified_bessel_order_derivatives_match_scipy():
         np.testing.assert_allclose(np.asarray(actual), expected, rtol=2e-7, atol=2e-9)
 
 
-def test_modified_bessel_boundaries_domains_and_broadcasting():
+def test_modified_bessel_boundaries_domains_and_broadcasting() -> None:
     orders = jnp.asarray([0.0, 1.0, 2.0])[:, None]
     arguments = jnp.asarray([0.0, 1.0])[None, :]
     assert phx.special.iv(orders, arguments).shape == (3, 2)

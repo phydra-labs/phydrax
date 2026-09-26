@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -56,15 +57,15 @@ _TARGETS = jnp.asarray([[3.25, 2.0, 2.1], [2.1, 3.2, 1.9]])
 _ALPHA = jnp.asarray([0.13, -0.07, 0.05])
 
 
-def _cell():
+def _cell() -> Any:
     return PeriodicCell(4.0 * jnp.eye(3))
 
 
-def _space():
+def _space() -> Any:
     return RWGSurfaceCurrentSpace3D(OrientedTriangleSurfaceComplex3D(_VERTICES, _FACES))
 
 
-def _policy(**overrides):
+def _policy(**overrides: Any) -> Any:
     arguments = dict(
         splitting_parameter=1.2,
         real_cutoff=1,
@@ -77,10 +78,11 @@ def _policy(**overrides):
         max_resident_bytes=8 * 1024 * 1024,
     )
     arguments.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return PeriodicEwaldPolicy3D(**arguments)
 
 
-def _action(targets=_TARGETS, **overrides):
+def _action(targets: Any = _TARGETS, **overrides: Any) -> Any:
     return prepare_periodic_maxwell_electric_field_action_3d(
         _space(),
         targets,
@@ -93,7 +95,7 @@ def _action(targets=_TARGETS, **overrides):
     )
 
 
-def test_periodic_maxwell_off_surface_action_has_bloch_character_and_evidence():
+def test_periodic_maxwell_off_surface_action_has_bloch_character_and_evidence() -> None:
     action = _action()
     coefficients = (
         jnp.linspace(-0.3, 0.5, action.current_space.size)
@@ -127,7 +129,7 @@ def test_periodic_maxwell_off_surface_action_has_bloch_character_and_evidence():
     )
 
 
-def test_periodic_maxwell_complex_transpose_and_adjoint_are_exact():
+def test_periodic_maxwell_complex_transpose_and_adjoint_are_exact() -> None:
     action = _action()
     coefficients = (
         jnp.linspace(0.1, 0.7, action.current_space.size)
@@ -159,7 +161,7 @@ def test_periodic_maxwell_complex_transpose_and_adjoint_are_exact():
     assert action.support.exact_adjoint
 
 
-def test_periodic_maxwell_rejects_wood_neutrality_and_resource_violations():
+def test_periodic_maxwell_rejects_wood_neutrality_and_resource_violations() -> None:
     with pytest.raises(PeriodicHelmholtzWoodAnomalyError):
         prepare_periodic_maxwell_electric_field_action_3d(
             _space(),
@@ -197,7 +199,7 @@ def test_periodic_maxwell_rejects_wood_neutrality_and_resource_violations():
         _action(max_preparation_workspace_bytes=1024)
 
 
-def test_periodic_vector_field_action_never_implies_boundary_solve_support():
+def test_periodic_vector_field_action_never_implies_boundary_solve_support() -> None:
     action = _action()
     support = periodic_vector_boundary_support_3d(action)
 

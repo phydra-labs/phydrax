@@ -823,8 +823,7 @@ def exact_state_space_log_likelihood(
     """Evaluate an exact Kalman or finite-state marginal likelihood."""
     if not isinstance(problem, StateSpaceProblem):
         raise TypeError("problem must be a StateSpaceProblem.")
-    if temporal_method not in ("sequential", "parallel", "auto"):
-        raise ValueError("temporal_method must be 'sequential', 'parallel', or 'auto'.")
+    temporal_method = parse(temporal_method, KalmanExecutionMethod, "temporal_method")
     resolved = _resolved_method(problem, method)
     if resolved == "kalman":
         backend = kalman_filter(

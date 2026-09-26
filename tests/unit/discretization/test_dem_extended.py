@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _materials(*, rolling=0.0):
+def _materials(*, rolling: Any = 0.0) -> Any:
     return phx.equations.DEMMaterialTable(
         jnp.asarray([2.0e5]),
         jnp.asarray([0.25]),
@@ -22,17 +25,17 @@ def _materials(*, rolling=0.0):
 
 
 def _compile(
-    normal,
+    normal: Any,
     *,
-    cohesion=None,
-    tangential=None,
-    rotational=None,
-    barriers=(),
-    neighborhood=None,
-    execution=None,
-    materials=None,
-    maximum_overlap=0.3,
-):
+    cohesion: Any = None,
+    tangential: Any = None,
+    rotational: Any = None,
+    barriers: Any = (),
+    neighborhood: Any = None,
+    execution: Any = None,
+    materials: Any = None,
+    maximum_overlap: Any = 0.3,
+) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([10, 20]), jnp.ones((2,)), ambient_dimension=2
     ).prepare()
@@ -68,7 +71,7 @@ def _compile(
     )
 
 
-def test_energy_ledger_is_source_resolved_rejection_safe_and_qualifiable():
+def test_energy_ledger_is_source_resolved_rejection_safe_and_qualifiable() -> None:
     compiled = _compile(phx.discretization.LinearSpringDashpotNormalPlan(1.0e4))
     state = compiled.initialize_state(
         0.0,
@@ -119,7 +122,7 @@ def test_energy_ledger_is_source_resolved_rejection_safe_and_qualifiable():
     assert rejected.accepted_state.energy.accepted_steps == 0
 
 
-def test_bagheri_bridge_force_energy_lifecycle_and_fit_domain():
+def test_bagheri_bridge_force_energy_lifecycle_and_fit_domain() -> None:
     bridge = phx.discretization.BagheriCapillaryBridgePlan(
         0.072,
         0.1,
@@ -150,7 +153,7 @@ def test_bagheri_bridge_force_energy_lifecycle_and_fit_domain():
     )
     gap = 0.5 * critical_gap
 
-    def contact_energy(current_gap):
+    def contact_energy(current_gap: Any) -> Any:
         position = state.kinematics.position.at[1, 0].set(1.0 + current_gap)
         staged = eqx.tree_at(
             lambda value: value.kinematics.position,
@@ -211,7 +214,7 @@ def test_bagheri_bridge_force_energy_lifecycle_and_fit_domain():
         )
 
 
-def test_verlet_fused_hierarchical_and_batched_paths_preserve_authority():
+def test_verlet_fused_hierarchical_and_batched_paths_preserve_authority() -> None:
     box = phx.discretization.ParticleBox(
         jnp.asarray([-1.0, -1.0]),
         jnp.asarray([1.0, 1.0]),
@@ -306,7 +309,7 @@ def test_verlet_fused_hierarchical_and_batched_paths_preserve_authority():
         phx.discretization.DEMBatchExecutionMode.UNIFORM_REBUILD,
     ],
 )
-def test_batched_verlet_step_without_neighborhood_cache_is_rejected(mode):
+def test_batched_verlet_step_without_neighborhood_cache_is_rejected(mode: Any) -> None:
     box = phx.discretization.ParticleBox(
         jnp.asarray([-1.0, -1.0]),
         jnp.asarray([1.0, 1.0]),
@@ -341,7 +344,7 @@ def test_batched_verlet_step_without_neighborhood_cache_is_rejected(mode):
         )
 
 
-def test_rolling_smooth_sensitivity_and_checkpoint_replay_are_operational():
+def test_rolling_smooth_sensitivity_and_checkpoint_replay_are_operational() -> None:
     compiled = _compile(
         phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
         rotational=phx.discretization.ConstantRollingResistancePlan(),
@@ -409,11 +412,13 @@ def test_rolling_smooth_sensitivity_and_checkpoint_replay_are_operational():
     assert smooth.diagnostics(0.0, smooth_state).successful
 
 
-def _inexact_leaves(tree):
+def _inexact_leaves(tree: Any) -> Any:
     return [leaf for leaf in jax.tree.leaves(tree) if eqx.is_inexact_array(leaf)]
 
 
-def test_checkpointed_dem_vjp_guards_cotangent_on_replay_mismatch(monkeypatch):
+def test_checkpointed_dem_vjp_guards_cotangent_on_replay_mismatch(
+    monkeypatch: Any,
+) -> None:
     from phydrax.discretization.particle import _dem_replay
 
     compiled = _compile(phx.discretization.LinearSpringDashpotNormalPlan(1.0e4))
@@ -423,10 +428,10 @@ def test_checkpointed_dem_vjp_guards_cotangent_on_replay_mismatch(monkeypatch):
         jnp.asarray([[0.1, 0.0], [-0.1, 0.0]]),
     )
 
-    def loss(final_state):
+    def loss(final_state: Any) -> Any:
         return jnp.sum(final_state.kinematics.position**2)
 
-    def vjp():
+    def vjp() -> Any:
         return phx.discretization.checkpointed_dem_vjp(
             loss,
             compiled.dynamics,
@@ -460,10 +465,10 @@ def test_checkpointed_dem_vjp_guards_cotangent_on_replay_mismatch(monkeypatch):
     )
 
 
-def test_moving_servo_curvature_dmt_and_plastic_models():
+def test_moving_servo_curvature_dmt_and_plastic_models() -> None:
     geometry = phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
 
-    def motion(base, time, points, args):
+    def motion(base: Any, time: Any, points: Any, args: Any) -> Any:
         del time, args
         return phx.discretization.DEMBarrierMotion(
             base,

@@ -1420,7 +1420,10 @@ def _arnoldi_cycle_configuration(
 ) -> tuple[int, int, int]:
     method = policy.method
     # Cycle configuration is only computed on the RestartedArnoldi route.
-    assert isinstance(method, RestartedArnoldi)
+    if not (isinstance(method, RestartedArnoldi)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(method, RestartedArnoldi)."
+        )
     requested_subspace = _arnoldi_subspace_dimension(
         method,
         count,

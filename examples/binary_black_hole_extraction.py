@@ -8,6 +8,8 @@ or asymptotic binary waveform.
 
 from __future__ import annotations
 
+from typing import Any
+
 from jax import config
 
 
@@ -19,7 +21,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def metric_norm(vector, metric):
+def metric_norm(vector: Any, metric: Any) -> Any:
     return jnp.sqrt(phx.ein.contract("...i,...ij,...j->...", vector, metric, vector))
 
 

@@ -588,11 +588,17 @@ class FeasibleParameterization(AbstractFeasibilityMap):
         transform = self.transform
         # __init__ pairs each parameterization with its transform class.
         if self.parameterization == "positive":
-            assert isinstance(transform, PositiveTransform)
+            if not (isinstance(transform, PositiveTransform)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(transform, PositiveTransform)."
+                )
             minimum = jnp.asarray(transform.minimum, dtype=result.dtype)
             return jnp.min(result - minimum), jnp.max(jnp.maximum(minimum - result, 0.0))
         if self.parameterization == "interval":
-            assert isinstance(transform, IntervalTransform)
+            if not (isinstance(transform, IntervalTransform)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(transform, IntervalTransform)."
+                )
             lower = jnp.asarray(transform.lower, dtype=result.dtype)
             upper = jnp.asarray(transform.upper, dtype=result.dtype)
             margin = jnp.min(jnp.minimum(result - lower, upper - result))

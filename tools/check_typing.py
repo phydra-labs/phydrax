@@ -34,7 +34,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = "phydrax"
+FIRST_PARTY = (
+    "phydrax",
+    "tests",
+    "tools",
+    "benchmarks",
+    "examples",
+    "mkdocstrings_setup.py",
+)
 ANNOTATION_RULES = "ANN001,ANN002,ANN003,ANN201,ANN202,ANN204,ANN205,ANN206"
 _CHECKER_COMMENT = re.compile(r"#\s*(?:(?:type|pyright|mypy|pytype)\s*:|pyre-)")
 _SOURCE_LOCATION = re.compile(r"(\.pyi?):\d+(?::\d+)?")
@@ -151,7 +158,16 @@ def _collect_ty(collector: _Collector, /) -> None:
     result = run_tool(
         root,
         "ty",
-        ("check", "--output-format", "gitlab", "--python", sys.prefix, PACKAGE),
+        (
+            "check",
+            "--output-format",
+            "gitlab",
+            "--error",
+            "unused-ignore-comment",
+            "--python",
+            sys.prefix,
+            *FIRST_PARTY,
+        ),
     )
     if result.returncode not in (0, 1):
         raise SystemExit(
@@ -181,7 +197,7 @@ def _collect_annotations(collector: _Collector, /) -> None:
             "json",
             "--no-cache",
             "--exit-zero",
-            PACKAGE,
+            *FIRST_PARTY,
         ),
     )
     if result.returncode != 0:

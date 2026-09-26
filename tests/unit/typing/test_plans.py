@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -35,7 +35,7 @@ class Catalog(StrictModule):
     count: pt.Size[ComponentDim] = eqx.field(static=True)
 
 
-def _catalog(**overrides):
+def _catalog(**overrides: Any) -> Any:
     fields = {
         "names": ("h2", "o2"),
         "masses": jnp.asarray((2.0, 32.0)),
@@ -48,7 +48,7 @@ def _catalog(**overrides):
     return Catalog(**fields)
 
 
-def test_contract_fields_are_checked_in_declaration_order():
+def test_contract_fields_are_checked_in_declaration_order() -> None:
     pt.validate(_catalog())
     with pytest.raises(ValueError, match="masses"):
         _catalog(masses=jnp.asarray((2.0, 32.0, 18.0)))
@@ -59,14 +59,14 @@ def test_contract_fields_are_checked_in_declaration_order():
 
 
 @pytest.mark.filterwarnings("ignore:A JAX array is being set as static")
-def test_field_validation_requires_exact_literal_runtime_types():
+def test_field_validation_requires_exact_literal_runtime_types() -> None:
     with pytest.raises(TypeError, match="basis"):
         _catalog(basis=np.str_("nodal"))
     with pytest.raises(ValueError, match="basis"):
         _catalog(basis="spectral")
 
 
-def test_validate_requires_an_opted_in_strict_module():
+def test_validate_requires_an_opted_in_strict_module() -> None:
     class Plain(StrictModule):
         masses: pt.Float64[ComponentDim]
 
@@ -76,7 +76,7 @@ def test_validate_requires_an_opted_in_strict_module():
         pt.validate(object())
 
 
-def test_opt_in_without_contract_fields_is_refused():
+def test_opt_in_without_contract_fields_is_refused() -> None:
     class Plain(StrictModule):
         __strict_contract__ = True
 
@@ -86,7 +86,7 @@ def test_opt_in_without_contract_fields_is_refused():
         Plain("x")
 
 
-def test_type_checking_only_contract_names_fail_with_field_context():
+def test_type_checking_only_contract_names_fail_with_field_context() -> None:
     class Hidden(StrictModule):
         __strict_contract__ = True
 
@@ -96,7 +96,7 @@ def test_type_checking_only_contract_names_fail_with_field_context():
         Hidden(jnp.zeros((1,), dtype=jnp.float32))
 
 
-def test_unsupported_contract_placements_fail_with_field_context():
+def test_unsupported_contract_placements_fail_with_field_context() -> None:
     class Misplaced(StrictModule):
         __strict_contract__ = True
 
@@ -106,7 +106,7 @@ def test_unsupported_contract_placements_fail_with_field_context():
         Misplaced([])
 
 
-def test_inherited_fields_resolve_in_their_defining_module():
+def test_inherited_fields_resolve_in_their_defining_module() -> None:
     class AbstractHolder(StrictModule):
         __strict_contract__ = True
 
@@ -120,7 +120,7 @@ def test_inherited_fields_resolve_in_their_defining_module():
         Holder(jnp.zeros((2,)), 3)
 
 
-def test_concurrent_first_construction_compiles_one_consistent_plan():
+def test_concurrent_first_construction_compiles_one_consistent_plan() -> None:
     class Concurrent(StrictModule):
         __strict_contract__ = True
 
@@ -129,7 +129,7 @@ def test_concurrent_first_construction_compiles_one_consistent_plan():
     values = jnp.zeros((2,))
     errors = []
 
-    def run():
+    def run() -> None:
         try:
             Concurrent(values)
         except Exception as error:  # collected for the assertion below

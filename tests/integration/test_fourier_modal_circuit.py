@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -14,7 +15,7 @@ from phydrax.solver.maxwell.fourier_modal import (
 )
 
 
-def _prepared(*, grazing=False, exterior_permittivity=1.0):
+def _prepared(*, grazing: Any = False, exterior_permittivity: Any = 1.0) -> Any:
     size = 2
     identity = jnp.eye(size, dtype=jnp.complex128)
     modes_left = HomogeneousPortModes(
@@ -69,10 +70,13 @@ def _prepared(*, grazing=False, exterior_permittivity=1.0):
         ),
     )
     return PreparedFourierModalMaxwell(
+        # ty: ignore[invalid-argument-type]
         problem,
+        # ty: ignore[invalid-argument-type]
         SimpleNamespace(),
         (),
         (),
+        # ty: ignore[invalid-argument-type]
         SimpleNamespace(),
         modes_left,
         modes_right,
@@ -88,7 +92,7 @@ def _prepared(*, grazing=False, exterior_permittivity=1.0):
     )
 
 
-def test_fourier_modal_adapter_reorders_asymmetric_blocks_canonically():
+def test_fourier_modal_adapter_reorders_asymmetric_blocks_canonically() -> None:
     component = fourier_modal_scattering_component(
         _prepared(), left_modes=("h0:te",), right_modes=("h0:te",)
     )
@@ -101,18 +105,20 @@ def test_fourier_modal_adapter_reorders_asymmetric_blocks_canonically():
         ("h0:te",),
         ("h0:te",),
     )
+    # ty: ignore[unresolved-attribute]
     assert float(component.ports[0].references[0].reference_plane) == -1.0
+    # ty: ignore[unresolved-attribute]
     assert float(component.ports[1].references[0].reference_plane) == 3.0
 
 
-def test_fourier_modal_adapter_rejects_grazing_modes():
+def test_fourier_modal_adapter_rejects_grazing_modes() -> None:
     with pytest.raises(ValueError, match="nongrazing"):
         fourier_modal_scattering_component(
             _prepared(grazing=True), left_modes=("h0:te",), right_modes=("h0:te",)
         )
 
 
-def test_fourier_modal_adapter_basis_identity_includes_exterior_media():
+def test_fourier_modal_adapter_basis_identity_includes_exterior_media() -> None:
     first = fourier_modal_scattering_component(
         _prepared(exterior_permittivity=1.0),
         left_modes=("h0:te",),
@@ -123,4 +129,5 @@ def test_fourier_modal_adapter_basis_identity_includes_exterior_media():
         left_modes=("h0:te",),
         right_modes=("h0:te",),
     )
+    # ty: ignore[unresolved-attribute]
     assert first.ports[0].references[0].basis_id != second.ports[0].references[0].basis_id

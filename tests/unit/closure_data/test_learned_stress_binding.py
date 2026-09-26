@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -32,7 +34,7 @@ _STRAIN = jnp.asarray(
 )
 
 
-def _predict_stress(features, _args):
+def _predict_stress(features: Any, _args: Any) -> Any:
     a = features[..., 0]
     b = features[..., 1]
     zero = jnp.zeros_like(a)
@@ -46,29 +48,29 @@ def _predict_stress(features, _args):
     )
 
 
-def _asymmetric_prediction(features, args):
+def _asymmetric_prediction(features: Any, args: Any) -> Any:
     stress = _predict_stress(features, args)
     return stress.at[0, 0, 1].add(1.0)
 
 
-def _traceful_prediction(features, args):
+def _traceful_prediction(features: Any, args: Any) -> Any:
     stress = _predict_stress(features, args)
     return stress + jnp.eye(3, dtype=stress.dtype)
 
 
-def _nonfinite_prediction(features, args):
+def _nonfinite_prediction(features: Any, args: Any) -> Any:
     return _predict_stress(features, args).at[0, 0, 0].set(jnp.nan)
 
 
-def _wrong_shape_prediction(features, args):
+def _wrong_shape_prediction(features: Any, args: Any) -> Any:
     return _predict_stress(features, args)[..., 0]
 
 
-def _wrong_dtype_prediction(features, args):
+def _wrong_dtype_prediction(features: Any, args: Any) -> Any:
     return _predict_stress(features, args).astype(jnp.float16)
 
 
-def _resolved_filter(name="cell filter"):
+def _resolved_filter(name: Any = "cell filter") -> Any:
     return ResolvedLESFilter(
         name,
         family="implicit-grid-volume",
@@ -81,7 +83,9 @@ def _resolved_filter(name="cell filter"):
     )
 
 
-def _normalizer(*, feature_name="resolved-gradient", schema_id="flow-schema"):
+def _normalizer(
+    *, feature_name: Any = "resolved-gradient", schema_id: Any = "flow-schema"
+) -> Any:
     provenance = NormalizerProvenance(
         partition_id="train-partition",
         training_assignment_ids=("assignment-0",),
@@ -97,7 +101,7 @@ def _normalizer(*, feature_name="resolved-gradient", schema_id="flow-schema"):
     )
 
 
-def _feature_schema():
+def _feature_schema() -> Any:
     return LearnedStressFeatureSchema(
         name="resolved-gradient",
         component_names=("s_xx", "s_xy"),
@@ -109,12 +113,12 @@ def _feature_schema():
 
 
 def _output_contract(
-    resolved_filter,
+    resolved_filter: Any,
     *,
-    filter_id=None,
-    discretization_id="mesh-32-cells",
-    regime="constant-density-incompressible",
-):
+    filter_id: Any = None,
+    discretization_id: Any = "mesh-32-cells",
+    regime: Any = "constant-density-incompressible",
+) -> Any:
     return LearnedStressOutputContract(
         shape=(2, 3, 3),
         dtype=jnp.float32,
@@ -131,11 +135,11 @@ def _output_contract(
 
 def _prepared(
     *,
-    policy="signed",
-    fraction=None,
-    predictor=_predict_stress,
-    port_mapping=None,
-):
+    policy: Any = "signed",
+    fraction: Any = None,
+    predictor: Any = _predict_stress,
+    port_mapping: Any = None,
+) -> Any:
     resolved_filter = _resolved_filter()
     provenance = LESParameterProvenance(
         resolved_filter,
@@ -166,7 +170,7 @@ def _prepared(
     return prepared
 
 
-def test_signed_stress_validates_contract_and_preserves_backscatter():
+def test_signed_stress_validates_contract_and_preserves_backscatter() -> None:
     prepared = _prepared()
     result = prepared(_FEATURES, _STRAIN)
 
@@ -184,7 +188,7 @@ def test_signed_stress_validates_contract_and_preserves_backscatter():
     assert result.evidence.valid
 
 
-def test_dissipative_projection_removes_only_negative_local_transfer():
+def test_dissipative_projection_removes_only_negative_local_transfer() -> None:
     result = _prepared(policy="dissipative")(_FEATURES, _STRAIN)
 
     np.testing.assert_allclose(result.evidence.raw_local_transfer, (-2.0, 2.0))
@@ -199,7 +203,9 @@ def test_dissipative_projection_removes_only_negative_local_transfer():
     np.testing.assert_allclose(result.evidence.selected_backscatter_transfer, 0.0)
 
 
-def test_bounded_backscatter_caps_aggregate_without_claiming_pointwise_dissipation():
+def test_bounded_backscatter_caps_aggregate_without_claiming_pointwise_dissipation() -> (
+    None
+):
     result = _prepared(policy="bounded_backscatter", fraction=0.25)(_FEATURES, _STRAIN)
 
     np.testing.assert_allclose(result.evidence.raw_forward_transfer, 2.0)
@@ -222,7 +228,9 @@ def test_bounded_backscatter_caps_aggregate_without_claiming_pointwise_dissipati
         (_nonfinite_prediction, "nonfinite"),
     ),
 )
-def test_invalid_prediction_is_refused_without_a_zero_fallback(predictor, message):
+def test_invalid_prediction_is_refused_without_a_zero_fallback(
+    predictor: Any, message: Any
+) -> None:
     prepared = _prepared(predictor=predictor)
 
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match=message):
@@ -237,14 +245,16 @@ def test_invalid_prediction_is_refused_without_a_zero_fallback(predictor, messag
         (_wrong_dtype_prediction, TypeError, "dtype"),
     ),
 )
-def test_prediction_shape_and_dtype_must_match_exactly(predictor, error, message):
+def test_prediction_shape_and_dtype_must_match_exactly(
+    predictor: Any, error: Any, message: Any
+) -> None:
     prepared = _prepared(predictor=predictor)
 
     with pytest.raises(error, match=message):
         prepared(_FEATURES, _STRAIN)
 
 
-def test_feature_shape_dtype_and_output_convention_are_exact():
+def test_feature_shape_dtype_and_output_convention_are_exact() -> None:
     prepared = _prepared()
 
     with pytest.raises(ValueError, match="features.*shape"):
@@ -264,7 +274,7 @@ def test_feature_shape_dtype_and_output_convention_are_exact():
         )
 
 
-def test_prepare_refuses_artifact_normalizer_target_and_units_mismatches():
+def test_prepare_refuses_artifact_normalizer_target_and_units_mismatches() -> None:
     prepared = _prepared()
     plan = prepared.plan
     normalizer = prepared.normalizer
@@ -297,7 +307,7 @@ def test_prepare_refuses_artifact_normalizer_target_and_units_mismatches():
         plan.prepare(_predict_stress, other_normalizer, **defaults)
 
 
-def test_plan_refuses_filter_provenance_and_feature_identity_mismatches():
+def test_plan_refuses_filter_provenance_and_feature_identity_mismatches() -> None:
     resolved_filter = _resolved_filter()
     other_filter = _resolved_filter("other cell filter")
     provenance = LESParameterProvenance(
@@ -369,7 +379,7 @@ def test_plan_refuses_filter_provenance_and_feature_identity_mismatches():
         )
 
 
-def test_prepared_binding_is_jittable_and_has_a_finite_jvp():
+def test_prepared_binding_is_jittable_and_has_a_finite_jvp() -> None:
     prepared = _prepared()
     evaluate = eqx.filter_jit(lambda values: prepared(values, _STRAIN))
     compiled = evaluate(_FEATURES)
@@ -384,7 +394,7 @@ def test_prepared_binding_is_jittable_and_has_a_finite_jvp():
     assert jnp.all(jnp.isfinite(tangent))
 
 
-def test_stress_result_carries_header_contract_and_identities():
+def test_stress_result_carries_header_contract_and_identities() -> None:
     prepared = _prepared()
     result = prepared(_FEATURES, _STRAIN)
     dissipative = _prepared(policy="dissipative")(_FEATURES, _STRAIN)
@@ -400,7 +410,7 @@ def test_stress_result_carries_header_contract_and_identities():
     np.testing.assert_array_equal(result.derivative_valid, (True, True))
 
 
-def _transfer_tangent(prepared, features):
+def _transfer_tangent(prepared: Any, features: Any) -> Any:
     return jax.jvp(
         lambda values: prepared(values, _STRAIN).local_transfer,
         (features,),
@@ -408,7 +418,7 @@ def _transfer_tangent(prepared, features):
     )
 
 
-def test_dissipative_lane_on_zero_transfer_boundary_has_poisoned_derivative():
+def test_dissipative_lane_on_zero_transfer_boundary_has_poisoned_derivative() -> None:
     # Lane 0 predicts a pure shear stress orthogonal to the strain (zero
     # transfer, the dissipative clip boundary); lane 1 is clipped backscatter.
     features = jnp.asarray(((1.0, 3.0), (3.0, 2.0)), dtype=jnp.float32)
@@ -424,7 +434,7 @@ def test_dissipative_lane_on_zero_transfer_boundary_has_poisoned_derivative():
     assert bool(jnp.isfinite(tangent[1]))
 
 
-def test_bounded_backscatter_on_the_cap_poisons_only_backscatter_lanes():
+def test_bounded_backscatter_on_the_cap_poisons_only_backscatter_lanes() -> None:
     prepared = _prepared(policy="bounded_backscatter", fraction=1.0)
     result = prepared(_FEATURES, _STRAIN)
 
@@ -435,7 +445,7 @@ def test_bounded_backscatter_on_the_cap_poisons_only_backscatter_lanes():
     assert bool(jnp.isfinite(tangent[1]))
 
 
-def test_existing_generic_binding_contract_remains_unchanged():
+def test_existing_generic_binding_contract_remains_unchanged() -> None:
     predictor = lambda values, args: values if args is None else args * values
     binding = LearnedClosureBindingPlan(
         predictor,
@@ -452,7 +462,7 @@ def test_existing_generic_binding_contract_remains_unchanged():
     assert binding.differentiability is BranchDifferentiationPolicy.SMOOTH
 
 
-def _fitted_stress_model(feature_port, stress_port):
+def _fitted_stress_model(feature_port: Any, stress_port: Any) -> Any:
     features = jnp.asarray(
         np.random.default_rng(0).normal(size=(16, 2)), dtype=jnp.float32
     )
@@ -470,14 +480,14 @@ def _fitted_stress_model(feature_port, stress_port):
     ).model
 
 
-def _owner_ports():
+def _owner_ports() -> Any:
     return (
         _feature_schema().value_port(),
         _output_contract(_resolved_filter()).value_port(),
     )
 
 
-def test_fitted_predictor_binds_to_stress_owner_ports_through_explicit_mapping():
+def test_fitted_predictor_binds_to_stress_owner_ports_through_explicit_mapping() -> None:
     feature_port, stress_port = _owner_ports()
     model = _fitted_stress_model(feature_port, stress_port)
     mapping = PortMapping(
@@ -494,7 +504,7 @@ def test_fitted_predictor_binds_to_stress_owner_ports_through_explicit_mapping()
     assert _prepared().port_binding is None
 
 
-def test_stress_binding_requires_mapping_exactly_for_port_declaring_predictors():
+def test_stress_binding_requires_mapping_exactly_for_port_declaring_predictors() -> None:
     feature_port, stress_port = _owner_ports()
     model = _fitted_stress_model(feature_port, stress_port)
     mapping = PortMapping(
@@ -514,7 +524,7 @@ def test_stress_binding_requires_mapping_exactly_for_port_declaring_predictors()
         _prepared(predictor=model, port_mapping=crossed)
 
 
-def test_stress_binding_rejects_predictor_with_mismatched_feature_dimensions():
+def test_stress_binding_rejects_predictor_with_mismatched_feature_dimensions() -> None:
     feature_port, stress_port = _owner_ports()
     velocity_features = LearnedStressFeatureSchema(
         name="resolved-gradient",
@@ -534,7 +544,7 @@ def test_stress_binding_rejects_predictor_with_mismatched_feature_dimensions():
         _prepared(predictor=model, port_mapping=mapping)
 
 
-def test_generic_closure_binding_rejects_port_declaring_predictors():
+def test_generic_closure_binding_rejects_port_declaring_predictors() -> None:
     feature_port, stress_port = _owner_ports()
     model = _fitted_stress_model(feature_port, stress_port)
 

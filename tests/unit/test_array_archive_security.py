@@ -61,7 +61,7 @@ def _fail_if_numpy_loads(*args: object, **kwargs: object) -> None:
 
 def test_container_member_manifest_and_aggregate_limits_precede_allocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     path = write_array_archive(
         tmp_path / "bounded.zip",
         manifest={"kind": "limit-fixture"},
@@ -83,7 +83,7 @@ def test_container_member_manifest_and_aggregate_limits_precede_allocation(
 
 def test_array_dtype_rank_shape_and_element_limits_precede_allocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     high_rank = write_array_archive(
         tmp_path / "high-rank.zip",
         manifest={"kind": "rank-fixture"},
@@ -120,7 +120,7 @@ def test_array_dtype_rank_shape_and_element_limits_precede_allocation(
 
 def test_manifest_nesting_limit_precedes_array_allocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     path = write_array_archive(
         tmp_path / "nested.zip",
         manifest={"telemetry": {"nested": {"deeper": {"value": 1}}}},
@@ -132,7 +132,9 @@ def test_manifest_nesting_limit_precedes_array_allocation(
         read_array_archive(path, limits=ArrayArchiveLimits(max_manifest_nesting=3))
 
 
-def test_explicit_trusted_policy_preserves_legacy_high_rank_archive(tmp_path: Path):
+def test_explicit_trusted_policy_preserves_legacy_high_rank_archive(
+    tmp_path: Path,
+) -> None:
     expected = np.zeros((1,) * 9, dtype=np.float32)
     structured = np.array(
         [(1.0, 2)], dtype=np.dtype([("value", "<f8"), ("index", "<i4")])
@@ -154,7 +156,7 @@ def test_explicit_trusted_policy_preserves_legacy_high_rank_archive(tmp_path: Pa
 
 def test_array_archive_rejects_symlink_and_fifo_sources_without_following(
     tmp_path: Path,
-):
+) -> None:
     archive = write_array_archive(
         tmp_path / "source.zip",
         manifest={"kind": "path-safety"},
@@ -171,7 +173,7 @@ def test_array_archive_rejects_symlink_and_fifo_sources_without_following(
         read_array_archive(fifo)
 
 
-def test_array_archive_rejects_symlinked_parent_component(tmp_path: Path):
+def test_array_archive_rejects_symlinked_parent_component(tmp_path: Path) -> None:
     trusted = tmp_path / "trusted"
     trusted.mkdir()
     archive = write_array_archive(
@@ -186,7 +188,7 @@ def test_array_archive_rejects_symlinked_parent_component(tmp_path: Path):
         read_array_archive(linked_parent / archive.name)
 
 
-def test_writer_enforces_the_same_limits_as_reader(tmp_path: Path):
+def test_writer_enforces_the_same_limits_as_reader(tmp_path: Path) -> None:
     destination = tmp_path / "writer-bounded.zip"
     with pytest.raises(ValueError, match="rank limit"):
         write_array_archive(
@@ -199,7 +201,7 @@ def test_writer_enforces_the_same_limits_as_reader(tmp_path: Path):
 
 def test_expected_inventory_rejects_before_numpy_load(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     path = write_array_archive(
         tmp_path / "inventory.zip",
         manifest={"kind": "inventory"},
@@ -213,7 +215,7 @@ def test_expected_inventory_rejects_before_numpy_load(
         )
 
 
-def test_reader_returns_defensive_c_contiguous_read_only_arrays(tmp_path: Path):
+def test_reader_returns_defensive_c_contiguous_read_only_arrays(tmp_path: Path) -> None:
     source = np.asfortranarray(np.arange(12, dtype=np.float64).reshape((3, 4)))
     path = write_array_archive(
         tmp_path / "defensive.zip",

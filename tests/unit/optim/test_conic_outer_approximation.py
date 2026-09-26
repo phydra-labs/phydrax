@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _soc_program():
+def _soc_program() -> Any:
     conic = phx.optim.ConicProgram(
         None,
         jnp.asarray([0.0, 1.0]),
@@ -28,7 +31,7 @@ def _soc_program():
     )
 
 
-def _clarabel_outer(*, maximum_rounds=100):
+def _clarabel_outer(*, maximum_rounds: Any = 100) -> Any:
     pytest.importorskip("clarabel")
     return phx.optim.ConicOuterApproximation(
         conic=phx.optim.ConvexSolvePolicy(phx.optim.ClarabelInteriorPoint()),
@@ -36,7 +39,7 @@ def _clarabel_outer(*, maximum_rounds=100):
     )
 
 
-def test_projection_separator_is_globally_valid_and_excludes_source():
+def test_projection_separator_is_globally_valid_and_excludes_source() -> None:
     program = _soc_program().relaxation
     source = jnp.asarray([0.0, 0.0])
 
@@ -62,7 +65,7 @@ def test_projection_separator_is_globally_valid_and_excludes_source():
         assert cut.row @ candidate <= cut.rhs + 1e-8
 
 
-def test_conic_outer_approximation_matches_fixed_integer_reference():
+def test_conic_outer_approximation_matches_fixed_integer_reference() -> None:
     program = _soc_program()
     policy = phx.optim.MixedIntegerSolvePolicy(_clarabel_outer())
 
@@ -78,7 +81,7 @@ def test_conic_outer_approximation_matches_fixed_integer_reference():
     assert result.work.cuts_accepted >= 1
 
 
-def test_outer_round_limit_never_reports_certified_success():
+def test_outer_round_limit_never_reports_certified_success() -> None:
     program = _soc_program()
     policy = phx.optim.MixedIntegerSolvePolicy(_clarabel_outer(maximum_rounds=1))
 

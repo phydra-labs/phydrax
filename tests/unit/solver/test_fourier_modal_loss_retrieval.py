@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -13,8 +14,8 @@ from phydrax.solver.maxwell import fourier_modal as fm
 
 
 def _slab_case(
-    permittivity,
-    permeability=1.0,
+    permittivity: Any,
+    permeability: Any = 1.0,
     *,
     frequency: float = 5.0,
     thickness: float = 0.2,
@@ -23,10 +24,10 @@ def _slab_case(
     bloch_x: float = 0.0,
     material_role: str = "physical",
     passive: bool | None = True,
-    exterior_permittivity=1.0,
-    exterior_permeability=1.0,
+    exterior_permittivity: Any = 1.0,
+    exterior_permeability: Any = 1.0,
     numeric_version: str = "case",
-):
+) -> Any:
     harmonics = LatticeHarmonicPlan.parallelogramic(
         (bandwidth,), (sample_count,)
     ).prepare(jnp.asarray(((0.1, 0.0),)), numeric_version=numeric_version)
@@ -40,6 +41,7 @@ def _slab_case(
         permittivity,
         permeability,
         material_id="slab",
+        # ty: ignore[invalid-argument-type]
         material_role=material_role,
         passive=passive,
     )
@@ -63,7 +65,7 @@ def _slab_case(
     return harmonics, prepared
 
 
-def _solve(prepared, polarization: str = "te", side: str = "left"):
+def _solve(prepared: Any, polarization: str = "te", side: str = "left") -> Any:
     excitation = fm.plane_wave_excitation(
         prepared.scattering,
         prepared.problem.harmonics.plan.layout.mode_ids[0],
@@ -171,7 +173,7 @@ def test_loss_rejects_artificial_pml_and_has_differentiable_observable() -> None
     )
     assert not bool(pml_evidence.eligible)
 
-    def objective(loss):
+    def objective(loss: Any) -> Any:
         _, prepared = _slab_case(
             2.25 + 1.0j * loss,
             passive=False,
@@ -222,7 +224,7 @@ def _retrieval(
     *,
     bloch_x: float = 0.0,
     bandwidth: int = 1,
-):
+) -> Any:
     cases = []
     revisions = []
     harmonic_mode_id = ""
@@ -244,6 +246,7 @@ def _retrieval(
         tuple(revisions),
         slab_thickness=thickness,
         harmonic_mode_id=harmonic_mode_id,
+        # ty: ignore[invalid-argument-type]
         polarization=polarization,
     )
     if bloch_x != 0.0:

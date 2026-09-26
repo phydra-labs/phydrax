@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_dimensionless_constraint_residuals_reject_percent_level_density_error():
+def test_dimensionless_constraint_residuals_reject_percent_level_density_error() -> None:
     residuals = phx.discretization.particle_constraint_residuals(
         jnp.asarray([1.012416, 1.0]),
         1.0,
@@ -22,7 +22,7 @@ def test_dimensionless_constraint_residuals_reject_percent_level_density_error()
     assert not profile.constraints_satisfied(residuals)
 
 
-def test_execution_success_is_distinct_from_production_qualification():
+def test_execution_success_is_distinct_from_production_qualification() -> None:
     profile = phx.discretization.ParticleQualificationProfile()
     evidence = (
         phx.discretization.ParticleClaimEvidence(
@@ -44,7 +44,7 @@ def test_execution_success_is_distinct_from_production_qualification():
     assert not result.production_gate_satisfied
 
 
-def test_iisph_and_dfsph_lenient_execution_do_not_pass_production_gate():
+def test_iisph_and_dfsph_lenient_execution_do_not_pass_production_gate() -> None:
     count = 6
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
@@ -52,6 +52,7 @@ def test_iisph_and_dfsph_lenient_execution_do_not_pass_production_gate():
     ).prepare()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(
         count * (count - 1) // 2,
+        # ty: ignore[invalid-argument-type]
         box=phx.discretization.ParticleBox([0.0], [1.0]),
     ).prepare(particles)
     kernel = phx.discretization.WendlandC2SPHKernel(1)
@@ -65,7 +66,11 @@ def test_iisph_and_dfsph_lenient_execution_do_not_pass_production_gate():
         phx.discretization.IISPHMethodPlan(1.0, maximum_iterations=2, tolerance=1.0),
     )
     iisph_result = iisph.step_detailed(
-        0.0, iisph.initialize_state(position, velocity), 0.001
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        iisph.initialize_state(position, velocity),
+        # ty: ignore[invalid-argument-type]
+        0.001,
     )
     dfsph = phx.discretization.PreparedDFSPH(
         particles,
@@ -81,7 +86,11 @@ def test_iisph_and_dfsph_lenient_execution_do_not_pass_production_gate():
         ),
     )
     dfsph_result = dfsph.step_detailed(
-        0.0, dfsph.initialize_state(position, velocity), 0.001
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        dfsph.initialize_state(position, velocity),
+        # ty: ignore[invalid-argument-type]
+        0.001,
     )
 
     assert iisph_result.successful

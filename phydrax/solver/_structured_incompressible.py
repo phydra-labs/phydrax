@@ -828,7 +828,10 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         if route == "transform":
             # A transform route is selected only with a prepared transform plan.
             transform_plan = self.transform_plan
-            assert transform_plan is not None
+            if not (transform_plan is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: transform_plan is not None."
+                )
             transform = transform_plan.solve(rhs / direct_scale)
             solution_candidate = (
                 self.operators.gauge_project(transform.value)
@@ -840,7 +843,10 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             hybrid = None
         elif route == "hybrid":
             # A hybrid route is selected only with a prepared transform-line plan.
-            assert active_hybrid_plan is not None
+            if not (active_hybrid_plan is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: active_hybrid_plan is not None."
+                )
             hybrid = active_hybrid_plan.solve(rhs / direct_scale)
             solution_candidate = self.operators.gauge_project(hybrid.candidate)
             solve_success = hybrid.converged

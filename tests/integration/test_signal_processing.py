@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_public_trainable_fir_and_streaming_rate_conversion_workflow():
+def test_public_trainable_fir_and_streaming_rate_conversion_workflow() -> None:
     time = jnp.arange(12, dtype="float64")
     signal = jnp.cos(2.0 * jnp.pi * 0.08 * time) + 0.25j * jnp.sin(
         2.0 * jnp.pi * 0.17 * time
@@ -23,7 +26,7 @@ def test_public_trainable_fir_and_streaming_rate_conversion_workflow():
     outputs = []
 
     @eqx.filter_jit
-    def process(carried, chunk, taps):
+    def process(carried: Any, chunk: Any, taps: Any) -> Any:
         return plan.step(carried, chunk, taps)
 
     for chunk in filtered.reshape((3, 4)):

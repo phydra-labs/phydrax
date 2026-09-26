@@ -78,7 +78,8 @@ class ShepardDensityRenormalizationTransform(
         def apply_transform(state: Array) -> AcceptedStepTransformResult:
             position, velocity, density = self.dynamics.state_layout.unpack(state)
             # __init__ requires an evolved-density layout.
-            assert density is not None
+            if not (density is not None):
+                raise RuntimeError("Internal invariant failed: density is not None.")
             neighborhood = self.dynamics.neighborhood.build(position)
             position = neighborhood.require_success(position)
             geometry = particle_pair_geometry(

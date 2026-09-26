@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +15,13 @@ import pytest
 from phydrax.applications import electrophysiology as ep
 
 
-def _runtime(*, weight=0.4, delay=0.2, execution="clock", two_relations=False):
+def _runtime(
+    *,
+    weight: Any = 0.4,
+    delay: Any = 0.2,
+    execution: Any = "clock",
+    two_relations: Any = False,
+) -> Any:
     connections = [
         ep.SynapseConnection(
             "distal",
@@ -44,11 +52,13 @@ def _runtime(*, weight=0.4, delay=0.2, execution="clock", two_relations=False):
     ).prepare()
 
 
-def _pair(**kwargs):
+def _pair(**kwargs: Any) -> Any:
     return ep.PairSTDPPlan(20.0, 25.0, 0.1, 0.05, 0.0, 1.0, **kwargs)
 
 
-def _relation_event(kind, *, slot=0, pre_compartment=0, delay=0.2):
+def _relation_event(
+    kind: Any, *, slot: Any = 0, pre_compartment: Any = 0, delay: Any = 0.2
+) -> Any:
     return ep.SynapseRelationEvent(
         int(kind),
         slot,
@@ -65,14 +75,14 @@ def _relation_event(kind, *, slot=0, pre_compartment=0, delay=0.2):
     )
 
 
-def _assert_same_tree(actual, expected):
+def _assert_same_tree(actual: Any, expected: Any) -> None:
     for actual_leaf, expected_leaf in zip(
         jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True
     ):
         np.testing.assert_array_equal(actual_leaf, expected_leaf)
 
 
-def test_physical_delays_reject_clock_quantization_but_allow_event_execution():
+def test_physical_delays_reject_clock_quantization_but_allow_event_execution() -> None:
     with pytest.raises(ValueError, match="multiple"):
         _runtime(delay=0.15)
     event_runtime = _runtime(delay=0.15, execution="event")
@@ -104,7 +114,7 @@ def test_physical_delays_reject_clock_quantization_but_allow_event_execution():
     assert int(rejected.status) == int(ep.SynapseStatus.INVALID_ENDPOINT)
 
 
-def test_clock_arrival_uses_emission_weight_despite_intervening_learning():
+def test_clock_arrival_uses_emission_weight_despite_intervening_learning() -> None:
     runtime = _runtime()
     state = ep.initialize_synapse_network(runtime)
     pre = jnp.asarray([1.0, 0.0, 0.0])
@@ -140,7 +150,7 @@ def test_clock_arrival_uses_emission_weight_despite_intervening_learning():
     np.testing.assert_allclose(arrived.evidence.current_offset_nA, [0.0, 0.0, 0.8])
 
 
-def test_zero_weight_arrival_counts_still_form_learning_pairs():
+def test_zero_weight_arrival_counts_still_form_learning_pairs() -> None:
     runtime = _runtime(weight=0.0)
     state = ep.initialize_synapse_network(runtime)
     pre = jnp.asarray([1.0, 0.0, 0.0])
@@ -175,7 +185,7 @@ def test_zero_weight_arrival_counts_still_form_learning_pairs():
     np.testing.assert_allclose(rewarded.relations.weight[0], 0.1 * np.exp(-2.0 / 20.0))
 
 
-def test_arrival_pairing_reverses_causality_when_delay_crosses_post_spike():
+def test_arrival_pairing_reverses_causality_when_delay_crosses_post_spike() -> None:
     runtime = _runtime(execution="event")
     original = ep.initialize_synapse_network(runtime).relations
     pre = jnp.asarray([1.0, 0.0, 0.0])
@@ -207,7 +217,9 @@ def test_arrival_pairing_reverses_causality_when_delay_crosses_post_spike():
     np.testing.assert_allclose(weights["arrival"], 0.4 - 0.05 * np.exp(-5.0 / 25.0))
 
 
-def test_soft_bound_pair_rule_uses_actual_elapsed_time_and_normalized_weight_distance():
+def test_soft_bound_pair_rule_uses_actual_elapsed_time_and_normalized_weight_distance() -> (
+    None
+):
     runtime = _runtime(weight=0.8, execution="event")
     relations = ep.initialize_synapse_network(runtime).relations
     traces = ep.initialize_pair_stdp(runtime)
@@ -246,8 +258,8 @@ def test_soft_bound_pair_rule_uses_actual_elapsed_time_and_normalized_weight_dis
     ],
 )
 def test_delayed_reward_routes_signed_credit_by_selected_modulation_scope(
-    scope, modulation, expected_factors
-):
+    scope: Any, modulation: Any, expected_factors: Any
+) -> None:
     runtime = _runtime(two_relations=True, execution="event")
     relations = ep.initialize_synapse_network(runtime).relations
     traces = ep.initialize_eligibility_stdp(runtime)
@@ -294,7 +306,7 @@ def test_delayed_reward_routes_signed_credit_by_selected_modulation_scope(
     np.testing.assert_array_equal(committed.generation, relations.generation)
 
 
-def test_rejected_reward_atomically_retains_weights_pair_traces_and_eligibility():
+def test_rejected_reward_atomically_retains_weights_pair_traces_and_eligibility() -> None:
     runtime = _runtime(execution="event")
     relations = ep.initialize_synapse_network(runtime).relations
     traces = ep.initialize_eligibility_stdp(runtime)
@@ -338,7 +350,7 @@ def test_rejected_reward_atomically_retains_weights_pair_traces_and_eligibility(
     )
 
 
-def test_delete_and_reuse_cancel_pending_deliveries_and_all_learning_credit():
+def test_delete_and_reuse_cancel_pending_deliveries_and_all_learning_credit() -> None:
     runtime = _runtime(two_relations=True)
     state = ep.initialize_synapse_network(runtime)
     traces = ep.initialize_eligibility_stdp(runtime)
@@ -368,9 +380,13 @@ def test_delete_and_reuse_cancel_pending_deliveries_and_all_learning_credit():
     deleted, cleared = ep.commit_synapse_network_relation_event_with_plasticity(
         delete, state, traces
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(cleared.pair_state.pre_trace[0], 0.0)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(cleared.pair_state.post_trace[0], 0.0)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(cleared.eligibility[0], 0.0)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(cleared.eligibility[1], traces.eligibility[1])
     reuse = ep.evaluate_synapse_relation_event(
         runtime, deleted.relations, _relation_event(ep.SynapseRelationEventKind.ACTIVATE)
@@ -387,6 +403,7 @@ def test_delete_and_reuse_cancel_pending_deliveries_and_all_learning_credit():
         runtime,
         plan,
         reused.relations,
+        # ty: ignore[invalid-argument-type]
         cleared,
         zero,
         zero,

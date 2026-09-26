@@ -522,7 +522,10 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
         if route == "hybrid":
             # The hybrid route requires a certified line representation and fixed
             # coefficients, both checked when the route was selected above.
-            assert hybrid is not None and fixed is not None
+            if not (hybrid is not None and fixed is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: hybrid is not None and fixed is not None."
+                )
             prepared_hybrid = TransformLineSolvePlan(
                 hybrid,
                 diagonal_shift=fixed[0],
@@ -542,7 +545,10 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
             )
         elif route == "transform":
             # The transform route is selected only when direct resources were counted.
-            assert direct_resource_data is not None
+            if not (direct_resource_data is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: direct_resource_data is not None."
+                )
             count, factor_bytes, workspace_bytes, total_bytes = direct_resource_data
             resources = MACHelmholtzResourceEstimate(
                 component,
@@ -684,7 +690,10 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
                 modal_values = prepared.modal_values
                 transform = prepared.transform
                 # _prepare_component keeps transform data exactly on this route.
-                assert transform is not None and modal_values is not None
+                if not (transform is not None and modal_values is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: transform is not None and modal_values is not None."
+                    )
                 mass_ = mass
                 diffusion_ = diffusion
                 if self.differentiation_policy in ("rhs-only", "none"):
@@ -707,7 +716,10 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
             elif prepared.route == "hybrid":
                 prepared_hybrid = prepared.prepared_hybrid
                 # _prepare_component prepares the line solve exactly on this route.
-                assert prepared_hybrid is not None
+                if not (prepared_hybrid is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: prepared_hybrid is not None."
+                    )
                 result = prepared_hybrid.solve(
                     _extract_unknown(self.momentum, component, component_rhs)
                 )
@@ -1220,7 +1232,8 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
         viscosity = self.dynamics.problem.viscosity.astype(step.dtype)
         helmholtz_plan = self.helmholtz
         # Plans without implicit LES always prepare a Helmholtz solve.
-        assert helmholtz_plan is not None
+        if not (helmholtz_plan is not None):
+            raise RuntimeError("Internal invariant failed: helmholtz_plan is not None.")
         helmholtz = helmholtz_plan.solve(
             rhs,
             boundary_stage,
@@ -1307,9 +1320,16 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
         gradient_operator = self.gradient_operator
         # Implicit-LES plans are built only from a validated prepared LES together
         # with the composite-pressure operators and face density it requires.
-        assert isinstance(prepared_les, PreparedMACAlgebraicLES)
-        assert face_density is not None
-        assert divergence_operator is not None and gradient_operator is not None
+        if not (isinstance(prepared_les, PreparedMACAlgebraicLES)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(prepared_les, PreparedMACAlgebraicLES)."
+            )
+        if not (face_density is not None):
+            raise RuntimeError("Internal invariant failed: face_density is not None.")
+        if not (divergence_operator is not None and gradient_operator is not None):
+            raise RuntimeError(
+                "Internal invariant failed: divergence_operator is not None and gradient_operator is not None."
+            )
         current_boundary = self.dynamics.boundary_stage(time, args)
         current_velocity = self.dynamics.momentum.boundaries.enforce(
             self.dynamics.unpack_velocity(current_state), current_boundary
@@ -1738,7 +1758,8 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
         )
         helmholtz_plan = self.helmholtz
         # Plans without implicit LES always prepare a Helmholtz solve.
-        assert helmholtz_plan is not None
+        if not (helmholtz_plan is not None):
+            raise RuntimeError("Internal invariant failed: helmholtz_plan is not None.")
         helmholtz = helmholtz_plan.solve(
             rhs, boundary_stage, initial_guess=current_velocity
         )
@@ -1856,9 +1877,16 @@ class MACSBDF2Method(StrictModule, NonTrainableState):
         gradient_operator = startup.gradient_operator
         # Implicit-LES plans are built only from a validated prepared LES together
         # with the composite-pressure operators and face density it requires.
-        assert isinstance(prepared_les, PreparedMACAlgebraicLES)
-        assert face_density is not None
-        assert divergence_operator is not None and gradient_operator is not None
+        if not (isinstance(prepared_les, PreparedMACAlgebraicLES)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(prepared_les, PreparedMACAlgebraicLES)."
+            )
+        if not (face_density is not None):
+            raise RuntimeError("Internal invariant failed: face_density is not None.")
+        if not (divergence_operator is not None and gradient_operator is not None):
+            raise RuntimeError(
+                "Internal invariant failed: divergence_operator is not None and gradient_operator is not None."
+            )
         attempted_time = history.time + step
         boundary_stage = self.dynamics.boundary_stage(attempted_time, args)
         extrapolated = tuple(

@@ -29,10 +29,11 @@ from phydrax.control import (
 )
 
 
-def test_dense_continuous_and_discrete_lyapunov_match_scipy_references():
+def test_dense_continuous_and_discrete_lyapunov_match_scipy_references() -> None:
     continuous_matrix = np.array([[-1.0, 1.7], [-0.4, -2.0]])
     source = np.array([[1.0, 0.2], [0.2, 2.0]])
     continuous = solve_continuous_lyapunov(continuous_matrix, source, tolerance=1e-10)
+    # ty: ignore[deprecated]
     continuous_reference = scipy.linalg.solve_continuous_lyapunov(
         continuous_matrix, -source
     )
@@ -46,6 +47,7 @@ def test_dense_continuous_and_discrete_lyapunov_match_scipy_references():
 
     discrete_matrix = np.array([[0.6, 0.2], [0.0, 0.25]])
     discrete = solve_discrete_lyapunov(discrete_matrix, source, tolerance=1e-10)
+    # ty: ignore[deprecated]
     discrete_reference = scipy.linalg.solve_discrete_lyapunov(discrete_matrix, source)
     np.testing.assert_allclose(discrete.value, discrete_reference, rtol=2e-11, atol=2e-11)
     assert bool(discrete.diagnostics.stable)
@@ -53,11 +55,12 @@ def test_dense_continuous_and_discrete_lyapunov_match_scipy_references():
     assert discrete.diagnostics.method == "bilinear-bartels-stewart"
 
 
-def test_lyapunov_equations_diagnose_unstable_and_singular_marginal_systems():
+def test_lyapunov_equations_diagnose_unstable_and_singular_marginal_systems() -> None:
     source = jnp.eye(2)
     unstable_continuous = solve_continuous_lyapunov(
         jnp.diag(jnp.array([0.4, -1.0])), source, tolerance=1e-10
     )
+    # ty: ignore[deprecated]
     continuous_reference = scipy.linalg.solve_continuous_lyapunov(
         np.diag([0.4, -1.0]), -np.eye(2)
     )
@@ -70,6 +73,7 @@ def test_lyapunov_equations_diagnose_unstable_and_singular_marginal_systems():
     unstable_discrete = solve_discrete_lyapunov(
         jnp.diag(jnp.array([1.2, 0.4])), source, tolerance=1e-10
     )
+    # ty: ignore[deprecated]
     discrete_reference = scipy.linalg.solve_discrete_lyapunov(
         np.diag([1.2, 0.4]), np.eye(2)
     )
@@ -87,7 +91,7 @@ def test_lyapunov_equations_diagnose_unstable_and_singular_marginal_systems():
     assert marginal.diagnostics.spectral_separation == 0.0
 
 
-def test_finite_lyapunov_integrals_and_sums_match_scalar_analytic_values():
+def test_finite_lyapunov_integrals_and_sums_match_scalar_analytic_values() -> None:
     horizon = 1.3
     source = jnp.ones((1, 1))
     stable = finite_continuous_lyapunov(jnp.array([[-2.0]]), source, horizon)
@@ -108,7 +112,7 @@ def test_finite_lyapunov_integrals_and_sums_match_scalar_analytic_values():
     assert bool(discrete.diagnostics.converged)
 
 
-def test_infinite_gramians_require_stability_but_finite_gramians_do_not():
+def test_infinite_gramians_require_stability_but_finite_gramians_do_not() -> None:
     factor = jnp.ones((1, 1))
     stable = continuous_controllability_gramian(jnp.array([[-1.0]]), factor)
     unstable = continuous_controllability_gramian(jnp.array([[0.2]]), factor)
@@ -136,7 +140,7 @@ def test_infinite_gramians_require_stability_but_finite_gramians_do_not():
     )
 
 
-def test_infinite_gramian_nonfinite_inputs_take_status_precedence():
+def test_infinite_gramian_nonfinite_inputs_take_status_precedence() -> None:
     result = continuous_controllability_gramian(
         jnp.array([[jnp.nan]]),
         jnp.ones((1, 1)),
@@ -147,7 +151,7 @@ def test_infinite_gramian_nonfinite_inputs_take_status_precedence():
     assert int(result.diagnostics.status) == LinearMatrixEquationStatus.NONFINITE
 
 
-def test_continuous_gramian_action_rejects_self_certifying_order_one():
+def test_continuous_gramian_action_rejects_self_certifying_order_one() -> None:
     with pytest.raises(ValueError, match="quadrature_order must be at least 2"):
         continuous_controllability_gramian_action(
             lambda value: value,
@@ -161,7 +165,7 @@ def test_continuous_gramian_action_rejects_self_certifying_order_one():
         )
 
 
-def test_long_discrete_gramian_action_uses_nonrecursive_iteration():
+def test_long_discrete_gramian_action_uses_nonrecursive_iteration() -> None:
     steps = 2048
     vector = jnp.array([1.5])
     result = discrete_controllability_gramian_action(
@@ -178,7 +182,7 @@ def test_long_discrete_gramian_action_uses_nonrecursive_iteration():
     assert bool(result.diagnostics.converged)
 
 
-def test_singular_reachability_and_observability_are_preserved_and_reported():
+def test_singular_reachability_and_observability_are_preserved_and_reported() -> None:
     continuous_matrix = jnp.diag(jnp.array([-1.0, -2.0]))
     input_matrix = jnp.array([[1.0], [0.0]])
     output_matrix = jnp.array([[0.0, 1.0]])
@@ -199,13 +203,14 @@ def test_singular_reachability_and_observability_are_preserved_and_reported():
     assert int(discrete.diagnostics.rank) == 1
 
 
-def test_complex_lyapunov_and_gramian_use_conjugate_transposes():
+def test_complex_lyapunov_and_gramian_use_conjugate_transposes() -> None:
     matrix = np.array(
         [[-1.0 + 0.4j, 0.2 - 0.1j], [0.0, -2.0 - 0.3j]],
         dtype=np.complex128,
     )
     source = np.array([[1.0, 0.2j], [-0.2j, 0.7]], dtype=np.complex128)
     result = solve_continuous_lyapunov(matrix, source, tolerance=1e-10)
+    # ty: ignore[deprecated]
     reference = scipy.linalg.solve_continuous_lyapunov(matrix, -source)
     np.testing.assert_allclose(result.value, reference, rtol=2e-11, atol=2e-11)
     np.testing.assert_allclose(
@@ -214,6 +219,7 @@ def test_complex_lyapunov_and_gramian_use_conjugate_transposes():
 
     input_matrix = jnp.array([[1.0 + 0.2j], [0.3 - 0.4j]])
     gramian = continuous_controllability_gramian(matrix, input_matrix)
+    # ty: ignore[deprecated]
     gramian_reference = scipy.linalg.solve_continuous_lyapunov(
         matrix, -np.asarray(input_matrix @ jnp.conj(input_matrix.T))
     )
@@ -221,7 +227,9 @@ def test_complex_lyapunov_and_gramian_use_conjugate_transposes():
     assert bool(gramian.diagnostics.positive_semidefinite)
 
 
-def test_operator_krylov_lyapunov_solvers_match_dense_without_kronecker_matrices():
+def test_operator_krylov_lyapunov_solvers_match_dense_without_kronecker_matrices() -> (
+    None
+):
     continuous_matrix = jnp.array([[-1.0, 0.3], [-0.2, -2.0]])
     source = jnp.array([[1.0, 0.1], [0.1, 0.7]])
     continuous_dense = solve_continuous_lyapunov(continuous_matrix, source)
@@ -253,7 +261,7 @@ def test_operator_krylov_lyapunov_solvers_match_dense_without_kronecker_matrices
     assert bool(discrete_action.diagnostics.converged)
 
 
-def test_dense_and_matrix_free_gramian_actions_agree_for_all_four_variants():
+def test_dense_and_matrix_free_gramian_actions_agree_for_all_four_variants() -> None:
     continuous_matrix = jnp.array([[-1.0, 0.2], [0.0, -2.0]])
     discrete_matrix = jnp.array([[0.5, 0.1], [0.0, 0.2]])
     input_matrix = jnp.array([[1.0], [0.5]])
@@ -335,7 +343,7 @@ def test_dense_and_matrix_free_gramian_actions_agree_for_all_four_variants():
     )
 
 
-def test_complex_matrix_free_gramian_actions_agree_with_dense_values():
+def test_complex_matrix_free_gramian_actions_agree_with_dense_values() -> None:
     matrix = jnp.array([[-1.0 + 0.4j, 0.2 - 0.1j], [0.0, -2.0 - 0.3j]])
     input_matrix = jnp.array([[1.0 + 0.2j], [0.3 - 0.4j]])
     vector = jnp.array([0.4 - 0.1j, -0.7 + 0.3j])
@@ -354,7 +362,7 @@ def test_complex_matrix_free_gramian_actions_agree_with_dense_values():
     np.testing.assert_allclose(action.value, dense.value @ vector, rtol=2e-9, atol=2e-9)
 
 
-def test_dense_dimension_limits_are_explicit_and_actions_remain_available():
+def test_dense_dimension_limits_are_explicit_and_actions_remain_available() -> None:
     matrix = jnp.diag(jnp.array([-1.0, -2.0, -3.0]))
     source = jnp.eye(3)
     with pytest.raises(ValueError, match="max_dimension=2"):
@@ -373,7 +381,7 @@ def test_dense_dimension_limits_are_explicit_and_actions_remain_available():
     assert bool(action.diagnostics.converged)
 
 
-def test_lyapunov_primitives_are_jittable_and_have_implicit_gradients():
+def test_lyapunov_primitives_are_jittable_and_have_implicit_gradients() -> None:
     source = jnp.ones((1, 1))
     continuous_jit = jax.jit(continuous_lyapunov_solution)
     discrete_jit = jax.jit(discrete_lyapunov_solution)

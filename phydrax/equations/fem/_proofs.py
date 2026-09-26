@@ -746,7 +746,10 @@ def solve_hdg_poisson(
         )
     connectivity = discretization.mesh.connectivity
     # CellMesh builds polygonal connectivity for every two-dimensional mesh.
-    assert isinstance(connectivity, PolygonalConnectivity)
+    if not (isinstance(connectivity, PolygonalConnectivity)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(connectivity, PolygonalConnectivity)."
+        )
     boundary_mask = connectivity.boundary_edges
     edge_vertices = jnp.asarray(connectivity.edges, dtype=jnp.int32)
     edge_midpoints = jnp.mean(

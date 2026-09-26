@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,7 +12,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_normal_gauge_projection_has_expected_sphere_radius_derivative():
+def test_normal_gauge_projection_has_expected_sphere_radius_derivative() -> None:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         1.0,
@@ -31,7 +34,7 @@ def test_normal_gauge_projection_has_expected_sphere_radius_derivative():
     )
     radius_index = geometry.schema.index(phx.geometry.ParameterId("sphere", "radius"))
 
-    def coordinates(radius):
+    def coordinates(radius: Any) -> Any:
         state = geometry.state.replace_at(radius_index, radius)
         return plan.realize(state).proposed_points
 
@@ -47,7 +50,7 @@ def test_normal_gauge_projection_has_expected_sphere_radius_derivative():
     assert result.evidence.root_residual <= plan.policy.root_tolerance
 
 
-def test_projection_rejects_trust_region_expiry_with_finite_fallback():
+def test_projection_rejects_trust_region_expiry_with_finite_fallback() -> None:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         1.0,

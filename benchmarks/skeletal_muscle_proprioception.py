@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -24,8 +26,8 @@ def _case(step_count: int) -> dict[str, object]:
     runtime = MileusnicSpindle2006Plan().prepare()
     input_value = MileusnicSpindleInput(1.02, 0.1, 0.0, 70.0, 70.0)
 
-    def rollout(initial):
-        def step(state, _):
+    def rollout(initial: Any) -> Any:
+        def step(state: Any, _: Any) -> Any:
             candidate = runtime.candidate(state, input_value, 1.0e-4)
             return candidate.commit(), candidate.evidence.successful
 

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -16,7 +19,9 @@ from phydrax.signal import (
 
 
 @pytest.mark.parametrize("up,down", ((1, 1), (2, 1), (1, 3), (3, 2), (4, 2)))
-def test_raw_upfirdn_matches_scipy_without_ratio_reduction_or_tap_scaling(up, down):
+def test_raw_upfirdn_matches_scipy_without_ratio_reduction_or_tap_scaling(
+    up: Any, down: Any
+) -> None:
     values = np.asarray((1.0, -0.5, 2.0, 0.25))
     taps = np.asarray((0.2, 0.5, -0.1, 0.3, 0.7))
 
@@ -27,7 +32,7 @@ def test_raw_upfirdn_matches_scipy_without_ratio_reduction_or_tap_scaling(up, do
     assert np.allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_upfirdn_preserves_middle_axis_and_complex_values():
+def test_upfirdn_preserves_middle_axis_and_complex_values() -> None:
     values = (
         jnp.arange(2 * 5 * 3, dtype="float64").reshape((2, 5, 3)).astype("complex128")
     )
@@ -48,7 +53,7 @@ def test_upfirdn_preserves_middle_axis_and_complex_values():
 
 
 @pytest.mark.parametrize("up,down", ((3, 2), (5, 7), (4, 2), (147, 160)))
-def test_finite_resample_poly_matches_scipy_default_alignment(up, down):
+def test_finite_resample_poly_matches_scipy_default_alignment(up: Any, down: Any) -> None:
     values = np.linspace(-1.0, 1.0, 23)
 
     actual = resample_poly(values, up, down)
@@ -58,7 +63,7 @@ def test_finite_resample_poly_matches_scipy_default_alignment(up, down):
     assert np.allclose(actual, expected, rtol=1e-11, atol=1e-11)
 
 
-def test_explicit_prototype_matches_scipy_and_rejects_even_centering():
+def test_explicit_prototype_matches_scipy_and_rejects_even_centering() -> None:
     values = jnp.sin(2.0 * jnp.pi * 0.07 * jnp.arange(31))
     prototype = kaiser_sinc_resampling_filter(3, 2, half_width=6)
 
@@ -76,12 +81,12 @@ def test_explicit_prototype_matches_scipy_and_rejects_even_centering():
         resample_poly(values, 3, 2, taps=jnp.ones((4,)))
 
 
-def test_polyphase_paths_are_jittable_and_differentiable_in_values_and_taps():
+def test_polyphase_paths_are_jittable_and_differentiable_in_values_and_taps() -> None:
     values = jnp.linspace(-1.0, 1.0, 17)
     taps = jnp.asarray((0.1, 0.3, 0.5, 0.3, 0.1))
 
     @jax.jit
-    def loss(x, h):
+    def loss(x: Any, h: Any) -> Any:
         output = upfirdn(x, h, up=3, down=2)
         return jnp.sum(jnp.abs(output) ** 2)
 

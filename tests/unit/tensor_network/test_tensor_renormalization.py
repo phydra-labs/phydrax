@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -13,7 +14,7 @@ _CRITICAL_BETA = 0.5 * math.log(1.0 + math.sqrt(2.0))
 _CRITICAL_LOG_PARTITION = 0.5 * math.log(2.0) + 2.0 * 0.915965594177219 / math.pi
 
 
-def _ising_tensor(beta: float, *, precision=None):
+def _ising_tensor(beta: float, *, precision: Any = None) -> Any:
     spins = jnp.asarray((-1.0, 1.0), dtype=jnp.float64)
     weights = jnp.exp(beta * spins[:, None] * spins[None, :])
     return tn.build_uniform_pair_partition_tensor(
@@ -23,7 +24,7 @@ def _ising_tensor(beta: float, *, precision=None):
     ).tensor
 
 
-def _run(tensor, method, *, bond: int, steps: int):
+def _run(tensor: Any, method: Any, *, bond: int, steps: int) -> Any:
     return tn.run_tensor_renormalization(
         tn.TensorRenormalizationProblem(tensor),
         tn.TensorRenormalizationPolicy(
@@ -34,7 +35,7 @@ def _run(tensor, method, *, bond: int, steps: int):
     )
 
 
-def test_uniform_square_tensor_enforces_oriented_opposite_bonds():
+def test_uniform_square_tensor_enforces_oriented_opposite_bonds() -> None:
     value = jnp.ones((2, 3, 2, 3), dtype=jnp.float64)
     tensor = tn.UniformSquareTensor(value)
     assert tensor.vertical_bond_dimension == 2
@@ -46,7 +47,7 @@ def test_uniform_square_tensor_enforces_oriented_opposite_bonds():
         tn.UniformSquareTensor(jnp.ones((2, 3, 2, 4)))
 
 
-def test_pair_partition_builder_handles_anisotropic_diagonal_weights():
+def test_pair_partition_builder_handles_anisotropic_diagonal_weights() -> None:
     vertical = jnp.diag(jnp.asarray((4.0, 9.0), dtype=jnp.float64))
     horizontal = jnp.diag(jnp.asarray((1.0, 16.0), dtype=jnp.float64))
     onsite = jnp.asarray((2.0, 3.0), dtype=jnp.float64)
@@ -70,7 +71,7 @@ def test_pair_partition_builder_handles_anisotropic_diagonal_weights():
     assert float32.tensor.value.dtype == jnp.dtype("float32")
 
 
-def test_pair_partition_builder_rejects_indefinite_weights():
+def test_pair_partition_builder_rejects_indefinite_weights() -> None:
     indefinite = jnp.asarray(((1.0, 2.0), (2.0, 1.0)), dtype=jnp.float64)
     with pytest.raises(eqx.EquinoxRuntimeError, match="positive-semidefinite"):
         result = tn.build_uniform_pair_partition_tensor(indefinite)
@@ -78,7 +79,7 @@ def test_pair_partition_builder_rejects_indefinite_weights():
 
 
 @pytest.mark.parametrize("method", (tn.TRGMethod(), tn.HOTRGMethod()))
-def test_tensor_renormalization_is_exact_for_unit_bond_dimension(method):
+def test_tensor_renormalization_is_exact_for_unit_bond_dimension(method: Any) -> None:
     tensor = tn.UniformSquareTensor(jnp.asarray([[[[2.0]]]], dtype=jnp.float64))
     result = _run(tensor, method, bond=1, steps=4)
     assert result.successful
@@ -88,7 +89,7 @@ def test_tensor_renormalization_is_exact_for_unit_bond_dimension(method):
     assert result.final_tensor.value.shape == (1, 1, 1, 1)
 
 
-def test_full_rank_one_step_matches_independent_two_tensor_closures():
+def test_full_rank_one_step_matches_independent_two_tensor_closures() -> None:
     value = (
         jax.random.uniform(
             jax.random.key(7),
@@ -126,14 +127,14 @@ def test_full_rank_one_step_matches_independent_two_tensor_closures():
 
 
 @pytest.mark.parametrize("method", (tn.TRGMethod(), tn.HOTRGMethod()))
-def test_critical_ising_partition_density_matches_exact_solution(method):
+def test_critical_ising_partition_density_matches_exact_solution(method: Any) -> None:
     result = _run(_ising_tensor(_CRITICAL_BETA), method, bond=6, steps=8)
     assert result.successful
     assert jnp.isfinite(result.log_partition_density)
     assert abs(float(result.log_partition_density) - _CRITICAL_LOG_PARTITION) < 5e-3
 
 
-def test_q2_potts_partition_matches_ising_mapping():
+def test_q2_potts_partition_matches_ising_mapping() -> None:
     beta = 2.0 * _CRITICAL_BETA
     pair_weight = jnp.asarray(
         ((math.exp(beta), 1.0), (1.0, math.exp(beta))),
@@ -146,7 +147,7 @@ def test_q2_potts_partition_matches_ising_mapping():
     assert abs(float(result.log_partition_density) - reference) < 5e-3
 
 
-def test_hotrg_plan_preserves_anisotropy_and_alternates_directions():
+def test_hotrg_plan_preserves_anisotropy_and_alternates_directions() -> None:
     tensor = tn.UniformSquareTensor(jnp.ones((2, 3, 2, 3), dtype=jnp.float64))
     problem = tn.TensorRenormalizationProblem(tensor)
     plan = tn.plan_tensor_renormalization(
@@ -166,7 +167,7 @@ def test_hotrg_plan_preserves_anisotropy_and_alternates_directions():
     assert plan.stages[0].maximum_factorization_elements == 2 * 2**2 * 3**4
 
 
-def test_prepared_refresh_reuses_plan_but_changes_partition_density():
+def test_prepared_refresh_reuses_plan_but_changes_partition_density() -> None:
     tensor = _ising_tensor(0.2)
     problem = tn.TensorRenormalizationProblem(tensor)
     policy = tn.TensorRenormalizationPolicy(
@@ -196,7 +197,7 @@ def test_prepared_refresh_reuses_plan_but_changes_partition_density():
     )
 
 
-def test_tensor_renormalization_reports_numerical_failures():
+def test_tensor_renormalization_reports_numerical_failures() -> None:
     nonfinite = tn.UniformSquareTensor(jnp.asarray([[[[jnp.nan]]]], dtype=jnp.float64))
     nonfinite_result = _run(nonfinite, tn.TRGMethod(), bond=1, steps=1)
     assert int(nonfinite_result.diagnostics.status) == int(
@@ -225,7 +226,9 @@ def test_tensor_renormalization_reports_numerical_failures():
         tn.TensorRenormalizationProblem(complex_partition)
 
 
-def test_tensor_renormalization_refuses_factorization_resources_before_execution():
+def test_tensor_renormalization_refuses_factorization_resources_before_execution() -> (
+    None
+):
     problem = tn.TensorRenormalizationProblem(_ising_tensor(0.2))
     resources = tn.TensorRenormalizationResourcePolicy(maximum_factorization_elements=1)
     policy = tn.TensorRenormalizationPolicy(
@@ -238,7 +241,7 @@ def test_tensor_renormalization_refuses_factorization_resources_before_execution
         tn.plan_tensor_renormalization(problem, policy)
 
 
-def test_tensor_renormalization_honors_mixed_precision_roles():
+def test_tensor_renormalization_honors_mixed_precision_roles() -> None:
     precision = tn.TensorNetworkPrecisionPolicy(
         storage_dtype="float32",
         contraction_dtype="float32",

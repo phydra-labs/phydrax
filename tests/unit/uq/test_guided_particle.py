@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -5,7 +7,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([1.0]),
         jnp.asarray([[1.0]]),
@@ -44,7 +46,7 @@ def _problem():
     )
 
 
-def test_fully_adapted_auxiliary_filter_has_exact_incremental_correction():
+def test_fully_adapted_auxiliary_filter_has_exact_incremental_correction() -> None:
     problem = _problem()
     proposal = phx.uq.LinearGaussianGuidedParticleProposal((1,))
     result = phx.uq.guided_particle_filter(
@@ -86,32 +88,32 @@ def test_fully_adapted_auxiliary_filter_has_exact_incremental_correction():
     )
 
 
-def test_callable_guided_proposal_computes_target_density_correction():
+def test_callable_guided_proposal_computes_target_density_correction() -> None:
     problem = _problem()
 
     def sample(
-        key,
-        current_problem,
-        previous,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
-    ):
+        key: Any,
+        current_problem: Any,
+        previous: Any,
+        t0: Any,
+        t1: Any,
+        observation: Any,
+        mask: Any,
+        context: Any,
+    ) -> Any:
         del observation, mask
         return current_problem.model.transition.sample(key, previous, t0, t1, context)
 
     def log_prob(
-        proposed,
-        current_problem,
-        previous,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
-    ):
+        proposed: Any,
+        current_problem: Any,
+        previous: Any,
+        t0: Any,
+        t1: Any,
+        observation: Any,
+        mask: Any,
+        context: Any,
+    ) -> Any:
         del observation, mask
         return current_problem.model.transition.log_prob(
             proposed, previous, t0, t1, context
@@ -139,7 +141,7 @@ def test_callable_guided_proposal_computes_target_density_correction():
     assert not result.auxiliary_resampled[0]
 
 
-def test_guided_filter_rejects_proposal_shape_mismatch():
+def test_guided_filter_rejects_proposal_shape_mismatch() -> None:
     with jax.disable_jit():
         proposal = phx.uq.BootstrapParticleProposal((2,))
         try:

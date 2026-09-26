@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -6,11 +8,19 @@ import phydrax as phx
 
 units = phx.atomistic.AtomisticUnitSystem.reduced()
 system = phx.atomistic.AtomisticSystemPlan(
-    [10, 20], [1, 1], [1.0, 1.0], units, atom_type_ids=[1, 1]
+    # ty: ignore[invalid-argument-type]
+    [10, 20],
+    # ty: ignore[invalid-argument-type]
+    [1, 1],
+    # ty: ignore[invalid-argument-type]
+    [1.0, 1.0],
+    units,
+    # ty: ignore[invalid-argument-type]
+    atom_type_ids=[1, 1],
 ).prepare()
 
 
-def evaluate(system, positions, cell):
+def evaluate(system: Any, positions: Any, cell: Any) -> Any:
     del system, cell
     return phx.atomistic.ExternalAtomisticEvaluation(
         jnp.sum(positions * positions),
@@ -24,7 +34,7 @@ def evaluate(system, positions, cell):
 provider = phx.atomistic.CallableBornOppenheimerProvider(evaluate, "harmonic-reference")
 
 
-def frame(distance, source):
+def frame(distance: Any, source: Any) -> Any:
     return phx.atomistic.AtomisticFrame(
         0.0,
         0,
@@ -37,7 +47,7 @@ def frame(distance, source):
     )
 
 
-def seed_record(value, split):
+def seed_record(value: Any, split: Any) -> Any:
     acquisition = phx.atomistic.AcquisitionRecord(
         frame=value,
         descriptor=value.positions.reshape((-1,)),
@@ -99,7 +109,7 @@ models = tuple(
 )
 
 
-def qualify(committee):
+def qualify(committee: Any) -> Any:
     evidence = phx.atomistic.AtomisticDynamicsClaimEvidence(
         phx.atomistic.AtomisticDynamicsQualificationClaim.FINITE_EXECUTION,
         committee.committee_id,

@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run():
+def run() -> Any:
     count = 64
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
@@ -37,6 +40,7 @@ def run():
     depth = jnp.where(jnp.arange(count) < count // 2, 1.0, 0.0)
     state = jnp.stack((depth, jnp.zeros_like(depth)), axis=-1)
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         compiled.dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.25),
@@ -44,6 +48,7 @@ def run():
     step = compiled.stable_step(state, cfl=0.25)
     result = runtime.advance(runtime.initialize_state(state, 0.0, step))
     updated = result.runtime_state.cell_average()
+    # ty: ignore[unresolved-attribute]
     observables = compiled.dynamics.shallow_water_observables(updated)
     if not bool(result.accepted):
         raise RuntimeError("Wet/dry shallow-water step was rejected")

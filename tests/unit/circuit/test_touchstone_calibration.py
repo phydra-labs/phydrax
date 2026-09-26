@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -14,7 +16,9 @@ from phydrax.circuit import (
 )
 
 
-def test_touchstone_column_order_references_round_trip_and_exact_nodes(tmp_path):
+def test_touchstone_column_order_references_round_trip_and_exact_nodes(
+    tmp_path: Any,
+) -> None:
     frequencies = jnp.asarray([1.0e9, 2.0e9])
     matrices = jnp.asarray(
         [
@@ -42,7 +46,7 @@ def test_touchstone_column_order_references_round_trip_and_exact_nodes(tmp_path)
     assert jnp.allclose(evaluated.matrix, matrices)
 
 
-def test_calibration_adapter_preserves_native_gradients():
+def test_calibration_adapter_preserves_native_gradients() -> None:
     reference = ElectricalWaveReference(50.0)
     ports = (WavePort("p", reference),)
     target = jnp.asarray([[[0.3 + 0.0j]]])
@@ -53,12 +57,12 @@ def test_calibration_adapter_preserves_native_gradients():
         port_ids=("p",),
     )
 
-    def parameterize(theta):
+    def parameterize(theta: Any) -> Any:
         return MatrixScatteringComponent(jnp.asarray([[jnp.tanh(theta)]]), ports)
 
     problem = scattering_least_squares_problem(parameterize, (dataset,))
 
-    def objective(theta):
+    def objective(theta: Any) -> Any:
         residual, _ = problem.value(theta)
         return 0.5 * jnp.sum(residual**2)
 

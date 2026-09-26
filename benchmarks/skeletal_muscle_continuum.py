@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -18,7 +20,7 @@ import jax.numpy as jnp
 from phydrax.applications.skeletal_muscle import continuum
 
 
-def _material():
+def _material() -> Any:
     architecture = continuum.UniformFiberArchitecturePlan(
         "benchmark-longitudinal"
     ).prepare(jnp.asarray((1.0, 0.0, 0.0)))
@@ -29,7 +31,7 @@ def _material():
     )
 
 
-def _deformations(point_count):
+def _deformations(point_count: Any) -> Any:
     coordinate = jnp.linspace(0.0, 1.0, point_count)
     stretch = 0.72 + 0.66 * coordinate
     transverse = stretch ** -0.5
@@ -41,13 +43,13 @@ def _deformations(point_count):
     return deformation.at[:, 0, 1].set(shear)
 
 
-def _case(point_count, repetitions):
+def _case(point_count: Any, repetitions: Any) -> Any:
     material = _material()
     deformations = _deformations(point_count)
 
     @eqx.filter_jit
-    def evaluate(values):
-        def point(value):
+    def evaluate(values: Any) -> Any:
+        def point(value: Any) -> Any:
             return material.evaluate(value, 0.0).first_piola
 
         return jax.vmap(point)(values)
@@ -74,7 +76,7 @@ def _case(point_count, repetitions):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--repetitions", type=int, default=20)

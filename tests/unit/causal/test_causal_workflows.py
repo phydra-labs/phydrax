@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -30,7 +32,7 @@ def _assumptions() -> causal.AssumptionLedger:
     )
 
 
-def _finite_problem():
+def _finite_problem() -> Any:
     schema = causal.CausalSchema(
         (
             causal.CausalVariable(name="z", scale=causal.VariableScale.BINARY),
@@ -100,7 +102,7 @@ def _finite_problem():
     )
 
 
-def test_graph_separation_adjustment_and_finite_identification():
+def test_graph_separation_adjustment_and_finite_identification() -> None:
     problem, graph, _, law = _finite_problem()
 
     backdoor = causal.enumerate_adjustment_sets(graph, treatment="t", outcome="y")
@@ -125,7 +127,7 @@ def test_graph_separation_adjustment_and_finite_identification():
     assert float(result.effect) == pytest.approx(0.5)
 
 
-def test_latent_projection_and_perfect_intervention_cut_confounding():
+def test_latent_projection_and_perfect_intervention_cut_confounding() -> None:
     schema = causal.CausalSchema(
         (
             causal.CausalVariable(
@@ -151,7 +153,7 @@ def test_latent_projection_and_perfect_intervention_cut_confounding():
     assert intervened.bidirected_edges == ()
 
 
-def test_counterfactual_reuses_abducted_exogenous_state():
+def test_counterfactual_reuses_abducted_exogenous_state() -> None:
     schema = causal.CausalSchema(
         (
             causal.CausalVariable(name="x"),
@@ -202,7 +204,7 @@ def test_counterfactual_reuses_abducted_exogenous_state():
     assert np.asarray(counterfactual.value("y")) == pytest.approx([4.0])
 
 
-def test_cross_fitted_aipw_and_archive_round_trip(tmp_path):
+def test_cross_fitted_aipw_and_archive_round_trip(tmp_path: Any) -> None:
     n = 120
     z = np.tile(np.asarray([-1.0, -1.0, 1.0, 1.0]), n // 4)
     treatment = np.arange(n) % 2
@@ -303,7 +305,7 @@ def test_cross_fitted_aipw_and_archive_round_trip(tmp_path):
     assert not bool(restored_failure.successful)
 
 
-def test_pc_stable_returns_equivalence_class():
+def test_pc_stable_returns_equivalence_class() -> None:
     rng = np.random.default_rng(9)
     n = 1200
     x = rng.normal(size=n)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -20,7 +23,7 @@ from tests._control_systems import (
 )
 
 
-def test_ilqr_policy_feedback_uses_quaternion_pose_local_error():
+def test_ilqr_policy_feedback_uses_quaternion_pose_local_error() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
@@ -57,17 +60,17 @@ def test_ilqr_policy_feedback_uses_quaternion_pose_local_error():
 
 
 def _problem(
-    transition,
-    times,
-    initial_state,
-    running_cost,
-    terminal_cost,
+    transition: Any,
+    times: Any,
+    initial_state: Any,
+    running_cost: Any,
+    terminal_cost: Any,
     *,
-    state_shape,
-    control_shape,
-    problem_id,
-    args=None,
-):
+    state_shape: Any,
+    control_shape: Any,
+    problem_id: Any,
+    args: Any = None,
+) -> Any:
     grid = phx.dynamics.TimeGrid(times, time_id=f"{problem_id}:time")
     dynamics = make_discrete_control_dynamics(
         transition,
@@ -86,7 +89,7 @@ def _problem(
     )
 
 
-def test_ilqr_reduces_exactly_to_affine_finite_horizon_lqr():
+def test_ilqr_reduces_exactly_to_affine_finite_horizon_lqr() -> None:
     horizon = 5
     a = jnp.array(
         [
@@ -120,11 +123,11 @@ def test_ilqr_reduces_exactly_to_affine_finite_horizon_lqr():
     initial_state = jnp.array([0.8, -0.2])
     args = (a, b, bias, q, r, cross, q_linear, r_linear, q_terminal, terminal_linear)
 
-    def transition(context, state, control, data):
+    def transition(context: Any, state: Any, control: Any, data: Any) -> Any:
         index = context.step_index
         return data[0][index] @ state + data[1][index] @ control + data[2][index]
 
-    def running_cost(time, state, control, data):
+    def running_cost(time: Any, state: Any, control: Any, data: Any) -> Any:
         index = jnp.asarray(time, dtype=jnp.int32)
         return (
             0.5 * state @ data[3][index] @ state
@@ -134,7 +137,7 @@ def test_ilqr_reduces_exactly_to_affine_finite_horizon_lqr():
             + data[7][index] @ control
         )
 
-    def terminal_cost(time, state, data):
+    def terminal_cost(time: Any, state: Any, data: Any) -> Any:
         del time
         return 0.5 * state @ data[8] @ state + data[9] @ state
 
@@ -183,27 +186,27 @@ def test_ilqr_reduces_exactly_to_affine_finite_horizon_lqr():
     )
 
 
-def _nonlinear_problem(kind):
+def _nonlinear_problem(kind: Any) -> Any:
     dt = 0.08
     horizon = 24
     times = jnp.arange(horizon + 1) * dt
     if kind == "pendulum":
         initial_state = jnp.array([0.9, 0.0])
 
-        def transition(time, state, control, args):
+        def transition(time: Any, state: Any, control: Any, args: Any) -> Any:
             del time, args
             angle, velocity = state
             torque = control[0]
             acceleration = -jnp.sin(angle) - 0.08 * velocity + torque
             return state + dt * jnp.array([velocity, acceleration])
 
-        def running_cost(time, state, control, args):
+        def running_cost(time: Any, state: Any, control: Any, args: Any) -> Any:
             del time, args
             return 0.5 * (
                 4.0 * state[0] ** 2 + 0.3 * state[1] ** 2 + 0.08 * control[0] ** 2
             )
 
-        def terminal_cost(time, state, args):
+        def terminal_cost(time: Any, state: Any, args: Any) -> Any:
             del time, args
             return 15.0 * state[0] ** 2 + 2.0 * state[1] ** 2
 
@@ -215,7 +218,7 @@ def _nonlinear_problem(kind):
         length = 0.5
         gravity = 9.81
 
-        def transition(time, state, control, args):
+        def transition(time: Any, state: Any, control: Any, args: Any) -> Any:
             del time, args
             position, angle, velocity, angular_velocity = state
             force = control[0]
@@ -236,7 +239,7 @@ def _nonlinear_problem(kind):
                 [velocity, angular_velocity, cart_acceleration, angular_acceleration]
             )
 
-        def running_cost(time, state, control, args):
+        def running_cost(time: Any, state: Any, control: Any, args: Any) -> Any:
             del time, args
             return 0.5 * (
                 0.2 * state[0] ** 2
@@ -246,7 +249,7 @@ def _nonlinear_problem(kind):
                 + 0.05 * control[0] ** 2
             )
 
-        def terminal_cost(time, state, args):
+        def terminal_cost(time: Any, state: Any, args: Any) -> Any:
             del time, args
             return (
                 2.0 * state[0] ** 2
@@ -269,7 +272,7 @@ def _nonlinear_problem(kind):
 
 
 @pytest.mark.parametrize("kind", ["pendulum", "cartpole"])
-def test_ilqr_improves_nonlinear_pendulum_and_cartpole(kind):
+def test_ilqr_improves_nonlinear_pendulum_and_cartpole(kind: Any) -> None:
     problem = _nonlinear_problem(kind)
     result = solve_ilqr(
         problem,
@@ -287,23 +290,23 @@ def test_ilqr_improves_nonlinear_pendulum_and_cartpole(kind):
     assert np.all(np.isfinite(result.trajectory.controls))
 
 
-def test_ilqr_reported_gradient_agrees_with_direct_open_loop_gradient():
+def test_ilqr_reported_gradient_agrees_with_direct_open_loop_gradient() -> None:
     dt = 0.2
     horizon = 6
 
-    def transition(time, state, control, args):
+    def transition(time: Any, state: Any, control: Any, args: Any) -> Any:
         del time, args
         return state + dt * jnp.array(
             [state[1], -jnp.sin(state[0]) + control[0] + 0.1 * control[0] ** 3]
         )
 
-    def running_cost(time, state, control, args):
+    def running_cost(time: Any, state: Any, control: Any, args: Any) -> Any:
         del time, args
         return (
             0.5 * (state @ state + 0.3 * control @ control) + 0.02 * state[0] * control[0]
         )
 
-    def terminal_cost(time, state, args):
+    def terminal_cost(time: Any, state: Any, args: Any) -> Any:
         del time, args
         return state @ jnp.diag(jnp.array([2.0, 0.5])) @ state
 
@@ -319,7 +322,7 @@ def test_ilqr_reported_gradient_agrees_with_direct_open_loop_gradient():
     )
     initial_controls = jnp.linspace(-0.2, 0.25, horizon).reshape((horizon, 1))
 
-    def objective(controls):
+    def objective(controls: Any) -> Any:
         state = problem.initial_state
         total = jnp.asarray(0.0)
         for step in range(horizon):
@@ -336,7 +339,7 @@ def test_ilqr_reported_gradient_agrees_with_direct_open_loop_gradient():
     )
 
 
-def test_ilqr_rejects_non_positive_definite_backward_pass_without_fallback():
+def test_ilqr_rejects_non_positive_definite_backward_pass_without_fallback() -> None:
     problem = _problem(
         lambda time, state, control, args: state,
         jnp.array([0.0, 1.0, 2.0]),
@@ -355,7 +358,9 @@ def test_ilqr_rejects_non_positive_definite_backward_pass_without_fallback():
     assert not bool(result.successful)
 
 
-def test_differential_ilqr_requires_selected_flow_and_propagates_failed_integration():
+def test_differential_ilqr_requires_selected_flow_and_propagates_failed_integration() -> (
+    None
+):
     grid = phx.dynamics.TimeGrid(
         jnp.array([0.0, 0.5, 1.0, 1.5]), time_id="failed-flow-time"
     )
@@ -393,10 +398,10 @@ def test_differential_ilqr_requires_selected_flow_and_propagates_failed_integrat
     assert not bool(result.control_result.sampled_loss.valid)
 
 
-def test_ilqr_rejects_explicit_finite_rollback_and_retains_transition_evidence():
+def test_ilqr_rejects_explicit_finite_rollback_and_retains_transition_evidence() -> None:
     failure_status = 59
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, args
         return phx.dynamics.DiscreteTransitionResult(
             state + control + 100.0,
@@ -432,7 +437,7 @@ def test_ilqr_rejects_explicit_finite_rollback_and_retains_transition_evidence()
     assert int(evidence.first_failure_status) == failure_status
 
 
-def test_ilqr_reports_line_search_rejection_without_changing_nominal_controls():
+def test_ilqr_reports_line_search_rejection_without_changing_nominal_controls() -> None:
     problem = _problem(
         lambda time, state, control, args: state,
         jnp.array([0.0, 1.0, 2.0]),
@@ -458,7 +463,9 @@ def test_ilqr_reports_line_search_rejection_without_changing_nominal_controls():
     assert not bool(result.successful)
 
 
-def test_ilqr_is_deterministic_and_policy_rolls_out_through_public_control_problem():
+def test_ilqr_is_deterministic_and_policy_rolls_out_through_public_control_problem() -> (
+    None
+):
     problem = _nonlinear_problem("pendulum")
     initial = jnp.zeros((problem.time_grid.num_steps, 1))
     first = solve_ilqr(problem, initial, max_iterations=8, regularization=1e-4)

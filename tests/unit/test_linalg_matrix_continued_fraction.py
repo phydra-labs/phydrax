@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +17,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _assemble_block_tridiagonal(diagonal, upper, lower):
+def _assemble_block_tridiagonal(diagonal: Any, upper: Any, lower: Any) -> Any:
     block_count, block_size, _ = diagonal.shape
     dimension = block_count * block_size
     matrix = jnp.zeros((dimension, dimension), dtype=diagonal.dtype)
@@ -37,7 +40,7 @@ def _assemble_block_tridiagonal(diagonal, upper, lower):
     return matrix
 
 
-def _leading_resolvent_blocks(matrix, shifts, block_size):
+def _leading_resolvent_blocks(matrix: Any, shifts: Any, block_size: Any) -> Any:
     identity = jnp.eye(matrix.shape[0], dtype=matrix.dtype)
     right_hand_side = identity[:, :block_size]
     return jax.vmap(
@@ -48,7 +51,7 @@ def _leading_resolvent_blocks(matrix, shifts, block_size):
     )(shifts)
 
 
-def test_matrix_continued_fraction_matches_noncommuting_block_resolvent():
+def test_matrix_continued_fraction_matches_noncommuting_block_resolvent() -> None:
     diagonal = jnp.asarray(
         [
             [[1.0 + 0.1j, 0.2], [-0.3j, 2.0 - 0.1j]],
@@ -106,7 +109,7 @@ def test_matrix_continued_fraction_matches_noncommuting_block_resolvent():
     assert eager.provenance.coupling == "explicit-upper-lower"
 
 
-def test_adjoint_coupling_default_preserves_matrix_resolvent_sign():
+def test_adjoint_coupling_default_preserves_matrix_resolvent_sign() -> None:
     diagonal = jnp.asarray(
         [
             [[1.0, 0.2j], [-0.2j, 1.5]],
@@ -143,7 +146,7 @@ def test_adjoint_coupling_default_preserves_matrix_resolvent_sign():
     assert implicit.provenance.coupling == "adjoint-paired-upper-lower"
 
 
-def test_terminal_self_energy_matches_eliminated_block():
+def test_terminal_self_energy_matches_eliminated_block() -> None:
     diagonal = jnp.asarray(
         [
             [[1.0, 0.1], [0.1, 1.5]],
@@ -182,7 +185,7 @@ def test_terminal_self_energy_matches_eliminated_block():
     assert result.provenance.termination == "explicit-terminal-self-energy"
 
 
-def test_matrix_continued_fraction_isolates_failures_and_validates_shapes():
+def test_matrix_continued_fraction_isolates_failures_and_validates_shapes() -> None:
     diagonal = jnp.asarray([[[1.0, 0.0], [0.0, 2.0]]])
     shifts = jnp.asarray([1.0 + 0.0j, 3.0 + 0.0j, jnp.nan + 0.0j])
 
@@ -227,7 +230,7 @@ def test_matrix_continued_fraction_isolates_failures_and_validates_shapes():
         )
 
 
-def test_matrix_continued_fraction_shift_jvp_matches_dense_derivative():
+def test_matrix_continued_fraction_shift_jvp_matches_dense_derivative() -> None:
     diagonal = jnp.asarray(
         [
             [[1.0, 0.2], [0.2, 1.5]],
@@ -239,7 +242,7 @@ def test_matrix_continued_fraction_shift_jvp_matches_dense_derivative():
     lower = jnp.swapaxes(upper, -1, -2)
     matrix = _assemble_block_tridiagonal(diagonal, upper, lower)
 
-    def evaluate(real_shift):
+    def evaluate(real_shift: Any) -> Any:
         return la.matrix_continued_fraction(
             diagonal,
             upper,

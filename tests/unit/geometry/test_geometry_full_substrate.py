@@ -35,7 +35,7 @@ from phydrax.geometry.brep import BRepBoundaryMap
 _SI_COORDINATES = phx.SpatialCoordinateContract.si()
 
 
-def _tetrahedron():
+def _tetrahedron() -> Any:
     vertices = jnp.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     )
@@ -43,7 +43,7 @@ def _tetrahedron():
     return vertices, faces
 
 
-def _conformal_two_box_partition():
+def _conformal_two_box_partition() -> Any:
     splitter = BOPAlgo_Splitter()
     splitter.AddArgument(
         BRepPrimAPI_MakeBox(gp_Pnt(0.0, 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
@@ -57,7 +57,7 @@ def _conformal_two_box_partition():
     return splitter.Shape()
 
 
-def test_halfedge_topology_and_exact_bvh_query():
+def test_halfedge_topology_and_exact_bvh_query() -> None:
     vertices, faces = _tetrahedron()
     mesh = phx.geometry.TriangleMesh(vertices, faces, source_id="tetrahedron")
     assert mesh.topology.watertight
@@ -71,14 +71,16 @@ def test_halfedge_topology_and_exact_bvh_query():
     assert np.allclose(np.asarray(bvh_result.distance), [0.2, 1.0])
 
 
-def test_topology_rejects_nonmanifold_and_inconsistent_orientation():
+def test_topology_rejects_nonmanifold_and_inconsistent_orientation() -> None:
     with pytest.raises(ValueError, match="inconsistent orientation"):
+        # ty: ignore[invalid-argument-type]
         phx.geometry.TriangleTopology([[0, 1, 2], [0, 1, 3]])
     with pytest.raises(ValueError, match="non-manifold"):
+        # ty: ignore[invalid-argument-type]
         phx.geometry.TriangleTopology([[0, 1, 2], [1, 0, 3], [0, 1, 4]])
 
 
-def test_mesh_and_planar_regions_have_explicit_signed_queries():
+def test_mesh_and_planar_regions_have_explicit_signed_queries() -> None:
     vertices, faces = _tetrahedron()
     region = phx.geometry.MeshRegion(vertices, faces, feature_id="tet").compile()
     query = jax.jit(lambda value: region.boundary_field(value))(
@@ -109,7 +111,7 @@ def test_mesh_and_planar_regions_have_explicit_signed_queries():
     )
 
 
-def test_boundary_atlas_frames_selection_and_sampling_metadata():
+def test_boundary_atlas_frames_selection_and_sampling_metadata() -> None:
     box = phx.geometry.Box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0)).compile()
     selected = box.boundary_atlas.select(tags=("x_min",))
     assert selected.num_charts == 1
@@ -124,7 +126,7 @@ def test_boundary_atlas_frames_selection_and_sampling_metadata():
     assert np.allclose(np.asarray(samples.points[:, 0]), -1.0)
 
 
-def test_sphere_boundary_atlas_uses_trimmed_triangular_charts():
+def test_sphere_boundary_atlas_uses_trimmed_triangular_charts() -> None:
     atlas = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile().boundary_atlas
     charts = jnp.asarray([0, 0, 1, 1], dtype=jnp.int32)
     references = jnp.asarray([[0.25, 0.25], [0.75, 0.75], [0.25, 0.25], [0.75, 0.75]])
@@ -144,7 +146,7 @@ def test_sphere_boundary_atlas_uses_trimmed_triangular_charts():
     )
 
 
-def test_matrix_free_ddg_linear_precision():
+def test_matrix_free_ddg_linear_precision() -> None:
     mesh = phx.geometry.TriangleMesh(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
         [[0, 1, 2], [0, 2, 3]],
@@ -156,7 +158,7 @@ def test_matrix_free_ddg_linear_precision():
     assert np.all(np.asarray(operators.vertex_mass) > 0.0)
 
 
-def test_occt_brep_import_preserves_topology_patches_and_boundary_identity():
+def test_occt_brep_import_preserves_topology_patches_and_boundary_identity() -> None:
     model = phx.geometry.model_from_occt_shape(
         BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
         coordinate_contract=_SI_COORDINATES,
@@ -200,7 +202,7 @@ def test_occt_brep_import_preserves_topology_patches_and_boundary_identity():
     )
 
 
-def test_brep_identity_separates_physical_source_from_query_representation():
+def test_brep_identity_separates_physical_source_from_query_representation() -> None:
     source_digest = hashlib.sha256(b"physical-equivalent-cad").hexdigest()
     baseline = phx.geometry.model_from_occt_shape(
         bd.Box(1.0, 2.0, 3.0).wrapped,
@@ -258,7 +260,7 @@ def test_brep_identity_separates_physical_source_from_query_representation():
     assert rescaled.source_revision != baseline.source_revision
 
 
-def test_brep_entity_ids_reject_ambiguous_identity_components():
+def test_brep_entity_ids_reject_ambiguous_identity_components() -> None:
     with pytest.raises(ValueError, match="source_revision"):
         phx.geometry.BRepEntityId("", "face", 0)
     with pytest.raises(ValueError, match="kind"):
@@ -267,7 +269,7 @@ def test_brep_entity_ids_reject_ambiguous_identity_components():
         phx.geometry.BRepEntityId("revision", "face", -1)
 
 
-def test_occt_conformal_partition_preserves_shared_face_incidence():
+def test_occt_conformal_partition_preserves_shared_face_incidence() -> None:
     model = phx.geometry.model_from_occt_shape(
         _conformal_two_box_partition(),
         coordinate_contract=_SI_COORDINATES,
@@ -303,7 +305,9 @@ def test_occt_conformal_partition_preserves_shared_face_incidence():
     assert set(shared_orientations) == {-1, 1}
 
 
-def test_persist_occt_shape_publishes_native_identity_without_clobbering(tmp_path):
+def test_persist_occt_shape_publishes_native_identity_without_clobbering(
+    tmp_path: Any,
+) -> None:
     destination = tmp_path / "shape.brep"
     model = phx.geometry.persist_occt_shape(
         bd.Box(1.0, 2.0, 3.0).wrapped,
@@ -351,7 +355,7 @@ def test_persist_occt_shape_publishes_native_identity_without_clobbering(tmp_pat
     assert replacement.source_revision != published_revision
 
 
-def test_rational_bspline_surface_is_jax_differentiable():
+def test_rational_bspline_surface_is_jax_differentiable() -> None:
     control_points = jnp.asarray(
         [
             [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -360,7 +364,7 @@ def test_rational_bspline_surface_is_jax_differentiable():
     )
     knots = jnp.asarray([0.0, 0.0, 1.0, 1.0])
 
-    def height(corner_height):
+    def height(corner_height: Any) -> Any:
         points = control_points.at[1, 1, 2].set(corner_height)
         patch = phx.geometry.BSplineSurfacePatch(
             points,
@@ -391,7 +395,7 @@ def test_rational_bspline_surface_is_jax_differentiable():
     ) == pytest.approx(np.sqrt(1.5))
 
 
-def test_rational_bspline_surface_preserves_endpoint_differentials():
+def test_rational_bspline_surface_preserves_endpoint_differentials() -> None:
     control_points = jnp.asarray(
         [
             [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -442,7 +446,7 @@ def test_rational_bspline_surface_preserves_endpoint_differentials():
     )
 
 
-def test_rational_bspline_surface_matches_tensor_product_oracle():
+def test_rational_bspline_surface_matches_tensor_product_oracle() -> None:
     u_degree = 2
     v_degree = 3
     u_knots = np.asarray([0.0, 0.0, 0.0, 0.3, 0.5, 0.5, 1.0, 1.0, 1.0])
@@ -528,7 +532,7 @@ def test_rational_bspline_surface_matches_tensor_product_oracle():
         atol=1e-9,
     )
 
-    def height(center_weight):
+    def height(center_weight: Any) -> Any:
         dynamic_weights = jnp.asarray(weights).at[2, 3].set(center_weight)
         dynamic_patch = phx.geometry.BSplineSurfacePatch(
             control_points,
@@ -552,7 +556,7 @@ def test_rational_bspline_surface_matches_tensor_product_oracle():
     )
 
 
-def test_rational_bspline_curve_matches_scipy_and_endpoint_derivative():
+def test_rational_bspline_curve_matches_scipy_and_endpoint_derivative() -> None:
     degree = 3
     knots = np.asarray([0.0, 0.0, 0.0, 0.0, 0.4, 0.7, 1.0, 1.0, 1.0, 1.0])
     control_points = np.asarray(
@@ -596,8 +600,11 @@ def test_rational_bspline_curve_matches_scipy_and_endpoint_derivative():
     )
 
     singular = phx.geometry.BSplineCurve(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0], [1.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, -1.0],
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.0, 1.0, 1.0],
         1,
     )
@@ -605,7 +612,7 @@ def test_rational_bspline_curve_matches_scipy_and_endpoint_derivative():
         jax.block_until_ready(eqx.filter_jit(singular.evaluate)(jnp.asarray(0.5)))
 
 
-def test_occt_bspline_import_matches_native_surface_differential():
+def test_occt_bspline_import_matches_native_surface_differential() -> None:
     coordinates = np.linspace(0.0, 1.0, 5)
     face = bd.Face.make_surface_from_array_of_points(
         [
@@ -695,7 +702,7 @@ def test_occt_bspline_import_matches_native_surface_differential():
     assert np.all(np.asarray(frame.jacobian) > 0.0)
 
 
-def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch():
+def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch() -> None:
     wires = [
         bd.Wire.make_circle(
             1.0,
@@ -750,6 +757,7 @@ def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch():
         weight_index,
         weights.at[0, 0].multiply(1.01),
     )
+    # ty: ignore[unresolved-attribute]
     realization = differentiable.kernel.realize(state)
     realized_frame = realization.atlas.frame(indices, references)
     assert np.array_equal(np.asarray(realization.faces), np.asarray(model.mesh_faces))
@@ -759,7 +767,7 @@ def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch():
     assert np.isfinite(float(realization.seam_residual))
 
 
-def test_level_set_domain_ansatz_factor_has_unit_boundary_jet():
+def test_level_set_domain_ansatz_factor_has_unit_boundary_jet() -> None:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Ellipse((0.0, 0.0), (2.0, 1.0)).compile()
     )
@@ -771,7 +779,7 @@ def test_level_set_domain_ansatz_factor_has_unit_boundary_jet():
     assert float(jnp.linalg.norm(gradient)) == pytest.approx(1.0)
 
 
-def test_fixed_topology_brep_preserves_connectivity_and_shape_gradients():
+def test_fixed_topology_brep_preserves_connectivity_and_shape_gradients() -> None:
     model = phx.geometry.model_from_occt_shape(
         bd.Sphere(1.0).wrapped,
         coordinate_contract=_SI_COORDINATES,
@@ -785,12 +793,13 @@ def test_fixed_topology_brep_preserves_connectivity_and_shape_gradients():
         if spec.parameter_id.name == "radius"
     )
 
-    def volume(radius):
+    def volume(radius: Any) -> Any:
         state = geometry.state.replace_at(radius_index, radius)
         return geometry.kernel.measure(state)
 
     initial = volume(jnp.asarray(1.0))
     derivative = jax.grad(volume)(jnp.asarray(1.0))
+    # ty: ignore[unresolved-attribute]
     realization = geometry.kernel.realize(geometry.state)
     assert np.array_equal(np.asarray(realization.faces), np.asarray(model.mesh_faces))
     assert float(realization.seam_residual) < 1e-10
@@ -798,11 +807,12 @@ def test_fixed_topology_brep_preserves_connectivity_and_shape_gradients():
     assert float(volume(jnp.asarray(1.2))) > float(initial)
 
 
-def test_sketch_and_design_constraint_solvers_lower_to_geometry():
+def test_sketch_and_design_constraint_solvers_lower_to_geometry() -> None:
     sketch = phx.geometry.Sketch(
         jnp.asarray([[0.0, 0.0], [1.2, 0.1], [1.1, 1.0], [0.0, 0.9]]),
         lines=jnp.asarray([[0, 1], [1, 2], [2, 3], [3, 0]]),
         constraints=(
+            # ty: ignore[invalid-argument-type]
             phx.geometry.FixedPoint(0, (0.0, 0.0)),
             phx.geometry.Horizontal(0),
             phx.geometry.Vertical(1),
@@ -859,7 +869,7 @@ def test_sketch_and_design_constraint_solvers_lower_to_geometry():
     assert float(domain.measure) == pytest.approx(target_volume)
 
 
-def test_affine_geometry_preserves_boundary_tags_and_exact_atlas_measure():
+def test_affine_geometry_preserves_boundary_tags_and_exact_atlas_measure() -> None:
     transformed = (
         phx.geometry.Box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0))
         .rotated((0.0, 0.0, 1.0), 0.3)

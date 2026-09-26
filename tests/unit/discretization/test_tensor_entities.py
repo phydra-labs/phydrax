@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_bounded_cell_axis_has_distinct_cell_and_face_entities():
+def test_bounded_cell_axis_has_distinct_cell_and_face_entities() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4),),
         axis_names=("x",),
@@ -27,14 +27,16 @@ def test_bounded_cell_axis_has_distinct_cell_and_face_entities():
     assert jnp.allclose(faces.coordinates_by_axis[0], jnp.linspace(0.0, 1.0, 5))
     assert jnp.allclose(jnp.sum(cells.measure), 1.0)
     assert jnp.allclose(jnp.sum(faces.measure), 1.0)
+    # ty: ignore[unresolved-attribute]
     assert pressure.vector_space.shape == (4,)
+    # ty: ignore[unresolved-attribute]
     assert velocity.vector_space.shape == (5,)
     assert pressure.vector_space.space_id != velocity.vector_space.space_id
     assert jnp.count_nonzero(faces.lower_boundary_masks[0]) == 1
     assert jnp.count_nonzero(faces.upper_boundary_masks[0]) == 1
 
 
-def test_periodic_cell_axis_quotients_point_entities_to_cell_count():
+def test_periodic_cell_axis_quotients_point_entities_to_cell_count() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=True),),
         axis_names=("x",),
@@ -46,7 +48,7 @@ def test_periodic_cell_axis_quotients_point_entities_to_cell_count():
     assert not jnp.any(grid.faces("x").upper_boundary_masks[0])
 
 
-def test_two_dimensional_face_layouts_have_axis_specific_shapes():
+def test_two_dimensional_face_layouts_have_axis_specific_shapes() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(3),
@@ -62,7 +64,7 @@ def test_two_dimensional_face_layouts_have_axis_specific_shapes():
     assert jnp.allclose(jnp.sum(grid.cells().measure), 2.0)
 
 
-def test_unresolved_grid_location_cannot_manufacture_a_field_space():
+def test_unresolved_grid_location_cannot_manufacture_a_field_space() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4),),
         axis_names=("x",),

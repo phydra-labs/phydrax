@@ -15,7 +15,7 @@ jax.config.update("jax_enable_x64", True)
 Q = 1.602176634e-19
 
 
-def test_abrupt_pn_equilibrium_resolves_depletion_field_and_mesh_converges():
+def test_abrupt_pn_equilibrium_resolves_depletion_field_and_mesh_converges() -> None:
     peaks = []
     for nodes in (41, 81):
         plan = sc.pn_junction(nodes)
@@ -41,7 +41,7 @@ def test_abrupt_pn_equilibrium_resolves_depletion_field_and_mesh_converges():
     np.testing.assert_allclose(peaks[1], peaks[0], rtol=0.06)
 
 
-def test_flatband_mos_capacitance_matches_oxide_and_debye_series_limit():
+def test_flatband_mos_capacitance_matches_oxide_and_debye_series_limit() -> None:
     provisional = sc.mos_capacitor(81, 11)
     offset = float(provisional.contact_potential_offset[-1])
     plan = sc.mos_capacitor(81, 11, gate_offset=offset)
@@ -66,7 +66,7 @@ def test_flatband_mos_capacitance_matches_oxide_and_debye_series_limit():
     assert abs(float(plus.terminal_currents[0])) < 1e-18
 
 
-def test_lateral_bjt_base_bias_controls_collector_current_with_terminal_kcl():
+def test_lateral_bjt_base_bias_controls_collector_current_with_terminal_kcl() -> None:
     plan = sc.bipolar_transistor(21, 5)
     device = sc.PreparedSemiconductorDevice(plan)
     equilibrium = device.equilibrium()

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -15,11 +18,11 @@ from phydrax.operators.differential import (
 )
 
 
-def test_dt_n_second_derivative_matches_ad_and_closed_form():
+def test_dt_n_second_derivative_matches_ad_and_closed_form() -> None:
     time = TimeInterval(0.0, 1.0)
 
     @time.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return t**3
 
     d2_ad = dt_n(u, var="t", order=2, backend="ad")
@@ -31,11 +34,11 @@ def test_dt_n_second_derivative_matches_ad_and_closed_form():
     assert jnp.allclose(d2_ad.func(t), expected, rtol=1e-6, atol=1e-6)
 
 
-def test_partial_n_coord_separable_second_derivative_matches_closed_form():
+def test_partial_n_coord_separable_second_derivative_matches_closed_form() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 3
 
     d2_jet = partial_n(u, var="x", order=2, backend="jet")
@@ -45,11 +48,11 @@ def test_partial_n_coord_separable_second_derivative_matches_closed_form():
     assert jnp.allclose(out, 6.0 * coords, rtol=1e-6, atol=1e-6)
 
 
-def test_laplacian_backend_jet_matches_ad():
+def test_laplacian_backend_jet_matches_ad() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 3
 
     lap_ad = laplacian(u, var="x", backend="ad")
@@ -64,15 +67,15 @@ def test_laplacian_backend_jet_matches_ad():
     assert jnp.allclose(lap_jet.func((coords,)), 6.0 * coords, rtol=1e-6, atol=1e-6)
 
 
-def test_div_diag_k_grad_backend_jet_constant_k_matches_laplacian():
+def test_div_diag_k_grad_backend_jet_constant_k_matches_laplacian() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 3
 
     @geom.Function("x")
-    def k_vec(x):
+    def k_vec(x: Any) -> Any:
         return jnp.array([1.0], dtype="float64")
 
     op = div_diag_k_grad(u, k_vec, var="x", backend="jet")
@@ -86,11 +89,11 @@ def test_div_diag_k_grad_backend_jet_constant_k_matches_laplacian():
     assert jnp.allclose(op.func((coords,)), expected, rtol=1e-6, atol=1e-6)
 
 
-def test_bilaplacian_backend_jet_matches_ad_1d():
+def test_bilaplacian_backend_jet_matches_ad_1d() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 4
 
     bilap_ad = bilaplacian(u, var="x", backend="ad")
@@ -105,13 +108,13 @@ def test_bilaplacian_backend_jet_matches_ad_1d():
     assert jnp.allclose(bilap_jet.func((coords,)), expected, rtol=1e-6, atol=1e-6)
 
 
-def test_bilaplacian_backend_jet_matches_ad_2d_mixed_terms():
+def test_bilaplacian_backend_jet_matches_ad_2d_mixed_terms() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 4 + x[1] ** 4 + 2.0 * x[0] ** 2 * x[1] ** 2
 
     bilap_ad = bilaplacian(u, var="x", backend="ad")

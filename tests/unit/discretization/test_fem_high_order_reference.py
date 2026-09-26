@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -40,7 +42,9 @@ from phydrax.integration._rules import (
         (GaussLobattoLegendreRule, 6, 9),
     ),
 )
-def test_legendre_rules_are_positive_and_polynomial_exact(rule, order, exact_degree):
+def test_legendre_rules_are_positive_and_polynomial_exact(
+    rule: Any, order: Any, exact_degree: Any
+) -> None:
     prepared_rule = rule(order)
     data = prepared_rule.data()
     nodes = np.asarray(data.nodes)
@@ -70,7 +74,7 @@ def test_legendre_rules_are_positive_and_polynomial_exact(rule, order, exact_deg
         )
 
 
-def test_tetrahedral_degree_aware_rule_integrates_mass_degree_polynomial():
+def test_tetrahedral_degree_aware_rule_integrates_mass_degree_polynomial() -> None:
     polynomial_degree = 4
     points, weights = _degree_aware_reference_rule(
         "tetrahedron",
@@ -88,7 +92,7 @@ def test_tetrahedral_degree_aware_rule_integrates_mass_degree_polynomial():
     )
 
 
-def test_gll_family_uses_stable_barycentric_polynomial_reproduction():
+def test_gll_family_uses_stable_barycentric_polynomial_reproduction() -> None:
     family = ReferenceNodalFamily("quadrilateral", 8)
     assert family.orders == (8, 8)
     nodes = family.nodes_by_axis[0]
@@ -115,7 +119,9 @@ def test_gll_family_uses_stable_barycentric_polynomial_reproduction():
         expected_gradient,
         atol=2.0e-8,
     )
+    # ty: ignore[unsupported-operator]
     assert jnp.all(family.quadrature_weights_by_axis[0] > 0.0)
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(jnp.sum(family.quadrature_weights_by_axis[0]), 1.0)
 
 
@@ -139,8 +145,8 @@ def test_gll_family_uses_stable_barycentric_polynomial_reproduction():
     ),
 )
 def test_anisotropic_dense_and_factorized_reference_actions_agree(
-    cell, orders, points_by_axis
-):
+    cell: Any, orders: Any, points_by_axis: Any
+) -> None:
     family = ReferenceNodalFamily(cell, orders)
     tabulation = TensorProductTabulation(family, points_by_axis)
     plan = SumFactorizationPlan(tabulation)
@@ -204,13 +210,13 @@ def test_anisotropic_dense_and_factorized_reference_actions_agree(
     )
 
 
-def _flatten_entity_dofs(element):
+def _flatten_entity_dofs(element: Any) -> Any:
     return tuple(
         dof for dimension in element.entity_dofs for entity in dimension for dof in entity
     )
 
 
-def test_anisotropic_quadrilateral_entity_partition_and_orientation():
+def test_anisotropic_quadrilateral_entity_partition_and_orientation() -> None:
     element = ReferenceNodalFamily("quadrilateral", (2, 3)).finite_element()
 
     assert tuple(entity[0] for entity in element.entity_dofs[0]) == (0, 8, 11, 3)
@@ -220,7 +226,7 @@ def test_anisotropic_quadrilateral_entity_partition_and_orientation():
     assert tuple(sorted(_flatten_entity_dofs(element))) == tuple(range(12))
 
 
-def test_anisotropic_hexahedron_entity_partition_and_orientation():
+def test_anisotropic_hexahedron_entity_partition_and_orientation() -> None:
     family = ReferenceNodalFamily("hexahedron", (2, 3, 4))
     element = family.finite_element()
 
@@ -260,7 +266,7 @@ def test_anisotropic_hexahedron_entity_partition_and_orientation():
     assert tuple(sorted(_flatten_entity_dofs(element))) == tuple(range(60))
 
 
-def _all_actions():
+def _all_actions() -> Any:
     return (
         "interpolate",
         "interpolate_transpose",
@@ -271,7 +277,9 @@ def _all_actions():
     )
 
 
-def _prepare_quad(family, *, actions=None, precision=None, volume_order=4):
+def _prepare_quad(
+    family: Any, *, actions: Any = None, precision: Any = None, volume_order: Any = 4
+) -> Any:
     return PreparedFiniteElementReference(
         family.finite_element(),
         ReferenceQuadrilateralRule(GaussLegendreRule(volume_order)),
@@ -282,7 +290,7 @@ def _prepare_quad(family, *, actions=None, precision=None, volume_order=4):
     )
 
 
-def _prepare_hex(family):
+def _prepare_hex(family: Any) -> Any:
     return PreparedFiniteElementReference(
         family.finite_element(),
         ReferenceHexahedronRule(GaussLegendreRule(3)),
@@ -300,7 +308,9 @@ def _prepare_hex(family):
         (ReferenceNodalFamily("hexahedron", (2, 2, 2)), _prepare_hex),
     ),
 )
-def test_prepared_quad_and_hex_trace_and_transpose_consistency(family, prepare):
+def test_prepared_quad_and_hex_trace_and_transpose_consistency(
+    family: Any, prepare: Any
+) -> None:
     prepared = prepare(family)
     coefficients = jnp.linspace(-0.6, 1.1, family.finite_element().local_dof_count)
     volume_values = prepared.interpolate(coefficients)
@@ -357,7 +367,7 @@ def test_prepared_quad_and_hex_trace_and_transpose_consistency(family, prepare):
         )
 
 
-def test_prepared_reference_identity_binds_rules_actions_and_precision():
+def test_prepared_reference_identity_binds_rules_actions_and_precision() -> None:
     family = ReferenceNodalFamily("quadrilateral", 3)
     baseline = _prepare_quad(family)
     reordered = _prepare_quad(family, actions=tuple(reversed(_all_actions())))
@@ -379,7 +389,7 @@ def test_prepared_reference_identity_binds_rules_actions_and_precision():
     assert baseline.report.precision_id != other_precision.report.precision_id
 
 
-def test_higher_order_simplex_integer_points_match_floating_tabulation():
+def test_higher_order_simplex_integer_points_match_floating_tabulation() -> None:
     family = SimplexNodalFamily("triangle", 4)
     integer_points = jnp.asarray(((0, 0), (1, 0), (0, 1)), dtype=jnp.int32)
     floating_points = integer_points.astype("float64")
@@ -402,7 +412,9 @@ def test_higher_order_simplex_integer_points_match_floating_tabulation():
     ("cell", "order"),
     (("triangle", 5), ("tetrahedron", 3)),
 )
-def test_simplex_family_and_prepared_reference_reproduce_polynomials(cell, order):
+def test_simplex_family_and_prepared_reference_reproduce_polynomials(
+    cell: Any, order: Any
+) -> None:
     family = SimplexNodalFamily(cell, order)
     dimension = family.nodes.shape[1]
     nodal_values, _nodal_gradients = family.tabulate(family.nodes)
@@ -459,7 +471,7 @@ def test_simplex_family_and_prepared_reference_reproduce_polynomials(cell, order
     assert family.condition_number < 1.0e5
 
 
-def test_facet_orientation_groups_have_exact_inverses_and_composition():
+def test_facet_orientation_groups_have_exact_inverses_and_composition() -> None:
     from phydrax.discretization._reference_cell import (
         facet_orientation_actions,
         facet_orientation_between,
@@ -483,7 +495,7 @@ def test_facet_orientation_groups_have_exact_inverses_and_composition():
     assert action.permutation == (2, 0, 1)
 
 
-def test_triangular_physical_mortar_reproduces_total_degree_space():
+def test_triangular_physical_mortar_reproduces_total_degree_space() -> None:
     from phydrax.discretization.fem._mortar import (
         serial_finite_element_mortar_plan,
     )
@@ -509,7 +521,7 @@ def test_triangular_physical_mortar_reproduces_total_degree_space():
     np.testing.assert_allclose(mortar.conservation_residual(flux), 0.0, atol=3.0e-12)
 
 
-def test_entropy_reference_operators_close_generalized_sbp_identity():
+def test_entropy_reference_operators_close_generalized_sbp_identity() -> None:
     from phydrax.equations.fem._entropy_stability import (
         prepare_entropy_reference_operator,
     )

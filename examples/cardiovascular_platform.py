@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -25,7 +26,7 @@ from phydrax.qualification import HMACSHA256TrustPolicy, SupportTuple
 from phydrax.units import MILLISECOND
 
 
-def _anatomy():
+def _anatomy() -> Any:
     coordinates = np.asarray(
         [
             (0.0, 0.0, 0.0),
@@ -50,6 +51,7 @@ def _anatomy():
         dtype=np.int32,
     )
     mesh = CellMesh.from_tetrahedra(coordinates, tetrahedra)
+    # ty: ignore[unresolved-attribute]
     points = coordinates[np.asarray(mesh.connectivity.faces)]
     role_faces = {
         "endocardium": np.flatnonzero(np.all(points[..., 0] == 0.0, axis=1)),
@@ -107,7 +109,7 @@ def _anatomy():
     return mesh, fields, microstructure
 
 
-def _ep_runtime(mesh, microstructure):
+def _ep_runtime(mesh: Any, microstructure: Any) -> Any:
     finite_element = FiniteElementPlan(
         mesh,
         FiniteElementFieldSpec("activation", lagrange_element("tetrahedron", 1)),
@@ -126,7 +128,7 @@ def _ep_runtime(mesh, microstructure):
     ).prepare(0.01)
 
 
-def _blocked_release(case):
+def _blocked_release(case: Any) -> Any:
     support = SupportTuple(
         "cardiovascular.workflow",
         {

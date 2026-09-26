@@ -418,7 +418,10 @@ class POUNDERS(AbstractLeastSquaresMethod):
         output_parameters = jax.tree.map(self.precision.output, parameters)
         certificate_evidence = certificate.precision_evidence
         # certify_least_squares_physical always attaches precision evidence.
-        assert certificate_evidence is not None
+        if not (certificate_evidence is not None):
+            raise RuntimeError(
+                "Internal invariant failed: certificate_evidence is not None."
+            )
         precision_evidence = self.precision.evidence_for(
             parameters,
             space.unflatten(center_residual),

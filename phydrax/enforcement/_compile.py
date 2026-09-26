@@ -950,7 +950,8 @@ class _BoundaryBlendOverlay(StrictModule):
         for c, w in zip(self.pieces, self.weights, strict=True):
             transform = c.transform
             # Boundary-stage specifications are local ansätze, which always carry one.
-            assert transform is not None
+            if not (transform is not None):
+                raise RuntimeError("Internal invariant failed: transform is not None.")
             u_piece = transform.apply(
                 u,
                 get_field,
@@ -2028,7 +2029,10 @@ class EnforcementProgram(StrictModule):
                 )
             condition = spec.condition
             # EnforcementSpec pairs every realization with a typed ``Condition``.
-            assert isinstance(condition, Condition)
+            if not (isinstance(condition, Condition)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(condition, Condition)."
+                )
             condition_id = condition.condition_id
             context = ConditionEvaluationContext(
                 condition,

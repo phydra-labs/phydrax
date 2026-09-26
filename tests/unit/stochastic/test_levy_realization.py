@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _stable_process():
+def _stable_process() -> Any:
     return phx.stochastic.SymmetricStableLevyProcess(
         1.3,
         jnp.asarray([0.25, 0.4]),
@@ -13,7 +15,7 @@ def _stable_process():
     )
 
 
-def test_levy_series_extension_and_batch_growth_preserve_path_prefixes():
+def test_levy_series_extension_and_batch_growth_preserve_path_prefixes() -> None:
     process = _stable_process()
     base = phx.stochastic.LevyProcessRealization.from_process(
         process,
@@ -51,7 +53,7 @@ def test_levy_series_extension_and_batch_growth_preserve_path_prefixes():
     assert jnp.array_equal(base_series.jumps, wider_series.jumps[:3])
 
 
-def test_levy_series_interval_queries_are_additive_and_cutoff_complete():
+def test_levy_series_interval_queries_are_additive_and_cutoff_complete() -> None:
     process = _stable_process()
     realization = phx.stochastic.LevyProcessRealization.from_process(
         process,
@@ -84,7 +86,7 @@ def test_levy_series_interval_queries_are_additive_and_cutoff_complete():
     assert jnp.allclose(with_drift - whole, process.drift, rtol=0.0, atol=1e-12)
 
 
-def test_symmetric_stable_contract_matches_declared_characteristic_exponent():
+def test_symmetric_stable_contract_matches_declared_characteristic_exponent() -> None:
     process = _stable_process()
     frequency = jnp.asarray([[0.7, -0.3], [1.2, 0.4]])
     expected = 1j * (frequency @ process.drift) - jnp.sum(
@@ -99,7 +101,7 @@ def test_symmetric_stable_contract_matches_declared_characteristic_exponent():
     assert jnp.array_equal(covariance, jnp.diag(jnp.diag(covariance)))
 
 
-def test_levy_realization_composes_with_other_global_drivers():
+def test_levy_realization_composes_with_other_global_drivers() -> None:
     process = _stable_process()
     levy = phx.stochastic.LevyProcessRealization.from_process(
         process,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -10,7 +12,7 @@ import phydrax as phx
 fd = phx.applications.solid_mechanics
 
 
-def _cable():
+def _cable() -> Any:
     structure = fd.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
         3,
@@ -26,7 +28,7 @@ def _cable():
     return structure, positions, problem, inputs
 
 
-def _tetrahedron():
+def _tetrahedron() -> Any:
     positions = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -50,7 +52,7 @@ def _tetrahedron():
     return structure, positions
 
 
-def test_nonlinear_plan_refresh_preserves_template_and_updates_setup_numerics():
+def test_nonlinear_plan_refresh_preserves_template_and_updates_setup_numerics() -> None:
     structure, positions, _, _ = _cable()
     model = fd.EdgeLineLoadModel(measure="current")
     problem = fd.ForceDensityProblem(structure, load_model=model, sign_mode="tension")
@@ -80,7 +82,7 @@ def test_nonlinear_plan_refresh_preserves_template_and_updates_setup_numerics():
     assert fd.solve_force_density(refreshed).successful
 
 
-def test_force_density_plan_identity_covers_termination_and_load_tree_contract():
+def test_force_density_plan_identity_covers_termination_and_load_tree_contract() -> None:
     structure, positions, _, _ = _cable()
     problem = fd.ForceDensityProblem(
         structure,
@@ -117,7 +119,7 @@ def test_force_density_plan_identity_covers_termination_and_load_tree_contract()
         )
 
 
-def test_self_weight_surface_traction_and_component_ledger_conserve_loads():
+def test_self_weight_surface_traction_and_component_ledger_conserve_loads() -> None:
     structure, positions = _tetrahedron()
     lengths = jnp.sqrt(
         jnp.sum(
@@ -143,7 +145,9 @@ def test_self_weight_surface_traction_and_component_ledger_conserve_loads():
     assert jnp.allclose(state.total, state.components[0] + state.components[1])
 
 
-def test_pneumatic_pressure_uses_closed_volume_law_and_rejects_wrong_orientation():
+def test_pneumatic_pressure_uses_closed_volume_law_and_rejects_wrong_orientation() -> (
+    None
+):
     structure, positions = _tetrahedron()
     volume = fd.enclosed_surface_volume(structure, positions)
     assert volume == pytest.approx(1.0 / 6.0)
@@ -159,7 +163,7 @@ def test_pneumatic_pressure_uses_closed_volume_law_and_rejects_wrong_orientation
     assert not bool(model.valid(structure, reflected, jnp.asarray(2.0)))
 
 
-def test_surface_pressure_rejects_folded_q4_and_observables_detect_warp():
+def test_surface_pressure_rejects_folded_q4_and_observables_detect_warp() -> None:
     connectivity = phx.discretization.polygonal_connectivity(
         None, jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32), 4
     )
@@ -185,7 +189,7 @@ def test_surface_pressure_rejects_folded_q4_and_observables_detect_warp():
     assert jnp.allclose(fd.surface_rectangularity_residual(structure, planar, 1.0), 0.0)
 
 
-def test_pressure_loaded_tetrahedron_solves_and_has_implicit_derivative():
+def test_pressure_loaded_tetrahedron_solves_and_has_implicit_derivative() -> None:
     structure, positions = _tetrahedron()
     problem = fd.ForceDensityProblem(
         structure,
@@ -199,7 +203,7 @@ def test_pressure_loaded_tetrahedron_solves_and_has_implicit_derivative():
     )
     plan = fd.plan_force_density(problem, sample, initial_positions=positions)
 
-    def top_height(pressure):
+    def top_height(pressure: Any) -> Any:
         inputs = fd.ForceDensityInputs(
             sample.force_densities,
             sample.prescribed_values,
@@ -219,7 +223,7 @@ def test_pressure_loaded_tetrahedron_solves_and_has_implicit_derivative():
     assert jnp.isfinite(derivative)
 
 
-def test_batch_affine_reciprocal_and_per_graph_evidence():
+def test_batch_affine_reciprocal_and_per_graph_evidence() -> None:
     structure, positions, problem, inputs = _cable()
     plan = fd.plan_force_density(problem, inputs)
     batched = fd.solve_force_density_batch(
@@ -273,7 +277,7 @@ def test_batch_affine_reciprocal_and_per_graph_evidence():
     assert affine_result.state.positions[1, 0] == pytest.approx(1.0)
 
 
-def test_mechanism_self_stress_and_constitutive_stability_are_distinct():
+def test_mechanism_self_stress_and_constitutive_stability_are_distinct() -> None:
     structure, straight, problem, inputs = _cable()
     mechanism = fd.analyze_force_density_mechanisms(structure, straight)
     assert mechanism.successful
@@ -289,11 +293,11 @@ def test_mechanism_self_stress_and_constitutive_stability_are_distinct():
     assert stability.minimum_eigenvalue > 0.0
 
 
-def test_linear_solution_taylor_remainder_is_second_order():
+def test_linear_solution_taylor_remainder_is_second_order() -> None:
     _, _, problem, sample = _cable()
     plan = fd.plan_force_density(problem, sample)
 
-    def objective(q):
+    def objective(q: Any) -> Any:
         inputs = fd.ForceDensityInputs(
             q, sample.prescribed_values, sample.load_parameters
         )
@@ -318,7 +322,7 @@ def test_linear_solution_taylor_remainder_is_second_order():
     assert first / second == pytest.approx(4.0, rel=0.12)
 
 
-def test_discrete_arch_converges_to_analytical_load_path_and_rise():
+def test_discrete_arch_converges_to_analytical_load_path_and_rise() -> None:
     span = 10.0
     density = 1.0
     node_count = 20
@@ -341,7 +345,7 @@ def test_discrete_arch_converges_to_analytical_load_path_and_rise():
     equilibrium = fd.ForceDensityProblem(structure, sign_mode="compression")
     plan = fd.plan_force_density(equilibrium, sample)
 
-    def decode(magnitude, _):
+    def decode(magnitude: Any, _: Any) -> Any:
         return fd.ForceDensityInputs(
             jnp.full((node_count - 1,), -magnitude.reshape(())),
             prescribed,
@@ -372,11 +376,11 @@ def test_discrete_arch_converges_to_analytical_load_path_and_rise():
     assert load_path == pytest.approx(target_load_path, rel=0.08)
 
 
-def test_structured_force_density_wrapper_compiles_physical_constraints():
+def test_structured_force_density_wrapper_compiles_physical_constraints() -> None:
     structure, _, equilibrium, sample = _cable()
     plan = fd.plan_force_density(equilibrium, sample)
 
-    def decode(magnitude, _):
+    def decode(magnitude: Any, _: Any) -> Any:
         return fd.ForceDensityInputs(
             jnp.repeat(magnitude.reshape(()), 2),
             sample.prescribed_values,

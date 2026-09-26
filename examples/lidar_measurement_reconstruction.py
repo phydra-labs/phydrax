@@ -61,11 +61,13 @@ asset = phx.measurement.MeasurementAsset.from_single_reference(
     ),
 )
 points = phx.measurement.cartesianize_lidar_scan(phx.measurement.LidarScan(asset))
+# ty: ignore[no-matching-overload]
 if int(np.sum(points.support.active_mask)) != 3:
     raise RuntimeError("No-return samples were not excluded from the point product.")
 print(
     json.dumps(
         {
+            # ty: ignore[no-matching-overload]
             "valid_points": int(np.sum(points.support.active_mask)),
             "point_product_id": points.point_product_id,
             "source_manifest_id": points.references[0].manifest_id,

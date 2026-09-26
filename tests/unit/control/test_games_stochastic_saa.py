@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -23,7 +26,14 @@ from phydrax.dynamics import TimeGrid
 from phydrax.nonlinear import NonlinearStatus, NonlinearTermination
 
 
-def _noise(values, prefix, *, labels=None, coupling_id=None, valid=None):
+def _noise(
+    values: Any,
+    prefix: Any,
+    *,
+    labels: Any = None,
+    coupling_id: Any = None,
+    valid: Any = None,
+) -> Any:
     values = jnp.asarray(values, dtype="float64")
     count = values.shape[0]
     if labels is None:
@@ -41,7 +51,7 @@ def _noise(values, prefix, *, labels=None, coupling_id=None, valid=None):
     )
 
 
-def _quadratic_costs(parameters, noise, args):
+def _quadratic_costs(parameters: Any, noise: Any, args: Any) -> Any:
     signal = noise.increments[:, 0, 0]
     first_target = signal + args["first_shift"]
     second_target = args["second_scale"] * signal + args["second_shift"]
@@ -54,7 +64,9 @@ def _quadratic_costs(parameters, noise, args):
     return jnp.stack((player_zero, player_one), axis=-1)
 
 
-def _quadratic_problem(*, case_shape=(), args=None, suffix="base"):
+def _quadratic_problem(
+    *, case_shape: Any = (), args: Any = None, suffix: Any = "base"
+) -> Any:
     if args is None:
         args = {
             "first_shift": 1.0,
@@ -72,7 +84,7 @@ def _quadratic_problem(*, case_shape=(), args=None, suffix="base"):
     )
 
 
-def test_weighted_stochastic_quadratic_game_solves_owned_saa_root_and_holds_out():
+def test_weighted_stochastic_quadratic_game_solves_owned_saa_root_and_holds_out() -> None:
     problem = _quadratic_problem()
     training = _noise([-2.0, 0.5, 3.0], "train")
     holdout = _noise(
@@ -108,7 +120,7 @@ def test_weighted_stochastic_quadratic_game_solves_owned_saa_root_and_holds_out(
     assert result.training_bundle_id != result.holdout_bundle_id
 
 
-def test_complete_player_gradients_are_formed_before_owned_rows_are_selected():
+def test_complete_player_gradients_are_formed_before_owned_rows_are_selected() -> None:
     problem = _quadratic_problem()
     training = _noise([-1.0, 2.0], "ownership-train")
     holdout = _noise([4.0, 6.0], "ownership-holdout")
@@ -136,8 +148,8 @@ def test_complete_player_gradients_are_formed_before_owned_rows_are_selected():
     )
 
 
-def test_pathwise_gradient_is_not_the_gradient_of_a_mutated_mean_trajectory():
-    def quartic_path_costs(parameters, noise, args):
+def test_pathwise_gradient_is_not_the_gradient_of_a_mutated_mean_trajectory() -> None:
+    def quartic_path_costs(parameters: Any, noise: Any, args: Any) -> Any:
         del args
         path_value = noise.increments[:, 0, 0]
         difference = parameters[..., 0, None] - path_value
@@ -166,7 +178,7 @@ def test_pathwise_gradient_is_not_the_gradient_of_a_mutated_mean_trajectory():
     np.testing.assert_allclose(residual_at_path_mean, [-2.0], atol=1e-6)
 
 
-def test_prepared_training_bundle_is_frozen_common_randomness_across_solves():
+def test_prepared_training_bundle_is_frozen_common_randomness_across_solves() -> None:
     problem = _quadratic_problem()
     training = _noise([-3.0, 0.0, 4.0], "frozen-train")
     holdout = _noise([6.0, 8.0, 10.0], "frozen-holdout")
@@ -192,7 +204,7 @@ def test_prepared_training_bundle_is_frozen_common_randomness_across_solves():
     assert first.training_realization_ids == second.training_realization_ids
 
 
-def test_training_and_holdout_realization_identity_must_be_disjoint():
+def test_training_and_holdout_realization_identity_must_be_disjoint() -> None:
     problem = _quadratic_problem()
     training = _noise([0.0, 1.0], "shared")
     holdout = PreparedControlledNoise(
@@ -215,7 +227,7 @@ def test_training_and_holdout_realization_identity_must_be_disjoint():
         )
 
 
-def test_training_and_holdout_coupling_id_must_identify_independence():
+def test_training_and_holdout_coupling_id_must_identify_independence() -> None:
     problem = _quadratic_problem()
     training = _noise([0.0, 1.0], "coupled-train", coupling_id="same-coupling")
     holdout = _noise([2.0, 3.0], "coupled-holdout", coupling_id="same-coupling")
@@ -230,7 +242,7 @@ def test_training_and_holdout_coupling_id_must_identify_independence():
         )
 
 
-def test_refresh_requires_same_topology_and_entirely_new_realization_ids():
+def test_refresh_requires_same_topology_and_entirely_new_realization_ids() -> None:
     problem = _quadratic_problem()
     initial_training = _noise([0.0, 1.0], "refresh-old-train")
     initial_holdout = _noise([2.0, 3.0], "refresh-old-holdout")
@@ -270,12 +282,12 @@ def test_refresh_requires_same_topology_and_entirely_new_realization_ids():
         )
 
 
-def test_case_axes_are_separate_from_path_player_and_parameter_axes():
+def test_case_axes_are_separate_from_path_player_and_parameter_axes() -> None:
     training = _noise([-1.0, 0.5, 2.0], "cases-train")
     holdout = _noise([3.0, 4.0, 5.0], "cases-holdout")
     targets = jnp.asarray([[-2.0, 1.0, 4.0], [5.0, 0.0, -1.0]])
 
-    def case_costs(parameters, noise, args):
+    def case_costs(parameters: Any, noise: Any, args: Any) -> Any:
         del noise
         difference = parameters[..., 0, None] - args["targets"]
         return (0.5 * difference**2)[..., None]
@@ -305,11 +317,11 @@ def test_case_axes_are_separate_from_path_player_and_parameter_axes():
     assert result.status.shape == (2,)
 
 
-def test_root_failure_and_nonfinite_training_paths_fail_closed():
+def test_root_failure_and_nonfinite_training_paths_fail_closed() -> None:
     training = _noise([0.0, 0.0], "root-failure-train")
     holdout = _noise([1.0, 2.0], "root-failure-holdout")
 
-    def quartic(parameters, noise, args):
+    def quartic(parameters: Any, noise: Any, args: Any) -> Any:
         del args
         difference = parameters[..., 0, None] - noise.increments[:, 0, 0]
         return (0.25 * difference**4)[..., None]
@@ -351,8 +363,8 @@ def test_root_failure_and_nonfinite_training_paths_fail_closed():
     assert not bool(nonfinite.stationarity_certified)
 
 
-def test_nonfinite_callback_cost_and_holdout_cost_have_stable_statuses():
-    def costs(parameters, noise, args):
+def test_nonfinite_callback_cost_and_holdout_cost_have_stable_statuses() -> None:
+    def costs(parameters: Any, noise: Any, args: Any) -> Any:
         values = 0.5 * (parameters[..., 0, None] - noise.increments[:, 0, 0]) ** 2
         if noise.coupling_id == args["bad_coupling"]:
             values = values.at[..., 0].set(jnp.nan)
@@ -400,7 +412,7 @@ def test_nonfinite_callback_cost_and_holdout_cost_have_stable_statuses():
     assert bool(jnp.any(~holdout_result.holdout_cluster_valid))
 
 
-def test_filtered_jit_preserves_frozen_bundle_solution_and_evidence():
+def test_filtered_jit_preserves_frozen_bundle_solution_and_evidence() -> None:
     problem = _quadratic_problem(suffix="jit")
     prepared = prepare_stochastic_policy_game(
         plan_stochastic_policy_game(problem),
@@ -418,7 +430,7 @@ def test_filtered_jit_preserves_frozen_bundle_solution_and_evidence():
     np.testing.assert_array_equal(compiled.status, eager.status)
 
 
-def test_result_never_claims_population_or_feedback_nash():
+def test_result_never_claims_population_or_feedback_nash() -> None:
     problem = _quadratic_problem(suffix="claim")
     result = solve_stochastic_policy_game(
         problem,

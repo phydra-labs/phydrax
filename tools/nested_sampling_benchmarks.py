@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -13,7 +14,7 @@ import jax.scipy as jsp
 import phydrax as phx
 
 
-def gaussian_benchmark(*, dimension: int, num_live: int):
+def gaussian_benchmark(*, dimension: int, num_live: int) -> Any:
     prior_scale = 2.0
     observation_scale = 0.5
     space = phx.uq.ParameterSpace(
@@ -21,7 +22,7 @@ def gaussian_benchmark(*, dimension: int, num_live: int):
         priors=phx.uq.Normal(0.0, prior_scale),
     )
 
-    def log_likelihood(value):
+    def log_likelihood(value: Any) -> Any:
         standardized = value / observation_scale
         return jnp.sum(
             -0.5 * standardized**2
@@ -79,7 +80,7 @@ def gaussian_benchmark(*, dimension: int, num_live: int):
     }
 
 
-def bimodal_benchmark(*, num_live: int, method: str):
+def bimodal_benchmark(*, num_live: int, method: str) -> Any:
     prior_scale = 3.0
     likelihood_scale = 0.3
     mode = 2.0
@@ -88,7 +89,7 @@ def bimodal_benchmark(*, num_live: int, method: str):
         priors=phx.uq.Normal(0.0, prior_scale),
     )
 
-    def log_likelihood(value):
+    def log_likelihood(value: Any) -> Any:
         components = jnp.stack(
             (
                 jsp.stats.norm.logpdf(value, loc=-mode, scale=likelihood_scale),
@@ -109,6 +110,7 @@ def bimodal_benchmark(*, num_live: int, method: str):
         ),
         phx.uq.NestedPriorPlan(continuous_paths=("<root>",)),
         phx.uq.NestedProposalPlan(
+            # ty: ignore[invalid-argument-type]
             method,
             ellipsoid=True,
             phantom_recycling=True,
@@ -148,7 +150,7 @@ def bimodal_benchmark(*, num_live: int, method: str):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--case",

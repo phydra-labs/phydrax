@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ from phydrax.applications.robotics import FixedBodyRoutePlan
 from phydrax.discretization.particle import ReducedArticulationPlan
 
 
-def _articulation():
+def _articulation() -> Any:
     body_ids = jnp.asarray([100, 101, 102], dtype=jnp.int64)
     particles = phx.discretization.ParticleSetPlan(
         body_ids, jnp.ones((3,)), ambient_dimension=3
@@ -45,7 +48,7 @@ def _articulation():
     return body_ids, articulation
 
 
-def _route():
+def _route() -> Any:
     body_ids, articulation = _articulation()
     plan = FixedBodyRoutePlan(
         ("flexor", "reserved"),
@@ -71,7 +74,7 @@ def _route():
     return plan.prepare(articulation, local)
 
 
-def test_csr_route_length_jvp_and_transpose_are_exact_virtual_power_duals():
+def test_csr_route_length_jvp_and_transpose_are_exact_virtual_power_duals() -> None:
     route = _route()
     configuration = jnp.asarray([0.35, -0.2])
     velocity = jnp.asarray([0.7, -0.4])
@@ -107,7 +110,7 @@ def test_csr_route_length_jvp_and_transpose_are_exact_virtual_power_duals():
     assert jnp.allclose(evidence.power_residual_W, 0.0, atol=1.0e-11)
 
 
-def test_route_is_jittable_vmappable_and_differentiable_in_local_coordinates():
+def test_route_is_jittable_vmappable_and_differentiable_in_local_coordinates() -> None:
     route = _route()
     configurations = jnp.asarray([[0.0, 0.0], [0.2, -0.1], [-0.3, 0.25]])
     lengths = jax.jit(jax.vmap(route.lengths))(configurations)
@@ -118,7 +121,7 @@ def test_route_is_jittable_vmappable_and_differentiable_in_local_coordinates():
     _, jvp = jax.jvp(route.lengths, (point,), (direction,))
     assert jnp.allclose(jvp, route.length_jacobian_operator(point).mv(direction))
 
-    def length_from_local(local):
+    def length_from_local(local: Any) -> Any:
         changed = eqx.tree_at(lambda value: value.local_positions_m, route, local)
         return changed.lengths(point)[0]
 
@@ -127,7 +130,7 @@ def test_route_is_jittable_vmappable_and_differentiable_in_local_coordinates():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_degenerate_active_segment_and_compressive_input_fail_closed():
+def test_degenerate_active_segment_and_compressive_input_fail_closed() -> None:
     body_ids, articulation = _articulation()
     route = FixedBodyRoutePlan(
         ("degenerate",), (0, 2), (int(body_ids[0]), int(body_ids[0]))
@@ -142,7 +145,7 @@ def test_degenerate_active_segment_and_compressive_input_fail_closed():
     assert jnp.array_equal(load, jnp.zeros_like(load))
 
 
-def test_plan_rejects_dynamic_or_invalid_topology_at_preparation():
+def test_plan_rejects_dynamic_or_invalid_topology_at_preparation() -> None:
     with pytest.raises(ValueError, match="at least two points"):
         FixedBodyRoutePlan(("route",), (0, 1), (100,))
     with pytest.raises(ValueError, match="CSR offsets"):

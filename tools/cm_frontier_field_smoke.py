@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -26,11 +27,11 @@ from phydrax.operators.quantum._two_particle_green import (
 )
 
 
-def _case(name, passed, **evidence):
+def _case(name: Any, passed: Any, **evidence: Any) -> Any:
     return {"case": name, "passed": bool(passed), **evidence}
 
 
-def _vertex():
+def _vertex() -> Any:
     labels = jnp.arange(-1, 2, dtype=jnp.int32)
     convention = FermionicTwoParticleChannelConvention("particle-hole-direct")
     route = convention.route(
@@ -49,7 +50,7 @@ def _vertex():
     )
 
 
-def _diagram(order):
+def _diagram(order: Any) -> Any:
     field = df.FieldSpec(f"smoke-psi-{order}", statistics="fermion")
     propagator = df.PropagatorSpec(field, mass=1.0)
     rule = df.VertexRule(
@@ -60,11 +61,12 @@ def _diagram(order):
     )
     return df.DiagramGraph(
         (df.VertexInsertion("v", rule),),
+        # ty: ignore[invalid-argument-type]
         (df.PropagatorLine("loop", propagator, "v", "v", df.MomentumRoute([0.0])),),
     )
 
 
-def run_smoke():
+def run_smoke() -> Any:
     cases = []
     vertex = _vertex()
     crossing = fermionic_crossing_evidence(vertex)
@@ -124,10 +126,10 @@ def run_smoke():
 
     signs = jnp.asarray((1, -1), dtype=jnp.int32)
 
-    def up_kernel(source, target, delta):
+    def up_kernel(source: Any, target: Any, delta: Any) -> Any:
         return jnp.where(source == target, jnp.where(delta >= 0.0, 0.75, -0.25), 0.1)
 
-    def down_kernel(source, target, delta):
+    def down_kernel(source: Any, target: Any, delta: Any) -> Any:
         return -signs[source] * signs[target] * jnp.conj(up_kernel(source, target, delta))
 
     ctint = (
@@ -222,7 +224,7 @@ def run_smoke():
     }
 
 
-def main():
+def main() -> None:
     payload = run_smoke()
     print(json.dumps(payload, indent=2))
     if not payload["passed"]:

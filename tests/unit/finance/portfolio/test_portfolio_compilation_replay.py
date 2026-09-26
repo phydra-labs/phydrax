@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 
 
@@ -33,11 +35,13 @@ from phydrax.finance.portfolio._replay import (
 from phydrax.optim import MixedIntegerProgram, QuadraticProgram, solve_quadratic_program
 
 
-def _evidence():
+def _evidence() -> Any:
     return FinanceEvidenceBinding(("data",), ("model",), ("numerics",), ("use",))
 
 
-def _forecast(*, expected=(0.0, 0.0), covariance=((1.0, 0.0), (0.0, 4.0))):
+def _forecast(
+    *, expected: Any = (0.0, 0.0), covariance: Any = ((1.0, 0.0), (0.0, 4.0))
+) -> Any:
     return ForecastLaw(
         ("asset:a", "asset:b"),
         jnp.asarray(expected),
@@ -49,7 +53,7 @@ def _forecast(*, expected=(0.0, 0.0), covariance=((1.0, 0.0), (0.0, 4.0))):
     )
 
 
-def test_two_asset_minimum_variance_has_analytic_allocation():
+def test_two_asset_minimum_variance_has_analytic_allocation() -> None:
     problem = PortfolioProblem(
         _forecast(),
         MeanVarianceObjective(1.0, return_weight=0.0),
@@ -70,7 +74,7 @@ def test_two_asset_minimum_variance_has_analytic_allocation():
     assert result.forecast_law_id == "forecast"
 
 
-def test_singular_covariance_is_accepted_without_artificial_inverse():
+def test_singular_covariance_is_accepted_without_artificial_inverse() -> None:
     problem = PortfolioProblem(
         _forecast(covariance=((1.0, 1.0), (1.0, 1.0))),
         MeanVarianceObjective(1.0),
@@ -82,7 +86,7 @@ def test_singular_covariance_is_accepted_without_artificial_inverse():
     assert isinstance(compiled.program, QuadraticProgram)
 
 
-def test_mip_decode_returns_lots_and_activity_and_rejects_corruption():
+def test_mip_decode_returns_lots_and_activity_and_rejects_corruption() -> None:
     problem = PortfolioProblem(
         _forecast(expected=(0.1, 0.0), covariance=((0.0, 0.0), (0.0, 0.0))),
         MeanVarianceObjective(0.0),
@@ -116,7 +120,7 @@ def test_mip_decode_returns_lots_and_activity_and_rejects_corruption():
         decode_portfolio_decision(compiled, feasible, structure_id="wrong")
 
 
-def test_scenario_tree_enforces_information_causality():
+def test_scenario_tree_enforces_information_causality() -> None:
     tree = ScenarioTree(jnp.asarray(((0, 1), (0, 2)), dtype=jnp.int32))
     forecast = ForecastLaw(
         ("asset:a", "asset:b"),
@@ -152,7 +156,7 @@ def test_scenario_tree_enforces_information_causality():
         )
 
 
-def test_numeric_refresh_refuses_structural_change():
+def test_numeric_refresh_refuses_structural_change() -> None:
     constraints = PortfolioConstraints(
         lower_weights=jnp.zeros(2), upper_weights=jnp.ones(2)
     )
@@ -186,7 +190,7 @@ def test_numeric_refresh_refuses_structural_change():
         refresh_portfolio_compilation(compiled, structural)
 
 
-def test_multicurrency_settlement_replay_is_self_financing():
+def test_multicurrency_settlement_replay_is_self_financing() -> None:
     usd, eur = Currency("USD", 2), Currency("EUR", 2)
     us = AssetReference(FinancialIdentifier("asset", "us"), "equity", usd, "US")
     eu = AssetReference(FinancialIdentifier("asset", "eu"), "equity", eur, "EU")

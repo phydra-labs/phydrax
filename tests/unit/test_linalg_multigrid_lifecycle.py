@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _positive_definite_properties():
+def _positive_definite_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -24,13 +27,13 @@ def _positive_definite_properties():
     )
 
 
-def _poisson_matrix(size):
+def _poisson_matrix(size: Any) -> Any:
     diagonal = 2.0 * jnp.eye(size)
     off_diagonal = jnp.eye(size, k=1) + jnp.eye(size, k=-1)
     return diagonal - off_diagonal
 
 
-def _sparse_map(matrix, *, properties=None):
+def _sparse_map(matrix: Any, *, properties: Any = None) -> Any:
     rows, columns = jnp.nonzero(matrix)
     relation = phx.sparse.EdgeRelation(
         columns,
@@ -45,7 +48,7 @@ def _sparse_map(matrix, *, properties=None):
     )
 
 
-def test_three_level_cycle_policies_execute_distinct_recursive_schedules():
+def test_three_level_cycle_policies_execute_distinct_recursive_schedules() -> None:
     fine = la.ArraySpace((3,), dtype=jnp.float64)
     middle = la.ArraySpace((2,), dtype=jnp.float64)
     coarse = la.ArraySpace((1,), dtype=jnp.float64)
@@ -132,7 +135,7 @@ def test_three_level_cycle_policies_execute_distinct_recursive_schedules():
 
 
 @pytest.mark.parametrize("direction", ("forward", "backward", "symmetric"))
-def test_gauss_seidel_is_jittable_and_reuses_triangular_analysis(direction):
+def test_gauss_seidel_is_jittable_and_reuses_triangular_analysis(direction: Any) -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
     matrix = jnp.asarray([[4.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 3.0]])
     operator = la.DenseLinearOperator(
@@ -206,7 +209,7 @@ def test_gauss_seidel_is_jittable_and_reuses_triangular_analysis(direction):
         )
 
 
-def test_sparse_coarse_factor_and_smoother_refresh_share_symbolic_state():
+def test_sparse_coarse_factor_and_smoother_refresh_share_symbolic_state() -> None:
     size = 6
     matrix = _poisson_matrix(size)
     operator = _sparse_map(
@@ -239,8 +242,11 @@ def test_sparse_coarse_factor_and_smoother_refresh_share_symbolic_state():
         max_bytes=2_000_000,
     )
     action = builder.prepare(operator, materialization=materialization)
+    # ty: ignore[unresolved-attribute]
     original_transfer = action.hierarchy.levels[0].prolongation
+    # ty: ignore[unresolved-attribute]
     original_smoother = action.hierarchy.levels[0].smoother
+    # ty: ignore[unresolved-attribute]
     original_coarse = action.hierarchy.levels[-1].smoother
     assert isinstance(original_smoother, la.GaussSeidelPreconditioner)
     assert isinstance(original_coarse, la.SparseFactorizationPreconditioner)
@@ -255,12 +261,15 @@ def test_sparse_coarse_factor_and_smoother_refresh_share_symbolic_state():
         updated,
         materialization=materialization,
     )
+    # ty: ignore[unresolved-attribute]
     refreshed_smoother = refreshed.hierarchy.levels[0].smoother
+    # ty: ignore[unresolved-attribute]
     refreshed_coarse = refreshed.hierarchy.levels[-1].smoother
 
     assert isinstance(refreshed_smoother, la.GaussSeidelPreconditioner)
     assert isinstance(refreshed_coarse, la.SparseFactorizationPreconditioner)
     assert refreshed_smoother.forward_factor is not None
+    # ty: ignore[unresolved-attribute]
     assert refreshed.hierarchy.levels[0].prolongation is original_transfer
     assert (
         refreshed_smoother.forward_factor.analysis
@@ -273,6 +282,7 @@ def test_sparse_coarse_factor_and_smoother_refresh_share_symbolic_state():
     )
     assert all(
         f"level-{index}:builder-action-refreshed"
+        # ty: ignore[unresolved-attribute]
         in refreshed.hierarchy.diagnostics.reuse_decisions
         for index in range(2)
     )
@@ -286,11 +296,13 @@ def test_sparse_coarse_factor_and_smoother_refresh_share_symbolic_state():
         ),
         materialization=materialization,
     )
+    # ty: ignore[unresolved-attribute]
     rebuilt_coarse = rebuilt.hierarchy.levels[-1].smoother
     assert isinstance(rebuilt_coarse, la.SparseFactorizationPreconditioner)
     assert rebuilt_coarse.factorization.plan is not original_coarse.factorization.plan
     assert any(
         "reuse-invalidated-pattern-change" in decision
+        # ty: ignore[unresolved-attribute]
         for decision in rebuilt.hierarchy.diagnostics.reuse_decisions
     )
 
@@ -306,17 +318,19 @@ def test_sparse_coarse_factor_and_smoother_refresh_share_symbolic_state():
         materialization=materialization,
     )
     assert isinstance(
+        # ty: ignore[unresolved-attribute]
         reprepared.hierarchy.levels[0].smoother,
         la.DiagonalPreconditioner,
     )
     assert all(
         f"level-{index}:builder-action-prepared"
+        # ty: ignore[unresolved-attribute]
         in reprepared.hierarchy.diagnostics.reuse_decisions
         for index in range(2)
     )
 
 
-def test_smoothed_aggregation_propagates_explicit_near_nullspace_candidates():
+def test_smoothed_aggregation_propagates_explicit_near_nullspace_candidates() -> None:
     size = 12
     space = la.ArraySpace((size,), dtype=jnp.float64)
     operator = _sparse_map(
@@ -359,7 +373,7 @@ def test_smoothed_aggregation_propagates_explicit_near_nullspace_candidates():
     )
 
 
-def test_smoothed_aggregation_rejects_fine_level_storage_before_setup():
+def test_smoothed_aggregation_rejects_fine_level_storage_before_setup() -> None:
     size = 8
     space = la.ArraySpace((size,), dtype=jnp.float64)
     operator = la.DenseLinearOperator(
@@ -406,11 +420,11 @@ def test_smoothed_aggregation_rejects_fine_level_storage_before_setup():
     ),
 )
 def test_implicit_unit_triangular_solve_retains_first_stored_offdiagonal(
-    triangle,
-    matrix,
-    right_hand_side,
-    expected,
-):
+    triangle: Any,
+    matrix: Any,
+    right_hand_side: Any,
+    expected: Any,
+) -> None:
     operator = _sparse_map(matrix)
     storage = operator.sparse_storage()
     analysis = la.analyze_sparse_triangular(
@@ -428,7 +442,7 @@ def test_implicit_unit_triangular_solve_retains_first_stored_offdiagonal(
     assert jnp.allclose(result.value, expected)
 
 
-def test_cholesky_factor_action_preserves_builder_property_evidence():
+def test_cholesky_factor_action_preserves_builder_property_evidence() -> None:
     properties = la.OperatorProperties(
         self_adjoint=True,
         evidence={"self_adjoint": "construction"},
@@ -471,7 +485,7 @@ def test_cholesky_factor_action_preserves_builder_property_evidence():
     )
 
 
-def test_exact_sparse_cholesky_tolerates_complex_hermitian_roundoff():
+def test_exact_sparse_cholesky_tolerates_complex_hermitian_roundoff() -> None:
     matrix = jnp.asarray(
         [
             [5.0 + 2.0e-16j, 1.0 + 2.0j, -0.5 + 0.25j],

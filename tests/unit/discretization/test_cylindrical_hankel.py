@@ -10,7 +10,7 @@ import pytest
 from phydrax.discretization import CylindricalHankelPlan, CylindricalHankelStatus
 
 
-def test_bessel_zero_hankel_pair_is_invertible_and_parseval_consistent():
+def test_bessel_zero_hankel_pair_is_invertible_and_parseval_consistent() -> None:
     prepared = CylindricalHankelPlan(2.5, 24).prepare()
     evidence = prepared.evidence
     assert bool(evidence.successful)
@@ -27,7 +27,7 @@ def test_bessel_zero_hankel_pair_is_invertible_and_parseval_consistent():
     np.testing.assert_allclose(spectral_norm, physical_norm, rtol=3.0e-5, atol=3.0e-6)
 
 
-def test_hankel_application_preserves_unselected_axes_and_has_fixed_gradient():
+def test_hankel_application_preserves_unselected_axes_and_has_fixed_gradient() -> None:
     prepared = CylindricalHankelPlan(1.0, 10, order=1).prepare()
     values = jnp.arange(30.0).reshape(3, 10)
     transformed = prepared.normalized(values, axis=1)
@@ -41,7 +41,7 @@ def test_hankel_application_preserves_unselected_axes_and_has_fixed_gradient():
     assert bool(jnp.isfinite(gradient))
 
 
-def test_hankel_plan_refuses_invalid_geometry_and_resource_requests():
+def test_hankel_plan_refuses_invalid_geometry_and_resource_requests() -> None:
     with pytest.raises(ValueError):
         CylindricalHankelPlan(0.0, 8)
     with pytest.raises(ValueError):
@@ -52,7 +52,7 @@ def test_hankel_plan_refuses_invalid_geometry_and_resource_requests():
         CylindricalHankelPlan(1.0, 8, maximum_matrix_elements=63)
 
 
-def test_hankel_plan_rejects_wrong_runtime_axis():
+def test_hankel_plan_rejects_wrong_runtime_axis() -> None:
     prepared = CylindricalHankelPlan(1.0, 8).prepare()
     with pytest.raises(ValueError):
         prepared.forward(jnp.ones((7,)))

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_ising_and_potts_constructors_preserve_declared_scores_and_cardinality():
+def test_ising_and_potts_constructors_preserve_declared_scores_and_cardinality() -> None:
     ising = phx.pgm.ising_factor_graph(
         jnp.asarray([0.2, -0.1]),
         jnp.asarray([[0, 1]]),
@@ -31,7 +33,7 @@ def test_ising_and_potts_constructors_preserve_declared_scores_and_cardinality()
     assert int(exact.map_assignment[0]) == 280
 
 
-def test_logical_and_cardinality_factors_match_declared_hard_semantics():
+def test_logical_and_cardinality_factors_match_declared_hard_semantics() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(3,), num_states=2)
     logical = phx.pgm.LogicalFactorGroup(
         (
@@ -55,7 +57,9 @@ def test_logical_and_cardinality_factors_match_declared_hard_semantics():
     assert jnp.isneginf(phx.pgm.factor_graph_log_score(graph, jnp.asarray([1, 0, 0])))
 
 
-def test_exact_likelihood_and_contrastive_divergence_have_correct_values_and_gradients():
+def test_exact_likelihood_and_contrastive_divergence_have_correct_values_and_gradients() -> (
+    None
+):
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(1,), num_states=2)
     factor = phx.pgm.DenseTableFactorGroup(
         (phx.pgm.VariableSelection.all(variables),),
@@ -83,7 +87,7 @@ def test_exact_likelihood_and_contrastive_divergence_have_correct_values_and_gra
 
     base = factor.log_potentials
 
-    def loss(table):
+    def loss(table: Any) -> Any:
         updated_graph = eqx.tree_at(
             lambda value: value.factor_groups[0].log_potentials,
             graph,
@@ -133,7 +137,7 @@ def test_exact_likelihood_and_contrastive_divergence_have_correct_values_and_gra
         )
 
 
-def test_factor_graph_moments_return_empirical_configuration_probabilities():
+def test_factor_graph_moments_return_empirical_configuration_probabilities() -> None:
     graph = phx.pgm.ising_factor_graph(
         jnp.zeros((2,)),
         jnp.asarray([[0, 1]]),

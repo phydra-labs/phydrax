@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -36,7 +37,7 @@ from phydrax.optim._state_design_linearization import (
 opt = phx.optim
 
 
-def _policy():
+def _policy() -> Any:
     return opt.StateAcceptancePolicy(
         state_relative_tolerance=1e-9,
         state_absolute_tolerance=1e-8,
@@ -45,7 +46,7 @@ def _policy():
     )
 
 
-def _termination():
+def _termination() -> Any:
     return opt.OptimizationTermination(
         absolute_optimality=1e-6,
         relative_optimality=0.0,
@@ -53,15 +54,15 @@ def _termination():
     )
 
 
-def _inner(left, right):
+def _inner(left: Any, right: Any) -> Any:
     return phx.ein.contract("i,i->", left, right, backend="jax")
 
 
-def _vector(design):
+def _vector(design: Any) -> Any:
     return jnp.stack((design["shared"], *design["local"]))
 
 
-def _block_state_evidence(evidence):
+def _block_state_evidence(evidence: Any) -> Any:
     return {
         name: {
             "accepted": bool(block.accepted),
@@ -74,7 +75,7 @@ def _block_state_evidence(evidence):
     }
 
 
-def _block_adjoint_evidence(evidence):
+def _block_adjoint_evidence(evidence: Any) -> Any:
     return {
         name: {
             "accepted": bool(block.accepted),
@@ -86,7 +87,7 @@ def _block_adjoint_evidence(evidence):
     }
 
 
-def _solve_pair(multipoint, design, repeats):
+def _solve_pair(multipoint: Any, design: Any, repeats: Any) -> Any:
     problem = multipoint.to_state_design_problem()
     reduced, reduced_time = measure_repeated(
         lambda: opt.solve_state_design(
@@ -150,7 +151,7 @@ def _solve_pair(multipoint, design, repeats):
     )
 
 
-def analytic_shared_local(repeats):
+def analytic_shared_local(repeats: Any) -> Any:
     """Heterogeneous state sizes, exact reduced Hessian, and all-at-once agreement."""
     operating_points = (
         {
@@ -168,12 +169,12 @@ def analytic_shared_local(repeats):
     )
     shared_regularization, local_regularization = 0.5, 0.4
 
-    def residual(state, design, args):
+    def residual(state: Any, design: Any, args: Any) -> Any:
         return state - (
             args["a"] * design["shared"] + args["b"] * design["local"] + args["load"]
         )
 
-    def objective(state, design, args):
+    def objective(state: Any, design: Any, args: Any) -> Any:
         error = state - args["target"]
         return (
             0.5 * _inner(error, error)
@@ -261,7 +262,7 @@ def analytic_shared_local(repeats):
     return report
 
 
-def native_axial_multiload(repeats):
+def native_axial_multiload(repeats: Any) -> Any:
     """One shared member area, independent load states, native axial constitutive law.
 
     For loads 1 and 2, E=10, L=1, and mass weight 0.5, minimized
@@ -271,7 +272,7 @@ def native_axial_multiload(repeats):
     """
     law = phx.applications.solid_mechanics.member_network.LinearAxialLaw()
 
-    def constitutive(extension, area):
+    def constitutive(extension: Any, area: Any) -> Any:
         return law.evaluate(
             1.0 + extension,
             jnp.asarray(1.0),
@@ -338,7 +339,7 @@ def native_axial_multiload(repeats):
     return report
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", choices=("analytic", "native", "all"), default="all")
     parser.add_argument("--repeats", type=int, default=3)

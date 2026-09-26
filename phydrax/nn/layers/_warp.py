@@ -220,8 +220,7 @@ class MultiheadWarp(StrictModule, ParameterOwner):
         )
         if hidden_width <= 0:
             raise ValueError("displacement_width must be positive.")
-        if self.mask_mode not in ("reject", "renormalize", "strict"):
-            raise ValueError("mask_mode must be 'reject', 'renormalize', or 'strict'.")
+        parse(self.mask_mode, WarpMaskMode, "mask_mode")
         self.boundary = _boundary_modes(boundary, self.spatial_ndim)
 
         value_key, hidden_key, output_key = jr.split(key, 3)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -18,7 +20,7 @@ from phydrax.applications.cosmology._wave_amr import (
 )
 
 
-def _group(devices) -> ExecutionGroup:
+def _group(devices: Any) -> ExecutionGroup:
     values = tuple(devices)
     return ExecutionGroup(
         ExecutionGroupSpec(
@@ -31,7 +33,7 @@ def _group(devices) -> ExecutionGroup:
     )
 
 
-def _problem(cells: int):
+def _problem(cells: int) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cells, periodic=True),),
         axis_names=("x",),
@@ -99,7 +101,7 @@ def _problem(cells: int):
     return hierarchy, prepared, prepared.initialize(tuple(levels), 1.0)
 
 
-def _measure(action, warmup: int, repeats: int):
+def _measure(action: Any, warmup: int, repeats: int) -> Any:
     result = None
     for _ in range(warmup):
         result = action()

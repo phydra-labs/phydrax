@@ -22,6 +22,7 @@ from ...discretization.finite_volume._distributed_marker_transfer import (
 )
 from ...qualification._evidence import QualificationCoverageReport
 from ...solver._marker_flow_runtime import HydrodynamicLoadRecord
+from ...typing import parse
 from ._immersed_profile import ImmersedDNSQualificationProfile
 from ._immersed_support import (
     ImmersedBodyRegimePlan,
@@ -334,8 +335,9 @@ class ImmersedRuntimeAdmissionPlan(StrictModule, NonTrainableState):
             )
         if not np.isfinite(reduction_tolerance) or reduction_tolerance <= 0.0:
             raise ValueError("distributed_tolerance must be finite and positive.")
-        if derivative_mode not in ("none", "jvp", "vjp"):
-            raise ValueError("derivative_mode must be 'none', 'jvp', or 'vjp'.")
+        derivative_mode = parse(
+            derivative_mode, ImmersedDerivativeMode, "derivative_mode"
+        )
         self.profile = profile
         self.regime = regime
         self.derivative_mode = derivative_mode

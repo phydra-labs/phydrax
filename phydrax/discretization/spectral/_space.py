@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Any, TYPE_CHECKING
+from typing import Any, get_args, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -19,6 +19,7 @@ from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import ArraySpace, DiagonalPairing
+from ...typing import parse
 from .._axis import AxisDiscretization
 from .._axis_domain import AxisDomain
 from .._core import (
@@ -143,7 +144,8 @@ def _point_support_mask(
 def _wrap_periodic_coordinate(axis: PreparedSpectralAxis, coordinate: Array, /) -> Array:
     lower = axis.domain.lower
     # Periodic axis domains always carry both endpoints.
-    assert lower is not None
+    if not (lower is not None):
+        raise RuntimeError("Internal invariant failed: lower is not None.")
     return lower + jnp.mod(coordinate - lower, axis.length)
 
 
@@ -893,7 +895,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
     ) -> Array:
         value = self._validate_leading(values, self.physical_shape, "Physical values")
         selected = self._selected_axes(axes)
-        diagonal_families = ("fourier", "sine", "cosine")
+        diagonal_families = get_args(_TensorBasis)
         if any(
             self.axes[axis].derivative_matrix is None
             and self.axes[axis].family not in diagonal_families
@@ -1036,10 +1038,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         families: list[_TensorBasis] = []
         for prepared in self.axes:
             family = prepared.family
-            if family not in ("fourier", "sine", "cosine"):
-                raise ValueError(
-                    "Exact Laplacian eigenpairs require Fourier, sine, or cosine axes."
-                )
+            family = parse(family, _TensorBasis, "family")
             families.append(family)
         axis_discretizations = tuple(axis.axis_discretization() for axis in self.axes)
         axis_values = tuple(

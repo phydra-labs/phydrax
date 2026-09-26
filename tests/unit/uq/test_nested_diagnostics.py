@@ -11,7 +11,7 @@ from phydrax.uq._nested_diagnostics import (
 )
 
 
-def test_insertion_rank_crosscheck_distinguishes_uniform_and_biased_sequences():
+def test_insertion_rank_crosscheck_distinguishes_uniform_and_biased_sequences() -> None:
     uniform = jnp.tile(jnp.arange(10, dtype=jnp.int32), 40)
     biased = jnp.zeros((400,), dtype=jnp.int32)
 
@@ -20,7 +20,7 @@ def test_insertion_rank_crosscheck_distinguishes_uniform_and_biased_sequences():
     assert rolling_insertion_rank_pvalues(uniform, 10).shape == (4,)
 
 
-def test_nested_diagnostics_reports_constraint_and_lineage_evidence():
+def test_nested_diagnostics_reports_constraint_and_lineage_evidence() -> None:
     diagnostics = build_nested_diagnostics(
         dead_log_likelihood=jnp.asarray([0.0, 1.0, 2.0, 3.0]),
         dead_birth_log_likelihood=jnp.asarray([jnp.nan, 0.0, 1.0, 2.0]),
@@ -48,7 +48,7 @@ def test_nested_diagnostics_reports_constraint_and_lineage_evidence():
     assert diagnostics.covariance_condition == 1.0
 
 
-def test_nested_diagnostics_preserves_failures_without_repair():
+def test_nested_diagnostics_preserves_failures_without_repair() -> None:
     diagnostics = build_nested_diagnostics(
         dead_log_likelihood=jnp.asarray([1.0, 0.0]),
         dead_birth_log_likelihood=jnp.asarray([0.0, 0.5]),

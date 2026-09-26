@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _parameters():
+def _parameters() -> Any:
     return phx.applications.battery.DFNParameters(
         negative_length_m=1.0e-4,
         separator_length_m=2.5e-5,
@@ -36,7 +39,7 @@ def _parameters():
     )
 
 
-def _state(plan, parameters):
+def _state(plan: Any, parameters: Any) -> Any:
     return plan.initial_state(
         parameters,
         electrolyte_concentration_mol_m3=1000.0,
@@ -105,7 +108,7 @@ def test_series_pack_commits_cells_atomically_and_sums_voltage() -> None:
     assert all(cell_state.time_s == 1.0 for cell_state in result.state.cell_states)
 
 
-def test_spatial_dfn_lanes_commit_atomically_and_close_current_distribution():
+def test_spatial_dfn_lanes_commit_atomically_and_close_current_distribution() -> None:
     local = phx.applications.battery.IsothermalDFNPlan(2, 2, 2, 3)
     spatial = phx.applications.battery.SpatialBatteryCellPlan(
         local,

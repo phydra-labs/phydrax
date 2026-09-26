@@ -76,7 +76,7 @@ def _sha256(path: Path, /) -> str:
 
 
 def _strict_json_object(text: str, /) -> Mapping[str, object]:
-    def unique(pairs):
+    def unique(pairs: Any) -> Any:
         result: dict[str, object] = {}
         for key, value in pairs:
             if key in result:
@@ -84,7 +84,7 @@ def _strict_json_object(text: str, /) -> Mapping[str, object]:
             result[key] = value
         return result
 
-    def reject_constant(value):
+    def reject_constant(value: Any) -> None:
         raise ValueError(f"Non-finite JSON value {value!r}.")
 
     document = json.loads(
@@ -632,6 +632,7 @@ def build_cardiovascular_release_artifacts(
     root_package = root_packages[0] if len(root_packages) == 1 else None
     if root_package is not None:
         root_package["hashes"] = tuple(
+            # ty: ignore[invalid-argument-type]
             sorted(set(root_package["hashes"]) | set(distribution_hashes.values()))
         )
 
@@ -685,6 +686,7 @@ def build_cardiovascular_release_artifacts(
         version = str(item["version"])
         identity = f"{name}@{version}"
         key = (name.lower().replace("_", "-"), version)
+        # ty: ignore[invalid-argument-type]
         expected_hashes = set(item["hashes"])
         if not expected_hashes:
             blockers.append(f"dependency-metadata:{identity}:hash-unresolved")

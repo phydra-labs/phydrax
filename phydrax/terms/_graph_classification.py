@@ -36,7 +36,7 @@ from ..domain.graph._observation import (
 from ..integration import ComponentTarget, mean_over, over, per_step
 from ..ml._classification import ClassificationObjective, ClassificationObjectiveKind
 from ..ml._schema import TargetSchema
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._integral_functional import IntegralFunctional
 
 
@@ -53,10 +53,7 @@ def _classification_configuration(
     if not isinstance(objective, ClassificationObjective):
         raise TypeError("objective must be a ClassificationObjective.")
     kind = target_schema.kind
-    if kind not in ("binary", "multiclass", "multilabel", "ordinal"):
-        raise ValueError(
-            "Graph classification TargetSchema kind must be binary, multiclass, multilabel, or ordinal."
-        )
+    kind = parse(kind, ClassificationKind, "kind")
 
     class_count: int | None = None
     if kind in ("multiclass", "ordinal"):

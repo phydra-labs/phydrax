@@ -23,15 +23,15 @@ from tools.operator_benchmarks.data_plane import run_data_plane_benchmark
 
 def _dataset(
     *,
-    cases=9,
-    resolution=4,
-    input_offset=0.0,
-    target_offset=0.0,
-    node_offset=0.0,
-    weight_offset=0.0,
-    masked=False,
-    provenance=None,
-):
+    cases: Any = 9,
+    resolution: Any = 4,
+    input_offset: Any = 0.0,
+    target_offset: Any = 0.0,
+    node_offset: Any = 0.0,
+    weight_offset: Any = 0.0,
+    masked: Any = False,
+    provenance: Any = None,
+) -> Any:
     nodes = jnp.linspace(0.0, 1.0, resolution) + node_offset
     weights = jnp.full((resolution,), 1.0 / resolution)
     weights = weights.at[0].add(weight_offset)
@@ -52,21 +52,23 @@ def _dataset(
     )
 
 
-def _callback_source(*, size=8, safe=False, fail_at=None, fingerprint="cases"):
+def _callback_source(
+    *, size: Any = 8, safe: Any = False, fail_at: Any = None, fingerprint: Any = "cases"
+) -> Any:
     metadata_reads = []
     case_reads = []
     reader_threads = []
     coordinates = jnp.arange(3.0)[:, None]
     weights = jnp.full((3,), 1.0 / 3.0)
 
-    def samples(*, values=None):
+    def samples(*, values: Any = None) -> Any:
         return phx.nn.operator.FunctionSamples(
             values=values,
             coordinates=coordinates,
             quadrature_weights=weights,
         )
 
-    def metadata_reader(index):
+    def metadata_reader(index: Any) -> Any:
         metadata_reads.append(index)
         geometry = samples()
         return phx.nn.operator.OperatorCaseMetadata(
@@ -74,7 +76,7 @@ def _callback_source(*, size=8, safe=False, fail_at=None, fingerprint="cases"):
             queries={"query": geometry},
         )
 
-    def case_reader(index, request):
+    def case_reader(index: Any, request: Any) -> Any:
         del request
         case_reads.append(index)
         reader_threads.append(threading.current_thread().name)
@@ -101,7 +103,7 @@ def _callback_source(*, size=8, safe=False, fail_at=None, fingerprint="cases"):
     return source, metadata_reads, case_reads, reader_threads
 
 
-def _wait_until(predicate, *, timeout=2.0):
+def _wait_until(predicate: Any, *, timeout: Any = 2.0) -> None:
     deadline = time.monotonic() + timeout
     while not predicate():
         if time.monotonic() >= deadline:
@@ -109,7 +111,7 @@ def _wait_until(predicate, *, timeout=2.0):
         time.sleep(0.005)
 
 
-def test_array_fingerprint_golden_vector_is_stable():
+def test_array_fingerprint_golden_vector_is_stable() -> None:
     fingerprint = array_tree_fingerprint(
         {
             "x": jnp.arange(6, dtype=jnp.float32).reshape(2, 3),
@@ -124,7 +126,7 @@ def test_array_fingerprint_golden_vector_is_stable():
         array_tree_fingerprint(np.asarray([object()], dtype=object))
 
 
-def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
+def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch() -> None:
     provenance = tuple(
         phx.nn.operator.OperatorCaseProvenance(
             f"case-{index}",
@@ -268,7 +270,7 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
     )
 
 
-def test_in_memory_loader_preserves_indexed_case_weights_and_masks():
+def test_in_memory_loader_preserves_indexed_case_weights_and_masks() -> None:
     dataset = _dataset(cases=5)
     log_weights = jnp.asarray([-2.0, 0.5, 1.25, -0.75, 3.0])
     case_mask = jnp.asarray([True, False, True, True, False])
@@ -298,7 +300,7 @@ def test_in_memory_loader_preserves_indexed_case_weights_and_masks():
     )
 
 
-def test_exact_resume_rejects_changed_case_weight_or_mask(tmp_path):
+def test_exact_resume_rejects_changed_case_weight_or_mask(tmp_path: Any) -> None:
     dataset = _dataset(cases=5, resolution=8)
     assert dataset.case_log_weights is not None
     assert dataset.case_mask is not None
@@ -339,7 +341,7 @@ def test_exact_resume_rejects_changed_case_weight_or_mask(tmp_path):
             )
 
 
-def test_loader_fingerprint_and_public_epoch_plan_contract_are_stable():
+def test_loader_fingerprint_and_public_epoch_plan_contract_are_stable() -> None:
     loader = phx.nn.operator.training.OperatorBatchLoader(
         _dataset(cases=6, resolution=4),
         batch_size=4,
@@ -368,7 +370,7 @@ def test_loader_fingerprint_and_public_epoch_plan_contract_are_stable():
     assert tuple(positional) == tuple(keyword)
 
 
-def test_callback_fingerprint_lookup_performs_no_hidden_reads():
+def test_callback_fingerprint_lookup_performs_no_hidden_reads() -> None:
     source, metadata_reads, case_reads, _ = _callback_source(size=100)
     loader = phx.nn.operator.training.OperatorBatchLoader(
         source,
@@ -386,7 +388,7 @@ def test_callback_fingerprint_lookup_performs_no_hidden_reads():
     assert case_reads == []
 
 
-def test_prefetch_preserves_order_and_has_bounded_read_ahead():
+def test_prefetch_preserves_order_and_has_bounded_read_ahead() -> None:
     source, _, case_reads, reader_threads = _callback_source(size=7, safe=True)
     loader = phx.nn.operator.training.OperatorBatchLoader(
         source,
@@ -410,7 +412,7 @@ def test_prefetch_preserves_order_and_has_bounded_read_ahead():
     )
 
 
-def test_unsafe_callback_source_stays_synchronous():
+def test_unsafe_callback_source_stays_synchronous() -> None:
     source, _, case_reads, reader_threads = _callback_source(size=4, safe=False)
     loader = phx.nn.operator.training.OperatorBatchLoader(
         source,
@@ -428,7 +430,7 @@ def test_unsafe_callback_source_stays_synchronous():
     assert reader_threads == [main_thread]
 
 
-def test_prefetch_matches_synchronous_batches_and_propagates_reader_errors():
+def test_prefetch_matches_synchronous_batches_and_propagates_reader_errors() -> None:
     dataset = _dataset(cases=11)
     synchronous = phx.nn.operator.training.OperatorBatchLoader(
         dataset,
@@ -484,13 +486,13 @@ def test_prefetch_matches_synchronous_batches_and_propagates_reader_errors():
     )
 
 
-def _logged_dataset_source(dataset, reads, *, fingerprint=None):
+def _logged_dataset_source(dataset: Any, reads: Any, *, fingerprint: Any = None) -> Any:
     backing = phx.nn.operator.InMemoryOperatorCaseSource(dataset)
 
-    def metadata_reader(index):
+    def metadata_reader(index: Any) -> Any:
         return backing.case_metadata(index)
 
-    def case_reader(index, request):
+    def case_reader(index: Any, request: Any) -> Any:
         reads.append(index)
         return backing.read_case(index, request=request)
 
@@ -506,7 +508,7 @@ def _logged_dataset_source(dataset, reads, *, fingerprint=None):
     )
 
 
-def test_eager_and_callback_sources_preserve_case_measure_and_exhaustive_mass():
+def test_eager_and_callback_sources_preserve_case_measure_and_exhaustive_mass() -> None:
     base = _dataset(cases=3)
     dataset = phx.nn.operator.training.OperatorDataset(
         base.batch,
@@ -548,7 +550,7 @@ def test_eager_and_callback_sources_preserve_case_measure_and_exhaustive_mass():
         )
 
 
-def test_case_payload_padding_duplicates_shapes_but_masks_padding():
+def test_case_payload_padding_duplicates_shapes_but_masks_padding() -> None:
     dataset = _dataset(cases=3)
     batch, targets, log_weights, mask = _pad_case_payload(
         dataset.batch,
@@ -563,7 +565,9 @@ def test_case_payload_padding_duplicates_shapes_but_masks_padding():
     assert log_weights.shape == mask.shape == (4,)
     assert jnp.array_equal(mask, jnp.asarray((True, True, True, False)))
     assert jnp.array_equal(
+        # ty: ignore[not-subscriptable]
         batch.input("state").values[-1],
+        # ty: ignore[not-subscriptable]
         batch.input("state").values[-2],
     )
 
@@ -572,7 +576,7 @@ def test_case_payload_padding_duplicates_shapes_but_masks_padding():
     jax.device_count() < 2,
     reason="Sharded tail padding requires at least two JAX devices.",
 )
-def test_sharded_tail_padding_preserves_logical_cases_and_masks_capacity():
+def test_sharded_tail_padding_preserves_logical_cases_and_masks_capacity() -> None:
     dataset = _dataset(cases=3)
     loader = phx.nn.operator.training.OperatorBatchLoader(
         dataset,
@@ -594,7 +598,7 @@ def test_sharded_tail_padding_preserves_logical_cases_and_masks_capacity():
     )
 
 
-def _fit_model():
+def _fit_model() -> Any:
     return phx.nn.operator.architectures.FNO(
         in_channels="scalar",
         out_channels="scalar",
@@ -606,8 +610,8 @@ def _fit_model():
 
 
 def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     dataset = _dataset(cases=5, resolution=8)
     common: dict[str, Any] = {
         "epochs": 2,
@@ -742,7 +746,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
     assert old_format_reads == []
 
 
-def test_data_plane_benchmark_reports_correctness_and_identity_gates():
+def test_data_plane_benchmark_reports_correctness_and_identity_gates() -> None:
     result = run_data_plane_benchmark(
         cases=7,
         batch_size=3,

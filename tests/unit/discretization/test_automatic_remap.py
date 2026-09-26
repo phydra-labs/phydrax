@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -18,7 +21,7 @@ from phydrax.discretization.finite_volume._unstructured import (
 )
 
 
-def _quad(vertices, cells, *, ids=None):
+def _quad(vertices: Any, cells: Any, *, ids: Any = None) -> Any:
     return UnstructuredFiniteVolumePlan(
         np.asarray(vertices, dtype="float64"),
         quadrilaterals=np.asarray(cells, dtype=np.int32),
@@ -26,7 +29,7 @@ def _quad(vertices, cells, *, ids=None):
     ).prepare()
 
 
-def _unit_quad(*, offset=(0.0, 0.0), ids=None):
+def _unit_quad(*, offset: Any = (0.0, 0.0), ids: Any = None) -> Any:
     x, y = offset
     return _quad(
         ((x, y), (x + 1.0, y), (x + 1.0, y + 1.0), (x, y + 1.0)),
@@ -35,7 +38,7 @@ def _unit_quad(*, offset=(0.0, 0.0), ids=None):
     )
 
 
-def test_identity_and_translated_geometry_are_exact_and_jittable():
+def test_identity_and_translated_geometry_are_exact_and_jittable() -> None:
     source = _unit_quad(ids=(11,))
     target = _unit_quad(ids=(22,))
     result = build_unstructured_conservative_remap(
@@ -52,15 +55,17 @@ def test_identity_and_translated_geometry_are_exact_and_jittable():
     )
     assert translated_result.status is UnstructuredConservativeRemapStatus.SUCCESS
     values = jnp.asarray([[2.0, -1.0]])
+    # ty: ignore[unresolved-attribute]
     transferred = eqx.filter_jit(translated_result.plan.apply)(values)
     np.testing.assert_allclose(transferred, values)
+    # ty: ignore[unresolved-attribute]
     gradient = jax.grad(lambda value: jnp.sum(translated_result.plan.apply(value) ** 2))(
         values
     )
     np.testing.assert_allclose(gradient, 2.0 * values)
 
 
-def test_containment_and_mixed_triangle_quad_refinement_cover_both_ledgers():
+def test_containment_and_mixed_triangle_quad_refinement_cover_both_ledgers() -> None:
     source = _quad(
         ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (2.0, 0.0), (2.0, 1.0)),
         ((0, 1, 2, 3), (1, 4, 5, 2)),
@@ -93,7 +98,7 @@ def test_containment_and_mixed_triangle_quad_refinement_cover_both_ledgers():
     np.testing.assert_allclose(np.sum(mixed_result.intersection_measures), 2.0)
 
 
-def test_tetrahedron_identity_and_conservation():
+def test_tetrahedron_identity_and_conservation() -> None:
     plan = UnstructuredFiniteVolumePlan(
         np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
         tetrahedra=np.asarray(((0, 1, 2, 3),)),
@@ -105,13 +110,16 @@ def test_tetrahedron_identity_and_conservation():
     assert result.status is UnstructuredConservativeRemapStatus.SUCCESS
     np.testing.assert_allclose(result.intersection_measures, plan.cell_volumes)
     values = jnp.asarray([[4.0]])
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(result.plan.apply(values), values)
     np.testing.assert_allclose(
-        result.plan.conservation_defect(values, result.plan.apply(values)), 0.0
+        # ty: ignore[unresolved-attribute]
+        result.plan.conservation_defect(values, result.plan.apply(values)),
+        0.0,
     )
 
 
-def test_stable_ids_and_complete_source_target_conservation():
+def test_stable_ids_and_complete_source_target_conservation() -> None:
     source = _quad(
         ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (2.0, 0.0), (2.0, 1.0)),
         ((0, 1, 2, 3), (1, 4, 5, 2)),
@@ -133,14 +141,18 @@ def test_stable_ids_and_complete_source_target_conservation():
     assert result.accepted_count == 2
     assert result.pair_ids == ((99, 10), (99, 20))
     values = jnp.asarray([[1.0], [3.0]])
+    # ty: ignore[unresolved-attribute]
     mapped = result.plan.apply(values)
     np.testing.assert_allclose(mapped, [[2.0]])
     np.testing.assert_allclose(
-        result.plan.conservation_defect(values, mapped), 0.0, atol=1e-14
+        # ty: ignore[unresolved-attribute]
+        result.plan.conservation_defect(values, mapped),
+        0.0,
+        atol=1e-14,
     )
 
 
-def test_under_and_over_coverage_fail_closed_without_repair():
+def test_under_and_over_coverage_fail_closed_without_repair() -> None:
     source = _unit_quad()
     larger_target = _quad(
         ((-0.5, -0.5), (1.5, -0.5), (1.5, 1.5), (-0.5, 1.5)), ((0, 1, 2, 3),)
@@ -171,7 +183,7 @@ def test_under_and_over_coverage_fail_closed_without_repair():
     assert over.plan is None
 
 
-def test_predicate_uncertainty_and_resource_limits_are_typed_failures():
+def test_predicate_uncertainty_and_resource_limits_are_typed_failures() -> None:
     source = _unit_quad()
     shifted = _quad(
         ((1.0 - 1e-12, 0.0), (2.0 - 1e-12, 0.0), (2.0 - 1e-12, 1.0), (1.0 - 1e-12, 1.0)),
@@ -207,7 +219,7 @@ def test_predicate_uncertainty_and_resource_limits_are_typed_failures():
     assert limited.plan is None
 
 
-def test_explicit_unsupported_geometry_returns_failure_artifact():
+def test_explicit_unsupported_geometry_returns_failure_artifact() -> None:
     result = build_unstructured_conservative_remap(
         object(), object(), tolerance=1e-10, provenance="unsupported"
     )
@@ -216,7 +228,7 @@ def test_explicit_unsupported_geometry_returns_failure_artifact():
     assert not result.passed
 
 
-def test_remap_evidence_derives_passed_from_validated_status_and_counts():
+def test_remap_evidence_derives_passed_from_validated_status_and_counts() -> None:
     evidence = UnstructuredConservativeRemapEvidence(
         target_coverage_defects=jnp.asarray((0.25,)),
         source_coverage_defects=jnp.asarray((0.0,)),
@@ -237,6 +249,7 @@ def test_remap_evidence_derives_passed_from_validated_status_and_counts():
             source_coverage_tolerance=jnp.asarray((0.0,)),
             candidate_count=1,
             accepted_count=1,
+            # ty: ignore[invalid-argument-type]
             status=0,
         )
     with pytest.raises(ValueError, match="counts"):

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 
 from phydrax.optics.sbs._sbs import (
@@ -16,7 +19,7 @@ from phydrax.optics.sbs._sbs import (
 _EPSILON_0 = 8.8541878128e-12
 
 
-def _domain(volume_weights, *, boundary_weights=None):
+def _domain(volume_weights: Any, *, boundary_weights: Any = None) -> Any:
     weights = np.asarray(volume_weights, dtype="float64")
     count = weights.size
     identity = np.eye(count)
@@ -44,7 +47,7 @@ def _domain(volume_weights, *, boundary_weights=None):
     )
 
 
-def _interaction(*, acoustic_wavenumber=2.0):
+def _interaction(*, acoustic_wavenumber: Any = 2.0) -> Any:
     return SBSInteractionCoefficients(
         pump_angular_frequency=10.0,
         stokes_angular_frequency=8.0,
@@ -58,7 +61,13 @@ def _interaction(*, acoustic_wavenumber=2.0):
     )
 
 
-def _single_point_plan(*, photoelastic_sign=-1.0, pump=1.0, stokes=1.0, acoustic=1.0):
+def _single_point_plan(
+    *,
+    photoelastic_sign: Any = -1.0,
+    pump: Any = 1.0,
+    stokes: Any = 1.0,
+    acoustic: Any = 1.0,
+) -> Any:
     tensor = np.zeros((2, 2, 2, 2), dtype="complex128")
     tensor[0, 0, 0, 0] = photoelastic_sign
     strain = np.zeros((1, 2, 2), dtype="complex128")
@@ -81,7 +90,7 @@ def _single_point_plan(*, photoelastic_sign=-1.0, pump=1.0, stokes=1.0, acoustic
     )
 
 
-def test_pe_mb_cancellation_and_reinforcement_are_complex_before_magnitude():
+def test_pe_mb_cancellation_and_reinforcement_are_complex_before_magnitude() -> None:
     cancellation = solve_sbs(
         _single_point_plan(photoelastic_sign=1.0).prepare(), _interaction()
     )
@@ -100,7 +109,7 @@ def test_pe_mb_cancellation_and_reinforcement_are_complex_before_magnitude():
     assert int(reinforcement.status) == int(SBSStatus.SUCCESS)
 
 
-def test_overlap_phase_covariance_and_gain_rescaling_invariance():
+def test_overlap_phase_covariance_and_gain_rescaling_invariance() -> None:
     baseline = solve_sbs(_single_point_plan().prepare(), _interaction())
     pump_scale = 2.0j
     stokes_scale = -3.0
@@ -123,7 +132,7 @@ def test_overlap_phase_covariance_and_gain_rescaling_invariance():
     np.testing.assert_allclose(scaled.gain, baseline.gain, rtol=1e-12)
 
 
-def test_selection_rule_phase_matching_loss_and_units():
+def test_selection_rule_phase_matching_loss_and_units() -> None:
     tensor = np.zeros((2, 2, 2, 2))
     tensor[0, 0, 0, 0] = 1.0
     strain = np.zeros((2, 2, 2))
@@ -167,7 +176,7 @@ def test_selection_rule_phase_matching_loss_and_units():
     assert matched.gain_units == "W^-1 m^-1"
 
 
-def _quadrature_result(count):
+def _quadrature_result(count: Any) -> Any:
     points = np.linspace(0.0, 1.0, count)
     spacing = 1.0 / (count - 1)
     weights = np.full((count,), spacing)
@@ -195,7 +204,7 @@ def _quadrature_result(count):
     return solve_sbs(plan.prepare(), _interaction())
 
 
-def test_shared_domain_quadrature_converges_to_analytic_overlap():
+def test_shared_domain_quadrature_converges_to_analytic_overlap() -> None:
     exact = -0.5 * _EPSILON_0 / 3.0
     coarse = _quadrature_result(9)
     fine = _quadrature_result(33)

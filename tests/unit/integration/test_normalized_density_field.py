@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -8,14 +10,16 @@ from phydrax.domain._normalized_density import (
 )
 
 
-def _realization():
+def _realization() -> Any:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     target = phx.integration.over(domain.component())
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(16))
     return domain, phx.integration.materialize(target, plan)
 
 
-def test_normalized_density_is_positive_shift_invariant_and_represented_unit_mass():
+def test_normalized_density_is_positive_shift_invariant_and_represented_unit_mass() -> (
+    None
+):
     domain, realization = _realization()
     base = domain.Function("x")(lambda x: 2.0 * x)
     shifted = domain.Function("x")(lambda x: 2.0 * x + 37.0)
@@ -32,10 +36,10 @@ def test_normalized_density_is_positive_shift_invariant_and_represented_unit_mas
     assert density_normalization_evidence(first).valid
 
 
-def test_normalized_density_has_finite_fixed_realization_gradient():
+def test_normalized_density_has_finite_fixed_realization_gradient() -> None:
     domain, realization = _realization()
 
-    def objective(scale):
+    def objective(scale: Any) -> Any:
         log_field = domain.Function("x")(lambda x: scale * x)
         normalized = normalize_density_field(log_field, realization)
         moment = phx.integration.reduce(normalized.field * normalized.field, realization)

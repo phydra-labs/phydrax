@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _ocean(*, case, shape):
+def _ocean(*, case: Any, shape: Any) -> Any:
     nx, ny, nz = shape
     grid = phx.discretization.TensorGridPlan(
         (
@@ -68,7 +69,7 @@ def _ocean(*, case, shape):
     return ocean, state
 
 
-def run_case(case, shape, dt):
+def run_case(case: Any, shape: Any, dt: Any) -> Any:
     ocean, state = _ocean(case=case, shape=shape)
     continuation = phx.applications.ocean.HydrostaticContinuationState.initialize(
         ocean, state
@@ -104,7 +105,7 @@ def run_case(case, shape, dt):
     return report
 
 
-def main():
+def main() -> Any:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--case",

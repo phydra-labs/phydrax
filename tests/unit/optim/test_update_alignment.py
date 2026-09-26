@@ -14,7 +14,7 @@ from phydrax.optim import (
 )
 
 
-def test_projection_is_exactly_inactive_for_feasible_updates_and_jittable():
+def test_projection_is_exactly_inactive_for_feasible_updates_and_jittable() -> None:
     gradients = (jnp.asarray((1.0, 0.0)), jnp.asarray((0.0, 1.0)))
     proposal = jnp.asarray((1.0, 2.0))
 
@@ -31,7 +31,7 @@ def test_projection_is_exactly_inactive_for_feasible_updates_and_jittable():
     np.testing.assert_allclose(eager.multipliers, 0.0, atol=0.0)
 
 
-def test_exact_active_set_projects_edges_and_opposing_constraints():
+def test_exact_active_set_projects_edges_and_opposing_constraints() -> None:
     orthant = project_conflict_free_direction(
         jnp.asarray((-1.0, 2.0)),
         (jnp.asarray((1.0, 0.0)), jnp.asarray((0.0, 1.0))),
@@ -49,7 +49,7 @@ def test_exact_active_set_projects_edges_and_opposing_constraints():
     assert not bool(jnp.any(opposing.aligned_conflicts))
 
 
-def test_diagonal_metric_changes_closest_feasible_direction():
+def test_diagonal_metric_changes_closest_feasible_direction() -> None:
     gradient = (jnp.asarray((1.0, 1.0)),)
     proposal = jnp.asarray((-2.0, 0.0))
 
@@ -70,7 +70,7 @@ def test_diagonal_metric_changes_closest_feasible_direction():
     )
 
 
-def test_rank_stationarity_activity_and_complex_geometry_are_distinct():
+def test_rank_stationarity_activity_and_complex_geometry_are_distinct() -> None:
     duplicate = project_conflict_free_direction(
         jnp.asarray((-1.0, 1.0)),
         (jnp.asarray((1.0, 0.0)), jnp.asarray((1.0, 0.0))),
@@ -99,7 +99,7 @@ def test_rank_stationarity_activity_and_complex_geometry_are_distinct():
     assert bool(complex_result.pareto_stationary)
 
 
-def test_large_objective_dual_and_failure_contracts_are_audited():
+def test_large_objective_dual_and_failure_contracts_are_audited() -> None:
     gradients = tuple(jnp.eye(4)[index] for index in range(4))
     projected = project_conflict_free_direction(-jnp.ones((4,)), gradients)
 
@@ -143,7 +143,7 @@ def test_large_objective_dual_and_failure_contracts_are_audited():
         )
 
 
-def test_statistics_preserve_four_stage_mismatch_evidence():
+def test_statistics_preserve_four_stage_mismatch_evidence() -> None:
     result = project_conflict_free_direction(
         jnp.asarray((-1.0, 2.0)),
         (jnp.asarray((1.0, 0.0)), jnp.asarray((0.0, 1.0))),

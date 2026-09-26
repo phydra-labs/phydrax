@@ -21,6 +21,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._strict import StrictModule
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -53,10 +54,8 @@ from ._common import (
 def _validate_cluster_policies(
     initialization: ClusterInitialization, empty_policy: EmptyClusterPolicy
 ) -> None:
-    if initialization not in ("random", "first", "k-means++"):
-        raise ValueError("unsupported cluster initialization.")
-    if empty_policy not in ("retain", "reseed", "error"):
-        raise ValueError("unsupported empty-cluster policy.")
+    initialization = parse(initialization, ClusterInitialization, "initialization")
+    empty_policy = parse(empty_policy, EmptyClusterPolicy, "empty_policy")
 
 
 def _update_centers(

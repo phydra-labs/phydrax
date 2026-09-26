@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -17,17 +20,23 @@ from phydrax.control.stochastic import BoundedUniformGrid1D
 from phydrax.dynamics import TimeGrid
 
 
-def _zero_game_coefficient(time, state, minimizer, maximizer, args):
+def _zero_game_coefficient(
+    time: Any, state: Any, minimizer: Any, maximizer: Any, args: Any
+) -> float:
     del time, state, minimizer, maximizer, args
     return 0.0
 
 
-def _matrix_payoff(time, state, minimizer, maximizer, args):
+def _matrix_payoff(
+    time: Any, state: Any, minimizer: Any, maximizer: Any, args: Any
+) -> Any:
     del time, state, args
     return 2.0 * (1.0 - minimizer) * maximizer + minimizer * (1.0 - maximizer)
 
 
-def _static_game(*, lower_order, upper_order, payoff, problem_id):
+def _static_game(
+    *, lower_order: Any, upper_order: Any, payoff: Any, problem_id: Any
+) -> Any:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 5)
     time_grid = TimeGrid(jnp.asarray([0.0, 0.1, 0.2]), time_id=problem_id)
     return DiscreteZeroSumHJBIProblem(
@@ -46,7 +55,7 @@ def _static_game(*, lower_order, upper_order, payoff, problem_id):
     )
 
 
-def test_declared_minmax_orders_and_all_four_action_selectors_are_independent():
+def test_declared_minmax_orders_and_all_four_action_selectors_are_independent() -> None:
     canonical = solve_discrete_hjbi_reference(
         _static_game(
             lower_order="max_min",
@@ -89,8 +98,8 @@ def test_declared_minmax_orders_and_all_four_action_selectors_are_independent():
 
 @pytest.mark.parametrize("identical_order", ("max_min", "min_max"))
 def test_identical_action_orders_cannot_turn_a_non_isaacs_game_into_a_saddle(
-    identical_order,
-):
+    identical_order: Any,
+) -> None:
     result = solve_discrete_hjbi_reference(
         _static_game(
             lower_order=identical_order,
@@ -114,7 +123,7 @@ def test_identical_action_orders_cannot_turn_a_non_isaacs_game_into_a_saddle(
     assert result.status_label == "NONCANONICAL_SADDLE_ACTION_ORDERS"
 
 
-def test_non_isaacs_game_reports_gap_and_never_receives_saddle_label():
+def test_non_isaacs_game_reports_gap_and_never_receives_saddle_label() -> None:
     result = solve_discrete_hjbi_reference(
         _static_game(
             lower_order="max_min",
@@ -134,7 +143,9 @@ def test_non_isaacs_game_reports_gap_and_never_receives_saddle_label():
     assert "SADDLE" not in result.status_label
 
 
-def test_discrete_saddle_label_requires_operator_boundary_refinement_and_gap_gates():
+def test_discrete_saddle_label_requires_operator_boundary_refinement_and_gap_gates() -> (
+    None
+):
     problem = _static_game(
         lower_order="max_min",
         upper_order="min_max",
@@ -168,7 +179,7 @@ def test_discrete_saddle_label_requires_operator_boundary_refinement_and_gap_gat
     assert result.evidence.scope == "declared-bounded-grid-discrete-residuals-only"
 
 
-def test_single_action_positive_diffusion_reduces_to_scalar_heat_solution():
+def test_single_action_positive_diffusion_reduces_to_scalar_heat_solution() -> None:
     sigma = 0.2
     terminal_time = 0.1
     grid = BoundedUniformGrid1D(-1.0, 1.0, 21)
@@ -199,7 +210,7 @@ def test_single_action_positive_diffusion_reduces_to_scalar_heat_solution():
     assert bool(result.saddle)
 
 
-def test_refinement_failure_prevents_saddle_even_when_isaacs_gap_is_zero():
+def test_refinement_failure_prevents_saddle_even_when_isaacs_gap_is_zero() -> None:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 7)
     time_grid = TimeGrid(jnp.linspace(0.0, 0.1, 5), time_id="hjbi-refinement")
     terminal = np.asarray(grid.points) ** 4
@@ -234,10 +245,12 @@ def test_refinement_failure_prevents_saddle_even_when_isaacs_gap_is_zero():
     assert int(result.status) == int(DiscreteHJBIStatus.REFINEMENT_GATE_FAILED)
 
 
-def test_invalid_action_order_is_rejected_before_coefficient_callbacks_execute():
+def test_invalid_action_order_is_rejected_before_coefficient_callbacks_execute() -> None:
     calls = []
 
-    def observed_coefficient(time, state, minimizer, maximizer, args):
+    def observed_coefficient(
+        time: Any, state: Any, minimizer: Any, maximizer: Any, args: Any
+    ) -> float:
         calls.append((time, state, minimizer, maximizer, args))
         return 0.0
 
@@ -254,6 +267,7 @@ def test_invalid_action_order_is_rejected_before_coefficient_callbacks_execute()
             observed_coefficient,
             observed_coefficient,
             observed_coefficient,
+            # ty: ignore[invalid-argument-type]
             lower_order="simultaneous",
             upper_order="min_max",
             problem_id="invalid-hjbi-order",
@@ -261,7 +275,7 @@ def test_invalid_action_order_is_rejected_before_coefficient_callbacks_execute()
     assert calls == []
 
 
-def test_corrected_scalar_lq_hjbi_formula_accepts_well_posed_gamma_cases():
+def test_corrected_scalar_lq_hjbi_formula_accepts_well_posed_gamma_cases() -> None:
     time_grid = TimeGrid(jnp.asarray([0.0, 0.1, 0.2]), time_id="scalar-lq-hjbi")
 
     for gamma in (2.0, 1.0, 0.8):
@@ -289,7 +303,7 @@ def test_corrected_scalar_lq_hjbi_formula_accepts_well_posed_gamma_cases():
     )
 
 
-def test_scalar_lq_hjbi_rejects_nonpositive_gamma_and_singular_riccati_horizon():
+def test_scalar_lq_hjbi_rejects_nonpositive_gamma_and_singular_riccati_horizon() -> None:
     short_grid = TimeGrid(jnp.asarray([0.0, 0.2]), time_id="gamma-gate")
     with pytest.raises(ValueError, match="strictly positive"):
         scalar_lq_hjbi_solution(short_grid, terminal_weight=1.0, gamma=0.0)

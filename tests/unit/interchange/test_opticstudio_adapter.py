@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import sys
 from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -21,7 +22,7 @@ from phydrax.optics.geometric import SequentialOpticsPlan
 
 
 class _FakeSurface:
-    def __init__(self, name: str):
+    def __init__(self, name: str) -> None:
         self.name = name
         self.MaterialCell = object()
         self.Comment = ""
@@ -32,61 +33,63 @@ class _FakeSurface:
 
 
 class _FakeLensDataEditor:
-    def __init__(self):
+    def __init__(self) -> None:
         self.surfaces = [_FakeSurface("object"), _FakeSurface("image")]
 
-    def GetSurfaceAt(self, index: int):
+    def GetSurfaceAt(self, index: int) -> Any:
         return self.surfaces[index]
 
-    def InsertNewSurfaceAt(self, index: int):
+    def InsertNewSurfaceAt(self, index: int) -> Any:
         surface = _FakeSurface(f"surface-{index}")
         self.surfaces.insert(index, surface)
         return surface
 
 
 class _FakeSystem:
-    def __init__(self):
+    def __init__(self) -> None:
         self.new_calls = 0
         self.sequential_calls = 0
         self.SystemData = SimpleNamespace(Units=SimpleNamespace(LensUnits="initial-unit"))
         self.LDE = _FakeLensDataEditor()
 
-    def new(self, *, saveifneeded: bool):
+    def new(self, *, saveifneeded: bool) -> None:
         assert saveifneeded is False
         self.new_calls += 1
         self.LDE = _FakeLensDataEditor()
 
-    def make_sequential(self):
+    def make_sequential(self) -> None:
         self.sequential_calls += 1
 
 
 class _FakeResult:
-    def __init__(self, payload: object):
+    def __init__(self, payload: object) -> None:
         self.payload = payload
 
-    def to_json(self):
+    def to_json(self) -> Any:
         return json.dumps(self.payload, sort_keys=False, separators=(", ", ": "))
 
 
 class _FakeConnection:
-    def __init__(self, system: _FakeSystem, *, connect_failure: bool = False):
+    def __init__(self, system: _FakeSystem, *, connect_failure: bool = False) -> None:
         self.system = system
         self.connect_failure = connect_failure
         self.connect_modes = []
         self.disconnect_calls = 0
 
-    def connect(self, *, mode: str):
+    def connect(self, *, mode: str) -> Any:
         self.connect_modes.append(mode)
         if self.connect_failure:
             raise RuntimeError("mock connection failure")
         return self.system
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         self.disconnect_calls += 1
 
 
 class _FakeZOSPy(ModuleType):
-    def __init__(self, *, connect_failure: bool = False, analysis_failure: bool = False):
+    def __init__(
+        self, *, connect_failure: bool = False, analysis_failure: bool = False
+    ) -> None:
         super().__init__("zospy")
         self.__version__ = "9.7.mock"
         self.system = _FakeSystem()
@@ -110,23 +113,23 @@ class _FakeZOSPy(ModuleType):
         module = self
 
         class ZOS:
-            def __new__(cls, **keywords):
+            def __new__(cls, **keywords: Any) -> Any:
                 module.constructor_keywords.append(dict(keywords))
                 return module.connection
 
         self.ZOS = ZOS
 
-    def _material_model(self, cell: object, *, refractive_index: float):
+    def _material_model(self, cell: object, *, refractive_index: float) -> None:
         self.material_calls.append((cell, refractive_index))
 
-    def _analysis(self, name: str):
+    def _analysis(self, name: str) -> Any:
         module = self
 
         class Analysis:
-            def __init__(self, **settings):
+            def __init__(self, **settings: Any) -> None:
                 self.settings = settings
 
-            def run(self, system: object, *, oncomplete: str):
+            def run(self, system: object, *, oncomplete: str) -> Any:
                 assert system is module.system
                 module.analysis_calls.append((name, dict(self.settings), oncomplete))
                 if module.analysis_failure:
@@ -143,8 +146,8 @@ class _FakeZOSPy(ModuleType):
 
 
 def _install_fake_zospy(
-    monkeypatch, *, connect_failure: bool = False, analysis_failure: bool = False
-):
+    monkeypatch: Any, *, connect_failure: bool = False, analysis_failure: bool = False
+) -> Any:
     module = _FakeZOSPy(
         connect_failure=connect_failure, analysis_failure=analysis_failure
     )
@@ -153,9 +156,9 @@ def _install_fake_zospy(
 
 
 def _plan(
-    surface_kinds=("plane", "sphere", "conic"),
-    interactions=("transmit", "transmit", "transmit"),
-):
+    surface_kinds: Any = ("plane", "sphere", "conic"),
+    interactions: Any = ("transmit", "transmit", "transmit"),
+) -> Any:
     surface_count = len(surface_kinds)
     frames = tuple(
         RigidFrame(np.eye(3), np.asarray((0.0, 0.0, value)))
@@ -183,7 +186,7 @@ def _plan(
     )
 
 
-def _even_asphere_plan():
+def _even_asphere_plan() -> Any:
     return SequentialOpticsPlan(
         (RigidFrame.identity(3),),
         ("even-asphere",),
@@ -199,10 +202,12 @@ def _even_asphere_plan():
     )
 
 
-def test_module_use_is_lazy_until_an_availability_or_session_operation(monkeypatch):
+def test_module_use_is_lazy_until_an_availability_or_session_operation(
+    monkeypatch: Any,
+) -> None:
     calls = []
 
-    def unexpected_import(name: str):
+    def unexpected_import(name: str) -> None:
         calls.append(name)
         raise AssertionError("optional dependency import was not requested")
 
@@ -217,9 +222,9 @@ def test_module_use_is_lazy_until_an_availability_or_session_operation(monkeypat
 
 
 def test_availability_is_nonthrowing_when_optional_dependency_is_unavailable(
-    monkeypatch,
-):
-    def unavailable(name: str):
+    monkeypatch: Any,
+) -> None:
+    def unavailable(name: str) -> None:
         assert name == "zospy"
         raise ModuleNotFoundError(name)
 
@@ -231,7 +236,7 @@ def test_availability_is_nonthrowing_when_optional_dependency_is_unavailable(
     assert availability.capabilities is adapter.OPTICSTUDIO_CAPABILITIES
 
 
-def test_session_disconnects_once_after_success_and_failure(monkeypatch):
+def test_session_disconnects_once_after_success_and_failure(monkeypatch: Any) -> None:
     zospy = _install_fake_zospy(monkeypatch)
     backend = adapter.OpticStudioBackend(opticstudio_directory=" C:/OpticStudio ")
     with backend.open_session() as session:
@@ -253,14 +258,16 @@ def test_session_disconnects_once_after_success_and_failure(monkeypatch):
     assert second.connection.disconnect_calls == 1
 
 
-def test_failed_connection_is_also_disconnected(monkeypatch):
+def test_failed_connection_is_also_disconnected(monkeypatch: Any) -> None:
     zospy = _install_fake_zospy(monkeypatch, connect_failure=True)
     with pytest.raises(RuntimeError, match="mock connection failure"):
         adapter.OpticStudioBackend().open_session()
     assert zospy.connection.disconnect_calls == 1
 
 
-def test_supported_sequential_export_is_lossless_and_si_normalized(monkeypatch):
+def test_supported_sequential_export_is_lossless_and_si_normalized(
+    monkeypatch: Any,
+) -> None:
     zospy = _install_fake_zospy(monkeypatch)
     with adapter.OpticStudioBackend().open_session() as session:
         report = adapter.export_sequential_to_opticstudio(
@@ -288,7 +295,9 @@ def test_supported_sequential_export_is_lossless_and_si_normalized(monkeypatch):
     )
 
 
-def test_unsupported_features_are_reported_before_vendor_mutation(monkeypatch):
+def test_unsupported_features_are_reported_before_vendor_mutation(
+    monkeypatch: Any,
+) -> None:
     zospy = _install_fake_zospy(monkeypatch)
     with adapter.OpticStudioBackend().open_session() as session:
         with pytest.raises(AdapterError) as error:
@@ -296,8 +305,11 @@ def test_unsupported_features_are_reported_before_vendor_mutation(monkeypatch):
                 _even_asphere_plan(), session, length_unit_in_meters=1.0e-3
             )
     assert error.value.status is AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
+    # ty: ignore[unresolved-attribute]
     assert error.value.features == ("surfaces[0].surface_kind=even-asphere",)
+    # ty: ignore[unresolved-attribute]
     assert error.value.report.valid is False
+    # ty: ignore[unresolved-attribute]
     assert tuple(loss.path for loss in error.value.report.losses) == (
         "surfaces[0].surface_kind",
     )
@@ -306,7 +318,9 @@ def test_unsupported_features_are_reported_before_vendor_mutation(monkeypatch):
     assert zospy.connection.disconnect_calls == 1
 
 
-def test_requests_and_detached_results_have_deterministic_normalization(monkeypatch):
+def test_requests_and_detached_results_have_deterministic_normalization(
+    monkeypatch: Any,
+) -> None:
     zospy = _install_fake_zospy(monkeypatch)
     first_request = adapter.OpticStudioAnalysisRequest(
         "CARDINAL_POINTS",
@@ -342,9 +356,9 @@ def test_requests_and_detached_results_have_deterministic_normalization(monkeypa
     ]
 
 
-def test_traced_values_are_rejected_at_host_boundary():
+def test_traced_values_are_rejected_at_host_boundary() -> None:
     @jax.jit
-    def request_from_traced_surface(surface):
+    def request_from_traced_surface(surface: Any) -> Any:
         return adapter.OpticStudioAnalysisRequest(
             "surface-data", settings={"surface": surface}
         )
@@ -353,13 +367,13 @@ def test_traced_values_are_rejected_at_host_boundary():
         request_from_traced_surface(jnp.asarray(1))
 
 
-def test_export_rejects_a_traced_plan_before_session_access(monkeypatch):
+def test_export_rejects_a_traced_plan_before_session_access(monkeypatch: Any) -> None:
     zospy = _install_fake_zospy(monkeypatch)
     plan = _plan()
     with adapter.OpticStudioBackend().open_session() as session:
 
         @jax.jit
-        def export_with_curvatures(curvatures):
+        def export_with_curvatures(curvatures: Any) -> Any:
             traced_plan = eqx.tree_at(lambda value: value.curvatures, plan, curvatures)
             return adapter.export_sequential_to_opticstudio(
                 traced_plan, session, length_unit_in_meters=1.0e-3

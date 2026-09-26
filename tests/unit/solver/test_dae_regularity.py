@@ -1,9 +1,11 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _policy(*, regularity, reuse=None, initial_step=None):
+def _policy(*, regularity: Any, reuse: Any = None, initial_step: Any = None) -> Any:
     return phx.solver.DAESolvePolicy(
         adaptive=phx.solver.DAEAdaptivePolicy(
             relative_tolerance=1e-4,
@@ -18,7 +20,7 @@ def _policy(*, regularity, reuse=None, initial_step=None):
     )
 
 
-def _scalar_problem(residual, *, identity):
+def _scalar_problem(residual: Any, *, identity: Any) -> Any:
     system = phx.dynamics.DifferentialAlgebraicSystem(
         residual,
         state_shape=(1,),
@@ -34,7 +36,7 @@ def _scalar_problem(residual, *, identity):
     )
 
 
-def test_periodic_regularity_verifies_consistency_and_bdf_stage_operators():
+def test_periodic_regularity_verifies_consistency_and_bdf_stage_operators() -> None:
     problem = _scalar_problem(
         lambda time, state, state_rate, parameter: state_rate + parameter * state,
         identity="adaptive-regularity",
@@ -63,7 +65,7 @@ def test_periodic_regularity_verifies_consistency_and_bdf_stage_operators():
     assert jnp.all(solution.regularity.stage_condition_estimate[:count] == 1.0)
 
 
-def test_singular_local_operator_is_recorded_or_promoted_to_terminal_failure():
+def test_singular_local_operator_is_recorded_or_promoted_to_terminal_failure() -> None:
     template = _scalar_problem(
         lambda time, state, state_rate, parameter: state_rate - 10.0 * state,
         identity="adaptive-singular-regularity",
@@ -121,7 +123,7 @@ def test_singular_local_operator_is_recorded_or_promoted_to_terminal_failure():
     assert not failed.valid[1]
 
 
-def test_singular_consistency_operator_can_stop_before_stage_execution():
+def test_singular_consistency_operator_can_stop_before_stage_execution() -> None:
     problem = _scalar_problem(
         lambda time, state, state_rate, parameter: state,
         identity="adaptive-singular-consistency",
@@ -160,7 +162,7 @@ def test_singular_consistency_operator_can_stop_before_stage_execution():
     assert jnp.array_equal(solution.valid, jnp.asarray((True, False)))
 
 
-def test_fixed_grid_periodic_regularity_uses_explicit_operator_probes():
+def test_fixed_grid_periodic_regularity_uses_explicit_operator_probes() -> None:
     problem = _scalar_problem(
         lambda time, state, state_rate, parameter: state_rate + parameter * state,
         identity="fixed-periodic-regularity",
@@ -189,7 +191,7 @@ def test_fixed_grid_periodic_regularity_uses_explicit_operator_probes():
     assert jnp.all(solution.regularity.stage_rank == 1)
 
 
-def test_temporal_reuse_preserves_values_and_reduces_jacobian_preparations():
+def test_temporal_reuse_preserves_values_and_reduces_jacobian_preparations() -> None:
     problem = _scalar_problem(
         lambda time, state, state_rate, parameter: state_rate + parameter * state,
         identity="adaptive-temporal-reuse",
@@ -229,7 +231,7 @@ def test_temporal_reuse_preserves_values_and_reduces_jacobian_preparations():
     assert jnp.sum(reused.attempt_history.stale_jacobian_retries) == 0
 
 
-def test_regularity_domain_identity_includes_bound_values():
+def test_regularity_domain_identity_includes_bound_values() -> None:
     first = phx.solver.DAERegularityDomain(
         jnp.asarray(((0.0, 1.0),)),
         jnp.asarray(((1.0, 2.0),)),

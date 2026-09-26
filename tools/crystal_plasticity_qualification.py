@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,13 +16,13 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _slip(direction, normal):
+def _slip(direction: Any, normal: Any) -> Any:
     return phx.applications.crystal_plasticity.CrystalSlipSystem(
         jnp.asarray(direction), jnp.asarray(normal)
     )
 
 
-def _model(*systems):
+def _model(*systems: Any) -> Any:
     cp = phx.applications.crystal_plasticity
     return cp.CrystalPlasticityModel(
         systems,
@@ -29,7 +30,7 @@ def _model(*systems):
     )
 
 
-def _point_law():
+def _point_law() -> Any:
     model = _model(_slip((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     state = model.initial_state()
     deformation = jnp.eye(3).at[0, 1].set(0.35)
@@ -66,7 +67,7 @@ def _point_law():
     }
 
 
-def _frame_covariance():
+def _frame_covariance() -> Any:
     model = _model(_slip((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     state = model.initial_state()
     deformation = jnp.eye(3).at[0, 1].set(0.35)
@@ -90,7 +91,7 @@ def _frame_covariance():
     }
 
 
-def _discretization():
+def _discretization() -> Any:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -127,7 +128,7 @@ def _discretization():
     ).prepare()
 
 
-def _routed_state():
+def _routed_state() -> Any:
     cp = phx.applications.crystal_plasticity
     discretization = _discretization()
     first = _model(_slip((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
@@ -168,7 +169,7 @@ def _routed_state():
     }
 
 
-def qualify():
+def qualify() -> Any:
     sections = {
         "point_law": _point_law(),
         "frame_covariance": _frame_covariance(),
@@ -184,7 +185,7 @@ def qualify():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",

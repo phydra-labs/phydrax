@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -22,14 +24,14 @@ from phydrax.discretization.fem._mixed_constraint import (
 )
 
 
-def _triangle_mesh():
+def _triangle_mesh() -> Any:
     return CellMesh.from_triangles(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
     )
 
 
-def _quadrilateral_mesh():
+def _quadrilateral_mesh() -> Any:
     return CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         (
@@ -43,8 +45,8 @@ def _quadrilateral_mesh():
     )
 
 
-def _model(*, bulk_modulus=None):
-    def isochoric_energy(deformation_bar):
+def _model(*, bulk_modulus: Any = None) -> Any:
+    def isochoric_energy(deformation_bar: Any) -> Any:
         dimension = deformation_bar.shape[0]
         return jnp.sum(deformation_bar * deformation_bar) - dimension
 
@@ -58,7 +60,7 @@ def _model(*, bulk_modulus=None):
     )
 
 
-def test_mean_zero_and_pinned_gauges_remove_only_the_constant_pressure_mode():
+def test_mean_zero_and_pinned_gauges_remove_only_the_constant_pressure_mode() -> None:
     pressure = jnp.asarray((2.0, 4.0, 7.0, -1.0))
     mean_zero = PressureGaugePolicy("mean-zero")
     pinned = PressureGaugePolicy("pinned", pinned_dof=2)
@@ -76,7 +78,7 @@ def test_mean_zero_and_pinned_gauges_remove_only_the_constant_pressure_mode():
     assert bool(pinned.evidence(pin_projected).valid)
 
 
-def test_inf_sup_evidence_distinguishes_stable_and_unstable_spaces():
+def test_inf_sup_evidence_distinguishes_stable_and_unstable_spaces() -> None:
     stable_constraint = jnp.asarray(((1.0, 0.0), (-1.0, 0.0)))
     unstable_constraint = jnp.zeros((2, 2))
     gauge = PressureGaugePolicy("mean-zero")
@@ -104,7 +106,9 @@ def test_inf_sup_evidence_distinguishes_stable_and_unstable_spaces():
     assert not unstable.locking_safe
 
 
-def test_mixed_plan_requires_physical_gauge_policy_and_refuses_unverified_stabilization():
+def test_mixed_plan_requires_physical_gauge_policy_and_refuses_unverified_stabilization() -> (
+    None
+):
     mesh = _triangle_mesh()
 
     with pytest.raises(ValueError, match="requires an explicit gauge"):
@@ -125,7 +129,9 @@ def test_mixed_plan_requires_physical_gauge_policy_and_refuses_unverified_stabil
         )
 
 
-def test_taylor_hood_exact_problem_prepares_coupled_blocks_gauge_and_locking_evidence():
+def test_taylor_hood_exact_problem_prepares_coupled_blocks_gauge_and_locking_evidence() -> (
+    None
+):
     plan = MixedFiniteElementConstraintPlan(
         _triangle_mesh(),
         PressureGaugePolicy("mean-zero"),
@@ -153,7 +159,9 @@ def test_taylor_hood_exact_problem_prepares_coupled_blocks_gauge_and_locking_evi
     assert bool(evaluation.finite)
 
 
-def test_q2_q1_finite_bulk_problem_has_physical_pressure_block_without_gauge_or_stabilization():
+def test_q2_q1_finite_bulk_problem_has_physical_pressure_block_without_gauge_or_stabilization() -> (
+    None
+):
     bulk_modulus = 250.0
     plan = MixedFiniteElementConstraintPlan(
         _quadrilateral_mesh(),

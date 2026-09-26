@@ -4,7 +4,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_orbit_to_calibrated_pixel_workflow():
+def test_orbit_to_calibrated_pixel_workflow() -> None:
     astro = phx.applications.astrodynamics
     context = astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),

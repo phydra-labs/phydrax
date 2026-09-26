@@ -12,6 +12,7 @@ by the qualification runner and release builders.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import diffrax as dfx
 import jax
@@ -70,7 +71,7 @@ OBSERVABLES = (
 BASE_MESH = (12, (4, 3, 4))
 
 
-def _case(case, **inputs):
+def _case(case: Any, **inputs: Any) -> Any:
     return CampaignCase(
         f"spme:{case}", tuple(sorted(inputs.items())), SPME_SCIENTIFIC_METRICS[case]
     )
@@ -112,8 +113,12 @@ CASES = (
 
 
 def _prepare_experiment(
-    *, shells=BASE_MESH[0], cells=BASE_MESH[1], steps=128, equilibrium=False
-):
+    *,
+    shells: Any = BASE_MESH[0],
+    cells: Any = BASE_MESH[1],
+    steps: Any = 128,
+    equilibrium: Any = False,
+) -> Any:
     adapter = Marquis2019SpmeAdapter(
         Marquis2019SpmePlan(
             shells,
@@ -128,6 +133,7 @@ def _prepare_experiment(
         else (CurrentStepPlan(0.5), RestStepPlan(0.25), CurrentStepPlan(0.25))
     )
     plan = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         BatteryOutputPlan(OBSERVABLES),
@@ -145,18 +151,18 @@ def _prepare_experiment(
     return plan, protocol
 
 
-def _normalized_outputs(result):
+def _normalized_outputs(result: Any) -> Any:
     values = result.outputs.values
     return jnp.stack(
         (values[:, 0], values[:, 1] / DATA.cmax[0], values[:, 2] / DATA.cmax[1]), axis=-1
     )
 
 
-def _difference(a, b):
+def _difference(a: Any, b: Any) -> Any:
     return float(np.max(np.abs(np.asarray(a) - np.asarray(b))))
 
 
-def prepare(sample_times_s):
+def prepare(sample_times_s: Any) -> Any:
     if tuple(sample_times_s) != TIMES:
         raise ValueError(
             f"SPMe campaign requires the precommitted sample matrix {TIMES}."
@@ -174,7 +180,7 @@ def prepare(sample_times_s):
         "time-fine": _prepare_experiment(steps=512),
     }
 
-    def solve(name, currents=jnp.asarray((0.2, -0.05))):
+    def solve(name: Any, currents: Any = jnp.asarray((0.2, -0.05))) -> Any:
         prepared, protocol = configurations[name]
         return prepared.run(
             parameters,
@@ -184,13 +190,13 @@ def prepare(sample_times_s):
             ),
         )
 
-    def operation():
+    def operation() -> Any:
         return solve("base")
 
-    def execute():
+    def execute() -> Any:
         results = {name: solve(name) for name in configurations}
 
-        def objective(currents):
+        def objective(currents: Any) -> Any:
             result = solve("base", currents)
             return _normalized_outputs(result)[-1]
 
@@ -204,7 +210,7 @@ def prepare(sample_times_s):
             2 * h
         )
 
-        def final_negative(current):
+        def final_negative(current: Any) -> Any:
             return jnp.sum(
                 solve(
                     "base", jnp.stack((current, point[1]))
@@ -233,7 +239,7 @@ def prepare(sample_times_s):
     )
 
 
-def _scalar_metric(metrics, case, name, value):
+def _scalar_metric(metrics: Any, case: Any, name: Any, value: Any) -> None:
     value = float(value)
     metrics[metric_key(f"spme:{case}", name)] = {
         "value": value if np.isfinite(value) else None,
@@ -243,7 +249,7 @@ def _scalar_metric(metrics, case, name, value):
     }
 
 
-def _reference_matrix(level):
+def _reference_matrix(level: Any) -> Any:
     return np.stack(
         (
             np.asarray(level["voltage_v"]),
@@ -254,7 +260,7 @@ def _reference_matrix(level):
     )
 
 
-def _load_references(spec, directory):
+def _load_references(spec: Any, directory: Any) -> Any:
     references = {}
     for binding in spec.payloads:
         if not isinstance(binding.manifest, ReferenceArtifactManifest):
@@ -286,6 +292,7 @@ def _load_references(spec, directory):
             raise ValueError(
                 "Reference manifest must cite the self-authored parameter data identity."
             )
+        # ty: ignore[no-matching-overload]
         runtime = dict(payload["runtime"])
         runtime_id = runtime.pop("runtime_id")
         if (
@@ -302,11 +309,13 @@ def _load_references(spec, directory):
             raise ValueError(
                 "PyBaMM reference must use the precommitted installed package version."
             )
+        # ty: ignore[invalid-argument-type]
         if len(payload["levels"]) != 3:
             raise ValueError(
                 "Reference must carry actual three-level self-convergence observations."
             )
         for level, radial, cells in zip(
+            # ty: ignore[invalid-argument-type]
             payload["levels"],
             (32, 64, 128),
             ((24, 12, 24), (48, 24, 48), (96, 48, 96)),
@@ -350,7 +359,7 @@ def _load_references(spec, directory):
     return references
 
 
-def raw_output(spec, executed, campaign_directory: Path):
+def raw_output(spec: Any, executed: Any, campaign_directory: Path) -> Any:
     metrics = {}
     base, equilibrium = executed["base"], executed["equilibrium"]
     add = lambda case, name, value: _scalar_metric(metrics, case, name, value)
@@ -526,7 +535,7 @@ def raw_output(spec, executed, campaign_directory: Path):
     }
 
 
-def campaign_entry():
+def campaign_entry() -> Any:
     return CampaignEntry(
         KIND,
         MARQUIS_2019_SPME_CANDIDATE,

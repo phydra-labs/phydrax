@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._dataset import (
     ClosureSample,
     ClosureSampleKey,
@@ -400,8 +401,7 @@ class SmoothCompressibleRolloutWindow(StrictModule, NonTrainableState):
         if not isinstance(plan, SmoothCompressibleRolloutWindowPlan):
             raise TypeError("plan must be a SmoothCompressibleRolloutWindowPlan.")
         split_ = str(split).strip()
-        if split_ not in ("train", "validation", "test"):
-            raise ValueError("Unknown rollout dataset split.")
+        split_ = parse(split_, DatasetSplit, "split_")
         anchor_ = plan.validate_anchor(trajectory, anchor)
         history_start = anchor_ - plan.history_steps
         target_stop = anchor_ + plan.horizon_steps

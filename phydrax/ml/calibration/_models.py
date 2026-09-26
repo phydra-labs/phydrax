@@ -26,6 +26,7 @@ from ..._differentiation import (
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     _protocol_model,
@@ -109,8 +110,7 @@ def _validate_optimization(
         raise ValueError(
             "Optimization requires scalar positive learning_rate/max_iterations and nonnegative tolerance/l2."
         )
-    if policy not in {"none", "statistical", "measure", "product"}:
-        raise ValueError("Unsupported weight policy.")
+    policy = parse(policy, WeightPolicy, "policy")
     return rate, iterations, tolerance_, penalty, policy
 
 
@@ -1178,8 +1178,7 @@ class IsotonicCalibrationRecipe(AbstractRecipe):
     weight_policy: WeightPolicy = eqx.field(static=True)
 
     def __init__(self, *, weight_policy: WeightPolicy = "statistical") -> None:
-        if weight_policy not in {"none", "statistical", "measure", "product"}:
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.weight_policy = weight_policy
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -1202,8 +1201,7 @@ class SmoothIsotonicCalibrationRecipe(AbstractRecipe):
         ):
             raise ValueError("bandwidth must be a finite positive scalar.")
         self.bandwidth = bandwidth_
-        if weight_policy not in {"none", "statistical", "measure", "product"}:
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.weight_policy = weight_policy
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:

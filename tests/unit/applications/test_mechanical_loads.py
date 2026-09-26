@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -26,7 +28,7 @@ from phydrax.integration._deformed_measure import DeformedMeasurePlan
 from phydrax.nn.parameters import ParameterSubspace
 
 
-def _triangle_action(load):
+def _triangle_action(load: Any) -> Any:
     reference = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
     gathers = jnp.asarray(((0, 1, 2),), dtype=jnp.int32)
     basis = jnp.asarray(((1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0),))
@@ -44,7 +46,7 @@ def _triangle_action(load):
     )
 
 
-def _tetrahedron_surface(scale=1.0):
+def _tetrahedron_surface(scale: Any = 1.0) -> Any:
     root_three = jnp.sqrt(3.0)
     centroids = jnp.asarray(
         (
@@ -73,7 +75,7 @@ def _tetrahedron_surface(scale=1.0):
     return centroids, scale * centroids, plan.evaluate(deformation)
 
 
-def _tetrahedron_action(load):
+def _tetrahedron_action(load: Any) -> Any:
     reference = jnp.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -116,7 +118,7 @@ def _tetrahedron_action(load):
     )
 
 
-def test_mechanical_semantics_refuse_uncertified_or_open_potential_routing():
+def test_mechanical_semantics_refuse_uncertified_or_open_potential_routing() -> None:
     with pytest.raises(ValueError, match="certified"):
         MechanicalLoadSemantics(
             "body",
@@ -137,7 +139,7 @@ def test_mechanical_semantics_refuse_uncertified_or_open_potential_routing():
         )
 
 
-def test_dead_load_potential_gradient_is_the_assembled_load_residual():
+def test_dead_load_potential_gradient_is_the_assembled_load_residual() -> None:
     action = _triangle_action(ReferenceDeadBodyForce(jnp.asarray((2.0, -3.0))))
     state = MechanicalLoadState(1.5)
     current = action.reference_coordinates + jnp.asarray(
@@ -157,7 +159,7 @@ def test_dead_load_potential_gradient_is_the_assembled_load_residual():
     assert bool(evaluation.valid)
 
 
-def test_closed_and_pneumatic_pressure_follow_current_volume():
+def test_closed_and_pneumatic_pressure_follow_current_volume() -> None:
     reference, current, measure = _tetrahedron_surface(scale=2.0)
     state = MechanicalLoadState()
     closed = ClosedSurfacePressure(
@@ -198,7 +200,7 @@ def test_closed_and_pneumatic_pressure_follow_current_volume():
     assert bool(gas.valid)
 
 
-def test_closed_pressure_FE_potential_gradient_matches_external_residual():
+def test_closed_pressure_FE_potential_gradient_matches_external_residual() -> None:
     pressure = ClosedSurfacePressure(
         2.5,
         closure_id="tetrahedron-closed",
@@ -212,7 +214,7 @@ def test_closed_pressure_FE_potential_gradient_matches_external_residual():
     np.testing.assert_allclose(gradient, residual, rtol=1e-6, atol=1e-6)
 
 
-def test_composite_preserves_components_and_conservative_routing():
+def test_composite_preserves_components_and_conservative_routing() -> None:
     first = ReferenceDeadBodyForce(jnp.asarray((1.0, 0.0)), load_id="first")
     second = ReferenceDeadBodyForce(jnp.asarray((0.0, 2.0)), load_id="second")
     composite = CompositeMechanicalLoad((first, second))
@@ -232,10 +234,10 @@ def test_composite_preserves_components_and_conservative_routing():
     assert not mixed.semantics.potential_certified
 
 
-def test_general_follower_action_keeps_its_nonsymmetric_tangent():
+def test_general_follower_action_keeps_its_nonsymmetric_tangent() -> None:
     matrix = jnp.asarray(((0.0, 2.0), (-1.0, 0.5)))
 
-    def law(reference, current, measure, state, args):
+    def law(reference: Any, current: Any, measure: Any, state: Any, args: Any) -> Any:
         del reference, measure, state, args
         return oe.contract("ij,...j->...i", matrix, current)
 
@@ -253,11 +255,11 @@ def test_general_follower_action_keeps_its_nonsymmetric_tangent():
         action.potential(current, MechanicalLoadState())
 
 
-def test_neural_mechanical_load_prepares_physical_virtual_work_pullback():
+def test_neural_mechanical_load_prepares_physical_virtual_work_pullback() -> None:
     action = _triangle_action(ReferenceDeadBodyForce(jnp.asarray((1.0, -2.0))))
     functions = {"coordinates": action.reference_coordinates + 0.05}
 
-    def trace(root, reference_coordinates, args):
+    def trace(root: Any, reference_coordinates: Any, args: Any) -> Any:
         del reference_coordinates, args
         return root["coordinates"]
 

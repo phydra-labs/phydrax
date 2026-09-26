@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -22,7 +24,7 @@ from phydrax.discretization.mpm import MPMRunStatus, MPMRuntimeState
 from phydrax.dynamics._plant import AbstractDiscretePlant, PlantStepContext
 
 
-def _prepared_problem(*, stateful: bool = False, case_ndim: int = 0):
+def _prepared_problem(*, stateful: bool = False, case_ndim: int = 0) -> Any:
     dimension = 2
     particle_count = 4
     axes = tuple(
@@ -72,7 +74,9 @@ def _prepared_problem(*, stateful: bool = False, case_ndim: int = 0):
         )
         initial_history = None
 
-    def commanded_acceleration(time, position, velocity, command):
+    def commanded_acceleration(
+        time: Any, position: Any, velocity: Any, command: Any
+    ) -> Any:
         del time, velocity
         return jnp.broadcast_to(
             jnp.asarray(command, dtype=position.dtype), position.shape
@@ -114,7 +118,7 @@ def _prepared_problem(*, stateful: bool = False, case_ndim: int = 0):
     return plant, compiled, runtime, arguments
 
 
-def _context(state, step_size):
+def _context(state: Any, step_size: Any) -> Any:
     return PlantStepContext(
         state.time,
         state.time + jnp.asarray(step_size, dtype=state.time.dtype),
@@ -122,7 +126,9 @@ def _context(state, step_size):
     )
 
 
-def test_mpm_soft_plant_routes_body_force_and_reports_motion_conservation_and_work():
+def test_mpm_soft_plant_routes_body_force_and_reports_motion_conservation_and_work() -> (
+    None
+):
     plant, _, initial_runtime, _ = _prepared_problem()
     assert isinstance(plant, AbstractDiscretePlant)
     assert plant.control_schema is not None
@@ -178,7 +184,9 @@ def test_mpm_soft_plant_routes_body_force_and_reports_motion_conservation_and_wo
     assert observation.execution_signature_id == plant.execution_signature.signature_id
 
 
-def test_casewise_failure_rolls_back_particle_grid_material_history_and_metadata():
+def test_casewise_failure_rolls_back_particle_grid_material_history_and_metadata() -> (
+    None
+):
     plant, _, runtime, _ = _prepared_problem(stateful=True, case_ndim=1)
     assert jnp.any(runtime.particles.material_state != 0.0)
     keys = jax.random.split(jax.random.key(3), 2)
@@ -214,7 +222,7 @@ def test_casewise_failure_rolls_back_particle_grid_material_history_and_metadata
     assert result.accepted_state.step_index[0] == 1
 
 
-def test_checkpoint_replay_is_deterministic_and_includes_particle_grid_history():
+def test_checkpoint_replay_is_deterministic_and_includes_particle_grid_history() -> None:
     plant, _, _, _ = _prepared_problem(stateful=True)
     source = plant.reset(jax.random.key(8), plant.parameters).accepted_state
     checkpoint = plant.checkpoint(source)
@@ -249,7 +257,7 @@ def test_checkpoint_replay_is_deterministic_and_includes_particle_grid_history()
     )
 
 
-def test_resolution_and_unbound_capability_requirements_fail_closed():
+def test_resolution_and_unbound_capability_requirements_fail_closed() -> None:
     plant, compiled, runtime, arguments = _prepared_problem()
     assert plant.resolution.particle_capacity == 4
     assert plant.resolution.grid_shape == (12, 12)

@@ -464,6 +464,7 @@ def _qualification(
         method,
         binding.plan.equilibrium_plan,
         SPATIAL_SHAPE,
+        # ty: ignore[invalid-argument-type]
         CELL_SPACING,
         TIME_STEP,
         conservation_tolerance=CONSERVATION_TOLERANCE,
@@ -484,7 +485,9 @@ def _qualification(
         volumetric_heating=COMBINED_HEATING,
     )
     nonfinite_plan = SmoothCompressibleD2VBodyForcingPlan(
-        method, acceleration=(np.finfo(np.float64).max, 0.0)
+        method,
+        # ty: ignore[invalid-argument-type]
+        acceleration=(np.finfo(np.float64).max, 0.0),
     )
     negative_plan = SmoothCompressibleD2VBodyForcingPlan(
         method, volumetric_heating=-1.0e6

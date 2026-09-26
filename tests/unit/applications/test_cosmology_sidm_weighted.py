@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -17,14 +19,14 @@ from phydrax.applications.cosmology._sidm_weighted import (
 cosmology = phx.applications.cosmology
 
 
-def _assert_tree_equal(first, second):
+def _assert_tree_equal(first: Any, second: Any) -> None:
     for first_leaf, second_leaf in zip(
         jax.tree.leaves(first), jax.tree.leaves(second), strict=True
     ):
         np.testing.assert_array_equal(first_leaf, second_leaf)
 
 
-def _particle_mesh(particles):
+def _particle_mesh(particles: Any) -> Any:
     axes = tuple(
         phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(3)
     )
@@ -50,6 +52,7 @@ def _particle_mesh(particles):
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -66,7 +69,9 @@ def _particle_mesh(particles):
     )
 
 
-def _case(weights, *, capacity=4, active_count=2, cross_section=0.01):
+def _case(
+    weights: Any, *, capacity: Any = 4, active_count: Any = 2, cross_section: Any = 0.01
+) -> Any:
     ids = jnp.asarray((101, 7, 83, 19, 211, 43, 59, 131)[:capacity])
     particles = phx.discretization.ParticleSetPlan(
         ids,
@@ -121,13 +126,15 @@ def _case(weights, *, capacity=4, active_count=2, cross_section=0.01):
     return plan, state
 
 
-def _certain_collision(plan, state, key=jr.key(3), epoch=4):
+def _certain_collision(
+    plan: Any, state: Any, key: Any = jr.key(3), epoch: Any = 4
+) -> Any:
     unit = plan.collide(state, key, epoch, 1.0)
     rate = jnp.max(unit.diagnostics.pair_probability)
     return plan.collide(state, key, epoch, (1.0 - 1.0e-12) / rate)
 
 
-def test_equal_weight_limit_is_unsplit_elastic_rare_scattering():
+def test_equal_weight_limit_is_unsplit_elastic_rare_scattering() -> None:
     plan, state = _case((2.0, 2.0))
     result = _certain_collision(plan, state)
 
@@ -142,7 +149,7 @@ def test_equal_weight_limit_is_unsplit_elastic_rare_scattering():
     )
 
 
-def test_weighted_homogeneous_rate_uses_maximum_weight():
+def test_weighted_homogeneous_rate_uses_maximum_weight() -> None:
     equal_plan, equal_state = _case((1.0, 1.0))
     weighted_plan, weighted_state = _case((3.0, 1.0))
     equal = equal_plan.collide(equal_state, jr.key(9), 2, 1.0e-3)
@@ -156,7 +163,7 @@ def test_weighted_homogeneous_rate_uses_maximum_weight():
     )
 
 
-def test_retained_subpacket_split_has_exact_ledger_lineage_and_restart_identity():
+def test_retained_subpacket_split_has_exact_ledger_lineage_and_restart_identity() -> None:
     plan, state = _case((3.0, 1.0))
     first = _certain_collision(plan, state, jr.key(81), 17)
     restarted = _certain_collision(plan, state, jr.key(81), 17)
@@ -178,7 +185,7 @@ def test_retained_subpacket_split_has_exact_ledger_lineage_and_restart_identity(
     np.testing.assert_allclose(first.diagnostics.kinetic_energy_defect, 0.0, atol=2.0e-13)
 
 
-def test_near_equal_weight_retains_exact_residual_in_a_child_packet():
+def test_near_equal_weight_retains_exact_residual_in_a_child_packet() -> None:
     epsilon = jnp.finfo(jnp.float64).eps
     plan, state = _case((1.0 + 32.0 * epsilon, 1.0))
     result = _certain_collision(plan, state, jr.key(27), 6)
@@ -191,7 +198,7 @@ def test_near_equal_weight_retains_exact_residual_in_a_child_packet():
     )
 
 
-def test_child_capacity_failure_rolls_back_every_state_leaf_atomically():
+def test_child_capacity_failure_rolls_back_every_state_leaf_atomically() -> None:
     plan, state = _case((3.0, 1.0), capacity=2)
     result = _certain_collision(plan, state)
 
@@ -200,7 +207,7 @@ def test_child_capacity_failure_rolls_back_every_state_leaf_atomically():
     _assert_tree_equal(result.accepted_state, state)
 
 
-def test_successful_weighted_rollout_uses_negative_one_failure_sentinel():
+def test_successful_weighted_rollout_uses_negative_one_failure_sentinel() -> None:
     plan, state = _case((1.0, 1.0), cross_section=0.0)
     result = plan.rollout(cosmology.FLRWBackground(1.0, 0.3), state, jr.key(41))
 
@@ -209,7 +216,7 @@ def test_successful_weighted_rollout_uses_negative_one_failure_sentinel():
     assert result.profile_id == plan.plan_id
 
 
-def test_runtime_macro_mass_is_the_pm_source_without_support_mutation():
+def test_runtime_macro_mass_is_the_pm_source_without_support_mutation() -> None:
     plan, state = _case((3.0, 1.0))
     prepared_mass = plan.particles.masses.copy()
     deposited, routes = plan.density(state)
@@ -224,7 +231,7 @@ def test_runtime_macro_mass_is_the_pm_source_without_support_mutation():
     np.testing.assert_array_equal(plan.particles.masses, prepared_mass)
 
 
-def test_resampler_closes_declared_kinetic_and_covariance_moments():
+def test_resampler_closes_declared_kinetic_and_covariance_moments() -> None:
     plan, initialized = _case(
         (1.0, 2.0, 0.5, 1.5, 0.75, 1.25), capacity=8, active_count=6
     )
@@ -301,7 +308,9 @@ def test_resampler_closes_declared_kinetic_and_covariance_moments():
     _assert_tree_equal(off_boundary.accepted_state, state)
 
 
-def test_resampler_periodic_centroid_and_large_capacity_use_linear_memory_identity():
+def test_resampler_periodic_centroid_and_large_capacity_use_linear_memory_identity() -> (
+    None
+):
     capacity = 2048
     active = jnp.arange(capacity) < 4
     positions = jnp.full((capacity, 3), jnp.nan)

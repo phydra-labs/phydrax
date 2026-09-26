@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _general(matrix, mass=None):
+def _general(matrix: Any, mass: Any = None) -> Any:
     operator = phx.linalg.DenseLinearOperator(jnp.asarray(matrix))
     mass_operator = (
         None if mass is None else phx.linalg.DenseLinearOperator(jnp.asarray(mass))
@@ -15,7 +17,7 @@ def _general(matrix, mass=None):
     )
 
 
-def _assert_successful(result):
+def _assert_successful(result: Any) -> None:
     assert bool(result.successful)
     assert bool(result.diagnostics.converged)
     assert bool(result.diagnostics.output_finite)
@@ -25,7 +27,7 @@ def _assert_successful(result):
     assert jnp.max(result.diagnostics.left_relative_residuals) < 1e-8
 
 
-def test_homogeneous_resolution_matching_is_one_to_one_and_permutation_safe():
+def test_homogeneous_resolution_matching_is_one_to_one_and_permutation_safe() -> None:
     coarse = _general(jnp.diag(jnp.asarray([1.0, 2.0, 4.0])))
     fine = _general(jnp.diag(jnp.asarray([4.0, 1.0, 2.0 + 1e-9])))
     _assert_successful(coarse)
@@ -38,7 +40,7 @@ def test_homogeneous_resolution_matching_is_one_to_one_and_permutation_safe():
     assert jnp.max(report.chordal_distances) < 1e-8
 
 
-def test_homogeneous_resolution_matching_preserves_infinite_classification():
+def test_homogeneous_resolution_matching_preserves_infinite_classification() -> None:
     matrix = jnp.diag(jnp.asarray([2.0, 3.0]))
     mass = jnp.diag(jnp.asarray([1.0, 0.0]))
     coarse = _general(matrix, mass)
@@ -52,7 +54,7 @@ def test_homogeneous_resolution_matching_preserves_infinite_classification():
     assert jnp.all(report.matched_mask)
 
 
-def test_repeated_cluster_is_not_certified_as_individual_modes():
+def test_repeated_cluster_is_not_certified_as_individual_modes() -> None:
     coarse = _general(jnp.diag(jnp.asarray([1.0, 1.0, 3.0])))
     fine = _general(jnp.diag(jnp.asarray([1.0, 1.0, 3.0])))
     _assert_successful(coarse)
@@ -64,7 +66,7 @@ def test_repeated_cluster_is_not_certified_as_individual_modes():
     assert report.trusted_count == 1
 
 
-def test_spectral_eigenspace_evidence_compares_transferred_modes():
+def test_spectral_eigenspace_evidence_compares_transferred_modes() -> None:
     domain = phx.discretization.AxisDomain.periodic(0.0, 1.0)
     coarse = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(5),)
@@ -98,7 +100,7 @@ def test_spectral_eigenspace_evidence_compares_transferred_modes():
     assert jnp.max(report.subspace_errors) < 1e-10
 
 
-def test_spectral_eigenspace_evidence_rejects_non_tensor_transfer():
+def test_spectral_eigenspace_evidence_rejects_non_tensor_transfer() -> None:
     domain = phx.discretization.AxisDomain.periodic(0.0, 1.0)
     space = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(5),)

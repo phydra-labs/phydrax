@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -98,7 +100,7 @@ def _one_group_per_split(
     raise AssertionError("Could not construct deterministic split fixtures.")
 
 
-def test_complete_parents_are_partitioned_before_any_overlapping_windows():
+def test_complete_parents_are_partitioned_before_any_overlapping_windows() -> None:
     partition_plan = LeakageSafePartitionPlan(
         "trajectory",
         train_fraction=0.5,
@@ -162,7 +164,7 @@ def test_complete_parents_are_partitioned_before_any_overlapping_windows():
     }
 
 
-def test_windows_are_contiguous_deterministic_and_reject_bad_anchor_or_horizon():
+def test_windows_are_contiguous_deterministic_and_reject_bad_anchor_or_horizon() -> None:
     parent = _trajectory(count=9)
     plan = SmoothCompressibleRolloutWindowPlan(
         3,
@@ -213,7 +215,7 @@ def test_windows_are_contiguous_deterministic_and_reject_bad_anchor_or_horizon()
         plan.anchors(_trajectory(count=4))
 
 
-def test_native_shapes_dtype_and_bound_identities_are_exact():
+def test_native_shapes_dtype_and_bound_identities_are_exact() -> None:
     schema = _schema()
     parent = _trajectory(schema=schema)
     assert schema.f_shape == (2, 3, 17)
@@ -297,7 +299,7 @@ def test_native_shapes_dtype_and_bound_identities_are_exact():
         )
 
 
-def test_failed_oracle_parent_is_rejected_whole_and_never_partially_windowed():
+def test_failed_oracle_parent_is_rejected_whole_and_never_partially_windowed() -> None:
     failed_validity = np.ones((8,), dtype="bool")
     failed_validity[-1] = False
     good = _trajectory(trajectory_id="good", count=8)
@@ -316,7 +318,7 @@ def test_failed_oracle_parent_is_rejected_whole_and_never_partially_windowed():
         )
 
 
-def test_statistics_count_each_training_parent_state_once_not_each_window():
+def test_statistics_count_each_training_parent_state_once_not_each_window() -> None:
     parent = _trajectory(count=6)
     dataset = prepare_smooth_compressible_rollout_dataset(
         (parent,),
@@ -344,7 +346,7 @@ def test_statistics_count_each_training_parent_state_once_not_each_window():
     assert len(dataset.train_windows) > 1
 
 
-def test_parent_artifact_and_runtime_ids_each_change_preparation_identity():
+def test_parent_artifact_and_runtime_ids_each_change_preparation_identity() -> None:
     partition_plan = LeakageSafePartitionPlan(
         "trajectory",
         train_fraction=1.0,
@@ -359,7 +361,7 @@ def test_parent_artifact_and_runtime_ids_each_change_preparation_identity():
         trajectory_id: str = "trajectory",
         stage_one_artifact_id: str = "stage-one",
         runtime_id: str = "runtime",
-    ):
+    ) -> Any:
         schema = _schema(
             runtime_id=runtime_id,
             stage_one_artifact_id=stage_one_artifact_id,

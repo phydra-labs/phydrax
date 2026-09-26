@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -34,7 +35,9 @@ from phydrax.tensor_decomposition import (
 )
 
 
-def _system(labels, equations, rows, exponents, coefficients):
+def _system(
+    labels: Any, equations: Any, rows: Any, exponents: Any, coefficients: Any
+) -> Any:
     return algebraic.SparsePolynomialSystem.from_coo(
         labels,
         equations,
@@ -44,7 +47,7 @@ def _system(labels, equations, rows, exponents, coefficients):
     )
 
 
-def _core_case():
+def _core_case() -> Any:
     system = _system(("x",), ("f",), (0, 0), ((0,), (2,)), (-1.0, 1.0))
     values = system.evaluate(jnp.asarray([[-1.0], [1.0]]))
     jacobian = system.jacobian(jnp.asarray([[0.0], [1.0]]))
@@ -75,7 +78,7 @@ def _core_case():
     }
 
 
-def _image_case():
+def _image_case() -> Any:
     numeric = _system(
         ("t",),
         ("x", "y", "z"),
@@ -86,6 +89,7 @@ def _image_case():
     mapping = polynomial_image.SparsePolynomialMap(numeric)
     support = polynomial_image.TargetMonomialSupport(
         ("x", "y", "z"),
+        # ty: ignore[invalid-argument-type]
         tuple(
             (first, second, third)
             for first in range(3)
@@ -123,7 +127,7 @@ def _image_case():
     }
 
 
-def _optimization_case():
+def _optimization_case() -> Any:
     objective = _system(("x",), ("objective",), (0,), ((2,),), (1.0,))
     inequalities = _system(("x",), ("unit interval",), (0, 0), ((0,), (2,)), (1.0, -1.0))
     problem = polynomial_optim.PolynomialOptimizationProblem(
@@ -145,7 +149,7 @@ def _optimization_case():
     }
 
 
-def _witness_case():
+def _witness_case() -> Any:
     witness = WitnessSet(
         "parabola",
         1,
@@ -163,7 +167,7 @@ def _witness_case():
     }
 
 
-def _tensor_case():
+def _tensor_case() -> Any:
     weights, factors = normalize_waring_components(
         jnp.asarray([1.7, -0.65]),
         jnp.asarray([[1.0, 0.35], [0.55, 1.0]]),
@@ -182,7 +186,7 @@ def _tensor_case():
     }
 
 
-def _g1_case():
+def _g1_case() -> Any:
     topology = PreparedHalfEdgePatchTopology(
         ("left", "right"),
         (("a", "b", "e", "d"), ("b", "c", "f", "e")),
@@ -210,7 +214,7 @@ def _g1_case():
     }
 
 
-def _power_case():
+def _power_case() -> Any:
     network = power.PowerNetwork(
         (power.Bus("source", 110), power.Bus("load", 110)),
         (power.Branch("line", "source", "load", 0.0, 0.1),),
@@ -235,7 +239,7 @@ def _power_case():
     }
 
 
-def main():
+def main() -> Any:
     cases = {
         "core": _core_case(),
         "polynomial_image": _image_case(),

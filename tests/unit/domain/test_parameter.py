@@ -12,7 +12,7 @@ from phydrax.domain import Interval1d, SampleLayout, TimeInterval
 from phydrax.operators.differential import grad, hessian
 
 
-def test_parameter_broadcasts_over_product_domain():
+def test_parameter_broadcasts_over_product_domain() -> None:
     dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     lam = dom.Parameter(2.5)
     assert lam.deps == ()
@@ -27,7 +27,7 @@ def test_parameter_broadcasts_over_product_domain():
     assert jnp.allclose(out, 2.5)
 
 
-def test_parameter_is_inexact_and_trainable_leaf():
+def test_parameter_is_inexact_and_trainable_leaf() -> None:
     dom = Interval1d(0.0, 1.0)
     lam = dom.Parameter(1)
 
@@ -37,7 +37,7 @@ def test_parameter_is_inexact_and_trainable_leaf():
     assert jnp.issubdtype(leaves[0].dtype, jnp.inexact)
 
 
-def test_parameter_transform_applies_and_trains_raw():
+def test_parameter_transform_applies_and_trains_raw() -> None:
     dom = Interval1d(0.0, 1.0)
     lam = dom.Parameter(-1.0, transform=jax.nn.softplus)
 
@@ -53,7 +53,7 @@ def test_parameter_transform_applies_and_trains_raw():
     assert jnp.all(out > 0.0)
 
 
-def test_parameter_grad_and_hessian_are_zero():
+def test_parameter_grad_and_hessian_are_zero() -> None:
     dom = Interval1d(0.0, 1.0)
     lam = dom.Parameter(2.5)
 

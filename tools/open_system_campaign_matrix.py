@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 
@@ -28,7 +29,7 @@ from tools.open_system_campaigns import (
 )
 
 
-def _runner_fingerprint(runner) -> str:
+def _runner_fingerprint(runner: Any) -> str:
     root = Path(__file__).resolve().parents[1]
     digest = hashlib.sha256()
     paths = [
@@ -47,7 +48,7 @@ def _runner_fingerprint(runner) -> str:
     return digest.hexdigest()
 
 
-def run_campaign_matrix(output_directory: str):
+def run_campaign_matrix(output_directory: str) -> Any:
     directory = Path(output_directory)
     directory.mkdir(parents=True, exist_ok=True)
     runners = (

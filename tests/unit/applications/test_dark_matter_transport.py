@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -33,7 +34,9 @@ from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.stochastic import JUMP_INVALID_INTENSITY, JUMP_MAX_EVENTS, JUMP_SUCCESS
 
 
-def _manifest(name, *, commercial=False, thermal_sigma_cutoff=6.0):
+def _manifest(
+    name: Any, *, commercial: Any = False, thermal_sigma_cutoff: Any = 6.0
+) -> Any:
     payload = name.encode()
     return ReferenceArtifactManifest(
         name,
@@ -56,7 +59,7 @@ def _manifest(name, *, commercial=False, thermal_sigma_cutoff=6.0):
     )
 
 
-def _profile():
+def _profile() -> Any:
     return LayeredTerrestrialProfile(
         jnp.asarray((1.0, 2.0)),
         jnp.asarray((1.0, 2.0)),
@@ -68,7 +71,7 @@ def _profile():
     )
 
 
-def _homogeneous_profile():
+def _homogeneous_profile() -> Any:
     return LayeredTerrestrialProfile(
         jnp.asarray((2.0,)),
         jnp.asarray((1.0,)),
@@ -80,7 +83,7 @@ def _homogeneous_profile():
     )
 
 
-def _scattering():
+def _scattering() -> Any:
     speeds = jnp.asarray((0.0, 10.0))
     cross_sections = jnp.asarray(((0.25, 0.25), (0.5, 0.5)))
     rates = cross_sections[:, None, :] * speeds[None, None, :]
@@ -97,7 +100,7 @@ def _scattering():
     )
 
 
-def test_requested_use_rights_are_enforced_and_bound_into_identity():
+def test_requested_use_rights_are_enforced_and_bound_into_identity() -> None:
     manifest = _manifest("synthetic-rights-profile", commercial=True)
     arguments = (
         jnp.asarray((2.0,)),
@@ -171,7 +174,7 @@ def test_requested_use_rights_are_enforced_and_bound_into_identity():
         )
 
 
-def test_transparent_path_and_layer_transitions_are_geometrically_explicit():
+def test_transparent_path_and_layer_transitions_are_geometrically_explicit() -> None:
     state = jnp.asarray((-3.0, 0.0, 0.0, 2.0, 0.0, 0.0))
     propagated = transparent_state(state, 1.25)
     evaluated = _profile().evaluate(
@@ -187,7 +190,7 @@ def test_transparent_path_and_layer_transitions_are_geometrically_explicit():
     )
 
 
-def test_layered_analytic_hazard_recovers_homogeneous_exponential_optical_depth():
+def test_layered_analytic_hazard_recovers_homogeneous_exponential_optical_depth() -> None:
     result = layered_analytic_optical_depth(
         _homogeneous_profile(),
         _scattering(),
@@ -206,7 +209,7 @@ def test_layered_analytic_hazard_recovers_homogeneous_exponential_optical_depth(
     assert jnp.abs(empirical - result.interaction_cdf) < 0.01
 
 
-def test_generic_hazard_quadrature_converges_to_layered_realization():
+def test_generic_hazard_quadrature_converges_to_layered_realization() -> None:
     profile = _profile()
     scattering = _scattering()
     exact = layered_analytic_optical_depth(
@@ -235,7 +238,7 @@ def test_generic_hazard_quadrature_converges_to_layered_realization():
     )
 
 
-def test_vacuum_layers_mask_out_of_support_rate_coefficients():
+def test_vacuum_layers_mask_out_of_support_rate_coefficients() -> None:
     vacuum = LayeredTerrestrialProfile(
         jnp.asarray((2.0,)),
         jnp.zeros((1,)),
@@ -262,7 +265,7 @@ def test_vacuum_layers_mask_out_of_support_rate_coefficients():
     assert quadrature.total_optical_depth == 0.0
 
 
-def test_partial_hazards_select_only_supported_targets():
+def test_partial_hazards_select_only_supported_targets() -> None:
     rates = jnp.asarray((0.0, 4.0, 0.0))
     selected = jnp.stack(
         tuple(
@@ -274,7 +277,7 @@ def test_partial_hazards_select_only_supported_targets():
     assert sample_target_from_partial_rates(jr.key(1), jnp.zeros((3,))) == -1
 
 
-def test_profiled_marked_jump_process_exposes_partial_target_rates_and_marks():
+def test_profiled_marked_jump_process_exposes_partial_target_rates_and_marks() -> None:
     process = ProfiledElasticJumpProcess(_profile(), _scattering(), 2.0)
     state = jnp.asarray((0.5, 0.0, 0.0, 4.0, 0.0, 0.0))
     rates = process.intensities(0.0, state)
@@ -289,7 +292,7 @@ def test_profiled_marked_jump_process_exposes_partial_target_rates_and_marks():
     assert jnp.array_equal(after[3:], collision.projectile_velocity_m_s)
 
 
-def test_rate_table_interpolation_and_elastic_invariants_are_exact():
+def test_rate_table_interpolation_and_elastic_invariants_are_exact() -> None:
     scattering = _scattering()
     coefficient = scattering.rate_coefficients(5.5, 200.0)
     collision = elastic_scatter_velocity(
@@ -345,7 +348,7 @@ def test_rate_table_interpolation_and_elastic_invariants_are_exact():
     )
 
 
-def test_weighted_surface_crossing_preserves_flux_and_applies_density_jacobian():
+def test_weighted_surface_crossing_preserves_flux_and_applies_density_jacobian() -> None:
     source = WeightedSampleBatch(
         jnp.asarray(((0.0, 0.0, 0.0, 1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0, 0.0, 0.0))),
         jnp.log(jnp.asarray((2.0, 3.0))),
@@ -368,7 +371,9 @@ def test_weighted_surface_crossing_preserves_flux_and_applies_density_jacobian()
         direction="outward",
     )
 
+    # ty: ignore[not-subscriptable]
     flux_weights = jnp.exp(crossing.flux.log_weights[crossing.flux.mask])
+    # ty: ignore[not-subscriptable]
     density_weights = jnp.exp(crossing.density.log_weights[crossing.density.mask])
     assert jnp.allclose(flux_weights, jnp.asarray((2.0, 3.0)))
     assert jnp.allclose(density_weights, jnp.asarray((1.0, 0.75)))
@@ -378,9 +383,13 @@ def test_weighted_surface_crossing_preserves_flux_and_applies_density_jacobian()
     assert jnp.allclose(crossing.initial_speeds_m_s, 1.0)
     assert jnp.allclose(crossing.crossing_speeds_m_s, jnp.asarray((2.0, 4.0)))
     assert jnp.allclose(crossing.diagnostics.effective_sample_size, 25.0 / 13.0)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(crossing.flux.ancestry_ids, jnp.asarray((71, 93)))
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(crossing.flux.stratum_ids, jnp.asarray((3, 4)))
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(crossing.flux.pair_ids, jnp.asarray((10, 11)))
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(crossing.flux.replicate_ids, jnp.asarray((20, 21)))
     oblique_source = WeightedSampleBatch(
         jnp.asarray(((0.0, 0.0, 0.0, 2.0, 0.0, 0.0),)),
@@ -405,6 +414,7 @@ def test_weighted_surface_crossing_preserves_flux_and_applies_density_jacobian()
         oblique.initial_to_crossing_density_jacobian,
         oblique.initial_speeds_m_s / oblique.crossing_speeds_m_s,
     )
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(oblique.flux.ancestry_ids, jnp.asarray((42, 42)))
     unsupported = WeightedSampleBatch(
         source.samples,
@@ -422,11 +432,11 @@ def test_weighted_surface_crossing_preserves_flux_and_applies_density_jacobian()
     assert unsupported_crossing.diagnostics.status == int(CrossingStatus.INVALID_INPUT)
 
 
-def test_crossing_and_observation_reductions_accept_traced_evidence():
+def test_crossing_and_observation_reductions_accept_traced_evidence() -> None:
     states = jnp.asarray((1.0, 0.0, 0.0, 2.0, 0.0, 0.0))[None, :]
 
     @jax.jit
-    def evaluate(support_valid, exposure):
+    def evaluate(support_valid: Any, exposure: Any) -> Any:
         source = WeightedSampleBatch(
             states,
             jnp.zeros((1,)),
@@ -453,7 +463,7 @@ def test_crossing_and_observation_reductions_accept_traced_evidence():
     assert not invalid
 
 
-def test_numerical_failures_do_not_alias_physical_outcomes():
+def test_numerical_failures_do_not_alias_physical_outcomes() -> None:
     evidence = transport_path_evidence(
         jnp.asarray(
             (JUMP_SUCCESS, JUMP_INVALID_INTENSITY, JUMP_MAX_EVENTS, JUMP_SUCCESS)

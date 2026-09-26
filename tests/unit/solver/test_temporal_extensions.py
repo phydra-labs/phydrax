@@ -11,6 +11,7 @@ def test_rkc_stabilizes_a_diffusive_scalar_step() -> None:
     method = phx.solver.RKCMethod(10)
     initial = jnp.asarray([1.0])
 
+    # ty: ignore[invalid-argument-type]
     result = method.step(lambda time, state, args: -100.0 * state, 0.0, initial, 0.01)
 
     assert jnp.all(jnp.isfinite(result))

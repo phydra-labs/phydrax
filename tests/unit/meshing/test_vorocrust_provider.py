@@ -1,5 +1,6 @@
 import os
 import sys
+from typing import Any
 
 import manifold3d
 import numpy as np
@@ -9,7 +10,7 @@ import phydrax as phx
 
 
 @pytest.mark.meshing_vorocrust
-def test_real_vorocrust_preserves_closed_cube_volume():
+def test_real_vorocrust_preserves_closed_cube_volume() -> None:
     executable = os.environ.get("PHYDRAX_VOROCRUST_EXECUTABLE")
     extractor = os.environ.get("PHYDRAX_VOROCRUST_EXTRACTOR")
     if executable is None or extractor is None:
@@ -51,6 +52,7 @@ def test_real_vorocrust_preserves_closed_cube_volume():
     qualified = phx.applications.porous_media.qualify_vorocrust_porous_mesh(
         result,
         coordinates,
+        # ty: ignore[unresolved-attribute]
         surface_faces=np.flatnonzero(np.asarray(result.mesh.connectivity.boundary_faces)),
     )
     assert qualified.surface_trace is not None
@@ -60,7 +62,7 @@ def test_real_vorocrust_preserves_closed_cube_volume():
         qualified.require_tpfa()
 
 
-def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa():
+def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa() -> None:
     coordinates = np.asarray(
         (
             (0, 0, 0),
@@ -85,6 +87,7 @@ def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa():
         ),
     )
     base = phx.meshing.certify_cell_mesh(
+        # ty: ignore[invalid-argument-type]
         phx.discretization.CellMesh.from_polyhedra(coordinates, cells),
         phx.SpatialCoordinateContract.si(),
     )
@@ -122,6 +125,7 @@ def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa():
         result.coordinate_contract,
         vertical_datum="local-survey-datum",
     )
+    # ty: ignore[unresolved-attribute]
     boundary = np.flatnonzero(np.asarray(result.mesh.connectivity.boundary_faces))
     qualified = phx.applications.porous_media.qualify_vorocrust_porous_mesh(
         result,
@@ -136,7 +140,9 @@ def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa():
         qualified.require_tpfa()
 
 
-def test_vorocrust_version_probe_maps_nonzero_exit_to_meshing_failure(tmp_path):
+def test_vorocrust_version_probe_maps_nonzero_exit_to_meshing_failure(
+    tmp_path: Any,
+) -> None:
     extractor = tmp_path / "extractor"
     extractor.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
     extractor.chmod(0o755)
@@ -151,7 +157,9 @@ def test_vorocrust_version_probe_maps_nonzero_exit_to_meshing_failure(tmp_path):
     )
 
 
-def test_vorocrust_version_probe_requires_protocol_and_binary_identities(tmp_path):
+def test_vorocrust_version_probe_requires_protocol_and_binary_identities(
+    tmp_path: Any,
+) -> None:
     extractor = tmp_path / "extractor"
     digest = "a" * 64
     extractor.write_text(
@@ -167,7 +175,7 @@ def test_vorocrust_version_probe_requires_protocol_and_binary_identities(tmp_pat
     assert info.version == "r1"
 
 
-def test_vorocrust_version_probe_bounds_output_before_decoding(tmp_path):
+def test_vorocrust_version_probe_bounds_output_before_decoding(tmp_path: Any) -> None:
     extractor = tmp_path / "extractor"
     extractor.write_text(
         f"#!{sys.executable}\nprint('x' * 20000)\n",
@@ -182,7 +190,9 @@ def test_vorocrust_version_probe_bounds_output_before_decoding(tmp_path):
     assert failure.value.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
 
 
-def test_vorocrust_fails_closed_when_native_preallocation_is_required(tmp_path):
+def test_vorocrust_fails_closed_when_native_preallocation_is_required(
+    tmp_path: Any,
+) -> None:
     extractor = tmp_path / "extractor"
     extractor.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     extractor.chmod(0o755)

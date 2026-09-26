@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +14,7 @@ from jax.scipy.linalg import expm
 import phydrax as phx
 
 
-def _augmented_reference(matrix, state, forcing, duration):
+def _augmented_reference(matrix: Any, state: Any, forcing: Any, duration: Any) -> Any:
     size = matrix.shape[-1]
     augmented = jnp.zeros((size + 1, size + 1), dtype=matrix.dtype)
     augmented = augmented.at[:size, :size].set(matrix)
@@ -20,7 +23,7 @@ def _augmented_reference(matrix, state, forcing, duration):
     return (expm(duration * augmented) @ initial)[:size]
 
 
-def test_affine_exponential_step_handles_zero_and_singular_operator():
+def test_affine_exponential_step_handles_zero_and_singular_operator() -> None:
     matrix = jnp.asarray(((0.0, 1.0), (0.0, 0.0)), dtype=jnp.float64)
     state = jnp.asarray((2.0, 3.0), dtype=jnp.float64)
     forcing = jnp.asarray((1.0, 2.0), dtype=jnp.float64)
@@ -45,7 +48,7 @@ def test_affine_exponential_step_handles_zero_and_singular_operator():
     assert bool(prepared_zero.successful)
 
 
-def test_prepared_affine_identity_includes_matrix_and_source_content():
+def test_prepared_affine_identity_includes_matrix_and_source_content() -> None:
     first = phx.dynamics.PreparedAffineLinearEvolution(
         jnp.asarray([[0.0]]),
         jnp.asarray([1.0]),
@@ -63,7 +66,7 @@ def test_prepared_affine_identity_includes_matrix_and_source_content():
     assert first.prepared_id != changed_source.prepared_id
 
 
-def test_affine_exponential_step_supports_batched_dense_operators():
+def test_affine_exponential_step_supports_batched_dense_operators() -> None:
     matrices = jnp.asarray(
         (((-1.0, 0.0), (0.0, -2.0)), ((0.0, 1.0), (0.0, 0.0))),
         dtype=jnp.float64,
@@ -84,7 +87,7 @@ def test_affine_exponential_step_supports_batched_dense_operators():
     np.testing.assert_array_equal(result.successful, (True, True))
 
 
-def test_affine_exponential_step_rejects_invalid_duration():
+def test_affine_exponential_step_rejects_invalid_duration() -> None:
     operator = phx.linalg.DenseLinearOperator(jnp.eye(2, dtype=jnp.float64))
     state = jnp.ones((2,), dtype=jnp.float64)
 
@@ -92,13 +95,13 @@ def test_affine_exponential_step_rejects_invalid_duration():
         phx.dynamics.affine_exponential_step(operator, state, state, -1.0)
 
 
-def test_reverse_parameter_gradient_survives_exact_krylov_breakdown():
+def test_reverse_parameter_gradient_survives_exact_krylov_breakdown() -> None:
     # A one-dimensional affine flow closes its Krylov subspace exactly. The
     # discarded zero residual must not inject sqrt(0) NaNs into reverse AD.
     conductance, duration = 10.0, 500.0
     initial, ambient, heat = 300.0, 280.0, 50.0
 
-    def temperature(log_capacity):
+    def temperature(log_capacity: Any) -> Any:
         capacity = 10000.0 * jnp.exp(log_capacity)
         operator = phx.linalg.DenseLinearOperator(
             jnp.reshape(-conductance / capacity, (1, 1))

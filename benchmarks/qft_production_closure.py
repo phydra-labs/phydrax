@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -236,7 +238,7 @@ def _variable_sector_closure() -> dict:
     }
 
 
-def _json_default(value):
+def _json_default(value: Any) -> Any:
     if isinstance(value, jax.Array):
         host = np.asarray(jax.device_get(value))
         return host.item() if host.shape == () else host.tolist()

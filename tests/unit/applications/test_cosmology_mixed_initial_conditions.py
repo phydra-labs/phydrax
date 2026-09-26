@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -31,7 +32,7 @@ from phydrax.units import ONE
 cosmology = phx.applications.cosmology
 
 
-def _space(count=6, dimension=3):
+def _space(count: Any = 6, dimension: Any = 3) -> Any:
     return phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(count) for _ in range(dimension)),
         axis_names=tuple("xyz"[:dimension]),
@@ -42,11 +43,11 @@ def _space(count=6, dimension=3):
 
 
 def _reference_binding(
-    payload,
-    artifact_kind,
+    payload: Any,
+    artifact_kind: Any,
     *,
-    commercial_use_permitted=True,
-):
+    commercial_use_permitted: Any = True,
+) -> Any:
     checksum = hashlib.sha256(payload).hexdigest()
     manifest = ReferenceArtifactManifest(
         f"{artifact_kind}-fixture",
@@ -77,11 +78,14 @@ def _reference_binding(
     return artifact, manifest
 
 
-def _transfer(space, *, component_units=None, gauge="synchronous"):
+def _transfer(
+    space: Any, *, component_units: Any = None, gauge: Any = "synchronous"
+) -> Any:
     scale = cosmology.CODE_COSMOLOGY_SCALE
     background = cosmology.FLRWBackground(1.0, 1.0, scale=scale)
     matrix = jnp.asarray([[2.0e-4, 1.0e-4], [-0.5e-4, 3.0e-4]])
     values = jnp.broadcast_to(matrix[:, :, None, None], (2, 2, 2, 2))
+    # ty: ignore[invalid-argument-type]
     payload = component_transfer_payload_bytes([0.1, 1.0], [0.1, 100.0], values)
     artifact, manifest = _reference_binding(payload, "component-transfer-matrix")
     provenance = cosmology.CosmologyProductProvenance(
@@ -97,7 +101,9 @@ def _transfer(space, *, component_units=None, gauge="synchronous"):
         parent_product_ids=(artifact.artifact_id, manifest.manifest_id),
     )
     product = ComponentTransferMatrixProduct(
+        # ty: ignore[invalid-argument-type]
         [0.1, 1.0],
+        # ty: ignore[invalid-argument-type]
         [0.1, 100.0],
         values,
         components=("cold_baryon", "wave_dark_matter"),
@@ -115,7 +121,9 @@ def _transfer(space, *, component_units=None, gauge="synchronous"):
     return background, product, matrix
 
 
-def _primordial(space, components=("adiabatic", "isocurvature"), *, key=0):
+def _primordial(
+    space: Any, components: Any = ("adiabatic", "isocurvature"), *, key: Any = 0
+) -> Any:
     mode_ids = PrimordialModeRealization.required_mode_ids(space, components)
     gaussian = GaussianCoefficientRealization.sample(
         jr.key(key), mode_ids, coupling_id="mixed-ic-resolution-coupling"
@@ -123,11 +131,12 @@ def _primordial(space, components=("adiabatic", "isocurvature"), *, key=0):
     return PrimordialModeRealization.from_gaussian_modes(space, gaussian, components)
 
 
-def _prepared_wave(count=8):
+def _prepared_wave(count: Any = 8) -> Any:
     space = _space(count, dimension=2)
     background = cosmology.FLRWBackground(1.0, 1.0)
     prepared = WaveDarkMatterPlan(
         1.0,
+        # ty: ignore[invalid-argument-type]
         (0.1, 0.1001),
         gravitational_constant=0.1,
         reduced_planck_constant=1.0,
@@ -139,7 +148,9 @@ def _prepared_wave(count=8):
     return space, prepared
 
 
-def test_correlated_component_modes_preserve_exact_auto_cross_spectra_and_identity():
+def test_correlated_component_modes_preserve_exact_auto_cross_spectra_and_identity() -> (
+    None
+):
     space = _space(6, dimension=3)
     _, product, matrix = _transfer(space)
     primordial = _primordial(space)
@@ -169,10 +180,11 @@ def test_correlated_component_modes_preserve_exact_auto_cross_spectra_and_identi
     assert realized.gauge == product.gauge
 
 
-def test_transfer_rights_denial_manifest_substitution_and_native_generation():
+def test_transfer_rights_denial_manifest_substitution_and_native_generation() -> None:
     space = _space(4, dimension=2)
     background, product, matrix = _transfer(space)
     values = jnp.broadcast_to(matrix[:, :, None, None], (2, 2, 2, 2))
+    # ty: ignore[invalid-argument-type]
     payload = component_transfer_payload_bytes([0.1, 1.0], [0.1, 100.0], values)
     denied_artifact, denied_manifest = _reference_binding(
         payload,
@@ -196,7 +208,9 @@ def test_transfer_rights_denial_manifest_substitution_and_native_generation():
     )
     with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
         ComponentTransferMatrixProduct(
+            # ty: ignore[invalid-argument-type]
             [0.1, 1.0],
+            # ty: ignore[invalid-argument-type]
             [0.1, 100.0],
             values,
             components=product.components,
@@ -231,7 +245,9 @@ def test_transfer_rights_denial_manifest_substitution_and_native_generation():
     )
     with pytest.raises(ValueError, match="digest/license/lineage"):
         ComponentTransferMatrixProduct(
+            # ty: ignore[invalid-argument-type]
             [0.1, 1.0],
+            # ty: ignore[invalid-argument-type]
             [0.1, 100.0],
             values,
             components=product.components,
@@ -257,7 +273,9 @@ def test_transfer_rights_denial_manifest_substitution_and_native_generation():
         differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
     )
     native = ComponentTransferMatrixProduct(
+        # ty: ignore[invalid-argument-type]
         [0.1, 1.0],
+        # ty: ignore[invalid-argument-type]
         [0.1, 100.0],
         values,
         components=product.components,
@@ -274,7 +292,7 @@ def test_transfer_rights_denial_manifest_substitution_and_native_generation():
     assert native.requested_use_id == "native-generated"
 
 
-def test_primordial_mode_ids_couple_resolutions_deterministically():
+def test_primordial_mode_ids_couple_resolutions_deterministically() -> None:
     fine_space = _space(8, dimension=2)
     coarse_space = _space(4, dimension=2)
     fine = _primordial(fine_space, key=17)
@@ -289,7 +307,7 @@ def test_primordial_mode_ids_couple_resolutions_deterministically():
     assert bool(coarse.successful)
 
 
-def test_mixed_plan_rejects_gauge_and_unit_mismatch():
+def test_mixed_plan_rejects_gauge_and_unit_mismatch() -> None:
     space = _space(4, dimension=3)
     _, product, _ = _transfer(space)
     capacity = int(np.prod(space.physical_shape))
@@ -315,7 +333,7 @@ def test_mixed_plan_rejects_gauge_and_unit_mismatch():
         _transfer(space, component_units=(ONE, ONE))
 
 
-def test_particle_projection_uses_lpt_and_closes_modes_and_mass():
+def test_particle_projection_uses_lpt_and_closes_modes_and_mass() -> None:
     space = _space(4, dimension=3)
     background, product, _ = _transfer(space)
     primordial = _primordial(space, key=5)
@@ -354,7 +372,7 @@ def test_particle_projection_uses_lpt_and_closes_modes_and_mass():
     )
 
 
-def test_compatible_current_reconstructs_mean_zero_phase_and_wave_mass():
+def test_compatible_current_reconstructs_mean_zero_phase_and_wave_mass() -> None:
     space, prepared = _prepared_wave()
     x = space.axes[0].nodes[:, None]
     phase = 0.02 * jnp.sin(2.0 * jnp.pi * x)
@@ -392,7 +410,7 @@ def test_compatible_current_reconstructs_mean_zero_phase_and_wave_mass():
     )
 
 
-def test_phase_seed_rejects_curl_circulation_nodes_and_unit_mismatch():
+def test_phase_seed_rejects_curl_circulation_nodes_and_unit_mismatch() -> None:
     space, prepared = _prepared_wave()
     plan = WavePhaseSeedPlan(prepared)
     y = space.axes[1].nodes[None, :]
@@ -452,7 +470,7 @@ def test_phase_seed_rejects_curl_circulation_nodes_and_unit_mismatch():
         )
 
 
-def test_soliton_normalization_and_integer_vortex_winding_are_distinct():
+def test_soliton_normalization_and_integer_vortex_winding_are_distinct() -> None:
     _, prepared = _prepared_wave()
     soliton = SolitonSeedPlan(prepared, (0.5, 0.5), 0.12, 3.0).realize(0.1)
     vortex_plan = VortexSeedPlan(prepared, (0.5, 0.5), 0.08, 2.0, 1)
@@ -473,10 +491,13 @@ def test_soliton_normalization_and_integer_vortex_winding_are_distinct():
     assert not np.array_equal(soliton.state.psi, vortex.state.psi)
 
     with pytest.raises(TypeError, match="must be an integer"):
+        # ty: ignore[invalid-argument-type]
         VortexSeedPlan(prepared, (0.5, 0.5), 0.08, 2.0, 1.5)
 
 
-def test_imported_complex_field_validation_binds_rights_payload_and_result_identity():
+def test_imported_complex_field_validation_binds_rights_payload_and_result_identity() -> (
+    None
+):
     space, prepared = _prepared_wave()
     psi = jnp.ones(space.physical_shape, dtype=jnp.complex128) * jnp.sqrt(2.0)
     payload = imported_complex_field_payload_bytes(psi, 0.1, 2.0)

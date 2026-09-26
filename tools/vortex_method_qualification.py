@@ -2,16 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import contextlib
 import io
 import json
 import runpy
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
 
-def _run(path):
+def _run(path: Any) -> Any:
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
         return runpy.run_path(Path(__file__).resolve().parents[1] / path)

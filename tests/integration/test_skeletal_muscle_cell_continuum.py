@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -19,7 +22,7 @@ from phydrax.applications.skeletal_muscle.fibers import (
 )
 
 
-def _source_candidate():
+def _source_candidate() -> Any:
     mask = jnp.ones((1, 1, 3), dtype="bool")
     stimulus = PrescribedFiberStimulusSchedule(
         jnp.asarray([0.0]),
@@ -38,7 +41,7 @@ def _source_candidate():
     return runtime.candidate(runtime.initialize(), 0.05)
 
 
-def _material():
+def _material() -> Any:
     architecture = UniformFiberArchitecturePlan("uniform-x").prepare(
         jnp.asarray((1.0, 0.0, 0.0))
     )
@@ -49,7 +52,7 @@ def _material():
     )
 
 
-def test_homogenized_crossbridge_driver_commits_both_routes_atomically():
+def test_homogenized_crossbridge_driver_commits_both_routes_atomically() -> None:
     source = _source_candidate()
     material = _material()
     coupling = HomogenizedShortenGasamCouplingPlan(
@@ -71,7 +74,7 @@ def test_homogenized_crossbridge_driver_commits_both_routes_atomically():
     assert candidate.evidence.force_owner == "engelhardt-gasam-2025"
 
 
-def test_invalid_calibration_rolls_back_fiber_and_material():
+def test_invalid_calibration_rolls_back_fiber_and_material() -> None:
     source = _source_candidate()
     material = _material()
     coupling = HomogenizedShortenGasamCouplingPlan(

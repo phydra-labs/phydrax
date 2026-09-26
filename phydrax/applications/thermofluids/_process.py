@@ -301,15 +301,27 @@ class ThermofluidProcessPlan(StrictModule):
             connected_ports.update(endpoints)
             if left.kind is ThermofluidPortKind.HEAT:
                 # Hydraulic specs are always HYDRAULIC and endpoint kinds match.
-                assert isinstance(left, ThermofluidPortSpec)
-                assert isinstance(right, ThermofluidPortSpec)
+                if not (isinstance(left, ThermofluidPortSpec)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(left, ThermofluidPortSpec)."
+                    )
+                if not (isinstance(right, ThermofluidPortSpec)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(right, ThermofluidPortSpec)."
+                    )
                 orientations = (
                     int(left.heat_flow_orientation),
                     int(right.heat_flow_orientation),
                 )
             elif left.kind is ThermofluidPortKind.MATERIAL:
-                assert isinstance(left, ThermofluidPortSpec)
-                assert isinstance(right, ThermofluidPortSpec)
+                if not (isinstance(left, ThermofluidPortSpec)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(left, ThermofluidPortSpec)."
+                    )
+                if not (isinstance(right, ThermofluidPortSpec)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(right, ThermofluidPortSpec)."
+                    )
                 orientations = (left.mass_flow_orientation, right.mass_flow_orientation)
             elif left.kind is ThermofluidPortKind.HYDRAULIC:
                 orientations = (1, 1)
@@ -535,8 +547,14 @@ def _validate_connection(
         raise ValueError("Connected thermofluid ports must have the same kind.")
     if left.kind is ThermofluidPortKind.MATERIAL:
         # Hydraulic specs are always HYDRAULIC, so both endpoints are material specs.
-        assert isinstance(left, ThermofluidPortSpec)
-        assert isinstance(right, ThermofluidPortSpec)
+        if not (isinstance(left, ThermofluidPortSpec)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(left, ThermofluidPortSpec)."
+            )
+        if not (isinstance(right, ThermofluidPortSpec)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(right, ThermofluidPortSpec)."
+            )
         if (
             left.catalog_id != right.catalog_id
             or left.thermodynamics_id != right.thermodynamics_id

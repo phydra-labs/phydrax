@@ -6,6 +6,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -28,7 +29,7 @@ from phydrax.solver._potential_flow_hydrodynamics import (
 )
 
 
-def _policy(face_count: int, *, smoke: bool):
+def _policy(face_count: int, *, smoke: bool) -> Any:
     radial = 8 if smoke else 16
     angular = 8 if smoke else 16
     return FreeSurfaceHydrodynamicsPolicy3D(
@@ -56,7 +57,7 @@ def _policy(face_count: int, *, smoke: bool):
     )
 
 
-def _case(*, depth: float | None, smoke: bool):
+def _case(*, depth: float | None, smoke: bool) -> Any:
     mesh = trimesh.creation.icosphere(subdivisions=0 if smoke else 1, radius=0.5)
     mesh.apply_translation((0.0, 0.0, -2.0))
     region = MeshRegion(
@@ -160,7 +161,7 @@ def _case(*, depth: float | None, smoke: bool):
     }
 
 
-def _parser():
+def _parser() -> Any:
     parser = argparse.ArgumentParser(
         description="Benchmark bounded zero-speed 3D potential-flow hydrodynamics."
     )
@@ -173,7 +174,7 @@ def _parser():
     return parser
 
 
-def main():
+def main() -> None:
     arguments = _parser().parse_args()
     records = [
         _case(depth=None, smoke=arguments.smoke),

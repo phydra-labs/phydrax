@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,7 +23,7 @@ from phydrax.applications.geophysics._inference import (
 from phydrax.applications.geophysics._observations import prepare_geophysical_observations
 
 
-def test_linear_gaussian_combinations_expose_unconstrained_direction():
+def test_linear_gaussian_combinations_expose_unconstrained_direction() -> None:
     with jax.enable_x64(True):
         result = column_local_information(
             lambda z: jnp.atleast_1d(2 * z[0] + z[1]), jnp.ones(2)
@@ -49,7 +51,9 @@ def test_linear_gaussian_combinations_expose_unconstrained_direction():
         )
 
 
-def test_correlated_missing_observations_use_principal_covariance_not_zero_residuals():
+def test_correlated_missing_observations_use_principal_covariance_not_zero_residuals() -> (
+    None
+):
     with jax.enable_x64(True):
         plan, initial, _, _ = twin_model()
         experiment = twin_experiment(
@@ -58,8 +62,11 @@ def test_correlated_missing_observations_use_principal_covariance_not_zero_resid
         binding = experiment.bindings[0]
         product = prepare_geophysical_observations(
             binding.operator,
+            # ty: ignore[invalid-argument-type]
             (0.0,),
+            # ty: ignore[invalid-argument-type]
             [[285.0, np.nan]],
+            # ty: ignore[invalid-argument-type]
             [[2.0, np.nan]],
             quantity=binding.operator.quantity,
             time=experiment.time,
@@ -72,6 +79,7 @@ def test_correlated_missing_observations_use_principal_covariance_not_zero_resid
             (product,),
             provenance="user-supplied-profile-with-missing-second-level",
             role="calibration",
+            # ty: ignore[invalid-argument-type]
             covariance=[[4.0, 1.5], [1.5, 1.0]],
         )
         np.testing.assert_array_equal(data.indices, [0])
@@ -83,12 +91,13 @@ def test_correlated_missing_observations_use_principal_covariance_not_zero_resid
                 (product,),
                 provenance="wrong-marginal",
                 role="calibration",
+                # ty: ignore[invalid-argument-type]
                 covariance=[[9.0, 1.5], [1.5, 1.0]],
             )
         assert bool(experiment.predict(plan).successful)
 
 
-def test_holdout_role_and_duplicate_products_cannot_enter_fit():
+def test_holdout_role_and_duplicate_products_cannot_enter_fit() -> None:
     with jax.enable_x64(True):
         plan, initial, space, truth = twin_model()
         experiment = twin_experiment(
@@ -109,7 +118,7 @@ def test_holdout_role_and_duplicate_products_cannot_enter_fit():
             space.check(space.upper + space.scales)
 
 
-def test_phase_boundary_is_not_reported_as_a_regular_inverse_map():
+def test_phase_boundary_is_not_reported_as_a_regular_inverse_map() -> None:
     with jax.enable_x64(True):
         plan, _, space, truth = twin_model()
         initial = plan.initialize(
@@ -134,8 +143,8 @@ def test_phase_boundary_is_not_reported_as_a_regular_inverse_map():
 
 @pytest.mark.parametrize("index", [True, -1, 0.5, 1])
 def test_inference_archive_rejects_invalid_continuation_index_before_loading_state(
-    tmp_path, index
-):
+    tmp_path: Any, index: Any
+) -> None:
     with jax.enable_x64(True):
         plan, initial, space, truth = twin_model()
         experiment = twin_experiment(

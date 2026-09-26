@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -27,7 +29,7 @@ from phydrax.applications.solid_mechanics._rod_reduction import (
 )
 
 
-def _spatial_reduced_rod():
+def _spatial_reduced_rod() -> Any:
     dtype = jnp.float32
     rod = prepare_rod(
         RodPlan(
@@ -57,7 +59,7 @@ def _spatial_reduced_rod():
     return prepare_reduced_rod(rod, ReducedRodPlan(basis))
 
 
-def _tube_plan():
+def _tube_plan() -> Any:
     dtype = jnp.float32
     return ReducedTubeChamberPlan(
         (
@@ -73,12 +75,12 @@ def _tube_plan():
     )
 
 
-def _moving_state(reduction):
+def _moving_state(reduction: Any) -> Any:
     velocity = jnp.zeros_like(reduction.reference_coefficients).at[0].set(0.2)
     return ReducedRodState(reduction.reference_coefficients, velocity)
 
 
-def test_regulated_tube_pressure_has_exact_pa_and_eccentric_dual_moment():
+def test_regulated_tube_pressure_has_exact_pa_and_eccentric_dual_moment() -> None:
     reduction = _spatial_reduced_rod()
     plan = RegulatedReducedTubePressurePlan(
         _tube_plan(),
@@ -110,7 +112,7 @@ def test_regulated_tube_pressure_has_exact_pa_and_eccentric_dual_moment():
     assert not evaluation.electrical_power_available
 
 
-def test_tube_volume_vjp_is_the_exact_reduced_pressure_effort():
+def test_tube_volume_vjp_is_the_exact_reduced_pressure_effort() -> None:
     reduction = _spatial_reduced_rod()
     chamber = _tube_plan().prepare(reduction)
     state = _moving_state(reduction)
@@ -127,7 +129,7 @@ def test_tube_volume_vjp_is_the_exact_reduced_pressure_effort():
     assert chamber.volume(state) == pytest.approx(0.22)
 
 
-def test_regulator_saturation_is_explicit_and_source_state_is_not_committed():
+def test_regulator_saturation_is_explicit_and_source_state_is_not_committed() -> None:
     reduction = _spatial_reduced_rod()
     prepared = RegulatedReducedTubePressurePlan(
         _tube_plan(),
@@ -151,7 +153,7 @@ def test_regulator_saturation_is_explicit_and_source_state_is_not_committed():
     assert evaluation.valid
 
 
-def test_sealed_tube_gas_has_conservative_polytropic_power_and_no_source_power():
+def test_sealed_tube_gas_has_conservative_polytropic_power_and_no_source_power() -> None:
     reduction = _spatial_reduced_rod()
     prepared = SealedReducedTubePressurePlan(
         _tube_plan(),
@@ -184,7 +186,7 @@ def test_sealed_tube_gas_has_conservative_polytropic_power_and_no_source_power()
     assert evaluation.valid
 
 
-def test_intrinsic_strain_is_subtracted_inside_the_material_trial():
+def test_intrinsic_strain_is_subtracted_inside_the_material_trial() -> None:
     reduction = _spatial_reduced_rod()
     material = reduction.rod.stretch_shear_material
     dtype = reduction.reference_coefficients.dtype
@@ -231,7 +233,7 @@ def test_intrinsic_strain_is_subtracted_inside_the_material_trial():
     assert evaluation.valid
 
 
-def test_zero_intrinsic_command_exactly_reproduces_passive_material():
+def test_zero_intrinsic_command_exactly_reproduces_passive_material() -> None:
     reduction = _spatial_reduced_rod()
     material = reduction.rod.stretch_shear_material
     dtype = reduction.reference_coefficients.dtype
@@ -276,7 +278,7 @@ def test_zero_intrinsic_command_exactly_reproduces_passive_material():
     assert controlled.control_source_power == pytest.approx(0.0)
 
 
-def test_variable_stiffness_interpolates_psd_endpoints_and_nonnegative_energy():
+def test_variable_stiffness_interpolates_psd_endpoints_and_nonnegative_energy() -> None:
     reduction = _spatial_reduced_rod()
     material = reduction.rod.stretch_shear_material
     dtype = reduction.reference_coefficients.dtype
@@ -315,7 +317,7 @@ def test_variable_stiffness_interpolates_psd_endpoints_and_nonnegative_energy():
     assert result.valid
 
 
-def test_intrinsic_and_stiffness_controls_compose_into_one_material_evaluation():
+def test_intrinsic_and_stiffness_controls_compose_into_one_material_evaluation() -> None:
     reduction = _spatial_reduced_rod()
     material = reduction.rod.stretch_shear_material
     dtype = reduction.reference_coefficients.dtype
@@ -371,7 +373,7 @@ def test_intrinsic_and_stiffness_controls_compose_into_one_material_evaluation()
         )
 
 
-def test_variable_stiffness_rejects_unordered_psd_endpoints():
+def test_variable_stiffness_rejects_unordered_psd_endpoints() -> None:
     dtype = jnp.float32
     minimum = jnp.asarray((((2.0, 0.0), (0.0, 2.0)),), dtype=dtype)
     maximum = jnp.asarray((((1.0, 0.0), (0.0, 3.0)),), dtype=dtype)
@@ -386,7 +388,7 @@ def test_variable_stiffness_rejects_unordered_psd_endpoints():
         )
 
 
-def _magnetic_plan(*, affine: bool):
+def _magnetic_plan(*, affine: bool) -> Any:
     dtype = jnp.float32
     gradient = jnp.zeros((1, 3, 3), dtype=dtype)
     uniform = jnp.asarray(((0.0, 2.0, 0.0),), dtype=dtype)
@@ -412,7 +414,7 @@ def _magnetic_plan(*, affine: bool):
     )
 
 
-def test_uniform_affine_magnetic_field_has_torque_and_zero_force():
+def test_uniform_affine_magnetic_field_has_torque_and_zero_force() -> None:
     reduction = _spatial_reduced_rod()
     prepared = _magnetic_plan(affine=False).prepare(reduction)
     dtype = reduction.reference_coefficients.dtype
@@ -436,7 +438,7 @@ def test_uniform_affine_magnetic_field_has_torque_and_zero_force():
     assert not evaluation.electrical_power_available
 
 
-def test_affine_magnetic_gradient_gives_analytic_force_and_exact_reduced_power():
+def test_affine_magnetic_gradient_gives_analytic_force_and_exact_reduced_power() -> None:
     reduction = _spatial_reduced_rod()
     prepared = _magnetic_plan(affine=True).prepare(reduction)
     dtype = reduction.reference_coefficients.dtype
@@ -457,7 +459,9 @@ def test_affine_magnetic_gradient_gives_analytic_force_and_exact_reduced_power()
     assert evaluation.valid
 
 
-def test_unsupported_pressure_constitutive_and_magnetic_capabilities_fail_closed():
+def test_unsupported_pressure_constitutive_and_magnetic_capabilities_fail_closed() -> (
+    None
+):
     with pytest.raises(ValueError, match="deformable_cross_sections"):
         ReducedTubeChamberPlan(
             _tube_plan().stations,

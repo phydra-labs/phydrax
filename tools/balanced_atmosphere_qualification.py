@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -30,29 +31,29 @@ from phydrax.discretization.spectral._spherical import SphericalSpectralPlan
 SOURCE = "https://www.gfdl.noaa.gov/wp-content/uploads/files/user_files/pjp/qj_jablonowski_williamson_2006.pdf"
 
 
-def model_at(bandlimit, levels, dt, **kwargs):
+def model_at(bandlimit: Any, levels: Any, dt: Any, **kwargs: Any) -> Any:
     space = SphericalSpectralPlan(bandlimit, sampling="gl").prepare(radius=6.371e6)
     sigma = np.linspace(0.0, 1.0, levels + 1)
     vertical = HybridPressureCoordinate(0.1 * (1 - sigma), sigma)
     return GlobalPrimitiveEquationPlan(space, vertical, dt=dt, **kwargs).prepare()
 
 
-def area(model):
+def area(model: Any) -> Any:
     return 4 * jnp.pi * model.plan.space.radius**2
 
 
-def physical_mode(model):
+def physical_mode(model: Any) -> Any:
     theta = model.work_space.transform.theta[:, None, None]
     longitude = model.work_space.transform.phi[None, :, None]
     return jnp.sin(theta) * jnp.cos(theta) * jnp.cos(longitude)
 
 
 @eqx.filter_jit
-def rollout(model, initial, steps):
+def rollout(model: Any, initial: Any, steps: Any) -> Any:
     """Advance the real owner and trapezoid-integrate a physical enthalpy mode."""
     mode = physical_mode(model)
 
-    def observable(state):
+    def observable(state: Any) -> Any:
         view = model.view(state)
         return jnp.sum(
             model.work_space.integral(
@@ -60,7 +61,7 @@ def rollout(model, initial, steps):
             )
         ) / area(model)
 
-    def step(carry, _):
+    def step(carry: Any, _: Any) -> Any:
         current, integral = carry
         result = model.advance(current)
         integrated = integral + 0.5 * model.plan.dt * (
@@ -71,7 +72,7 @@ def rollout(model, initial, steps):
     return jax.lax.scan(step, (initial, jnp.asarray(0.0)), xs=None, length=steps)
 
 
-def summarize(model, initial, final, evidence):
+def summarize(model: Any, initial: Any, final: Any, evidence: Any) -> Any:
     before, after = model.inventories(initial.state), model.inventories(final.state)
     duration = float(final.time - initial.time)
     angular_before, angular_after = (
@@ -102,7 +103,7 @@ def summarize(model, initial, final, evidence):
     }
 
 
-def identity_measurements(reference):
+def identity_measurements(reference: Any) -> Any:
     # Centered differences do not call balance_residuals or its AD derivatives.
     p = np.geomspace(1200.0, 110000.0, 11)[:, None]
     lat = np.linspace(-np.pi / 2, np.pi / 2, 15)[None, :]
@@ -168,7 +169,9 @@ def identity_measurements(reference):
     }
 
 
-def resolution_measurements(reference, bandlimits, levels, dt, steps):
+def resolution_measurements(
+    reference: Any, bandlimits: Any, levels: Any, dt: Any, steps: Any
+) -> Any:
     horizontal, vertical = [], []
     for label, pairs, rows in (
         ("horizontal", [(l, max(levels)) for l in bandlimits], horizontal),
@@ -244,7 +247,7 @@ def resolution_measurements(reference, bandlimits, levels, dt, steps):
     }
 
 
-def wave_measurements(dt, steps):
+def wave_measurements(dt: Any, steps: Any) -> Any:
     """Independent one-layer oscillator, derived without the owner's fast matrix."""
     rows = []
     for refinement in (1, 2, 4):
@@ -266,7 +269,7 @@ def wave_measurements(dt, steps):
         )
         center = model.plan.space.layout.bandlimit - 1
 
-        def oscillator(state):
+        def oscillator(state: Any) -> Any:
             c = (
                 h * state.temperature[2, center + 1, 0]
                 + model.plan.gas_constant
@@ -311,7 +314,7 @@ def wave_measurements(dt, steps):
     }
 
 
-def torque_measurements():
+def torque_measurements() -> Any:
     """Nonzero external torque, not only a symmetric zero-source identity."""
     model = model_at(6, 2, 30.0, processes=GlobalAtmosphereProcesses(held_suarez=True))
     speed = 20.0
@@ -357,7 +360,9 @@ def torque_measurements():
     }
 
 
-def perturbation_and_ad(reference, bandlimit, levels, dt, steps):
+def perturbation_and_ad(
+    reference: Any, bandlimit: Any, levels: Any, dt: Any, steps: Any
+) -> Any:
     rows, action_values, trajectory_errors = [], [], []
     final_states = []
     amplitude = 0.1
@@ -370,14 +375,14 @@ def perturbation_and_ad(reference, bandlimit, levels, dt, steps):
             )
         )
 
-        def initial_at(value):
+        def initial_at(value: Any) -> Any:
             return eqx.tree_at(
                 lambda c: c.state.temperature,
                 base,
                 base.state.temperature + value * delta,
             )
 
-        def action(value):
+        def action(value: Any) -> Any:
             (final, integrated), evidence = rollout(
                 model, initial_at(value), steps * refinement
             )
@@ -494,7 +499,7 @@ def perturbation_and_ad(reference, bandlimit, levels, dt, steps):
     }
 
 
-def terrain_and_transport(dt, steps):
+def terrain_and_transport(dt: Any, steps: Any) -> Any:
     # Terrain supports isothermal rest only. Also expose the actual stratified
     # resting residual without requiring an invariant the owner does not have.
     space = SphericalSpectralPlan(6, sampling="gl").prepare(radius=6.371e6)
@@ -602,10 +607,10 @@ def terrain_and_transport(dt, steps):
     }
 
 
-def rejected_boundaries():
+def rejected_boundaries() -> Any:
     # Catch only the declared rejection class; an unexpected exception remains
     # a failure of the campaign rather than a false successful rejection.
-    def rejected(call):
+    def rejected(call: Any) -> Any:
         try:
             call()
         except ValueError as error:
@@ -669,7 +674,7 @@ def rejected_boundaries():
     return {"cases": cases, "passed": all(case["rejected"] for case in cases.values())}
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bandlimits", nargs="+", type=int, default=[4, 6, 8])
     parser.add_argument("--levels", nargs="+", type=int, default=[2, 4, 8])
@@ -733,6 +738,7 @@ def main():
         ),
     }
     result["passed"] = all(
+        # ty: ignore[invalid-argument-type, not-subscriptable]
         result[key]["passed"]
         for key in (
             "identities",

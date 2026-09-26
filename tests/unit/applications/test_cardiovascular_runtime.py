@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import zipfile
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -66,7 +67,7 @@ from phydrax.lifecycle import (
 from phydrax.linalg import FailurePolicy, GMRES, LinearSolvePolicy, TolerancePolicy
 
 
-def _capacity(**overrides):
+def _capacity(**overrides: Any) -> Any:
     values = {
         "maximum_cohort_cases": 8,
         "maximum_state_values": 64,
@@ -81,7 +82,7 @@ def _capacity(**overrides):
     return CardiovascularCapacityManifest(**values)
 
 
-def _execution(route=None, *, capacity=None, **overrides):
+def _execution(route: Any = None, *, capacity: Any = None, **overrides: Any) -> Any:
     values = {
         "case_manifest_id": "case:adult-aorta:001",
         "analysis_plan_id": "analysis:coupled-heart:001",
@@ -97,7 +98,7 @@ def _execution(route=None, *, capacity=None, **overrides):
     return CardiovascularExecutionManifest(**values)
 
 
-def _distributed_fem(part_count=2):
+def _distributed_fem(part_count: Any = 2) -> Any:
     mesh = CellMesh.from_triangles(
         np.asarray(
             (
@@ -119,7 +120,7 @@ def _distributed_fem(part_count=2):
     return discretization, phases
 
 
-def _replay_schedule(step_count=4):
+def _replay_schedule(step_count: Any = 4) -> Any:
     return prepare_replay_schedule(
         step_count,
         8,
@@ -127,7 +128,9 @@ def _replay_schedule(step_count=4):
     )
 
 
-def _external_checkpoint(path, execution, values, checkpoint_id):
+def _external_checkpoint(
+    path: Any, execution: Any, values: Any, checkpoint_id: Any
+) -> Any:
     array = np.asarray(values)
     manifest = CheckpointManifest(
         checkpoint_id,
@@ -146,7 +149,7 @@ def _external_checkpoint(path, execution, values, checkpoint_id):
     return create_lifecycle_archive(path, manifest=manifest, arrays={"state": array})
 
 
-def test_capacity_admission_is_atomic_and_single_device_evidence_is_observed():
+def test_capacity_admission_is_atomic_and_single_device_evidence_is_observed() -> None:
     capacity = _capacity(maximum_events=2)
     admitted = admit_cardiovascular_capacity(
         capacity,
@@ -178,7 +181,9 @@ def test_capacity_admission_is_atomic_and_single_device_evidence_is_observed():
     assert evidence.visible_backend_devices >= 1
 
 
-def test_lifecycle_checkpoint_serial_restart_lineage_capacity_and_corruption(tmp_path):
+def test_lifecycle_checkpoint_serial_restart_lineage_capacity_and_corruption(
+    tmp_path: Any,
+) -> None:
     execution = _execution()
     codec = CardiovascularLifecycleCheckpointCodec(execution)
     first_path = tmp_path / "accepted-0001.phx"
@@ -210,6 +215,7 @@ def test_lifecycle_checkpoint_serial_restart_lineage_capacity_and_corruption(tmp
         committed=True,
     )
     assert second.parent_checkpoint_id == "checkpoint:0001"
+    # ty: ignore[unresolved-attribute]
     assert second.parent_manifest_id == restored.archive.manifest.manifest_id
     restored_second = codec.read(second.archive.path, parent=restored)
     assert restored_second.checkpoint_id == second.checkpoint_id
@@ -287,7 +293,7 @@ def test_lifecycle_checkpoint_serial_restart_lineage_capacity_and_corruption(tmp
         codec.read(nonfinite_path)
 
 
-def test_execution_pool_cohort_is_case_and_lane_deterministic_and_fail_closed():
+def test_execution_pool_cohort_is_case_and_lane_deterministic_and_fail_closed() -> None:
     case_ids = ("patient-c", "patient-a", "patient-b", "patient-d")
     one_lane = prepare_cardiovascular_cohort(
         _execution(CardiovascularCohortExecution(1)), case_ids
@@ -296,7 +302,7 @@ def test_execution_pool_cohort_is_case_and_lane_deterministic_and_fail_closed():
         _execution(CardiovascularCohortExecution(3)), tuple(reversed(case_ids))
     )
 
-    def execute(case_id, key):
+    def execute(case_id: Any, key: Any) -> Any:
         case_offset = sum(map(ord, case_id))
         return CardiovascularCohortCaseCandidate(jax.random.uniform(key) + case_offset)
 
@@ -321,7 +327,7 @@ def test_execution_pool_cohort_is_case_and_lane_deterministic_and_fail_closed():
     ):
         np.testing.assert_array_equal(key_words, full_keys[case_id])
 
-    def reject_one(case_id, key):
+    def reject_one(case_id: Any, key: Any) -> Any:
         value = jax.random.uniform(key)
         if case_id == "patient-b":
             return CardiovascularCohortCaseCandidate(
@@ -337,7 +343,9 @@ def test_execution_pool_cohort_is_case_and_lane_deterministic_and_fail_closed():
     assert failed.evidence.status is CardiovascularRuntimeStatus.COMMIT_REFUSED
 
 
-def test_distributed_fem_operator_owned_shards_transpose_solve_and_restart(tmp_path):
+def test_distributed_fem_operator_owned_shards_transpose_solve_and_restart(
+    tmp_path: Any,
+) -> None:
     discretization, phases = _distributed_fem()
     replay = _replay_schedule()
     reference = prepare_cardiovascular_distributed_execution(
@@ -382,6 +390,7 @@ def test_distributed_fem_operator_owned_shards_transpose_solve_and_restart(tmp_p
     assert evidence.partition_id == single_phases.partition.partition_id
     assert evidence.device_mesh_id == collective.capability.device_mesh_id
     assert evidence.transport_id == collective.capability.transport_id
+    # ty: ignore[unresolved-attribute]
     assert evidence.solver_state.owned_solution.sharding.spec[0] == "cardiovascular-parts"
 
     codec = CardiovascularLifecycleCheckpointCodec(collective_execution)
@@ -426,7 +435,7 @@ def test_distributed_fem_operator_owned_shards_transpose_solve_and_restart(tmp_p
             require_cardiovascular_distributed_transport(unavailable_process_mesh)
 
 
-def test_multirate_event_localization_order_saltation_and_exact_replay():
+def test_multirate_event_localization_order_saltation_and_exact_replay() -> None:
     execution = _execution(
         capacity=_capacity(
             maximum_macro_steps=2,
@@ -457,17 +466,17 @@ def test_multirate_event_localization_order_saltation_and_exact_replay():
     )
     prepared = prepare_cardiovascular_scheduler(execution, plan)
 
-    def advance(state, subsystem_id, start_ms, end_ms):
+    def advance(state: Any, subsystem_id: Any, start_ms: Any, end_ms: Any) -> Any:
         assert subsystem_id == "electrophysiology"
         return CardiovascularStepCandidate(state + (end_ms - start_ms))
 
-    def guards(state, time_ms):
+    def guards(state: Any, time_ms: Any) -> Any:
         del time_ms
         return jnp.asarray((state - 0.75, state - 0.75))
 
     reset_order = []
 
-    def reset(state, source_id, time_ms):
+    def reset(state: Any, source_id: Any, time_ms: Any) -> Any:
         del time_ms
         reset_order.append(source_id)
         return CardiovascularStepCandidate(state + 0.125)
@@ -533,7 +542,7 @@ def test_multirate_event_localization_order_saltation_and_exact_replay():
     assert mismatched_replay.status is CardiovascularRuntimeStatus.REPLAY_MISMATCH
 
 
-def test_scheduler_failure_and_capacity_refusal_roll_back_atomically():
+def test_scheduler_failure_and_capacity_refusal_roll_back_atomically() -> None:
     execution = _execution(
         capacity=_capacity(
             maximum_macro_steps=1,
@@ -548,7 +557,9 @@ def test_scheduler_failure_and_capacity_refusal_roll_back_atomically():
     )
     initial = jnp.asarray([3.0, 4.0])
 
-    def rejected_advance(state, subsystem_id, start_ms, end_ms):
+    def rejected_advance(
+        state: Any, subsystem_id: Any, start_ms: Any, end_ms: Any
+    ) -> Any:
         del subsystem_id, start_ms, end_ms
         return CardiovascularStepCandidate(
             state + 100.0,
@@ -556,11 +567,11 @@ def test_scheduler_failure_and_capacity_refusal_roll_back_atomically():
             status=CardiovascularRuntimeStatus.STEP_REJECTED,
         )
 
-    def no_events(state, time_ms):
+    def no_events(state: Any, time_ms: Any) -> Any:
         del state, time_ms
         return jnp.zeros((0,))
 
-    def no_reset(state, source_id, time_ms):
+    def no_reset(state: Any, source_id: Any, time_ms: Any) -> Any:
         del source_id, time_ms
         return CardiovascularStepCandidate(state)
 
@@ -607,7 +618,7 @@ def test_scheduler_failure_and_capacity_refusal_roll_back_atomically():
     np.testing.assert_array_equal(over_state.state, [1.0, 2.0, 3.0])
 
 
-def test_scheduler_enforces_exact_callback_leaf_contract_at_every_boundary():
+def test_scheduler_enforces_exact_callback_leaf_contract_at_every_boundary() -> None:
     execution = _execution(
         capacity=_capacity(
             maximum_macro_steps=1,
@@ -628,19 +639,19 @@ def test_scheduler_enforces_exact_callback_leaf_contract_at_every_boundary():
     )
     initial = jnp.asarray(0.0, dtype=jnp.float32)
 
-    def guards(state, time_ms):
+    def guards(state: Any, time_ms: Any) -> Any:
         del time_ms
         return jnp.asarray((state - 0.5,))
 
-    def normal_advance(state, subsystem_id, start_ms, end_ms):
+    def normal_advance(state: Any, subsystem_id: Any, start_ms: Any, end_ms: Any) -> Any:
         del subsystem_id
         return CardiovascularStepCandidate(state + end_ms - start_ms)
 
-    def normal_reset(state, source_id, time_ms):
+    def normal_reset(state: Any, source_id: Any, time_ms: Any) -> Any:
         del source_id, time_ms
         return CardiovascularStepCandidate(state + 0.1)
 
-    def wrong_dtype(state, subsystem_id, start_ms, end_ms):
+    def wrong_dtype(state: Any, subsystem_id: Any, start_ms: Any, end_ms: Any) -> Any:
         del subsystem_id
         value = state + end_ms - start_ms
         return CardiovascularStepCandidate(value.astype(jnp.int32))
@@ -650,7 +661,9 @@ def test_scheduler_enforces_exact_callback_leaf_contract_at_every_boundary():
             prepared, initial, 1, wrong_dtype, guards, normal_reset
         )
 
-    def wrong_localization_dtype(state, subsystem_id, start_ms, end_ms):
+    def wrong_localization_dtype(
+        state: Any, subsystem_id: Any, start_ms: Any, end_ms: Any
+    ) -> Any:
         del subsystem_id
         value = state + end_ms - start_ms
         if start_ms == 0.0 and end_ms < 1.0:
@@ -667,7 +680,7 @@ def test_scheduler_enforces_exact_callback_leaf_contract_at_every_boundary():
             normal_reset,
         )
 
-    def wrong_reset_shape(state, source_id, time_ms):
+    def wrong_reset_shape(state: Any, source_id: Any, time_ms: Any) -> Any:
         del source_id, time_ms
         return CardiovascularStepCandidate(jnp.stack((state, state)))
 
@@ -676,7 +689,9 @@ def test_scheduler_enforces_exact_callback_leaf_contract_at_every_boundary():
             prepared, initial, 1, normal_advance, guards, wrong_reset_shape
         )
 
-    def wrong_nudge_shape(state, subsystem_id, start_ms, end_ms):
+    def wrong_nudge_shape(
+        state: Any, subsystem_id: Any, start_ms: Any, end_ms: Any
+    ) -> Any:
         del subsystem_id
         value = state + end_ms - start_ms
         if start_ms > 0.0 and end_ms - start_ms <= 1.1 * tolerance:
@@ -689,7 +704,7 @@ def test_scheduler_enforces_exact_callback_leaf_contract_at_every_boundary():
         )
 
 
-def test_sanitized_diagnostic_never_retains_injected_sensitive_detail():
+def test_sanitized_diagnostic_never_retains_injected_sensitive_detail() -> None:
     secret = "patient-name=not-for-storage"
     diagnostic = cardiovascular_runtime_diagnostic(
         CardiovascularRuntimeStatus.STEP_REJECTED,

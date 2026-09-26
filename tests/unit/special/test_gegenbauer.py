@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,7 +10,7 @@ import phydrax as phx
 
 
 @pytest.mark.parametrize("degree", (0, 1, 2, 5, 12))
-def test_gegenbauer_matches_scipy_for_broadcast_real_arguments(degree):
+def test_gegenbauer_matches_scipy_for_broadcast_real_arguments(degree: Any) -> None:
     alpha = np.asarray([0.2, 0.5, 1.0, 2.75])[:, None]
     points = np.linspace(-1.3, 1.3, 17)[None, :]
 
@@ -19,7 +21,7 @@ def test_gegenbauer_matches_scipy_for_broadcast_real_arguments(degree):
 
 
 @pytest.mark.parametrize("degree", (0, 1, 2, 7))
-def test_gegenbauer_supports_complex_arguments(degree):
+def test_gegenbauer_supports_complex_arguments(degree: Any) -> None:
     alpha = np.asarray([0.25, 1.5])[:, None]
     points = np.asarray([-0.4 + 0.7j, 0.0 - 0.3j, 1.2 + 0.1j])[None, :]
 
@@ -30,7 +32,7 @@ def test_gegenbauer_supports_complex_arguments(degree):
     np.testing.assert_allclose(actual, expected, rtol=4e-12, atol=4e-13)
 
 
-def test_gegenbauer_recurrence_and_parity_hold_lane_wise():
+def test_gegenbauer_recurrence_and_parity_hold_lane_wise() -> None:
     alpha = jnp.asarray([0.1, 0.7, 2.0])[:, None]
     points = jnp.linspace(-0.9, 0.9, 11)[None, :]
     degree = 9
@@ -51,7 +53,7 @@ def test_gegenbauer_recurrence_and_parity_hold_lane_wise():
     )
 
 
-def test_gegenbauer_contains_legendre_and_chebyshev_u_families():
+def test_gegenbauer_contains_legendre_and_chebyshev_u_families() -> None:
     points = np.linspace(-0.97, 0.97, 31)
     for degree in range(9):
         np.testing.assert_allclose(
@@ -68,7 +70,7 @@ def test_gegenbauer_contains_legendre_and_chebyshev_u_families():
         )
 
 
-def test_standard_alpha_zero_collapse_retains_parameter_derivative_limit():
+def test_standard_alpha_zero_collapse_retains_parameter_derivative_limit() -> None:
     points = np.linspace(-0.95, 0.95, 29)
     assert np.all(phx.special.gegenbauer_c(0, 0.0, points) == 1.0)
     for degree in (1, 2, 5, 11):
@@ -84,7 +86,7 @@ def test_standard_alpha_zero_collapse_retains_parameter_derivative_limit():
         )
 
 
-def test_tiny_alpha_survives_the_first_recurrence_coefficient():
+def test_tiny_alpha_survives_the_first_recurrence_coefficient() -> None:
     alpha = jnp.asarray(1.0e-20, dtype=jnp.float64)
     point = jnp.asarray(0.0, dtype=jnp.float64)
     expected = -alpha
@@ -113,7 +115,7 @@ def test_tiny_alpha_survives_the_first_recurrence_coefficient():
     np.testing.assert_allclose(reverse, -1.0, rtol=0.0, atol=2.0e-20)
 
 
-def test_argument_and_parameter_autodiff_match_polynomial_identities():
+def test_argument_and_parameter_autodiff_match_polynomial_identities() -> None:
     degree = 8
     alpha = jnp.asarray(0.73)
     point = jnp.asarray(0.21)
@@ -136,7 +138,7 @@ def test_argument_and_parameter_autodiff_match_polynomial_identities():
     )
 
 
-def test_vandermonde_is_modes_last_after_broadcasting():
+def test_vandermonde_is_modes_last_after_broadcasting() -> None:
     alpha = jnp.asarray([0.25, 0.75])[:, None, None]
     points = jnp.asarray([[-0.8, -0.1, 0.4], [0.2, 0.6, 1.1], [-0.7, 0.0, 0.9]])[
         None, :, :
@@ -152,8 +154,9 @@ def test_vandermonde_is_modes_last_after_broadcasting():
     assert jnp.allclose(values, expected, rtol=2e-12, atol=2e-13)
 
 
-def test_gegenbauer_degree_and_alpha_boundaries_are_explicit():
+def test_gegenbauer_degree_and_alpha_boundaries_are_explicit() -> None:
     with pytest.raises(TypeError, match="n must be an integer"):
+        # ty: ignore[invalid-argument-type]
         phx.special.gegenbauer_c(2.5, 0.7, 0.2)
     with pytest.raises(TypeError, match="degree must be an integer"):
         phx.special.gegenbauer_vander(0.7, 0.2, True)
@@ -167,7 +170,7 @@ def test_gegenbauer_degree_and_alpha_boundaries_are_explicit():
     assert jnp.all(jnp.isnan(phx.special.gegenbauer_vander(alpha, 0.2, 3)))
 
 
-def test_low_precision_inputs_widen_without_narrowing_complex_values():
+def test_low_precision_inputs_widen_without_narrowing_complex_values() -> None:
     real = phx.special.gegenbauer_c(
         4,
         jnp.asarray(0.7, dtype=jnp.float16),

@@ -122,7 +122,8 @@ def _apply_exchange(
     if source_quantity is not None:
         target_quantity = target_port.quantity
         # Preparation requires physical descriptors at both ends of an exchange.
-        assert target_quantity is not None
+        if not (target_quantity is not None):
+            raise RuntimeError("Internal invariant failed: target_quantity is not None.")
         factor = float(conversion_factor(source_quantity.unit, target_quantity.unit))
         spatial_action = action
         action = lambda value: jax.tree.map(
@@ -756,7 +757,10 @@ def _interval_integral_parts(
     measure = port.measure
     unit = port.measure_unit
     # Interval-integral ports require quantity and measure; measured ports a unit.
-    assert quantity is not None and measure is not None and unit is not None
+    if not (quantity is not None and measure is not None and (unit is not None)):
+        raise RuntimeError(
+            "Internal invariant failed: quantity is not None and measure is not None and (unit is not None)."
+        )
     return quantity, measure, unit
 
 
@@ -895,7 +899,10 @@ def _window_result(
         method_id = f"explicit-{policy.sweep.kind}"
     else:
         # Preparation admits only explicit and implicit coupling policies.
-        assert isinstance(policy, ImplicitCouplingPolicy)
+        if not (isinstance(policy, ImplicitCouplingPolicy)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(policy, ImplicitCouplingPolicy)."
+            )
         method_id = policy.method.method_id
     provenance = CouplingProvenance(
         problem_id=prepared.problem_id,

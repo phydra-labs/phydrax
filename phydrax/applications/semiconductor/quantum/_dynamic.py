@@ -259,7 +259,8 @@ def _initial_correlation(
         return contract("ik,mk,jk->mij", vectors, f, vectors.conj(), backend="jax"), ok
     rho = initial.device_correlation
     # QuantumInitialState requires a correlation exactly for partitioned preparation.
-    assert rho is not None
+    if not (rho is not None):
+        raise RuntimeError("Internal invariant failed: rho is not None.")
     if rho.shape != (nm, n, n):
         raise ValueError(
             "Initial device correlation does not match the admitted mode/cell populations."

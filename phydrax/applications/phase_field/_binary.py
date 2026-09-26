@@ -656,14 +656,16 @@ class _FluxAmountDensity(StrictModule):
 def _surface_energy(patch: PhaseFieldBoundaryPatch, /) -> AbstractPhaseFieldSurfaceEnergy:
     surface_energy = patch.surface_energy
     # PhaseFieldBoundaryPlan.surface_patches keeps only patches with a surface energy.
-    assert surface_energy is not None
+    if not (surface_energy is not None):
+        raise RuntimeError("Internal invariant failed: surface_energy is not None.")
     return surface_energy
 
 
 def _mass_flux(patch: PhaseFieldBoundaryPatch, /) -> PrescribedPhaseFieldFlux:
     mass_flux = patch.mass_flux
     # PhaseFieldBoundaryPlan.flux_patches keeps only patches with a mass flux.
-    assert mass_flux is not None
+    if not (mass_flux is not None):
+        raise RuntimeError("Internal invariant failed: mass_flux is not None.")
     return mass_flux
 
 

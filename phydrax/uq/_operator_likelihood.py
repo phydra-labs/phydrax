@@ -135,7 +135,10 @@ class OperatorFactorSamplingPlan(StrictModule):
         )
         if ids is not None:
             # Sampled designs require all three arrays (validated above).
-            assert probabilities is not None and weights is not None
+            if not (probabilities is not None and weights is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: probabilities is not None and weights is not None."
+                )
             if not jnp.issubdtype(ids.dtype, jnp.integer):
                 raise TypeError("query_ids must have integer dtype.")
             if probabilities.shape != ids.shape or weights.shape != ids.shape:

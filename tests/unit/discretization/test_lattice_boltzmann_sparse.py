@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _index_space():
+def _index_space() -> Any:
     plan = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),
@@ -21,7 +23,7 @@ def _index_space():
     return plan.prepare_index_space(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
 
 
-def test_periodic_sparse_lbm_conserves_mass_and_is_jit_safe():
+def test_periodic_sparse_lbm_conserves_mass_and_is_jit_safe() -> None:
     prepared = phx.discretization.SparseLatticeBoltzmannPlan(
         _index_space(),
         phx.discretization.D2Q9(),
@@ -38,7 +40,7 @@ def test_periodic_sparse_lbm_conserves_mass_and_is_jit_safe():
     assert jnp.max(jnp.abs(result.velocity - jnp.asarray((0.03, 0.0)))) < 1.0e-12
 
 
-def test_sparse_lbm_wall_streaming_and_geometry_transition_are_conservative():
+def test_sparse_lbm_wall_streaming_and_geometry_transition_are_conservative() -> None:
     plan = phx.discretization.SparseLatticeBoltzmannPlan(
         _index_space(),
         phx.discretization.D2Q9(),

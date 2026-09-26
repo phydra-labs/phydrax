@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.finance.calibration._calibration import (
@@ -15,11 +17,11 @@ from phydrax.finance.calibration._surface import (
 )
 
 
-def _inverse_softplus(value):
+def _inverse_softplus(value: Any) -> Any:
     return jnp.log(jnp.expm1(value))
 
 
-def test_svi_calibration_recovers_synthetic_slice_and_replays_exactly():
+def test_svi_calibration_recovers_synthetic_slice_and_replays_exactly() -> None:
     expiry = 1.0
     parameters = SVIParameters(0.04, 0.1, -0.3, 0.0, 0.4)
     log_moneyness = jnp.array([-0.8, -0.4, 0.0, 0.4, 0.8, 1.2])
@@ -56,7 +58,7 @@ def test_svi_calibration_recovers_synthetic_slice_and_replays_exactly():
     assert replay.matches
 
 
-def test_surface_arbitrage_evidence_separates_butterfly_calendar_and_wings():
+def test_surface_arbitrage_evidence_separates_butterfly_calendar_and_wings() -> None:
     slice_ = SVISlice(1.0, SVIParameters(0.04, 0.08, -0.2, 0.0, 0.3))
     evidence = evaluate_surface_arbitrage(slice_)
     assert evidence.finite

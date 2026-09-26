@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import opt_einsum as oe
 import phydrax as phx
 
 
-def _periodic_space(count=8):
+def _periodic_space(count: Any = 8) -> Any:
     return phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(count),
@@ -22,7 +24,7 @@ def _periodic_space(count=8):
     )
 
 
-def _channel_space(wall_count=8):
+def _channel_space(wall_count: Any = 8) -> Any:
     return phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(4),
@@ -40,7 +42,7 @@ def _channel_space(wall_count=8):
     )
 
 
-def test_periodic_incompressible_dynamics_preserves_constraints_and_gradients():
+def test_periodic_incompressible_dynamics_preserves_constraints_and_gradients() -> None:
     space = _periodic_space()
     method = phx.discretization.PseudospectralMethodPlan(
         dealiasing=phx.discretization.PaddingDealiasingPlan(2)
@@ -84,7 +86,9 @@ def test_periodic_incompressible_dynamics_preserves_constraints_and_gradients():
     np.testing.assert_allclose(np.asarray(derivative), 1.0, atol=1e-10)
 
 
-def test_periodic_leray_removes_gradient_rhs_and_is_idempotent_in_three_dimensions():
+def test_periodic_leray_removes_gradient_rhs_and_is_idempotent_in_three_dimensions() -> (
+    None
+):
     space = phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(6),
@@ -123,7 +127,7 @@ def test_periodic_leray_removes_gradient_rhs_and_is_idempotent_in_three_dimensio
     )
 
 
-def test_hermitian_coordinates_and_spectral_symmetry_preserve_real_field_norm():
+def test_hermitian_coordinates_and_spectral_symmetry_preserve_real_field_norm() -> None:
     space = _periodic_space()
     x, y = jnp.meshgrid(
         space.axes[0].nodes,
@@ -182,7 +186,7 @@ def test_hermitian_coordinates_and_spectral_symmetry_preserve_real_field_norm():
     assert coordinates.reality_defect(first.apply(state)) < 1e-12
 
 
-def test_channel_stokes_enforces_couette_walls_and_bulk_flux():
+def test_channel_stokes_enforces_couette_walls_and_bulk_flux() -> None:
     space = _channel_space()
     y = space.axes[1].nodes
     couette = jnp.zeros(space.physical_shape + (3,)).at[..., 0].set(y[None, :, None])
@@ -243,7 +247,9 @@ def test_channel_stokes_enforces_couette_walls_and_bulk_flux():
     assert flux_result.diagnostics.wall_residual < 1e-11
 
 
-def _manufactured_nonzero_channel_mode(space, prepared, ix, iz):
+def _manufactured_nonzero_channel_mode(
+    space: Any, prepared: Any, ix: Any, iz: Any
+) -> Any:
     analysis = space.axes[1].modal_transform.analysis
     derivative = space.axes[1].derivative_matrix
     y = space.axes[1].nodes
@@ -274,7 +280,9 @@ def _manufactured_nonzero_channel_mode(space, prepared, ix, iz):
     return velocity, pressure_modes, helmholtz + gradient
 
 
-def test_channel_pressure_elimination_matches_manufactured_primitive_oracle_and_ad():
+def test_channel_pressure_elimination_matches_manufactured_primitive_oracle_and_ad() -> (
+    None
+):
     space = _channel_space()
     banded = phx.discretization.ChannelStokesPlan(space, 0.1).prepare(1.0)
     dense = phx.discretization.ChannelStokesPlan(
@@ -310,7 +318,7 @@ def test_channel_pressure_elimination_matches_manufactured_primitive_oracle_and_
     coordinates = jnp.stack((jnp.real(rhs), jnp.imag(rhs)), axis=-1)
     direction = coordinates
 
-    def solve_coordinates(values):
+    def solve_coordinates(values: Any) -> Any:
         modal_rhs = values[..., 0] + 1j * values[..., 1]
         result = banded.solve(modal_rhs)
         return jnp.concatenate(
@@ -336,7 +344,7 @@ def test_channel_pressure_elimination_matches_manufactured_primitive_oracle_and_
     assert jnp.all(jnp.isfinite(input_cotangent))
 
 
-def test_channel_zero_mode_recovers_pressure_and_preserves_all_wall_traces():
+def test_channel_zero_mode_recovers_pressure_and_preserves_all_wall_traces() -> None:
     space = _channel_space()
     lower = (-0.4, 0.15, 0.2)
     upper = (0.6, 0.15, -0.3)
@@ -409,12 +417,15 @@ def test_channel_zero_mode_recovers_pressure_and_preserves_all_wall_traces():
     assert banded_result.diagnostics.pressure_gauge_residual < 1e-10
 
 
-def test_channel_tau_rank_is_fixed_and_factor_storage_is_linear_in_wall_count():
+def test_channel_tau_rank_is_fixed_and_factor_storage_is_linear_in_wall_count() -> None:
     small = phx.discretization.ChannelStokesPlan(_channel_space(6), 0.1).prepare(1.0)
     large = phx.discretization.ChannelStokesPlan(_channel_space(10), 0.1).prepare(1.0)
     assert small.report.correction_rank == large.report.correction_rank == 4
+    # ty: ignore[unresolved-attribute]
     assert small.ultraspherical.helmholtz.rank == 2
+    # ty: ignore[unresolved-attribute]
     assert small.ultraspherical.biharmonic.rank == 4
+    # ty: ignore[unresolved-attribute]
     assert small.ultraspherical.pressure_recovery.rank == 1
     assert large.report.factor_bytes > small.report.factor_bytes
     assert large.report.factor_bytes / small.report.factor_bytes < 2.0

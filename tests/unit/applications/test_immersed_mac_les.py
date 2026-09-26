@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import io
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -28,7 +30,9 @@ from phydrax.equations._les_closures import (
 from phydrax.equations._mac_les import MACAlgebraicLESPlan
 
 
-def _route(*, count=4, coefficient=0.17, fraction=None, wall=False):
+def _route(
+    *, count: Any = 4, coefficient: Any = 0.17, fraction: Any = None, wall: Any = False
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(3)
@@ -93,7 +97,7 @@ def _route(*, count=4, coefficient=0.17, fraction=None, wall=False):
     return discretization, operators, momentum, pressure, plan, dynamics
 
 
-def _taylor_green(discretization):
+def _taylor_green(discretization: Any) -> Any:
     x_faces, y_faces, z_faces = discretization.face_centers
     return (
         jnp.sin(x_faces[..., 0]) * jnp.cos(x_faces[..., 1]) * jnp.cos(x_faces[..., 2]),
@@ -102,7 +106,7 @@ def _taylor_green(discretization):
     )
 
 
-def test_fixed_immersed_les_binds_owner_ids_and_zero_coefficient_parity():
+def test_fixed_immersed_les_binds_owner_ids_and_zero_coefficient_parity() -> None:
     discretization, operators, momentum, pressure, plan, immersed_dynamics = _route(
         coefficient=0.0
     )
@@ -140,7 +144,7 @@ def test_fixed_immersed_les_binds_owner_ids_and_zero_coefficient_parity():
     assert operators.prepared_id == plan.projection.operators.prepared_id
 
 
-def test_fixed_immersed_les_uses_fluid_volume_filter_and_zero_solid_stress():
+def test_fixed_immersed_les_uses_fluid_volume_filter_and_zero_solid_stress() -> None:
     fraction = jnp.ones((4, 4, 4)).at[0, 0, 0].set(0.0).at[1, 1, 1].set(0.125)
     discretization, _, _, _, _, dynamics = _route(fraction=fraction)
     velocity = _taylor_green(discretization)
@@ -162,7 +166,9 @@ def test_fixed_immersed_les_uses_fluid_volume_filter_and_zero_solid_stress():
     assert stage.model_result.kinematic_viscosity[1, 1, 1] >= 0.0
 
 
-def test_fixed_immersed_les_vector_wall_traction_is_tangent_dissipative_and_applied():
+def test_fixed_immersed_les_vector_wall_traction_is_tangent_dissipative_and_applied() -> (
+    None
+):
     discretization, _, _, _, plan, dynamics = _route(wall=True)
     state = dynamics.pack_velocity(_taylor_green(discretization))
 
@@ -181,7 +187,7 @@ def test_fixed_immersed_les_vector_wall_traction_is_tangent_dissipative_and_appl
         np.testing.assert_allclose(total, sgs + wall, rtol=2.0e-12, atol=2.0e-12)
 
 
-def test_vector_wall_stress_changes_normal_constrained_step_trajectory():
+def test_vector_wall_stress_changes_normal_constrained_step_trajectory() -> None:
     discretization, _, _, _, baseline_plan, baseline = _route(wall=False)
     _, _, _, _, wall_plan, wall_dynamics = _route(wall=True)
     state = baseline.pack_velocity(
@@ -211,7 +217,7 @@ def test_vector_wall_stress_changes_normal_constrained_step_trajectory():
     assert jnp.linalg.norm(wall_step.state - baseline_step.state) > 1.0e-12
 
 
-def test_immersed_methods_apply_sgs_project_and_restart_sbdf2_history():
+def test_immersed_methods_apply_sgs_project_and_restart_sbdf2_history() -> None:
     discretization, operators, _, _, plan, dynamics = _route(coefficient=0.12)
     velocity = tuple(0.03 * value for value in _taylor_green(discretization))
     state = dynamics.project_state(velocity)
@@ -270,7 +276,7 @@ def test_immersed_methods_apply_sgs_project_and_restart_sbdf2_history():
     assert jnp.linalg.norm(advanced.projection.marker_slip) < 2.0e-7
 
 
-def test_immersed_les_step_ledger_closes_impulse_and_transfer_work():
+def test_immersed_les_step_ledger_closes_impulse_and_transfer_work() -> None:
     discretization, _, _, _, plan, dynamics = _route(coefficient=0.08)
     velocity = tuple(0.05 * value for value in _taylor_green(discretization))
     state = dynamics.pack_velocity(velocity)
@@ -311,13 +317,13 @@ def test_immersed_les_step_ledger_closes_impulse_and_transfer_work():
     assert ledger.body_mechanical_work == 0.0
 
 
-def test_fixed_immersed_les_stage_is_jittable_and_has_velocity_jvp():
+def test_fixed_immersed_les_stage_is_jittable_and_has_velocity_jvp() -> None:
     discretization, operators, momentum, _, _, dynamics = _route(coefficient=0.1)
     state = dynamics.pack_velocity(_taylor_green(discretization))
     stage_data = momentum.boundaries.homogeneous_stage()
     prepared = dynamics.algebraic_les
 
-    def rate(coordinates):
+    def rate(coordinates: Any) -> Any:
         velocity = operators.velocity_space.unflatten(coordinates)
         stage = prepared.evaluate(tuple(velocity), stage_data)
         return operators.velocity_space.flatten(stage.physical_rate)
@@ -333,7 +339,7 @@ def test_fixed_immersed_les_stage_is_jittable_and_has_velocity_jvp():
 
 
 @pytest.mark.parametrize("motion", ("moving", "deforming"))
-def test_fixed_immersed_les_prepare_refuses_nonfixed_geometry(motion):
+def test_fixed_immersed_les_prepare_refuses_nonfixed_geometry(motion: Any) -> None:
     _, _, momentum, _, plan, _ = _route()
     refused = FixedImmersedMACLESPlan(
         plan.algebraic_les,
@@ -347,7 +353,7 @@ def test_fixed_immersed_les_prepare_refuses_nonfixed_geometry(motion):
         refused.prepare(momentum, molecular_viscosity=0.01)
 
 
-def test_fixed_immersed_les_prepare_refuses_distributed_and_wrong_wall_route():
+def test_fixed_immersed_les_prepare_refuses_distributed_and_wrong_wall_route() -> None:
     _, _, momentum, _, plan, _ = _route()
     distributed = FixedImmersedMACLESPlan(
         plan.algebraic_les,
@@ -374,7 +380,7 @@ def test_fixed_immersed_les_prepare_refuses_distributed_and_wrong_wall_route():
         wrong_wall.prepare(momentum, molecular_viscosity=0.01)
 
 
-def test_fixed_immersed_les_refuses_open_outer_boundary_at_prepare():
+def test_fixed_immersed_les_refuses_open_outer_boundary_at_prepare() -> None:
     count = 4
     specs = (
         phx.discretization.UniformCellAxisSpec(count, periodic=True),

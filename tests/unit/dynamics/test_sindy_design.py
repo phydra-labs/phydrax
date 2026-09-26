@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_strong_design_uses_sample_aligned_controls_and_derivatives():
+def test_strong_design_uses_sample_aligned_controls_and_derivatives() -> None:
     time = jnp.linspace(0.0, 2.0, 21)
     state = (0.2 + time**2)[:, None]
     control = jnp.sin(time)[:, None]
@@ -46,7 +46,7 @@ def test_strong_design_uses_sample_aligned_controls_and_derivatives():
     )
 
 
-def test_discrete_design_targets_next_state_without_derivative_reinterpretation():
+def test_discrete_design_targets_next_state_without_derivative_reinterpretation() -> None:
     state = jnp.asarray([0.1, 0.58, 0.964, 1.2712, 1.51696])[:, None]
     layout = phx.dynamics.StateLayout((1,), component_names=("x",))
     data = phx.dynamics.TrajectoryData(
@@ -70,7 +70,7 @@ def test_discrete_design_targets_next_state_without_derivative_reinterpretation(
     )
 
 
-def test_integral_design_matches_constant_vector_field_identity():
+def test_integral_design_matches_constant_vector_field_identity() -> None:
     time = jnp.asarray([0.0, 0.1, 0.35, 0.8, 1.4, 2.0])
     layout = phx.dynamics.StateLayout((1,), component_names=("x",))
     data = phx.dynamics.TrajectoryData(
@@ -97,7 +97,7 @@ def test_integral_design_matches_constant_vector_field_identity():
     )
 
 
-def test_weak_and_integral_windows_crossing_reset_are_invalid():
+def test_weak_and_integral_windows_crossing_reset_are_invalid() -> None:
     time = jnp.linspace(0.0, 1.0, 11)
     layout = phx.dynamics.StateLayout((1,))
     data = phx.dynamics.TrajectoryData(
@@ -129,13 +129,15 @@ def test_weak_and_integral_windows_crossing_reset_are_invalid():
     assert not bool(jnp.any(weak.valid[crossing_weak]))
 
 
-def test_pde_metadata_rejects_fractional_and_boolean_orders():
+def test_pde_metadata_rejects_fractional_and_boolean_orders() -> None:
     with pytest.raises(TypeError, match="orders must contain integers"):
+        # ty: ignore[invalid-argument-type]
         phx.dynamics.identification.PDEDerivative(0, (1.5,))
     with pytest.raises(TypeError, match="orders must contain integers"):
         phx.dynamics.identification.PDEDerivative(0, (True,))
     with pytest.raises(TypeError, match="state_powers must contain integers"):
         phx.dynamics.identification.PDELibraryTerm(
+            # ty: ignore[invalid-argument-type]
             (0.5,),
             name="fractional-power",
         )

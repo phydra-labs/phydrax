@@ -24,6 +24,7 @@ from s2fft.utils import quadrature as s2fft_quadrature
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._spherical import SphericalExecution, SphericalSampling
 
 
@@ -282,10 +283,12 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
             raise ValueError("directional_bandlimit must satisfy 1 <= N <= L.")
         if selected_lower < 0 or selected_lower >= selected_bandlimit:
             raise ValueError("lower_bandlimit must satisfy 0 <= L_lower < L.")
-        if selected_sampling not in ("mw", "mwss", "dh", "gl"):
-            raise ValueError("sampling must be 'mw', 'mwss', 'dh', or 'gl'.")
-        if selected_execution not in ("recursive", "precomputed"):
-            raise ValueError("execution must be 'recursive' or 'precomputed'.")
+        selected_sampling = parse(
+            selected_sampling, SphericalSampling, "selected_sampling"
+        )
+        selected_execution = parse(
+            selected_execution, SphericalExecution, "selected_execution"
+        )
         if selected_execution == "recursive" and selected_directional >= 8:
             raise ValueError(
                 "recursive Wigner execution is certified only for directional_bandlimit < 8; use precomputed execution."

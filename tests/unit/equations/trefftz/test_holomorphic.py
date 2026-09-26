@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _set_polynomial(potential, real, imaginary=None):
+def _set_polynomial(potential: Any, real: Any, imaginary: Any = None) -> Any:
     real_ = jnp.asarray(real, dtype="float64")
     imaginary_ = jnp.zeros_like(real_) if imaginary is None else jnp.asarray(imaginary)
     return eqx.tree_at(
@@ -21,7 +24,7 @@ def _set_polynomial(potential, real, imaginary=None):
     )
 
 
-def test_complex_linear_uses_real_leaves_and_matches_dense_complex_oracle():
+def test_complex_linear_uses_real_leaves_and_matches_dense_complex_oracle() -> None:
     layer = phx.nn.layers.ComplexLinear(in_size=2, out_size=2, key=jr.key(0))
     layer = eqx.tree_at(
         lambda value: (
@@ -45,7 +48,7 @@ def test_complex_linear_uses_real_leaves_and_matches_dense_complex_oracle():
     assert parameters and all(not jnp.iscomplexobj(leaf) for leaf in parameters)
 
 
-def test_complex_normalization_preserves_nonreal_data_for_real_coordinates():
+def test_complex_normalization_preserves_nonreal_data_for_real_coordinates() -> None:
     normalization = phx.equations.ComplexAffineNormalization.scalar(
         center=1.0 + 2.0j,
         scale=2.0j,
@@ -56,7 +59,7 @@ def test_complex_normalization_preserves_nonreal_data_for_real_coordinates():
     assert jnp.allclose(value, expected)
 
 
-def test_holomorphic_polynomial_horner_jets_match_closed_form():
+def test_holomorphic_polynomial_horner_jets_match_closed_form() -> None:
     potential = phx.equations.HolomorphicPolynomialPotential(1, 3)
     potential = _set_polynomial(
         potential,
@@ -76,7 +79,7 @@ def test_holomorphic_polynomial_horner_jets_match_closed_form():
     assert potential.holomorphic_certificate().parameter_coverage == "finite-subspace"
 
 
-def test_holomorphic_mlp_satisfies_cauchy_riemann_with_real_parameters():
+def test_holomorphic_mlp_satisfies_cauchy_riemann_with_real_parameters() -> None:
     model = phx.nn.models.HolomorphicMLP(
         in_size=1,
         out_size=2,
@@ -85,7 +88,7 @@ def test_holomorphic_mlp_satisfies_cauchy_riemann_with_real_parameters():
     )
     point = jnp.asarray([0.2, -0.3])
 
-    def complex_value(real_coordinates):
+    def complex_value(real_coordinates: Any) -> Any:
         return model(real_coordinates[0] + 1j * real_coordinates[1])
 
     derivative = jax.jacfwd(complex_value)(point)
@@ -97,6 +100,7 @@ def test_holomorphic_mlp_satisfies_cauchy_riemann_with_real_parameters():
         model.holomorphic_certificate().parameter_coverage == "finite-parametric-family"
     )
 
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0))
     harmonic = phx.equations.HarmonicPotential2D(model)
     field = domain.Model("x")(harmonic)
@@ -121,7 +125,7 @@ def test_holomorphic_mlp_satisfies_cauchy_riemann_with_real_parameters():
         phx.solver.solve_linear_trial_space(solver)
 
 
-def test_harmonic_and_biharmonic_potential_representations_are_exact():
+def test_harmonic_and_biharmonic_potential_representations_are_exact() -> None:
     harmonic_potential = _set_polynomial(
         phx.equations.HolomorphicPolynomialPotential(1, 2),
         [[0.0, 0.0, 1.0]],
@@ -131,6 +135,7 @@ def test_harmonic_and_biharmonic_potential_representations_are_exact():
     assert jnp.allclose(harmonic(point), point[0] ** 2 - point[1] ** 2)
     assert jnp.allclose(jnp.trace(jax.hessian(harmonic)(point)), 0.0, atol=1e-11)
     harmonic_certificate = phx.equations.trial_space_certificate(
+        # ty: ignore[invalid-argument-type]
         phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0)).Model("x")(harmonic)
     )
     assert harmonic_certificate.coverage == "finite-subspace"
@@ -142,13 +147,13 @@ def test_harmonic_and_biharmonic_potential_representations_are_exact():
     )
     biharmonic = phx.equations.BiharmonicPotential2D(biharmonic_potential)
 
-    def laplacian(value):
+    def laplacian(value: Any) -> Any:
         return jnp.trace(jax.hessian(biharmonic)(value))
 
     assert jnp.allclose(jnp.trace(jax.hessian(laplacian)(point)), 0.0, atol=2e-10)
 
 
-def test_plane_elasticity_potential_satisfies_equilibrium_for_both_hypotheses():
+def test_plane_elasticity_potential_satisfies_equilibrium_for_both_hypotheses() -> None:
     potential = _set_polynomial(
         phx.equations.HolomorphicPolynomialPotential(2, 3),
         [

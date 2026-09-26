@@ -672,10 +672,10 @@ def _compiled_rollout(
 ) -> Callable[[SmoothCompressibleKineticState], Any]:
     step_size = runtime.required_step_size
 
-    def rollout(initial_state: SmoothCompressibleKineticState):
+    def rollout(initial_state: SmoothCompressibleKineticState) -> Any:
         dtype = initial_state.particle_populations.dtype
 
-        def step(state, _):
+        def step(state: Any, _: Any) -> Any:
             if binding is None:
                 result, _ = runtime.step_oracle(
                     state, jnp.asarray(step_size, dtype=dtype)
@@ -720,10 +720,12 @@ def _paired_runtime(
     oracle_jit = _compiled_rollout(runtime, None, step_count)
     learned_jit = _compiled_rollout(runtime, binding, step_count)
     oracle_compiled, oracle_compilation = measure_lower_and_compile(
+        # ty: ignore[unresolved-attribute]
         lambda: oracle_jit.lower(initial_state),
         lambda lowered: lowered.compile(),
     )
     learned_compiled, learned_compilation = measure_lower_and_compile(
+        # ty: ignore[unresolved-attribute]
         lambda: learned_jit.lower(initial_state),
         lambda lowered: lowered.compile(),
     )
@@ -1235,6 +1237,7 @@ def qualification_report(
     else:
         learned_final, learned_rollout = _rollout_learned(
             coarse_runtime,
+            # ty: ignore[invalid-argument-type]
             binding,
             coarse_initial,
             coarse_step_count,
@@ -1258,6 +1261,7 @@ def qualification_report(
         }
         runtime_record = _paired_runtime(
             coarse_runtime,
+            # ty: ignore[invalid-argument-type]
             binding,
             coarse_initial,
             coarse_step_count,
@@ -1395,6 +1399,7 @@ def main() -> int:
     payload = canonical_json(report) + "\n"
     atomic_write(
         arguments.output,
+        # ty: ignore[invalid-argument-type]
         lambda temporary: temporary.write_text(payload, encoding="utf-8"),
     )
     return 0

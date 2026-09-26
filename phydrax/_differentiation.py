@@ -497,7 +497,8 @@ class DerivativeRegularity(StrictModule, NonTrainableState):
     def _polynomial_degree_bound(self) -> int:
         degree_bound = self.degree_bound
         # The constructor requires an int bound exactly when pieces are polynomial.
-        assert degree_bound is not None
+        if not (degree_bound is not None):
+            raise RuntimeError("Internal invariant failed: degree_bound is not None.")
         return degree_bound
 
     def _combine(

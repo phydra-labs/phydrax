@@ -16,7 +16,7 @@ from tools.operator_benchmarks import (
 )
 
 
-def test_resolution_scaling_profile_uses_one_parameterization():
+def test_resolution_scaling_profile_uses_one_parameterization() -> None:
     scenario = periodic_burgers_scenario(
         train_resolution=8,
         test_resolution=12,
@@ -40,7 +40,7 @@ def test_resolution_scaling_profile_uses_one_parameterization():
     assert jnp.isfinite(profile.inference_exponent)
 
 
-def test_resolution_specific_models_have_constant_parameter_count():
+def test_resolution_specific_models_have_constant_parameter_count() -> None:
     models = tuple(
         phx.nn.operator.architectures.FNO(
             width=4,
@@ -53,7 +53,7 @@ def test_resolution_specific_models_have_constant_parameter_count():
     assert_resolution_independent_parameters(models)
 
 
-def test_case_sharding_preserves_operator_values_and_replicates_parameters():
+def test_case_sharding_preserves_operator_values_and_replicates_parameters() -> None:
     scenario = periodic_burgers_scenario(
         train_resolution=8,
         test_resolution=12,

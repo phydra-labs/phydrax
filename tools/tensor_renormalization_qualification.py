@@ -8,6 +8,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -29,13 +30,13 @@ def _onsager_log_partition(beta: float) -> float:
     return math.log(2.0 * math.cosh(2.0 * beta)) + integral / (2.0 * math.pi)
 
 
-def _ising_tensor(beta: float):
+def _ising_tensor(beta: float) -> Any:
     spins = jnp.asarray((-1.0, 1.0), dtype=jnp.float64)
     pair_weight = jnp.exp(beta * spins[:, None] * spins[None, :])
     return phx.tensor_network.build_uniform_pair_partition_tensor(pair_weight).tensor
 
 
-def _method_case(name: str, beta: float, bond: int, steps: int):
+def _method_case(name: str, beta: float, bond: int, steps: int) -> Any:
     tn = phx.tensor_network
     method = tn.TRGMethod() if name == "trg" else tn.HOTRGMethod()
     problem = tn.TensorRenormalizationProblem(_ising_tensor(beta))
@@ -73,7 +74,7 @@ def _method_case(name: str, beta: float, bond: int, steps: int):
     }
 
 
-def _q2_potts_case(bond: int, steps: int):
+def _q2_potts_case(bond: int, steps: int) -> Any:
     tn = phx.tensor_network
     beta = 2.0 * _CRITICAL_BETA
     pair_weight = jnp.asarray(
@@ -103,7 +104,7 @@ def _q2_potts_case(bond: int, steps: int):
     }
 
 
-def _product_case():
+def _product_case() -> Any:
     tn = phx.tensor_network
     tensor = tn.UniformSquareTensor(jnp.asarray([[[[2.0]]]], dtype=jnp.float64))
     result = tn.run_tensor_renormalization(
@@ -128,7 +129,7 @@ def _product_case():
     }
 
 
-def _nonfinite_case():
+def _nonfinite_case() -> Any:
     tn = phx.tensor_network
     tensor = tn.UniformSquareTensor(jnp.asarray([[[[jnp.nan]]]], dtype=jnp.float64))
     result = tn.run_tensor_renormalization(
@@ -150,7 +151,7 @@ def _nonfinite_case():
     }
 
 
-def _resource_refusal_case():
+def _resource_refusal_case() -> Any:
     tn = phx.tensor_network
     problem = tn.TensorRenormalizationProblem(_ising_tensor(0.2))
     refused = False
@@ -175,7 +176,7 @@ def _resource_refusal_case():
     }
 
 
-def qualification(*, maximum_bond_dimension: int = 6, steps: int = 8):
+def qualification(*, maximum_bond_dimension: int = 6, steps: int = 8) -> Any:
     betas = (0.2, 0.3, _CRITICAL_BETA, 0.6)
     cases = [
         _method_case(method, beta, maximum_bond_dimension, steps)

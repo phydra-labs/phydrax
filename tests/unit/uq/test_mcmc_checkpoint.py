@@ -13,7 +13,7 @@ import phydrax as phx
 import phydrax.uq._mcmc as mcmc_module
 
 
-def _problem(center=(0.4, -0.7)):
+def _problem(center: Any = (0.4, -0.7)) -> Any:
     center_array = jnp.asarray(center)
     return phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
@@ -24,7 +24,7 @@ def _problem(center=(0.4, -0.7)):
     )
 
 
-def _assert_tree_equal(left, right):
+def _assert_tree_equal(left: Any, right: Any) -> None:
     comparisons = jax.tree_util.tree_map(jnp.array_equal, left, right)
     assert all(jax.tree_util.tree_leaves(comparisons))
 
@@ -38,12 +38,12 @@ def _assert_tree_equal(left, right):
     ],
 )
 def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
-    tmp_path,
-    monkeypatch,
-    algorithm,
-    chain_method,
-    checkpoint_every,
-):
+    tmp_path: Any,
+    monkeypatch: Any,
+    algorithm: Any,
+    chain_method: Any,
+    checkpoint_every: Any,
+) -> None:
     problem = _problem()
     common: dict[str, Any] = {
         "key": jr.key(919),
@@ -66,7 +66,7 @@ def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
     checkpoint = tmp_path / f"{algorithm}.phxckpt"
     original_write = mcmc_module._write_mcmc_checkpoint
 
-    def interrupting_write(destination, **kwargs):
+    def interrupting_write(destination: Any, **kwargs: Any) -> None:
         original_write(destination, **kwargs)
         if kwargs["completed"] == checkpoint_every:
             raise RuntimeError("simulated interruption")
@@ -81,7 +81,7 @@ def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
         )
     monkeypatch.setattr(mcmc_module, "_write_mcmc_checkpoint", original_write)
 
-    def adaptation_must_not_run(*args, **kwargs):
+    def adaptation_must_not_run(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("warmup repeated during resume")
 
     monkeypatch.setattr(mcmc_module, "_adapt_mcmc", adaptation_must_not_run)
@@ -114,7 +114,9 @@ def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
     )
 
 
-def test_mcmc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
+def test_mcmc_checkpoint_rejects_incompatible_identity_and_corruption(
+    tmp_path: Any,
+) -> None:
     problem = _problem()
     checkpoint = tmp_path / "state.phxckpt"
     settings: dict[str, Any] = {
@@ -160,7 +162,7 @@ def test_mcmc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
         )
 
 
-def test_interleaved_checkpoint_can_extend_without_repeating_draws(tmp_path):
+def test_interleaved_checkpoint_can_extend_without_repeating_draws(tmp_path: Any) -> None:
     problem = _problem()
     checkpoint = tmp_path / "extended.phxckpt"
     settings: dict[str, Any] = {
@@ -204,7 +206,7 @@ def test_interleaved_checkpoint_can_extend_without_repeating_draws(tmp_path):
     )
 
 
-def test_mcmc_accepts_distinct_initial_positions_for_each_chain():
+def test_mcmc_accepts_distinct_initial_positions_for_each_chain() -> None:
     problem = _problem()
     initial_positions = jnp.asarray([[-1.5, -1.0], [1.5, 1.0]])
 
@@ -223,7 +225,7 @@ def test_mcmc_accepts_distinct_initial_positions_for_each_chain():
     assert result.samples.shape == (2, 4, 2)
 
 
-def test_mcmc_rejects_ambiguous_or_misshaped_initial_positions():
+def test_mcmc_rejects_ambiguous_or_misshaped_initial_positions() -> None:
     problem = _problem()
 
     with pytest.raises(ValueError, match="cannot both"):

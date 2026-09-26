@@ -7,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def test_coupled_fbsde_explicit_replays_one_wiener_realization():
+def test_coupled_fbsde_explicit_replays_one_wiener_realization() -> None:
     problem = phx.solver.CoupledFBSDEProblem(
         jnp.linspace(0.0, 1.0, 9),
         jnp.asarray([0.0]),
@@ -49,7 +49,7 @@ def test_coupled_fbsde_explicit_replays_one_wiener_realization():
     assert jnp.all(first.successful)
 
 
-def test_coupled_fbsde_rejects_scalar_state_shape():
+def test_coupled_fbsde_rejects_scalar_state_shape() -> None:
     with pytest.raises(ValueError, match="state_shape"):
         phx.solver.CoupledFBSDEProblem(
             jnp.asarray([0.0, 1.0]),
@@ -67,7 +67,7 @@ def test_coupled_fbsde_rejects_scalar_state_shape():
         )
 
 
-def _jump_problem(*, status=None, realization=None):
+def _jump_problem(*, status: Any = None, realization: Any = None) -> Any:
     sample_shape = (2,)
     times = jnp.asarray([0.0, 0.5, 1.0])
     states = jnp.asarray(
@@ -123,12 +123,14 @@ def _jump_problem(*, status=None, realization=None):
     return problem, paths
 
 
-def _jump_control(label, time, state, channel, mark, args, *, key):
+def _jump_control(
+    label: Any, time: Any, state: Any, channel: Any, mark: Any, args: Any, *, key: Any
+) -> Any:
     del label, time, state, channel, mark, args, key
     return jnp.ones((1,))
 
 
-def test_compensated_poisson_bsde_is_exact_on_grid():
+def test_compensated_poisson_bsde_is_exact_on_grid() -> None:
     problem, paths = _jump_problem()
     evaluation = phx.stochastic.evaluate_jump_bsde(
         problem,
@@ -148,10 +150,10 @@ def test_compensated_poisson_bsde_is_exact_on_grid():
 
 
 @pytest.mark.parametrize("output_shape", [(), (2, 2)])
-def test_jump_bsde_reduces_the_declared_step_axis(output_shape):
+def test_jump_bsde_reduces_the_declared_step_axis(output_shape: Any) -> None:
     _, paths = _jump_problem()
 
-    def output(value):
+    def output(value: Any) -> Any:
         return jnp.asarray(value) if not output_shape else jnp.full(output_shape, value)
 
     base = phx.stochastic.BSDEProblem(
@@ -187,11 +189,11 @@ def test_jump_bsde_reduces_the_declared_step_axis(output_shape):
     assert diagnostics.compensated_increment_mean.shape == output_shape
 
 
-def test_jump_bsde_random_streams_are_namespaced_by_label():
+def test_jump_bsde_random_streams_are_namespaced_by_label() -> None:
     template_problem, template_paths = _jump_problem()
     events = template_paths.jump_events["jump"]
 
-    def evaluate(label):
+    def evaluate(label: Any) -> Any:
         paths = phx.stochastic.BSDEPathBatch(
             template_paths.times,
             template_paths.states,
@@ -225,7 +227,7 @@ def test_jump_bsde_random_streams_are_namespaced_by_label():
     assert not jnp.array_equal(first.jump_sums, second.jump_sums)
 
 
-def test_jump_bsde_propagates_event_failure_status():
+def test_jump_bsde_propagates_event_failure_status() -> None:
     problem, paths = _jump_problem(
         status=jnp.asarray([phx.stochastic.JUMP_SUCCESS, phx.stochastic.JUMP_MAX_EVENTS])
     )
@@ -253,7 +255,7 @@ def test_jump_bsde_propagates_event_failure_status():
         )
 
 
-def test_jump_bsde_requires_composite_provenance_when_present():
+def test_jump_bsde_requires_composite_provenance_when_present() -> None:
     wiener = phx.stochastic.WienerRealization(
         jr.key(53),
         (1,),
@@ -275,7 +277,7 @@ def test_jump_bsde_requires_composite_provenance_when_present():
         )
 
 
-def test_jump_bsde_accepts_matching_composite_realization():
+def test_jump_bsde_accepts_matching_composite_realization() -> None:
     wiener = phx.stochastic.WienerRealization(
         jr.key(54),
         (1,),

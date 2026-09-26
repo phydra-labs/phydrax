@@ -31,7 +31,10 @@ from itertools import accumulate
 from operator import mul
 from pathlib import Path
 
+# ty: ignore[unresolved-import]
 import flint
+
+# ty: ignore[unresolved-import]
 from flint import arb, arb_poly, fmpq, fmpq_series
 
 

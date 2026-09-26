@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -13,7 +16,7 @@ from phydrax.nn.models import (
 )
 
 
-def _two_chart_atlas():
+def _two_chart_atlas() -> Any:
     first = phx.metrix.CoordinateChart("first", ("z0", "z1"))
     second = phx.metrix.CoordinateChart("second", ("w0", "w1"))
     identity = lambda value: value
@@ -26,7 +29,7 @@ def _two_chart_atlas():
     )
 
 
-def test_cartier_divisor_overlap_units_cocycle_clearance_and_intersection():
+def test_cartier_divisor_overlap_units_cocycle_clearance_and_intersection() -> None:
     atlas = _two_chart_atlas()
     divisor = phx.geometry.complex.CartierDivisor(
         atlas,
@@ -68,7 +71,7 @@ def test_cartier_divisor_overlap_units_cocycle_clearance_and_intersection():
     assert bool(intersection.valid)
 
 
-def test_algebra_analytic_network_names_operator_side_and_bracketing():
+def test_algebra_analytic_network_names_operator_side_and_bracketing() -> None:
     product = phx.metrix.algebra.ComplexAlgebraSpec().prepare_product(backend="sparse")
     layer = AlgebraAnalyticLayer(
         jnp.asarray([[[1.0, 0.0]]]),
@@ -85,6 +88,7 @@ def test_algebra_analytic_network_names_operator_side_and_bracketing():
         (layer,),
         lambda value: value,
         operator,
+        # ty: ignore[invalid-argument-type]
         phx.metrix.algebra.BracketingPlan(0, operand_count=1),
         network_id="complex-linear-network",
     )
@@ -96,12 +100,15 @@ def test_algebra_analytic_network_names_operator_side_and_bracketing():
     assert bool(evidence.valid)
     with pytest.raises(ValueError, match="kind"):
         AnalyticityOperator(
-            "octonion_holomorphic", lambda function, point: point, operator_id="ambiguous"
+            # ty: ignore[invalid-argument-type]
+            "octonion_holomorphic",
+            lambda function, point: point,
+            operator_id="ambiguous",
         )
 
 
-def test_gauge_renormalization_uses_group_inverse_for_reverse_state_transport():
-    def certify(plan, parameters, gauge, state):
+def test_gauge_renormalization_uses_group_inverse_for_reverse_state_transport() -> None:
+    def certify(plan: Any, parameters: Any, gauge: Any, state: Any) -> None:
         evidence = plan.evidence(
             parameters,
             gauge,
@@ -114,7 +121,7 @@ def test_gauge_renormalization_uses_group_inverse_for_reverse_state_transport():
         assert evidence.inverse_residual < 1e-6
         assert evidence.state_residual < 1e-6
 
-    def make_plan(action, inverse, gauge_kind):
+    def make_plan(action: Any, inverse: Any, gauge_kind: Any) -> Any:
         return phx.metrix.GaugeRenormalizationPlan(
             action,
             action,
@@ -165,7 +172,7 @@ def test_gauge_renormalization_uses_group_inverse_for_reverse_state_transport():
         jnp.asarray(-0.2 + 0.7j),
     )
 
-    def quaternion_multiply(left, right):
+    def quaternion_multiply(left: Any, right: Any) -> Any:
         lw, lx, ly, lz = left
         rw, rx, ry, rz = right
         return jnp.asarray(

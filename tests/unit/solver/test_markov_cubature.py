@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -5,7 +7,9 @@ import pytest
 import phydrax as phx
 
 
-def _additive_problem(*, rate=0.0, initial=0.0, interpretation="ito"):
+def _additive_problem(
+    *, rate: Any = 0.0, initial: Any = 0.0, interpretation: Any = "ito"
+) -> Any:
     return phx.solver.DifferentialProblem(
         lambda time, state, value: value * state,
         jnp.asarray([initial]),
@@ -24,7 +28,7 @@ def _additive_problem(*, rate=0.0, initial=0.0, interpretation="ito"):
     )
 
 
-def _plan(intervals=4, **kwargs):
+def _plan(intervals: Any = 4, **kwargs: Any) -> Any:
     return phx.solver.MarkovCubaturePlan(
         phx.discretization.TemporalMesh.uniform(
             0.0,
@@ -37,14 +41,14 @@ def _plan(intervals=4, **kwargs):
     )
 
 
-def _moments(solution, index=-1):
+def _moments(solution: Any, index: Any = -1) -> Any:
     mask = solution.mask[index]
     weights = jnp.where(mask, jnp.exp(solution.log_weights[index]), 0.0)
     values = solution.points[index, :, 0]
     return jnp.sum(weights * values), jnp.sum(weights * values**2)
 
 
-def test_weak_euler_recombination_preserves_linear_gaussian_moments():
+def test_weak_euler_recombination_preserves_linear_gaussian_moments() -> None:
     intervals = 4
     rate = 0.2
     initial = 1.0
@@ -83,10 +87,10 @@ def test_weak_euler_recombination_preserves_linear_gaussian_moments():
     assert jnp.allclose(jnp.asarray(estimate.value.data), second, atol=1e-12)
 
 
-def test_weak_solver_is_jittable_and_uses_frozen_support_weight_derivatives():
+def test_weak_solver_is_jittable_and_uses_frozen_support_weight_derivatives() -> None:
     plan = _plan(4)
 
-    def terminal_mean(rate):
+    def terminal_mean(rate: Any) -> Any:
         solution = phx.solver.solve_markov_cubature(
             _additive_problem(rate=rate, initial=1.0),
             plan,
@@ -102,7 +106,7 @@ def test_weak_solver_is_jittable_and_uses_frozen_support_weight_derivatives():
     assert jnp.allclose(gradient, 1.05**3, atol=1e-11)
 
 
-def test_markov_solver_preserves_float32_state_dtype_under_jit():
+def test_markov_solver_preserves_float32_state_dtype_under_jit() -> None:
     problem = phx.solver.DifferentialProblem(
         lambda time, state, args: -jnp.asarray(0.2, dtype=state.dtype) * state,
         jnp.asarray([1.0], dtype=jnp.float32),
@@ -124,7 +128,7 @@ def test_markov_solver_preserves_float32_state_dtype_under_jit():
     assert solution.successful
 
 
-def test_temporal_masks_hold_the_law_without_recording_fake_expansions():
+def test_temporal_masks_hold_the_law_without_recording_fake_expansions() -> None:
     mesh = phx.discretization.TemporalMesh(
         jnp.asarray([0.0, 0.25, 0.5, 1.0]),
         role="driver",
@@ -160,7 +164,7 @@ def test_temporal_masks_hold_the_law_without_recording_fake_expansions():
     assert jnp.all(solution.valid)
 
 
-def test_dynamic_nonfinite_failure_returns_a_status_when_throw_is_disabled():
+def test_dynamic_nonfinite_failure_returns_a_status_when_throw_is_disabled() -> None:
     problem = phx.solver.DifferentialProblem(
         lambda time, state, args: jnp.full_like(state, jnp.nan),
         jnp.asarray([0.0]),
@@ -183,7 +187,7 @@ def test_dynamic_nonfinite_failure_returns_a_status_when_throw_is_disabled():
     assert not solution.valid[-1]
 
 
-def test_markov_cubature_rejects_unsupported_static_problem_contracts():
+def test_markov_cubature_rejects_unsupported_static_problem_contracts() -> None:
     deterministic = phx.solver.DifferentialProblem(
         lambda time, state, args: state,
         jnp.asarray([1.0]),

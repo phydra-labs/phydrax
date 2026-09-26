@@ -9,6 +9,7 @@ import dataclasses
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -34,7 +35,7 @@ class PINNDomainDecompositionBenchmark:
     elapsed_seconds: float
 
 
-def _parameter_count(tree) -> int:
+def _parameter_count(tree: Any) -> int:
     parameters, _, _ = partition_parameters(tree)
     return sum(
         leaf.size
@@ -43,7 +44,7 @@ def _parameter_count(tree) -> int:
     )
 
 
-def _fixed_source(component, count: int, *, key):
+def _fixed_source(component: Any, count: int, *, key: Any) -> Any:
     layout = phx.domain.SampleLayout((("x",),))
     batch = component.sample(
         phx.domain.PointSampling(count, layout=layout),
@@ -54,7 +55,7 @@ def _fixed_source(component, count: int, *, key):
     )
 
 
-def _poisson_terms(domain, field_name: str, *, points: int):
+def _poisson_terms(domain: Any, field_name: str, *, points: int) -> Any:
     interior = domain.component()
     boundary = domain.component({"x": phx.domain.Boundary()})
     forcing = domain.Function("x")(lambda x: jnp.pi**2 * jnp.sin(jnp.pi * x[0]))
@@ -82,7 +83,7 @@ def _poisson_terms(domain, field_name: str, *, points: int):
     )
 
 
-def _relative_l2(field, domain, *, points: int = 512) -> float:
+def _relative_l2(field: Any, domain: Any, *, points: int = 512) -> float:
     coordinates = jnp.linspace(0.0, 1.0, points)
     batch = domain.component().points({"x": coordinates[:, None]})
     prediction = jnp.asarray(field(batch).data)
@@ -92,7 +93,7 @@ def _relative_l2(field, domain, *, points: int = 512) -> float:
 
 
 def _run_global(
-    domain,
+    domain: Any,
     *,
     iterations: int,
     points: int,
@@ -140,7 +141,7 @@ def _run_global(
 
 
 def _run_partition_of_unity(
-    domain,
+    domain: Any,
     *,
     iterations: int,
     points: int,
@@ -220,7 +221,7 @@ def _run_partition_of_unity(
 
 
 def _run_schwarz(
-    domain,
+    domain: Any,
     *,
     iterations: int,
     points: int,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 from phydrax.ml import metrics
 
 
-def test_exact_ranking_metrics_use_hard_order_and_weighted_masks():
+def test_exact_ranking_metrics_use_hard_order_and_weighted_masks() -> None:
     relevance = jnp.array([1.0, 0.0, 1.0, 1.0])
     score = jnp.array([4.0, 3.0, 2.0, 100.0])
     mask = jnp.array([True, True, True, False])
@@ -33,7 +36,7 @@ def test_exact_ranking_metrics_use_hard_order_and_weighted_masks():
     assert jnp.allclose(precision.effective_weight, 3.0)
 
 
-def test_dcg_ndcg_exact_and_smooth_rank_semantics():
+def test_dcg_ndcg_exact_and_smooth_rank_semantics() -> None:
     relevance = jnp.array([3.0, 2.0, 0.0])
     ideal_score = jnp.array([3.0, 2.0, 0.0])
     reversed_score = -ideal_score
@@ -57,13 +60,13 @@ def test_dcg_ndcg_exact_and_smooth_rank_semantics():
     assert jnp.all(jnp.isfinite(smooth_gradient))
 
 
-def test_ranking_zero_relevance_has_explicit_denominator_status():
+def test_ranking_zero_relevance_has_explicit_denominator_status() -> None:
     result = metrics.average_precision_score(jnp.zeros(3), jnp.arange(3.0))
     assert not bool(result.valid)
     assert int(result.status) == metrics.METRIC_ZERO_DENOMINATOR
 
 
-def test_hard_clustering_scores_match_separated_partition():
+def test_hard_clustering_scores_match_separated_partition() -> None:
     features = jnp.array([[0.0], [1.0], [10.0], [11.0]])
     labels = jnp.array([0, 0, 1, 1])
 
@@ -91,7 +94,7 @@ def test_hard_clustering_scores_match_separated_partition():
     assert jnp.allclose(mutual_information.value, 1.0)
 
 
-def test_soft_clustering_scores_are_differentiable_in_membership_logits():
+def test_soft_clustering_scores_are_differentiable_in_membership_logits() -> None:
     features = jnp.array([[0.0], [1.0], [10.0], [11.0]])
     logits = jnp.array([[5.0, -5.0], [4.0, -4.0], [-4.0, 4.0], [-5.0, 5.0]])
 
@@ -119,7 +122,7 @@ def test_soft_clustering_scores_are_differentiable_in_membership_logits():
     assert jnp.any(jnp.abs(calinski_gradient) > 0.0)
 
 
-def test_clustering_single_cluster_and_complex_feature_policies():
+def test_clustering_single_cluster_and_complex_feature_policies() -> None:
     real_features = jnp.arange(4.0)[:, None]
     single = metrics.silhouette_score(
         real_features, jnp.zeros(4, dtype=jnp.int32), num_clusters=2
@@ -137,7 +140,7 @@ def test_clustering_single_cluster_and_complex_feature_policies():
     assert jnp.isfinite(complex_result.value)
 
 
-def test_ranking_ties_case_axes_jit_and_vmap_are_deterministic():
+def test_ranking_ties_case_axes_jit_and_vmap_are_deterministic() -> None:
     tied = metrics.discounted_cumulative_gain(
         jnp.array([3.0, 1.0, 2.0]),
         jnp.zeros(3),
@@ -164,7 +167,7 @@ def test_ranking_ties_case_axes_jit_and_vmap_are_deterministic():
     assert jnp.allclose(compiled, mapped)
 
 
-def test_all_smooth_ranking_surrogates_have_prediction_gradients():
+def test_all_smooth_ranking_surrogates_have_prediction_gradients() -> None:
     relevance = jnp.array([1.0, 0.2, 0.8, 0.0])
     score = jnp.array([1.2, 0.4, 0.7, -0.3])
 
@@ -220,7 +223,7 @@ def test_all_smooth_ranking_surrogates_have_prediction_gradients():
         assert jnp.any(jnp.abs(gradient) > 0.0)
 
 
-def test_ranking_invalid_empty_and_zero_denominator_states():
+def test_ranking_invalid_empty_and_zero_denominator_states() -> None:
     relevance = jnp.array([1.0, 0.0, 0.0])
     score = jnp.array([1.0, 3.0, 2.0])
 
@@ -247,7 +250,7 @@ def test_ranking_invalid_empty_and_zero_denominator_states():
         metrics.precision_at_k(relevance, score, k=0)
 
 
-def test_clustering_weights_masks_case_axes_jit_and_vmap():
+def test_clustering_weights_masks_case_axes_jit_and_vmap() -> None:
     features = jnp.array([[0.0], [1.0], [10.0], [11.0], [jnp.nan]])
     labels = jnp.array([0, 0, 1, 1, 0])
     weight = jnp.array([1.0, 2.0, 1.0, 2.0, 9.0])
@@ -288,7 +291,7 @@ def test_clustering_weights_masks_case_axes_jit_and_vmap():
     assert jnp.allclose(compiled, mapped)
 
 
-def test_soft_pair_clustering_metrics_values_and_membership_gradients():
+def test_soft_pair_clustering_metrics_values_and_membership_gradients() -> None:
     hard_membership = jax.nn.one_hot(jnp.array([0, 0, 1, 1]), 2)
     exact_rand = metrics.smooth_rand_score(hard_membership, hard_membership)
     exact_nmi = metrics.smooth_normalized_mutual_info_score(
@@ -300,7 +303,7 @@ def test_soft_pair_clustering_metrics_values_and_membership_gradients():
     membership_true = jnp.array([[0.9, 0.1], [0.8, 0.2], [0.2, 0.8], [0.1, 0.9]])
     membership_pred = jnp.array([[0.8, 0.2], [0.7, 0.3], [0.3, 0.7], [0.2, 0.8]])
 
-    def combined(values):
+    def combined(values: Any) -> Any:
         return (
             metrics.smooth_rand_score(membership_true, values).value
             + metrics.smooth_normalized_mutual_info_score(membership_true, values).value
@@ -313,7 +316,7 @@ def test_soft_pair_clustering_metrics_values_and_membership_gradients():
     assert jnp.any(jnp.abs(gradient) > 0.0)
 
 
-def test_clustering_zero_denominator_empty_and_invalid_states():
+def test_clustering_zero_denominator_empty_and_invalid_states() -> None:
     coincident = jnp.zeros((4, 1))
     labels = jnp.array([0, 0, 1, 1])
     davies = metrics.davies_bouldin_score(coincident, labels, num_clusters=2)

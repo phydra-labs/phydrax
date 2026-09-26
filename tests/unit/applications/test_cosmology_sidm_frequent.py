@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,12 +19,12 @@ from phydrax.applications.cosmology._sidm_weighted import WeightedSIDMPacketStat
 
 def _case(
     *,
-    split_cosine=0.8,
-    maximum_drag=0.1,
-    moment_tolerance=0.2,
-    microscopic_mass=1.0,
-    weights=(1.0, 1.0),
-):
+    split_cosine: Any = 0.8,
+    maximum_drag: Any = 0.1,
+    moment_tolerance: Any = 0.2,
+    microscopic_mass: Any = 1.0,
+    weights: Any = (1.0, 1.0),
+) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray((101, 7)),
         jnp.ones((2,)),
@@ -65,19 +67,19 @@ def _case(
     return plan, state
 
 
-def _step_for_drag(plan, state, drag_fraction):
+def _step_for_drag(plan: Any, state: Any, drag_fraction: Any) -> Any:
     unit = plan.apply(state, jr.key(0), 0, 1.0)
     coefficient = jnp.max(unit.diagnostics.target_drag_fraction)
     return drag_fraction / coefficient
 
 
-def _velocity(state):
+def _velocity(state: Any) -> Any:
     return state.canonical_momenta / (
         state.gravitational_masses[:, None] * state.scale_factor
     )
 
 
-def test_pair_owned_drag_diffusion_is_momentum_energy_and_psd_conservative():
+def test_pair_owned_drag_diffusion_is_momentum_energy_and_psd_conservative() -> None:
     plan, state = _case()
     dt = _step_for_drag(plan, state, 0.02)
     result = plan.apply(state, jr.key(5), 11, dt)
@@ -96,12 +98,12 @@ def test_pair_owned_drag_diffusion_is_momentum_energy_and_psd_conservative():
     assert bool(jnp.all(eigenvalues >= -2.0e-14))
 
 
-def test_sampled_first_and_second_kramers_moyal_moments_match_evidence():
+def test_sampled_first_and_second_kramers_moyal_moments_match_evidence() -> None:
     plan, state = _case()
     dt = _step_for_drag(plan, state, 0.01)
     keys = jr.split(jr.key(73), 2048)
 
-    def sample(key):
+    def sample(key: Any) -> Any:
         result = plan.apply(state, key, 9, dt)
         velocity = _velocity(result.accepted_state)
         return velocity[0] - velocity[1], result.successful
@@ -125,7 +127,9 @@ def test_sampled_first_and_second_kramers_moyal_moments_match_evidence():
     )
 
 
-def test_frequent_schedule_covers_every_supported_edge_once_with_aggregate_bound():
+def test_frequent_schedule_covers_every_supported_edge_once_with_aggregate_bound() -> (
+    None
+):
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray((3, 1, 2)), jnp.ones((3,)), ambient_dimension=3
     ).prepare()
@@ -177,7 +181,7 @@ def test_frequent_schedule_covers_every_supported_edge_once_with_aggregate_bound
     )
 
 
-def test_split_angle_sweep_reconstructs_full_kernel_without_gap_or_overlap():
+def test_split_angle_sweep_reconstructs_full_kernel_without_gap_or_overlap() -> None:
     species = DarkSectorSpeciesPlan("chi", 1.0)
     kernel = TwoBodyDifferentialKernelPlan.constant_isotropic(species, 0.2)
     small_transfer = []
@@ -205,7 +209,7 @@ def test_split_angle_sweep_reconstructs_full_kernel_without_gap_or_overlap():
     assert np.all(np.diff(rare_transfer) > 0.0)
 
 
-def test_frequent_profile_refuses_invalid_timestep_without_switching_regime():
+def test_frequent_profile_refuses_invalid_timestep_without_switching_regime() -> None:
     plan, state = _case(maximum_drag=0.05)
     dt = _step_for_drag(plan, state, 0.5)
     result = plan.apply(state, jr.key(4), 3, dt)
@@ -220,7 +224,7 @@ def test_frequent_profile_refuses_invalid_timestep_without_switching_regime():
         np.testing.assert_array_equal(actual, expected)
 
 
-def test_frequent_profile_refuses_unequal_packet_weights_without_partial_update():
+def test_frequent_profile_refuses_unequal_packet_weights_without_partial_update() -> None:
     plan, state = _case(weights=(2.0, 1.0))
     result = plan.apply(state, jr.key(19), 2, 1.0e-3)
 
@@ -234,7 +238,7 @@ def test_frequent_profile_refuses_unequal_packet_weights_without_partial_update(
         np.testing.assert_array_equal(actual, expected)
 
 
-def test_tiny_unit_mass_relation_rejects_order_unity_relative_error():
+def test_tiny_unit_mass_relation_rejects_order_unity_relative_error() -> None:
     plan, state = _case(microscopic_mass=1.0e-30)
     invalid = eqx.tree_at(
         lambda value: value.gravitational_masses,
@@ -247,7 +251,7 @@ def test_tiny_unit_mass_relation_rejects_order_unity_relative_error():
     assert not bool(result.successful)
 
 
-def test_frequent_profile_refuses_nonidentical_species_kernel():
+def test_frequent_profile_refuses_nonidentical_species_kernel() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray((1, 2)), jnp.ones((2,)), ambient_dimension=3
     ).prepare()
@@ -270,7 +274,9 @@ def test_frequent_profile_refuses_nonidentical_species_kernel():
         )
 
 
-def test_frequent_profile_refuses_azimuth_dependent_kernel_without_tensor_moments():
+def test_frequent_profile_refuses_azimuth_dependent_kernel_without_tensor_moments() -> (
+    None
+):
     plan, _ = _case()
     anisotropic_split = eqx.tree_at(
         lambda value: value.kernel.azimuths,

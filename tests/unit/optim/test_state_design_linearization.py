@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +15,7 @@ import phydrax as phx
 opt = phx.optim
 
 
-def _policy():
+def _policy() -> Any:
     return opt.StateAcceptancePolicy(
         state_relative_tolerance=0.0,
         state_absolute_tolerance=1e-6,
@@ -21,7 +24,7 @@ def _policy():
     )
 
 
-def test_response_pytree_cotangent_includes_direct_and_implicit_design_paths():
+def test_response_pytree_cotangent_includes_direct_and_implicit_design_paths() -> None:
     problem = opt.StateDesignProblem(
         lambda state, design, _: (
             state - jnp.array([design[0] ** 2, design[0] + design[1]])
@@ -46,7 +49,7 @@ def test_response_pytree_cotangent_includes_direct_and_implicit_design_paths():
     np.testing.assert_allclose(pull.design_cotangent, [24.25, 1.0], atol=1e-6)
 
 
-def test_design_only_response_remains_valid_at_singular_state_linearization():
+def test_design_only_response_remains_valid_at_singular_state_linearization() -> None:
     problem = opt.StateDesignProblem(
         lambda state, design, _: (state - design) ** 3,
         lambda state, design, _: jnp.sum(design**2),
@@ -59,7 +62,7 @@ def test_design_only_response_remains_valid_at_singular_state_linearization():
     np.testing.assert_allclose(pull.design_cotangent, [4.0, 6.0], atol=1e-6)
 
 
-def test_changed_realization_cannot_reuse_an_accepted_response_derivative():
+def test_changed_realization_cannot_reuse_an_accepted_response_derivative() -> None:
     problem = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: jnp.sum(state**2),
@@ -74,7 +77,7 @@ def test_changed_realization_cannot_reuse_an_accepted_response_derivative():
     assert not bool(opt.state_design_response_vjp(stale).accepted)
 
 
-def test_blockwise_acceptance_cannot_hide_failed_small_scale_equation():
+def test_blockwise_acceptance_cannot_hide_failed_small_scale_equation() -> None:
     policy = opt.StateAcceptancePolicy(
         state_relative_tolerance=0.0, state_absolute_tolerance=1e-8
     )
@@ -105,7 +108,7 @@ def test_blockwise_acceptance_cannot_hide_failed_small_scale_equation():
     np.testing.assert_allclose(combined.normalized_residual, 2.0)
 
 
-def test_all_at_once_success_requires_final_physical_admissibility():
+def test_all_at_once_success_requires_final_physical_admissibility() -> None:
     problem = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: jnp.sum((state - 1.0) ** 2) + 0.1 * jnp.sum(design**2),

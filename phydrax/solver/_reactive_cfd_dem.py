@@ -337,7 +337,8 @@ def _advance_once(
         dem = detail.accepted_state
         dem_successful = dem_successful & detail.successful
         if plan.hydrodynamics is not None:
-            assert first_hydro is not None
+            if not (first_hydro is not None):
+                raise RuntimeError("Internal invariant failed: first_hydro is not None.")
             second_hydro = evaluate_unresolved_cfd_dem(
                 plan.hydrodynamics,
                 dem,

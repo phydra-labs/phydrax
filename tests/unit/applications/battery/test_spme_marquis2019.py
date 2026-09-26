@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -56,7 +59,7 @@ FARADAY = 96485.33212
 GAS_CONSTANT = 8.31446261815324
 
 
-def _constant(value, support, *, quantity, value_unit):
+def _constant(value: Any, support: Any, *, quantity: Any, value_unit: Any) -> Any:
     return ConstantPropertyLaw(
         jnp.asarray(value),
         jnp.asarray(support),
@@ -69,7 +72,7 @@ def _constant(value, support, *, quantity, value_unit):
     )
 
 
-def _electrolyte_law(value, *, quantity, value_unit):
+def _electrolyte_law(value: Any, *, quantity: Any, value_unit: Any) -> Any:
     bounds = (0.0, 1.0) if value_unit == "1" else (0.0, jnp.inf)
     return ConcentrationTemperaturePropertyLaw(
         jnp.asarray((100.0, 2000.0)),
@@ -82,7 +85,7 @@ def _electrolyte_law(value, *, quantity, value_unit):
     )
 
 
-def _spm_parameters(*, maximum_current=20.0):
+def _spm_parameters(*, maximum_current: Any = 20.0) -> Any:
     return SpmParameters(
         electrode_area_m2=0.1,
         negative_electrode_thickness_m=1.0e-4,
@@ -138,7 +141,7 @@ def _spm_parameters(*, maximum_current=20.0):
     )
 
 
-def _parameters(*, maximum_current=20.0, transference=0.4):
+def _parameters(*, maximum_current: Any = 20.0, transference: Any = 0.4) -> Any:
     return Marquis2019SpmeParameters(
         _spm_parameters(maximum_current=maximum_current),
         separator_thickness_m=5.0e-5,
@@ -167,7 +170,13 @@ def _parameters(*, maximum_current=20.0, transference=0.4):
     )
 
 
-def _adapter(*, shells=5, negative_cells=4, separator_cells=3, positive_cells=4):
+def _adapter(
+    *,
+    shells: Any = 5,
+    negative_cells: Any = 4,
+    separator_cells: Any = 3,
+    positive_cells: Any = 4,
+) -> Any:
     adapter = Marquis2019SpmeAdapter(
         Marquis2019SpmePlan(
             shells,
@@ -179,7 +188,7 @@ def _adapter(*, shells=5, negative_cells=4, separator_cells=3, positive_cells=4)
     return adapter, adapter.prepare()
 
 
-def _runtime(parameters, current, *, duration=2.0):
+def _runtime(parameters: Any, current: Any, *, duration: Any = 2.0) -> Any:
     protocol = BatteryProtocolPlan((CurrentStepPlan(duration),))
     values = BatteryProtocolValues(protocol, jnp.asarray((current,)))
     return BatteryRuntimeInputs(
@@ -191,7 +200,14 @@ def _runtime(parameters, current, *, duration=2.0):
     )
 
 
-def _state(adapter, prepared, parameters, *, negative=0.5, positive=0.5):
+def _state(
+    adapter: Any,
+    prepared: Any,
+    parameters: Any,
+    *,
+    negative: Any = 0.5,
+    positive: Any = 0.5,
+) -> Any:
     return adapter.initial_state(
         prepared,
         parameters,
@@ -199,17 +215,23 @@ def _state(adapter, prepared, parameters, *, negative=0.5, positive=0.5):
     )
 
 
-def _observable(adapter, output, name):
+def _observable(adapter: Any, output: Any, name: Any) -> Any:
     return output.values[..., adapter.observable_names.index(name)]
 
 
-def test_three_region_plan_prepares_exact_ordered_topology_and_nonuniform_faces():
+def test_three_region_plan_prepares_exact_ordered_topology_and_nonuniform_faces() -> None:
     negative = ThroughCellRegionPlan(
-        2, region="negative", reference_faces=(0.0, 0.25, 1.0)
+        2,
+        region="negative",
+        # ty: ignore[invalid-argument-type]
+        reference_faces=(0.0, 0.25, 1.0),
     )
     separator = ThroughCellRegionPlan(1, region="separator")
     positive = ThroughCellRegionPlan(
-        2, region="positive", reference_faces=(0.0, 0.75, 1.0)
+        2,
+        region="positive",
+        # ty: ignore[invalid-argument-type]
+        reference_faces=(0.0, 0.75, 1.0),
     )
     prepared = PreparedThroughCellMesh(negative, separator, positive)
 
@@ -225,7 +247,7 @@ def test_three_region_plan_prepares_exact_ordered_topology_and_nonuniform_faces(
     )
 
 
-def test_eq48_boundaries_interfaces_current_split_source_and_conservation():
+def test_eq48_boundaries_interfaces_current_split_source_and_conservation() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -298,7 +320,9 @@ def test_eq48_boundaries_interfaces_current_split_source_and_conservation():
     )
 
 
-def test_single_face_flux_preserves_continuity_and_inventory_for_nonuniform_state():
+def test_single_face_flux_preserves_continuity_and_inventory_for_nonuniform_state() -> (
+    None
+):
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -338,12 +362,14 @@ def test_single_face_flux_preserves_continuity_and_inventory_for_nonuniform_stat
     np.testing.assert_allclose(electrolyte.conservation_residual_mol_s, 0.0, atol=1.0e-15)
 
 
-def test_electrolyte_coefficients_are_frozen_at_typical_concentration_and_temperature():
+def test_electrolyte_coefficients_are_frozen_at_typical_concentration_and_temperature() -> (
+    None
+):
     parameters = _parameters()
     concentration_nodes = jnp.asarray((500.0, 1000.0, 1500.0))
     temperature_nodes = jnp.asarray((250.0, 350.0))
 
-    def law(values, *, quantity, value_unit, bounds):
+    def law(values: Any, *, quantity: Any, value_unit: Any, bounds: Any) -> Any:
         return ConcentrationTemperaturePropertyLaw(
             concentration_nodes,
             temperature_nodes,
@@ -506,7 +532,7 @@ def test_electrolyte_coefficients_are_frozen_at_typical_concentration_and_temper
     )
 
 
-def test_five_voltage_terms_are_exact_paper_averages_with_one_third_factors():
+def test_five_voltage_terms_are_exact_paper_averages_with_one_third_factors() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -571,7 +597,7 @@ def test_five_voltage_terms_are_exact_paper_averages_with_one_third_factors():
     assert bool(output.domain_valid)
 
 
-def test_uniform_electrolyte_and_vanishing_ohmic_losses_reduce_exactly_to_spm():
+def test_uniform_electrolyte_and_vanishing_ohmic_losses_reduce_exactly_to_spm() -> None:
     parameters = _parameters(transference=1.0)
     high_conductivity = _electrolyte_law(
         1.0e30,
@@ -625,7 +651,7 @@ def test_uniform_electrolyte_and_vanishing_ohmic_losses_reduce_exactly_to_spm():
     )
 
 
-def test_eq48_particles_use_runtime_shell_concentration_dependent_diffusivity():
+def test_eq48_particles_use_runtime_shell_concentration_dependent_diffusivity() -> None:
     parameters = _parameters()
     variable_diffusivity = TabulatedPropertyLaw(
         jnp.asarray((0.0, 3.0e4)),
@@ -699,7 +725,7 @@ def test_eq48_particles_use_runtime_shell_concentration_dependent_diffusivity():
     )
 
 
-def test_table6_quantities_and_eq49_use_actual_current_and_state():
+def test_table6_quantities_and_eq49_use_actual_current_and_state() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -758,7 +784,7 @@ def test_table6_quantities_and_eq49_use_actual_current_and_state():
     )
 
 
-def test_eq49_ocp_error_matches_independent_molar_perturbation_normalization():
+def test_eq49_ocp_error_matches_independent_molar_perturbation_normalization() -> None:
     # The runtime passes q_scale=I*L/De [C/m3], whereas a Taylor expansion
     # uses delta_c=q_scale/F [mol/m3] and dimensionless voltage scale RT/F.
     molar_perturbation = jnp.asarray(2.0)
@@ -773,7 +799,7 @@ def test_eq49_ocp_error_matches_independent_molar_perturbation_normalization():
     )
 
 
-def test_eq49_applicability_refuses_a_tabulated_ocp_kink_in_its_neighborhood():
+def test_eq49_applicability_refuses_a_tabulated_ocp_kink_in_its_neighborhood() -> None:
     parameters = _parameters()
     kinked_ocp = TabulatedPropertyLaw(
         jnp.asarray((0.0, 0.5, 1.0)),
@@ -810,7 +836,7 @@ def test_eq49_applicability_refuses_a_tabulated_ocp_kink_in_its_neighborhood():
     )
 
 
-def test_eq49_neighborhood_refuses_crossing_noncontiguous_table_support():
+def test_eq49_neighborhood_refuses_crossing_noncontiguous_table_support() -> None:
     disconnected_ocp = TabulatedPropertyLaw(
         jnp.asarray((0.0, 0.45, 0.5, 0.55, 1.0)),
         jnp.asarray((0.1, 0.145, 0.15, 0.155, 0.2)),
@@ -835,7 +861,7 @@ def test_eq49_neighborhood_refuses_crossing_noncontiguous_table_support():
     assert not bool(neighborhood_valid)
 
 
-def test_support_failures_are_explicit_and_outputs_remain_finite():
+def test_support_failures_are_explicit_and_outputs_remain_finite() -> None:
     parameters = _parameters(maximum_current=5.0)
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -860,7 +886,7 @@ def test_support_failures_are_explicit_and_outputs_remain_finite():
     assert bool(jnp.all(jnp.isfinite(invalid.values)))
 
 
-def test_through_cell_refinement_improves_interface_flux_for_smooth_solution():
+def test_through_cell_refinement_improves_interface_flux_for_smooth_solution() -> None:
     parameters = _parameters()
     parameters = eqx.tree_at(
         lambda value: value.separator_electrolyte_porosity,
@@ -872,7 +898,7 @@ def test_through_cell_refinement_improves_interface_flux_for_smooth_solution():
     )
     fine_adapter, fine = _adapter(negative_cells=8, separator_cells=8, positive_cells=8)
 
-    def interface_error(adapter, prepared):
+    def interface_error(adapter: Any, prepared: Any) -> Any:
         state = _state(adapter, prepared, parameters)
         metrics = prepared.through_cell.metrics(
             negative_thickness_m=parameters.spm_parameters.negative_electrode_thickness_m,
@@ -913,7 +939,7 @@ def test_through_cell_refinement_improves_interface_flux_for_smooth_solution():
     )
 
 
-def test_problem_observation_jit_vmap_and_fixed_path_derivatives():
+def test_problem_observation_jit_vmap_and_fixed_path_derivatives() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -943,7 +969,7 @@ def test_problem_observation_jit_vmap_and_fixed_path_derivatives():
     assert mapped.values.shape == (2, len(adapter.observable_names))
     assert bool(jnp.all(mapped.domain_valid))
 
-    def voltage_for_current(current):
+    def voltage_for_current(current: Any) -> Any:
         output = adapter.observe(
             prepared,
             jnp.asarray(0.0),
@@ -956,7 +982,7 @@ def test_problem_observation_jit_vmap_and_fixed_path_derivatives():
     assert bool(jnp.isfinite(current_derivative))
     assert float(current_derivative) > 0.0
 
-    def voltage_for_conductivity(conductivity):
+    def voltage_for_conductivity(conductivity: Any) -> Any:
         candidate_conductivity = eqx.tree_at(
             lambda law: law.values,
             parameters.electrolyte_conductivity,
@@ -980,7 +1006,7 @@ def test_problem_observation_jit_vmap_and_fixed_path_derivatives():
     assert float(conductivity_derivative) < 0.0
 
 
-def test_protocol_orchestration_reports_all_conservation_and_evidence():
+def test_protocol_orchestration_reports_all_conservation_and_evidence() -> None:
     parameters = _parameters()
     adapter = Marquis2019SpmeAdapter(
         Marquis2019SpmePlan(
@@ -998,6 +1024,7 @@ def test_protocol_orchestration_reports_all_conservation_and_evidence():
     profile = MARQUIS_2019_SPME_CANDIDATE
     save_times = jnp.asarray((0.0, 0.25, 0.5, 0.75, 1.0))
     experiment = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         BatteryOutputPlan(
@@ -1039,7 +1066,7 @@ def test_protocol_orchestration_reports_all_conservation_and_evidence():
     )
     assert bool(jnp.all(result.outputs.valid))
 
-    def final_negative_amount(first_current):
+    def final_negative_amount(first_current: Any) -> Any:
         dynamic_values = BatteryProtocolValues(
             protocol,
             jnp.stack((first_current, jnp.asarray(-0.05))),
@@ -1055,7 +1082,7 @@ def test_protocol_orchestration_reports_all_conservation_and_evidence():
     np.testing.assert_allclose(fixed_path_derivative, 0.5 / FARADAY, rtol=2.0e-5)
 
 
-def test_model_preflight_checks_later_amplitudes_and_complete_charge_inventory():
+def test_model_preflight_checks_later_amplitudes_and_complete_charge_inventory() -> None:
     parameters = _parameters(maximum_current=0.5)
     _, prepared = _adapter()
     initial = Marquis2019SpmeInitialCondition(0.5, 0.5)
@@ -1088,7 +1115,7 @@ def test_model_preflight_checks_later_amplitudes_and_complete_charge_inventory()
         )
 
 
-def test_model_preflight_refuses_table6_failure_below_declared_current_bound():
+def test_model_preflight_refuses_table6_failure_below_declared_current_bound() -> None:
     parameters = _parameters(maximum_current=20.0)
     _, prepared = _adapter()
     protocol = BatteryProtocolPlan((CurrentStepPlan(0.1),))

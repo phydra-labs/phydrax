@@ -10,7 +10,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _linear_map(matrix, *, system_id):
+def _linear_map(matrix: Any, *, system_id: Any) -> Any:
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: matrix @ state,
         state_layout=phx.dynamics.StateLayout((matrix.shape[0],)),
@@ -19,7 +19,7 @@ def _linear_map(matrix, *, system_id):
     return phx.dynamics.DiscreteEvolution(system)
 
 
-def test_covariant_store_and_recompute_modes_match_diagonal_map():
+def test_covariant_store_and_recompute_modes_match_diagonal_map() -> None:
     matrix = jnp.diag(jnp.asarray([2.0, 0.5]))
     evolution = _linear_map(matrix, system_id="clv-diagonal-map")
     grid = phx.dynamics.IterationGrid.from_steps(6, iteration_id="clv-grid")
@@ -71,7 +71,7 @@ def test_covariant_store_and_recompute_modes_match_diagonal_map():
     )
 
 
-def test_shadowing_boundary_derives_exact_argument_tangent_candidate():
+def test_shadowing_boundary_derives_exact_argument_tangent_candidate() -> None:
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: 0.8 * state + args,
         state_layout=phx.dynamics.StateLayout((1,)),

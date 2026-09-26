@@ -49,7 +49,7 @@ from phydrax.nn.operator.training import (
 from phydrax.terms import ResidualPenalty
 
 
-def test_operator_training_substrate_has_explicit_namespace_ownership():
+def test_operator_training_substrate_has_explicit_namespace_ownership() -> None:
     training_exports = set(phx.nn.operator.training.__all__)
     assert set(phx.nn.__all__) == {
         "activations",
@@ -85,7 +85,9 @@ def test_operator_training_substrate_has_explicit_namespace_ownership():
     assert training_exports.isdisjoint(vars(phx.nn))
 
 
-def _point_samples(coordinates, *, values=None, weights=None, mask=None):
+def _point_samples(
+    coordinates: Any, *, values: Any = None, weights: Any = None, mask: Any = None
+) -> Any:
     return phx.nn.operator.FunctionSamples(
         values=None if values is None else jnp.asarray(values, dtype="float64"),
         coordinates=jnp.asarray(coordinates, dtype="float64"),
@@ -97,15 +99,15 @@ def _point_samples(coordinates, *, values=None, weights=None, mask=None):
 
 
 def _multi_query_case(
-    source_coordinates,
-    source_values,
-    source_weights,
-    state_coordinates,
-    state_weights,
-    flux_coordinates,
-    flux_weights,
-    flux_mask,
-):
+    source_coordinates: Any,
+    source_values: Any,
+    source_weights: Any,
+    state_coordinates: Any,
+    state_weights: Any,
+    flux_coordinates: Any,
+    flux_weights: Any,
+    flux_mask: Any,
+) -> Any:
     return phx.nn.operator.OperatorBatch(
         inputs={
             "u": _point_samples(
@@ -125,7 +127,7 @@ def _multi_query_case(
     )
 
 
-def test_multi_query_batches_stack_and_preserve_per_query_metadata():
+def test_multi_query_batches_stack_and_preserve_per_query_metadata() -> None:
     first = _multi_query_case(
         [[0.0], [0.5], [1.0]],
         [1.0, 2.0, 3.0],
@@ -197,7 +199,7 @@ def test_multi_query_batches_stack_and_preserve_per_query_metadata():
     assert prediction.field("flux").values.shape == (2, 3, 2)
 
 
-def _context_fixture():
+def _context_fixture() -> Any:
     values = jnp.arange(16.0).reshape((2, 4, 2))
     coordinates = jnp.array(
         [
@@ -216,7 +218,7 @@ def _context_fixture():
     return values, samples
 
 
-def test_context_strategies_have_stable_fingerprints_and_physical_state():
+def test_context_strategies_have_stable_fingerprints_and_physical_state() -> None:
     values, samples = _context_fixture()
     learned_strategy = phx.nn.operator.LearnedTokenContext(
         channels=2, num_tokens=3, key=jr.key(0)
@@ -255,6 +257,7 @@ def test_context_strategies_have_stable_fingerprints_and_physical_state():
     assert jnp.allclose(pooled.weights, jnp.array([[0.3, 0.3], [0.7, 0.0]]))
     assert jnp.array_equal(pooled.mask, jnp.array([[True, True], [True, False]]))
     assert jnp.allclose(
+        # ty: ignore[not-subscriptable]
         pooled.coordinates[..., 0],
         jnp.array([[2.0 / 3.0, 2.0], [7.3 / 0.7, 0.0]]),
     )
@@ -271,18 +274,18 @@ def test_context_strategies_have_stable_fingerprints_and_physical_state():
     assert jnp.array_equal(compiled.mask, pooled.mask)
 
 
-def test_lazy_case_sampling_reads_only_selected_cases_and_preserves_metadata():
+def test_lazy_case_sampling_reads_only_selected_cases_and_preserves_metadata() -> None:
     metadata_reads = []
     case_reads = []
     coordinates = jnp.arange(4.0)[:, None]
     weights = jnp.array([0.1, 0.2, 0.3, 0.4])
 
-    def metadata_reader(index):
+    def metadata_reader(index: Any) -> Any:
         metadata_reads.append(index)
         geometry = _point_samples(coordinates, weights=weights)
         return OperatorCaseMetadata(inputs={"u": geometry}, queries={"query": geometry})
 
-    def case_reader(index, request):
+    def case_reader(index: Any, request: Any) -> Any:
         case_reads.append(index)
         source = _point_samples(
             coordinates,
@@ -358,7 +361,7 @@ def test_lazy_case_sampling_reads_only_selected_cases_and_preserves_metadata():
     )
 
 
-def _tiny_encoded_operator_and_batch():
+def _tiny_encoded_operator_and_batch() -> Any:
     source_coordinates = jnp.array([[[0.0], [0.5], [1.0]], [[0.0], [0.25], [1.0]]])
     query_coordinates = jnp.array(
         [
@@ -413,7 +416,7 @@ def _tiny_encoded_operator_and_batch():
     return model, batch
 
 
-def test_streamed_encoded_query_decoding_matches_unchunked_eager_and_jit():
+def test_streamed_encoded_query_decoding_matches_unchunked_eager_and_jit() -> None:
     model, batch = _tiny_encoded_operator_and_batch()
     eager = model(batch)
     compiled = eqx.filter_jit(lambda current, data: current(data))(model, batch)
@@ -452,7 +455,7 @@ def test_streamed_encoded_query_decoding_matches_unchunked_eager_and_jit():
     assert jnp.array_equal(eager[~batch.query("query").mask], jnp.zeros((2,)))
 
 
-def test_npy_prediction_status_uses_current_canonical_fields(tmp_path):
+def test_npy_prediction_status_uses_current_canonical_fields(tmp_path: Any) -> None:
     model, batch = _tiny_encoded_operator_and_batch()
     source = ArrayOperatorQuerySource(
         batch.query("query"),
@@ -477,7 +480,7 @@ def test_npy_prediction_status_uses_current_canonical_fields(tmp_path):
     assert set(status) == {"metadata", "next_index", "complete"}
 
 
-def test_typed_branch_interactions_are_synchronous_deterministic_and_validated():
+def test_typed_branch_interactions_are_synchronous_deterministic_and_validated() -> None:
     values, samples = _context_fixture()
     sensor_state = phx.nn.operator.PooledGeometryContext(channels=2, num_tokens=2)(
         values, samples
@@ -572,7 +575,7 @@ def test_typed_branch_interactions_are_synchronous_deterministic_and_validated()
         )
 
 
-def test_differential_decoders_normalize_transform_jit_and_differentiate():
+def test_differential_decoders_normalize_transform_jit_and_differentiate() -> None:
     decoder = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
@@ -590,7 +593,7 @@ def test_differential_decoders_normalize_transform_jit_and_differentiate():
     )
     points = jnp.array([[-0.5], [0.25], [1.0]])
 
-    def decoder_jacobian(point):
+    def decoder_jacobian(point: Any) -> Any:
         return jax.jacfwd(
             lambda coordinate: jnp.asarray(decoder(coordinate)).reshape((1,))
         )(point)
@@ -623,7 +626,7 @@ def test_differential_decoders_normalize_transform_jit_and_differentiate():
         model(jnp.ones((2, 2)))
 
 
-def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution():
+def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution() -> None:
     field = PDEExpression.field("u")
     residual = -PDEExpression.constant(1.0) + field
     problem = PDEProblemIR(
@@ -719,15 +722,15 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution():
     ],
 )
 def test_pde_numeric_metadata_rejects_nonfinite_during_construction(
-    bad,
-    name,
-    make,
-):
+    bad: Any,
+    name: Any,
+    make: Any,
+) -> None:
     with pytest.raises(ValueError, match="finite"):
         make(bad)
 
 
-def test_pde_dimension_signatures_are_exact_and_serialized_sparse():
+def test_pde_dimension_signatures_are_exact_and_serialized_sparse() -> None:
     problem = PDEProblemIR(
         coordinates=(
             PDECoordinate(
@@ -772,16 +775,20 @@ def test_pde_dimension_signatures_are_exact_and_serialized_sparse():
         phx.equations.pde_ir_from_dict(encoded)
 
     for make in (
+        # ty: ignore[invalid-argument-type]
         lambda: PDECoordinate("x", "space", dimension=(1.0,)),
+        # ty: ignore[invalid-argument-type]
         lambda: PDEField("u", dimension=(1.0,)),
+        # ty: ignore[invalid-argument-type]
         lambda: phx.equations.PDEParameter("a", dimension=(1.0,)),
+        # ty: ignore[invalid-argument-type]
         lambda: PDEExpression.constant(1.0, dimension=(1.0,)),
     ):
         with pytest.raises(TypeError, match="DimensionSignature"):
             make()
 
 
-def test_pde_exact_dimension_algebra_and_rational_power_round_trip():
+def test_pde_exact_dimension_algebra_and_rational_power_round_trip() -> None:
     temperature = phx.units.TEMPERATURE
     x = PDECoordinate("x", "space", dimension=phx.units.LENGTH)
     time = PDECoordinate("t", "time", dimension=phx.units.TIME)
@@ -853,7 +860,7 @@ def test_pde_exact_dimension_algebra_and_rational_power_round_trip():
     assert restored.equations[0].lhs.args[1].value == Fraction(2, 3)
 
 
-def test_pde_token_basis_order_is_explicit_and_stack_checked():
+def test_pde_token_basis_order_is_explicit_and_stack_checked() -> None:
     problem = PDEProblemIR(
         coordinates=(PDECoordinate("x", "space", dimension=phx.units.LENGTH),),
         fields=(PDEField("u", coordinates=("x",), dimension=phx.units.TEMPERATURE),),
@@ -880,7 +887,7 @@ def test_pde_token_basis_order_is_explicit_and_stack_checked():
         tokenize_pde_ir(problem, dimension_basis=("length",))
 
 
-def _canonical_expression_problem(expression):
+def _canonical_expression_problem(expression: Any) -> Any:
     return PDEProblemIR(
         coordinates=(PDECoordinate("x", "space"),),
         fields=tuple(PDEField(name, coordinates=("x",)) for name in ("u", "v", "w", "z")),
@@ -888,7 +895,7 @@ def _canonical_expression_problem(expression):
     )
 
 
-def _token_arrays(tokens):
+def _token_arrays(tokens: Any) -> Any:
     return tuple(
         getattr(tokens, name)
         for name in (
@@ -923,7 +930,7 @@ def _token_arrays(tokens):
         ),
     ],
 )
-def test_associative_expression_canonicalization_is_recursive(expressions):
+def test_associative_expression_canonicalization_is_recursive(expressions: Any) -> None:
     fields = tuple(PDEExpression.field(name) for name in ("u", "v", "w", "z"))
     problems = tuple(
         _canonical_expression_problem(expression) for expression in expressions(*fields)
@@ -945,7 +952,7 @@ def test_associative_expression_canonicalization_is_recursive(expressions):
         )
 
 
-def test_nonassociative_expression_trees_remain_distinct():
+def test_nonassociative_expression_trees_remain_distinct() -> None:
     u, v, w, _ = tuple(PDEExpression.field(name) for name in ("u", "v", "w", "z"))
     expressions = (
         (u / v) / w,
@@ -962,18 +969,18 @@ def test_nonassociative_expression_trees_remain_distinct():
     assert len(hashes) == len(expressions)
 
 
-def _compiler_backend_problem():
+def _compiler_backend_problem() -> Any:
     return PDEProblemIR(
         coordinates=(PDECoordinate("x", "space"),),
         fields=(PDEField("u", coordinates=("x",)),),
     )
 
 
-def test_pde_compiler_executes_all_derivative_backends():
+def test_pde_compiler_executes_all_derivative_backends() -> None:
     geometry = Interval1d(-1.0, 1.0)
 
     @geometry.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 4
 
     problem = _compiler_backend_problem()
@@ -1024,7 +1031,7 @@ def test_pde_compiler_executes_all_derivative_backends():
     )
 
 
-def test_pde_compiler_rejects_invalid_backend_before_expression_dispatch():
+def test_pde_compiler_rejects_invalid_backend_before_expression_dispatch() -> None:
     problem = _compiler_backend_problem()
     constant = PDEExpression.constant(1.0)
     geometry = Interval1d(-1.0, 1.0)
@@ -1057,7 +1064,7 @@ def test_pde_compiler_rejects_invalid_backend_before_expression_dispatch():
             call()
 
 
-def test_scatter_operator_graph_entities_is_exported_from_nn():
+def test_scatter_operator_graph_entities_is_exported_from_nn() -> None:
     assert (
         phx.nn.operator.scatter_operator_graph_entities
         is phx.nn.operator.scatter_operator_graph_entities

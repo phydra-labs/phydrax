@@ -371,7 +371,10 @@ class DevicePlan(StrictModule):
                 legacy_bands = True
                 band_gap, affinity = model.band_gap, model.electron_affinity
                 # Intrinsic-density materials always resolve both band constants.
-                assert band_gap is not None and affinity is not None
+                if not (band_gap is not None and affinity is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: band_gap is not None and affinity is not None."
+                    )
                 current_band = (
                     float(intrinsic),
                     float(band_gap),

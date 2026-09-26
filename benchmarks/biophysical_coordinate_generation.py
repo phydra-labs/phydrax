@@ -8,6 +8,8 @@ Run: python -m benchmarks.biophysical_coordinate_generation --steps 200
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -41,7 +43,7 @@ from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
-def fixture():
+def fixture() -> Any:
     construct = ProteinConstruct(("A",), ("A",))
     keys = tuple(
         ProteinAtomKey(construct.residue_keys[0], name) for name in ("CA", "N", "C", "CB")
@@ -110,7 +112,7 @@ def fixture():
     return data
 
 
-def run(*, steps=200, repeats=3):
+def run(*, steps: Any=200, repeats: Any=3) -> Any:
     data = fixture()
     fit, fit_seconds = measure_synchronized(
         lambda: fit_coordinate_model(

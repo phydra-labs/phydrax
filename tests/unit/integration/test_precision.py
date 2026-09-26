@@ -8,7 +8,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_fixed_integration_records_output_and_decision_precision():
+def test_fixed_integration_records_output_and_decision_precision() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: x**2)
     precision = phx.integration.IntegrationPrecisionPolicy(
@@ -35,7 +35,7 @@ def test_fixed_integration_records_output_and_decision_precision():
     assert jnp.allclose(estimate.value.data, 1.0 / 3.0, atol=2e-7)
 
 
-def test_weighted_integration_uses_explicit_accumulation_dtype():
+def test_weighted_integration_uses_explicit_accumulation_dtype() -> None:
     samples = jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float32)
     target = phx.integration.weighted(
         samples,
@@ -53,7 +53,7 @@ def test_weighted_integration_uses_explicit_accumulation_dtype():
     assert estimate.diagnostics.weights.weight_ess.dtype == jnp.float64
 
 
-def test_cubature_rule_identity_is_independent_of_execution_precision():
+def test_cubature_rule_identity_is_independent_of_execution_precision() -> None:
     rule = phx.integration.CubatureRule("triangle", 5)
     first = rule.rule_id
     target = phx.integration.mapped(
@@ -78,7 +78,7 @@ def test_cubature_rule_identity_is_independent_of_execution_precision():
     assert estimate.value.data.dtype == jnp.float64
 
 
-def test_adaptive_interval_keeps_error_and_partition_decisions_high_precision():
+def test_adaptive_interval_keeps_error_and_partition_decisions_high_precision() -> None:
     domain = phx.domain.ScalarInterval(-1.0, 2.0, label="x")
     function = domain.Function("x")(lambda x: x**4 - 2.0 * x + 1.0)
     precision = phx.integration.IntegrationPrecisionPolicy(
@@ -100,6 +100,7 @@ def test_adaptive_interval_keeps_error_and_partition_decisions_high_precision():
     )
 
     assert estimate.value.data.dtype == jnp.float32
+    # ty: ignore[unresolved-attribute]
     assert estimate.error_estimate.dtype == jnp.float64
     assert estimate.diagnostics.estimated_error.dtype == jnp.float64
     assert estimate.diagnostics.partition is not None
@@ -107,7 +108,7 @@ def test_adaptive_interval_keeps_error_and_partition_decisions_high_precision():
     assert estimate.diagnostics.partition.estimated_errors.dtype == jnp.float64
 
 
-def test_adaptive_cubature_separates_execution_precision_roles():
+def test_adaptive_cubature_separates_execution_precision_roles() -> None:
     rule = phx.integration.GenzMalikRule(2, 9)
     rule_id = rule.rule_id
     precision = phx.integration.IntegrationPrecisionPolicy(
@@ -129,6 +130,7 @@ def test_adaptive_cubature_separates_execution_precision_roles():
 
     assert rule.rule_id == rule_id
     assert estimate.value.dtype == jnp.float32
+    # ty: ignore[unresolved-attribute]
     assert estimate.error_estimate.dtype == jnp.float64
     assert estimate.diagnostics.partition is not None
     assert estimate.diagnostics.partition.integral_estimates.dtype == jnp.float64
@@ -136,7 +138,7 @@ def test_adaptive_cubature_separates_execution_precision_roles():
     assert estimate.diagnostics.partition.split_indicators.dtype == jnp.float64
 
 
-def test_monte_carlo_statistics_follow_accumulation_and_decision_precision():
+def test_monte_carlo_statistics_follow_accumulation_and_decision_precision() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: x**2)
     precision = phx.integration.IntegrationPrecisionPolicy(
@@ -154,5 +156,6 @@ def test_monte_carlo_statistics_follow_accumulation_and_decision_precision():
     )
 
     assert estimate.value.data.dtype == jnp.float32
+    # ty: ignore[unresolved-attribute]
     assert estimate.error_estimate.dtype == jnp.float64
     assert estimate.diagnostics.standard_error.dtype == jnp.float64

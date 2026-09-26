@@ -190,8 +190,7 @@ class KineticRolloutTrainingPlan(StrictModule):
         )
         if flux_gate <= 0.0:
             raise ValueError("maximum_scaled_flux_error must be positive.")
-        if replay_mode not in ("full", "step", "block", "scheduled"):
-            raise ValueError("Unknown kinetic-rollout replay mode.")
+        replay_mode = parse(replay_mode, CheckpointedScanMode, "replay_mode")
         block = (
             None
             if replay_block_size is None

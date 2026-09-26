@@ -10,7 +10,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _map_evolution(matrix, *, system_id):
+def _map_evolution(matrix: Any, *, system_id: Any) -> Any:
     state_shape = (matrix.shape[0],)
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: matrix @ state,
@@ -20,13 +20,13 @@ def _map_evolution(matrix, *, system_id):
     return phx.dynamics.DiscreteEvolution(system)
 
 
-def _iteration_grid(start, num_steps, *, grid_id):
+def _iteration_grid(start: Any, num_steps: Any, *, grid_id: Any) -> Any:
     return phx.dynamics.IterationGrid(
         jnp.arange(start, start + num_steps + 1), iteration_id=grid_id
     )
 
 
-def _flow_evolution(drift, *, state_dimension, system_id):
+def _flow_evolution(drift: Any, *, state_dimension: Any, system_id: Any) -> Any:
     system = phx.dynamics.ContinuousSystem(
         drift,
         state_layout=phx.dynamics.StateLayout((state_dimension,)),
@@ -35,11 +35,11 @@ def _flow_evolution(drift, *, state_dimension, system_id):
     return phx.solver.DiffraxEvolution(system, rtol=1.0e-9, atol=1.0e-11)
 
 
-def _time_grid(start, end, num_steps, *, grid_id):
+def _time_grid(start: Any, end: Any, num_steps: Any, *, grid_id: Any) -> Any:
     return phx.dynamics.TimeGrid(jnp.linspace(start, end, num_steps + 1), time_id=grid_id)
 
 
-def test_linear_map_full_leading_and_qr_cadence_agree():
+def test_linear_map_full_leading_and_qr_cadence_agree() -> None:
     expected = jnp.asarray([0.2, -0.1, -0.5])
     matrix = jnp.diag(jnp.exp(expected))
     initial = jnp.asarray([0.7, -0.3, 0.2])
@@ -83,7 +83,7 @@ def test_linear_map_full_leading_and_qr_cadence_agree():
     assert leading.approximation == "leading_k_finite_time_spectrum"
 
 
-def test_truncated_default_basis_reaches_reversed_diagonal_leading_direction():
+def test_truncated_default_basis_reaches_reversed_diagonal_leading_direction() -> None:
     matrix = jnp.diag(jnp.exp(jnp.asarray([-1.0, 1.0])))
     result = phx.dynamics.analysis.finite_time_lyapunov_spectrum(
         _map_evolution(matrix, system_id="reversed-diagonal-map"),
@@ -98,7 +98,7 @@ def test_truncated_default_basis_reaches_reversed_diagonal_leading_direction():
     assert float(result.exponents[0]) > 0.0
 
 
-def test_qr_cadence_invariance_for_a_rotated_tangent_basis():
+def test_qr_cadence_invariance_for_a_rotated_tangent_basis() -> None:
     rotation = jnp.asarray([[0.8, -0.6], [0.6, 0.8]])
     matrix = rotation @ jnp.diag(jnp.exp(jnp.asarray([0.2, -0.3]))) @ rotation.T
     evolution = _map_evolution(matrix, system_id="rotated-map")
@@ -121,7 +121,7 @@ def test_qr_cadence_invariance_for_a_rotated_tangent_basis():
     np.testing.assert_allclose(every_ninth.exponents, every_step.exponents, atol=3.0e-14)
 
 
-def test_map_checkpoint_resume_matches_uninterrupted_accumulation():
+def test_map_checkpoint_resume_matches_uninterrupted_accumulation() -> None:
     matrix = jnp.asarray([[1.03, 0.2], [-0.1, 0.94]])
     initial = jnp.asarray([0.4, -0.2])
     evolution = _map_evolution(matrix, system_id="resume-map")
@@ -158,7 +158,7 @@ def test_map_checkpoint_resume_matches_uninterrupted_accumulation():
     assert resumed.checkpoint.step_index == uninterrupted.checkpoint.step_index == 100
 
 
-def test_pre_burn_checkpoint_remains_numerically_resumable():
+def test_pre_burn_checkpoint_remains_numerically_resumable() -> None:
     matrix = jnp.asarray([[1.08, 0.15], [-0.03, 0.92]])
     initial = jnp.asarray([0.4, -0.2])
     evolution = _map_evolution(matrix, system_id="pre-burn-resume-map")
@@ -226,10 +226,10 @@ def test_pre_burn_checkpoint_remains_numerically_resumable():
     )
 
 
-def test_linear_flow_and_resume_match_analytic_spectrum():
+def test_linear_flow_and_resume_match_analytic_spectrum() -> None:
     matrix = jnp.diag(jnp.asarray([0.35, -0.2, -0.8]))
 
-    def drift(time, state, args):
+    def drift(time: Any, state: Any, args: Any) -> Any:
         return matrix @ state
 
     evolution = _flow_evolution(drift, state_dimension=3, system_id="linear-flow")
@@ -262,7 +262,7 @@ def test_linear_flow_and_resume_match_analytic_spectrum():
     assert resumed.tangent_method == "jax-jvp:numerical-differential-flow"
 
 
-def test_post_burn_reports_use_physical_elapsed_time():
+def test_post_burn_reports_use_physical_elapsed_time() -> None:
     matrix = jnp.diag(jnp.asarray([1.03, 0.97]))
     map_result = phx.dynamics.analysis.finite_time_lyapunov_spectrum(
         _map_evolution(matrix, system_id="burn-relative-map"),
@@ -293,12 +293,12 @@ def test_post_burn_reports_use_physical_elapsed_time():
     )
 
 
-def test_lorenz_spectrum_has_literature_range_and_divergence_sum():
+def test_lorenz_spectrum_has_literature_range_and_divergence_sum() -> None:
     sigma = 10.0
     rho = 28.0
     beta = 8.0 / 3.0
 
-    def lorenz(time, state, args):
+    def lorenz(time: Any, state: Any, args: Any) -> Any:
         x, y, z = state
         return jnp.asarray([sigma * (y - x), x * (rho - z) - y, x * y - beta * z])
 
@@ -320,7 +320,7 @@ def test_lorenz_spectrum_has_literature_range_and_divergence_sum():
     )
 
 
-def test_kaplan_yorke_dimension_known_spectrum():
+def test_kaplan_yorke_dimension_known_spectrum() -> None:
     spectrum = jnp.asarray([0.9, 0.0, -14.4])
     np.testing.assert_allclose(
         phx.dynamics.analysis.kaplan_yorke_dimension(spectrum),
@@ -329,7 +329,7 @@ def test_kaplan_yorke_dimension_known_spectrum():
     )
 
 
-def test_singular_tangent_is_recorded_as_invalid_without_repair():
+def test_singular_tangent_is_recorded_as_invalid_without_repair() -> None:
     result = phx.dynamics.analysis.finite_time_lyapunov_spectrum(
         _map_evolution(jnp.zeros((2, 2)), system_id="singular-map"),
         jnp.ones(2),

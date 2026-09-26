@@ -66,6 +66,7 @@ def main() -> None:
         guard_ids=tuple(guard.guard_id for guard in adapter.native_guards(native)),
     )
     experiment = battery.BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         battery.BatteryOutputPlan(

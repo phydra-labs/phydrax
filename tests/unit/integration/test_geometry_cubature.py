@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -6,7 +7,14 @@ import pytest
 import phydrax as phx
 
 
-def _integrate_geometry(source, reference, degree, *, boundary=False, integrand=1.0):
+def _integrate_geometry(
+    source: Any,
+    reference: Any,
+    degree: Any,
+    *,
+    boundary: Any = False,
+    integrand: Any = 1.0,
+) -> Any:
     domain = phx.domain.GeometryDomain(source.compile())
     component = domain.component({"x": phx.domain.Boundary()} if boundary else None)
     rule = phx.integration.CubatureRule(reference, degree)
@@ -18,7 +26,7 @@ def _integrate_geometry(source, reference, degree, *, boundary=False, integrand=
     return domain, estimate
 
 
-def test_native_disk_and_circle_rules_preserve_radial_moments():
+def test_native_disk_and_circle_rules_preserve_radial_moments() -> None:
     source = phx.geometry.Circle((0.0, 0.0), 2.0)
     _, area = _integrate_geometry(source, "disk", 6)
     _, radial_second = _integrate_geometry(
@@ -35,7 +43,7 @@ def test_native_disk_and_circle_rules_preserve_radial_moments():
     assert area.num_evaluations < 100
 
 
-def test_native_sphere_rule_is_rotationally_balanced():
+def test_native_sphere_rule_is_rotationally_balanced() -> None:
     source = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0)
     domain = phx.domain.GeometryDomain(source.compile())
     boundary = domain.component({"x": phx.domain.Boundary()})
@@ -58,7 +66,7 @@ def test_native_sphere_rule_is_rotationally_balanced():
     )
 
 
-def test_native_ball_rule_preserves_volume_and_second_moment():
+def test_native_ball_rule_preserves_volume_and_second_moment() -> None:
     source = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0)
     _, volume = _integrate_geometry(source, "ball", 4)
     _, x_second = _integrate_geometry(
@@ -72,7 +80,7 @@ def test_native_ball_rule_preserves_volume_and_second_moment():
     assert x_second.value.data == pytest.approx(4.0 * math.pi / 15.0, rel=2e-13)
 
 
-def test_translation_and_nonuniform_scaling_preserve_native_cubature():
+def test_translation_and_nonuniform_scaling_preserve_native_cubature() -> None:
     source = phx.geometry.Circle((0.0, 0.0), 1.0).scaled(2.0).translated((3.0, -4.0))
     _, area = _integrate_geometry(source, "disk", 4)
     assert area.value.data == pytest.approx(4.0 * math.pi, rel=2e-13)
@@ -82,7 +90,7 @@ def test_translation_and_nonuniform_scaling_preserve_native_cubature():
     assert ellipse_area.value.data == pytest.approx(2.0 * math.pi, rel=2e-13)
 
 
-def _tetrahedron_region():
+def _tetrahedron_region() -> Any:
     vertices = jnp.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -90,7 +98,7 @@ def _tetrahedron_region():
     return phx.domain.GeometryDomain(phx.geometry.MeshRegion(vertices, faces).compile())
 
 
-def test_mesh_boundary_cubature_matches_exact_face_measure_and_selection():
+def test_mesh_boundary_cubature_matches_exact_face_measure_and_selection() -> None:
     region = _tetrahedron_region()
     boundary = region.component({"x": phx.domain.Boundary()})
     rule = phx.integration.CubatureRule("triangle", 5)
@@ -111,7 +119,7 @@ def test_mesh_boundary_cubature_matches_exact_face_measure_and_selection():
     assert estimate.num_evaluations == 4 * rule.num_points
 
 
-def test_native_geometry_cubature_composes_in_product_plans():
+def test_native_geometry_cubature_composes_in_product_plans() -> None:
     space = phx.domain.GeometryDomain(
         phx.geometry.Circle((0.0, 0.0), 1.0).compile(), label="x"
     )

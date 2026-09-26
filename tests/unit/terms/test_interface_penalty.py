@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _interface_problem():
+def _interface_problem() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     component = domain.component()
     residual_field = domain.Function("x")(lambda x: 2.0 + 0.0 * x[0])
@@ -20,7 +23,7 @@ def _interface_problem():
     return condition, source, {"u": residual_field, "phi": level_set}
 
 
-def test_implicit_interface_penalty_integrates_squared_residual_over_interface():
+def test_implicit_interface_penalty_integrates_squared_residual_over_interface() -> None:
     condition, source, functions = _interface_problem()
     term = phx.terms.implicit_interface_penalty(
         condition, source, level_set_field="phi", width=0.25
@@ -30,7 +33,7 @@ def test_implicit_interface_penalty_integrates_squared_residual_over_interface()
     assert jnp.allclose(term.loss(functions, key=jr.key(0)), 4.0, rtol=1.0e-3)
 
 
-def test_implicit_phase_penalty_integrates_squared_residual_over_inside_phase():
+def test_implicit_phase_penalty_integrates_squared_residual_over_inside_phase() -> None:
     condition, source, functions = _interface_problem()
     term = phx.terms.implicit_phase_penalty(
         condition, source, level_set_field="phi", width=0.25, phase="inside"

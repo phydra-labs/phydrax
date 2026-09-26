@@ -10,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def test_axis_identity_layout_alignment_and_reduction():
+def test_axis_identity_layout_alignment_and_reduction() -> None:
     case = phx.axes.Axis(phx.axes.AxisKey("experiment", "case"), 3)
     component = phx.axes.Axis(phx.axes.AxisKey("state", "component"), 2)
     values = phx.axes.AxisArray(
@@ -29,7 +29,7 @@ def test_axis_identity_layout_alignment_and_reduction():
     assert reduced.layout == phx.axes.AxisLayout((component.ref(),))
 
 
-def test_axis_keys_prevent_equal_size_identity_collisions():
+def test_axis_keys_prevent_equal_size_identity_collisions() -> None:
     left = phx.axes.Axis(phx.axes.AxisKey("left", "sample"), 2)
     right = phx.axes.Axis(phx.axes.AxisKey("right", "sample"), 2)
     assert left.key != right.key
@@ -37,7 +37,7 @@ def test_axis_keys_prevent_equal_size_identity_collisions():
         phx.axes.AxisLayout((left.ref(), left.ref()))
 
 
-def test_axis_contraction_and_jit_preserve_layout():
+def test_axis_contraction_and_jit_preserve_layout() -> None:
     state = phx.axes.Axis(phx.axes.AxisKey("system", "state"), 2)
     target = phx.axes.Axis(phx.axes.AxisKey("system", "target"), 3)
     source_ref = state.ref(slot="source", variance="dual")
@@ -62,7 +62,7 @@ def test_axis_contraction_and_jit_preserve_layout():
     assert result.layout == phx.axes.AxisLayout((target_ref,))
 
 
-def test_alignment_preserves_namespaced_axis_references():
+def test_alignment_preserves_namespaced_axis_references() -> None:
     left_axis = phx.axes.Axis(phx.axes.AxisKey("left", "sample"), 2)
     right_axis = phx.axes.Axis(phx.axes.AxisKey("right", "sample"), 3)
     left_ref = left_axis.ref(slot="source")
@@ -87,7 +87,7 @@ def test_alignment_preserves_namespaced_axis_references():
     assert aligned.layout == plan.target
 
 
-def test_broadcast_like_keeps_disjoint_namespaces_distinct():
+def test_broadcast_like_keeps_disjoint_namespaces_distinct() -> None:
     left_ref = phx.axes.Axis(phx.axes.AxisKey("left", "sample"), 2).ref()
     right_ref = phx.axes.Axis(phx.axes.AxisKey("right", "sample"), 3).ref()
     left = phx.axes.AxisArray(
@@ -108,7 +108,7 @@ def test_broadcast_like_keeps_disjoint_namespaces_distinct():
     )
 
 
-def test_factorized_contraction_transposes_into_declared_axis_order():
+def test_factorized_contraction_transposes_into_declared_axis_order() -> None:
     tensor = jnp.arange(6.0).reshape((2, 3, 1, 1))
     factor = phx.integration.AxisFactor("factor", tensor, ("b", "a"))
     plan = phx.integration.AxisContractionPlan(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -33,7 +36,9 @@ from phydrax.operators.path_integral._lattice_fermion import (
 from phydrax.operators.path_integral._smearing import stout_smear, StoutSmearingPlan
 
 
-def _tensor_boundary(shape=(2, 2), phases=(1.0, 1.0), maximum_displacement=3):
+def _tensor_boundary(
+    shape: Any = (2, 2), phases: Any = (1.0, 1.0), maximum_displacement: Any = 3
+) -> Any:
     topology = TensorTopology(
         tuple(f"x{axis}" for axis in range(len(shape))),
         shape,
@@ -46,7 +51,7 @@ def _tensor_boundary(shape=(2, 2), phases=(1.0, 1.0), maximum_displacement=3):
     )
 
 
-def _periodic_square_gauge():
+def _periodic_square_gauge() -> Any:
     boundary = _tensor_boundary()
     cell_topology = polygonal_cell_complex(
         None,
@@ -91,7 +96,7 @@ def _periodic_square_gauge():
     return boundary, cell_topology, link_space, representation, transport
 
 
-def _dense_action(operator):
+def _dense_action(operator: Any) -> Any:
     basis = jnp.eye(operator.source.size, dtype=operator.source.dtype)
     columns = jax.vmap(
         lambda coordinates: operator.target.flatten(
@@ -101,7 +106,7 @@ def _dense_action(operator):
     return jnp.swapaxes(columns, -1, -2)
 
 
-def test_free_wilson_dispersion_matches_lattice_symbol():
+def test_free_wilson_dispersion_matches_lattice_symbol() -> None:
     boundary = _tensor_boundary(shape=(4, 4))
     operator = FreeWilsonDiracOperator(
         boundary,
@@ -129,7 +134,7 @@ def test_free_wilson_dispersion_matches_lattice_symbol():
     assert jnp.allclose(operator.mv(field), expected, atol=2e-6)
 
 
-def test_wilson_covariance_and_gamma5_hermiticity():
+def test_wilson_covariance_and_gamma5_hermiticity() -> None:
     boundary, _, link_space, representation, transport = _periodic_square_gauge()
     links = link_space.identity().astype(jnp.complex64)
     operator = WilsonDiracOperator(
@@ -164,7 +169,7 @@ def test_wilson_covariance_and_gamma5_hermiticity():
     )
 
 
-def test_even_odd_schur_reconstructs_full_solution():
+def test_even_odd_schur_reconstructs_full_solution() -> None:
     boundary = _tensor_boundary(shape=(2, 2))
     operator = FreeWilsonDiracOperator(
         boundary,
@@ -189,7 +194,7 @@ def test_even_odd_schur_reconstructs_full_solution():
     assert jnp.allclose(prepared.reconstruct(reduced_solution, rhs), solution, atol=2e-5)
 
 
-def test_clover_inverse_and_adjoint_match_small_dense_reference():
+def test_clover_inverse_and_adjoint_match_small_dense_reference() -> None:
     boundary, _, link_space, representation, transport = _periodic_square_gauge()
     wilson = WilsonDiracOperator(
         boundary,
@@ -235,7 +240,7 @@ def test_clover_inverse_and_adjoint_match_small_dense_reference():
     )
 
 
-def test_stout_smearing_preserves_group_and_is_differentiable():
+def test_stout_smearing_preserves_group_and_is_differentiable() -> None:
     _, cell_topology, link_space, _, _ = _periodic_square_gauge()
     boundaries = prepare_cell_boundary_paths(cell_topology)
     staples = GaugeStaplePlan(link_space, boundaries)
@@ -267,7 +272,7 @@ def test_stout_smearing_preserves_group_and_is_differentiable():
     assert jnp.isfinite(derivative)
 
 
-def test_overlap_rational_action_matches_small_dense_equivalence():
+def test_overlap_rational_action_matches_small_dense_equivalence() -> None:
     boundary = _tensor_boundary(shape=(2, 2))
     kernel = FreeWilsonDiracOperator(
         boundary,

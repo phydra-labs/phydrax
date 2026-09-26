@@ -7,6 +7,8 @@ Run from the repository root with JAX_ENABLE_X64=true:
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -58,7 +60,7 @@ UNITS = AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
 PER_FS = derived_unit("1/fs", ((FEMTOSECOND, -1),))
 
 
-def fixture(size, *, dephasing=0.0, coupling=True, units=UNITS, energy_unit=ELECTRONVOLT):
+def fixture(size: Any, *, dephasing: Any=0.0, coupling: Any=True, units: Any=UNITS, energy_unit: Any=ELECTRONVOLT) -> Any:
     construct = NucleicAcidConstruct(("benchmark",), ("A" * size,), ("DNA",), (False,))
     sites = tuple(10_000 + index * 7 for index in range(size))
     graph = ElectronicSiteGraph(
@@ -125,11 +127,11 @@ def fixture(size, *, dephasing=0.0, coupling=True, units=UNITS, energy_unit=ELEC
     return prepare_electronics(graph, parameters, units=units, requested_use=USE)
 
 
-def density(state):
+def density(state: Any) -> Any:
     return state[:, None] * jnp.conj(state[None, :])
 
 
-def analytic_cases(trajectory_count):
+def analytic_cases(trajectory_count: Any) -> Any:
     model = fixture(2)
     initial = model.basis_state(model.basis_keys[0])
     coherent = evolve_electronics(
@@ -220,7 +222,7 @@ def analytic_cases(trajectory_count):
     }
 
 
-def scaling_case(size, repeats, steps):
+def scaling_case(size: Any, repeats: Any, steps: Any) -> Any:
     model, preparation_seconds = measure_synchronized(
         lambda: fixture(size, dephasing=0.02)
     )
@@ -263,7 +265,7 @@ def scaling_case(size, repeats, steps):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sizes", type=int, nargs="+", default=[2, 4, 8])
     parser.add_argument("--repeats", type=int, default=5)

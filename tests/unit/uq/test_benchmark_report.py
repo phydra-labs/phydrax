@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
+from typing import Any
 
 import pytest
 
@@ -10,8 +12,8 @@ from tools.uq_benchmarks import runner
 from tools.uq_benchmarks.report import BenchmarkReport, Metric, ScenarioResult
 
 
-def _scenario(name, value=0.5):
-    def run(configuration, seed):
+def _scenario(name: Any, value: Any = 0.5) -> Any:
+    def run(configuration: Any, seed: Any) -> Any:
         return ScenarioResult(
             name=name,
             description=f"{name} benchmark",
@@ -30,7 +32,7 @@ def _scenario(name, value=0.5):
     return run
 
 
-def test_metric_uses_inclusive_finite_release_gates():
+def test_metric_uses_inclusive_finite_release_gates() -> None:
     lower = Metric(0.0, "accuracy", minimum=0.0, maximum=1.0)
     upper = Metric(1.0, "accuracy", minimum=0.0, maximum=1.0)
     failed = Metric(1.1, "accuracy", minimum=0.0, maximum=1.0)
@@ -47,7 +49,9 @@ def test_metric_uses_inclusive_finite_release_gates():
         ScenarioResult("empty", "no evidence", 0)
 
 
-def test_report_serialization_is_strict_atomic_and_category_aggregated(tmp_path):
+def test_report_serialization_is_strict_atomic_and_category_aggregated(
+    tmp_path: Any,
+) -> None:
     passed = _scenario("passed")(runner.get_configuration("smoke"), 10)
     failed = _scenario("failed", 2.0)(runner.get_configuration("smoke"), 20)
     report = BenchmarkReport(
@@ -90,7 +94,9 @@ def test_report_serialization_is_strict_atomic_and_category_aggregated(tmp_path)
         BenchmarkReport.from_dict(payload)
 
 
-def test_runner_keeps_registry_order_and_seed_when_selecting_subsets(monkeypatch):
+def test_runner_keeps_registry_order_and_seed_when_selecting_subsets(
+    monkeypatch: Any,
+) -> None:
     scenarios = {
         "first": _scenario("first"),
         "second": _scenario("second"),
@@ -112,8 +118,10 @@ def test_runner_keeps_registry_order_and_seed_when_selecting_subsets(monkeypatch
     assert not subset.configuration["matrix_complete"]
 
 
-def test_runner_records_scenario_exceptions_without_losing_the_report(monkeypatch):
-    def broken(configuration, seed):
+def test_runner_records_scenario_exceptions_without_losing_the_report(
+    monkeypatch: Any,
+) -> None:
+    def broken(configuration: Any, seed: Any) -> None:
         raise RuntimeError(f"failure for {configuration.profile} at {seed}")
 
     monkeypatch.setattr(runner, "SCENARIOS", {"broken": broken})
@@ -126,7 +134,7 @@ def test_runner_records_scenario_exceptions_without_losing_the_report(monkeypatc
     assert "failure for smoke" in report.scenarios[0].error_message
 
 
-def test_stochastic_gradient_benchmark_controls_are_profiled_and_registered():
+def test_stochastic_gradient_benchmark_controls_are_profiled_and_registered() -> None:
     smoke = runner.get_configuration("smoke")
     standard = runner.get_configuration("standard")
 

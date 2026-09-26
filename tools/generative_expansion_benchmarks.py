@@ -11,6 +11,7 @@ import argparse
 import json
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -19,16 +20,16 @@ import jax.random as jr
 import phydrax as phx
 
 
-def _ready(value):
+def _ready(value: Any) -> Any:
     return jax.block_until_ready(value)
 
 
-def _empirical_covariance(samples):
+def _empirical_covariance(samples: Any) -> Any:
     centered = samples - jnp.mean(samples, axis=0)
     return centered.T @ centered / samples.shape[0]
 
 
-def benchmark_matrix_transition(*, sample_count: int):
+def benchmark_matrix_transition(*, sample_count: int) -> Any:
     process = phx.stochastic.MatrixGaussianDiffusion(
         jnp.asarray([[-0.2, 0.1], [-0.05, -0.4]]),
         jnp.asarray([[0.7, 0.1], [0.0, 0.5]]),
@@ -54,7 +55,7 @@ def benchmark_matrix_transition(*, sample_count: int):
     }
 
 
-def benchmark_categorical_corruption(*, sample_count: int):
+def benchmark_categorical_corruption(*, sample_count: int) -> Any:
     schedule = phx.stochastic.CategoricalDiffusionSchedule.uniform(
         32, 5, beta_start=0.01, beta_end=0.08
     )
@@ -76,7 +77,7 @@ def benchmark_categorical_corruption(*, sample_count: int):
     }
 
 
-def benchmark_subspace_law(*, sample_count: int):
+def benchmark_subspace_law(*, sample_count: int) -> Any:
     basis = jnp.asarray([[1.0, 0.0], [0.0, 2.0], [1.0, -1.0], [0.5, 0.5]])
     layout = phx.stochastic.AffineSubspaceLayout(
         jnp.asarray([0.2, -0.1, 0.3, 0.0]), basis, event_shape=(4,)
@@ -110,7 +111,7 @@ def benchmark_subspace_law(*, sample_count: int):
     }
 
 
-def benchmark_complex_law(*, sample_count: int):
+def benchmark_complex_law(*, sample_count: int) -> Any:
     location = jnp.asarray([0.3 + 0.2j, -0.1 + 0.4j])
     variance = jnp.asarray([1.0, 0.6])
     law = phx.stochastic.ComplexNormalLaw(location, variance, event_shape=(2,))
@@ -140,7 +141,7 @@ def benchmark_complex_law(*, sample_count: int):
     }
 
 
-def run_generative_expansion_benchmarks(*, quick: bool = False):
+def run_generative_expansion_benchmarks(*, quick: bool = False) -> Any:
     sample_count = 2_048 if quick else 16_384
     cases = (
         benchmark_matrix_transition(sample_count=sample_count),

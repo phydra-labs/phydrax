@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _trajectory():
+def _trajectory() -> Any:
     times = jnp.broadcast_to(jnp.asarray([0.0, 1.0, 2.0]), (4, 3))
     states = jnp.asarray(
         [
@@ -37,7 +40,7 @@ def _trajectory():
     )
 
 
-def test_threshold_crossing_localizes_and_distinguishes_censoring_from_failure():
+def test_threshold_crossing_localizes_and_distinguishes_censoring_from_failure() -> None:
     trajectory = _trajectory()
     event = phx.stochastic.ThresholdCrossingEvent(
         lambda time, state: state[0],
@@ -55,7 +58,7 @@ def test_threshold_crossing_localizes_and_distinguishes_censoring_from_failure()
     assert result.event_ids == ("upper-half",)
 
 
-def test_terminal_and_accumulated_events_use_complete_path_semantics():
+def test_terminal_and_accumulated_events_use_complete_path_semantics() -> None:
     trajectory = _trajectory()
     terminal = phx.stochastic.TerminalSetEvent(
         lambda time, state: state[0] >= 0.3,
@@ -95,7 +98,7 @@ def test_terminal_and_accumulated_events_use_complete_path_semantics():
     assert jnp.all(no_hit_scores[trajectory.valid] < 0.0)
 
 
-def test_competing_events_report_earliest_event_code_with_stable_ties():
+def test_competing_events_report_earliest_event_code_with_stable_ties() -> None:
     times = jnp.broadcast_to(jnp.asarray([0.0, 1.0, 2.0]), (2, 3))
     states = jnp.asarray(
         [

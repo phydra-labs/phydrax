@@ -36,7 +36,7 @@ from phydrax.series import SampledSeries, SeriesSupport
 from phydrax.units import KILOJOULE_PER_MOLE, PICOSECOND
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--samples", type=int, default=1024)
     parser.add_argument("--replicas", type=int, default=4)

@@ -1144,7 +1144,8 @@ def require_compatible_field_composition(
             )
         view_port = evaluator.value_port
         # Zeroth-order evaluators always expose their reconstruction value port.
-        assert view_port is not None
+        if not (view_port is not None):
+            raise RuntimeError("Internal invariant failed: view_port is not None.")
         mismatches = _port_mismatches(view_port, other_port)
         if mismatches:
             raise ValueError(

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -22,12 +25,12 @@ from phydrax.terms import (
 )
 
 
-def _jit_loss(term, functions):
+def _jit_loss(term: Any, functions: Any) -> Any:
     loss_fn = eqx.filter_jit(lambda k: term.loss(functions, key=k))
     return loss_fn(jr.key(0))
 
 
-def _per_step(condition, count, *, moment=False):
+def _per_step(condition: Any, count: Any, *, moment: Any = False) -> Any:
     target = (
         phx.integration.over(condition.on)
         if moment
@@ -36,18 +39,18 @@ def _per_step(condition, count, *, moment=False):
     return phx.integration.per_step(target, phx.integration.MonteCarloPlan(count))
 
 
-def _fixed_source(target, batch):
+def _fixed_source(target: Any, batch: Any) -> Any:
     return phx.integration.fixed(phx.integration.from_samples(target, batch))
 
 
-def test_continuous_initial_coord_separable_spatial():
+def test_continuous_initial_coord_separable_spatial() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
     component = domain.component({"t": FixedStart()})
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> float:
         return 0.0
 
     condition = Initial("u", component, target=0.0)
@@ -59,14 +62,14 @@ def test_continuous_initial_coord_separable_spatial():
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 
-def test_integral_constraint_coord_separable_constant():
+def test_integral_constraint_coord_separable_constant() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
     component = domain.component()
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> float:
         return 1.0
 
     condition = Moment("u", component, lambda field: field, target=1.0)
@@ -84,7 +87,7 @@ def test_integral_constraint_coord_separable_constant():
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 
-def test_integral_constraint_over_axis_constant():
+def test_integral_constraint_over_axis_constant() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
@@ -93,7 +96,7 @@ def test_integral_constraint_over_axis_constant():
     num_t = 6
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> float:
         return 1.0
 
     expected = 1.0
@@ -105,14 +108,14 @@ def test_integral_constraint_over_axis_constant():
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 
-def test_residual_penalty_union_zero_loss():
+def test_residual_penalty_union_zero_loss() -> None:
     geom = Interval1d(0.0, 1.0)
     c1 = geom.component(where={"x": lambda p: p[0] < 0.5})
     c2 = geom.component(where={"x": lambda p: p[0] >= 0.5})
     union = ComponentSum((c1, c2), assume_disjoint=True)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 0.0
 
     condition = Residual("u", union, lambda field: field)
@@ -128,15 +131,15 @@ def test_residual_penalty_union_zero_loss():
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 
-def test_where_all_masks_interior_constraint():
+def test_where_all_masks_interior_constraint() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.where(x[..., 0] < 0.5, 0.0, 1.0)
 
     @geom.Function("x")
-    def mask(x):
+    def mask(x: Any) -> Any:
         return jnp.where(x[..., 0] < 0.5, 1.0, 0.0)
 
     component = geom.component(where_all=mask)
@@ -145,12 +148,12 @@ def test_where_all_masks_interior_constraint():
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 
-def test_pointset_constraint_weighted_sum():
+def test_pointset_constraint_weighted_sum() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 1.0
 
     points = {"x": jnp.array([[0.1], [0.4], [0.9]], dtype="float64")}
@@ -164,12 +167,12 @@ def test_pointset_constraint_weighted_sum():
     assert jnp.allclose(loss, 6.0)
 
 
-def test_discrete_initial_constraint_forward_mode():
+def test_discrete_initial_constraint_forward_mode() -> None:
     time = TimeInterval(0.0, 1.0).relabel("tau")
     component = time.component({"tau": FixedStart()})
 
     @time.Function("tau")
-    def u(tau):
+    def u(tau: Any) -> Any:
         return tau**2
 
     condition = Initial(
@@ -188,19 +191,19 @@ def test_discrete_initial_constraint_forward_mode():
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 
-def test_ode_constraints_relabel_nonuniform_times():
+def test_ode_constraints_relabel_nonuniform_times() -> None:
     time = TimeInterval(0.0, 1.0).relabel("tau")
     component = time.component()
 
     @time.Function("tau")
-    def u(tau):
+    def u(tau: Any) -> Any:
         return tau**2
 
     @time.Function("tau")
-    def target(tau):
+    def target(tau: Any) -> Any:
         return 2.0 * tau
 
-    def operator(field):
+    def operator(field: Any) -> Any:
         return dt(field, var="tau") - target
 
     condition = Residual("u", component, operator)
@@ -218,14 +221,14 @@ def test_ode_constraints_relabel_nonuniform_times():
     assert _jit_loss(discrete, {"u": u}) < 1e-6
 
 
-def test_integral_constraint_union_zero_loss():
+def test_integral_constraint_union_zero_loss() -> None:
     geom = Interval1d(0.0, 1.0)
     left = geom.component(where={"x": lambda p: p[0] < 0.5})
     right = geom.component(where={"x": lambda p: p[0] >= 0.5})
     union = ComponentSum((left, right), assume_disjoint=True)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 0.0
 
     condition = Moment("u", union, lambda field: field, target=0.0)
@@ -241,12 +244,12 @@ def test_integral_constraint_union_zero_loss():
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 
-def test_integral_constraint_where_zero_mask():
+def test_integral_constraint_where_zero_mask() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component(where={"x": lambda p: p * 0.0})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 1.0
 
     condition = Moment("u", component, lambda field: field, target=0.0)
@@ -258,12 +261,12 @@ def test_integral_constraint_where_zero_mask():
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 
-def test_coord_separable_laplacian_jet_zero():
+def test_coord_separable_laplacian_jet_zero() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 1.0
 
     condition = Residual(
@@ -279,16 +282,16 @@ def test_coord_separable_laplacian_jet_zero():
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 
-def test_coord_separable_div_diag_k_grad_jet_zero():
+def test_coord_separable_div_diag_k_grad_jet_zero() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 1.0
 
     @geom.Function("x")
-    def k_vec(x):
+    def k_vec(x: Any) -> Any:
         return jnp.array([1.0], dtype="float64")
 
     condition = Residual(

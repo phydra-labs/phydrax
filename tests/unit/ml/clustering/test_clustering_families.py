@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -28,7 +31,7 @@ from phydrax.ml.clustering import (
 )
 
 
-def test_dbscan_finds_weighted_components_and_exposes_hard_and_soft_routes():
+def test_dbscan_finds_weighted_components_and_exposes_hard_and_soft_routes() -> None:
     features = jnp.array([[0.0], [5.0], [0.1], [5.1], [100.0]])
     batch = MLBatch(
         features,
@@ -53,7 +56,7 @@ def test_dbscan_finds_weighted_components_and_exposes_hard_and_soft_routes():
     assert "hard radius labels are terminal" in result.derivative_contract.conditions
 
 
-def test_connectivity_clustering_keeps_isolated_points_but_reports_capacity():
+def test_connectivity_clustering_keeps_isolated_points_but_reports_capacity() -> None:
     features = jnp.array([[0.0], [0.1], [3.0]])
     successful = ConnectivityClustering(2, 3, radius=0.2).fit_batch(MLBatch(features))
     exhausted = ConnectivityClustering(2, 3, radius=0.01).fit_batch(MLBatch(features))
@@ -65,7 +68,7 @@ def test_connectivity_clustering_keeps_isolated_points_but_reports_capacity():
     assert not exhausted.valid
 
 
-def test_dbscan_reports_no_core_points_and_rejects_fixed_capacity_overflow():
+def test_dbscan_reports_no_core_points_and_rejects_fixed_capacity_overflow() -> None:
     no_core = DBSCAN(2, 3, radius=0.1, minimum_samples=2.0).fit_batch(
         MLBatch(jnp.array([[0.0], [2.0], [4.0]]))
     )
@@ -77,7 +80,7 @@ def test_dbscan_reports_no_core_points_and_rejects_fixed_capacity_overflow():
         DBSCAN(4, 3).fit_batch(MLBatch(jnp.ones((3, 1))))
 
 
-def test_mean_shift_returns_smooth_modes_and_declared_unrolled_gradients():
+def test_mean_shift_returns_smooth_modes_and_declared_unrolled_gradients() -> None:
     features = jnp.array([[-2.0], [2.0], [-2.1], [2.1]])
     weights = jnp.array([1.0, 1.0, 1.5, 1.5])
     recipe = MeanShift(
@@ -132,7 +135,7 @@ def test_mean_shift_returns_smooth_modes_and_declared_unrolled_gradients():
     assert jnp.isfinite(bandwidth_gradient)
 
 
-def test_affinity_propagation_has_a_deterministic_fallback_exemplar():
+def test_affinity_propagation_has_a_deterministic_fallback_exemplar() -> None:
     features = jnp.array([[-1.0], [0.0], [1.0]])
     result = AffinityPropagation(
         2,
@@ -144,14 +147,16 @@ def test_affinity_propagation_has_a_deterministic_fallback_exemplar():
     model = result.as_trainable()
 
     assert result.status == ML_SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert jnp.sum(model.active_clusters) >= 1
+    # ty: ignore[unresolved-attribute]
     assert model.active_clusters[0]
     assert jnp.allclose(jnp.sum(model(features), axis=-1), 1.0)
     assert result.derivative_contract.route is DerivativeRoute.UNROLLED
     assert "fixed exemplar top-k ordering" in result.derivative_contract.conditions
 
 
-def test_spectral_clustering_is_jittable_vmappable_and_reports_disconnection():
+def test_spectral_clustering_is_jittable_vmappable_and_reports_disconnection() -> None:
     features = jnp.array([[-2.0], [2.0], [-1.8], [1.8]])
     result = SpectralClustering(
         2, gamma=0.5, temperature=0.4, kmeans_iterations=8
@@ -175,12 +180,13 @@ def test_spectral_clustering_is_jittable_vmappable_and_reports_disconnection():
     assert disconnected.diagnostics.degeneracy
 
 
-def test_agglomerative_clustering_uses_lexicographic_merge_ties():
+def test_agglomerative_clustering_uses_lexicographic_merge_ties() -> None:
     features = jnp.array([[0.0], [4.0], [2.0]])
     result = AgglomerativeClustering(2, linkage="centroid").fit_batch(MLBatch(features))
     model = result.as_trainable()
 
     assert result.status == ML_SUCCESS
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.centers, jnp.array([[1.0], [4.0]]))
     assert jnp.array_equal(model(features), jnp.array([0, 1, 0]))
     assert result.derivative_contract.route is DerivativeRoute.STOPPED
@@ -189,7 +195,7 @@ def test_agglomerative_clustering_uses_lexicographic_merge_ties():
     )
 
 
-def _checkerboard():
+def _checkerboard() -> Any:
     return jnp.array(
         [
             [5.0, 1.0, 4.8, 1.2],
@@ -207,7 +213,9 @@ def _checkerboard():
         SpectralCoclustering(2, 2, kmeans_iterations=8, temperature=0.5),
     ],
 )
-def test_biclustering_families_return_fixed_column_partitions_and_smooth_rows(recipe):
+def test_biclustering_families_return_fixed_column_partitions_and_smooth_rows(
+    recipe: Any,
+) -> None:
     features = _checkerboard()
     result = recipe.fit_batch(MLBatch(features))
     model = result.as_trainable()
@@ -226,7 +234,7 @@ def test_biclustering_families_return_fixed_column_partitions_and_smooth_rows(re
     assert "column_labels" in contract.nondifferentiable_outputs
 
 
-def test_coclustering_rejects_complex_and_reports_negative_data_infeasible():
+def test_coclustering_rejects_complex_and_reports_negative_data_infeasible() -> None:
     complex_features = _checkerboard().astype(jnp.complex64) * (1.0 + 0.2j)
     with pytest.raises(ValueError, match="real nonnegative"):
         SpectralCoclustering(2, 2).fit_batch(MLBatch(complex_features))

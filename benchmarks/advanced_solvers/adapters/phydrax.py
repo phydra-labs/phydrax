@@ -787,7 +787,7 @@ class PhydraxAdapter(BenchmarkAdapter):
             eqx = import_module("equinox")
             nonlinear = import_module("phydrax.nonlinear")
 
-            def operation(prepared):
+            def operation(prepared: Any) -> Any:
                 result = nonlinear.solve_prepared_nonlinear(prepared)
                 diagnostics = result.diagnostics
                 return (
@@ -809,7 +809,7 @@ class PhydraxAdapter(BenchmarkAdapter):
             method, termination = setup_state.policy
             if problem.variant == "bounded-least-squares":
 
-                def operation(initial):
+                def operation(initial: Any) -> Any:
                     return phx.optim.least_squares(
                         setup_state.native_problem,
                         initial,
@@ -818,7 +818,7 @@ class PhydraxAdapter(BenchmarkAdapter):
                     )
             elif problem.variant == "proximal":
 
-                def operation(initial):
+                def operation(initial: Any) -> Any:
                     return phx.optim.proximal_minimize(
                         setup_state.native_problem,
                         initial,
@@ -827,7 +827,7 @@ class PhydraxAdapter(BenchmarkAdapter):
                     )
             else:
 
-                def operation(initial):
+                def operation(initial: Any) -> Any:
                     return phx.optim.minimize(
                         setup_state.native_problem,
                         initial,
@@ -1130,7 +1130,7 @@ class PhydraxAdapter(BenchmarkAdapter):
         nonlinear = import_module("phydrax.nonlinear")
         jax = import_module("jax")
 
-        def solve_for_target(target):
+        def solve_for_target(target: Any) -> Any:
             return nonlinear.implicit_root(
                 prepared_state.native_problem,
                 prepared_state.rhs,
@@ -1428,7 +1428,7 @@ class PhydraxAdapter(BenchmarkAdapter):
         )
 
 
-def _jax_root_residual(problem, value, target, jnp):
+def _jax_root_residual(problem: Any, value: Any, target: Any, jnp: Any) -> Any:
     if problem.root_kind == "separable":
         return value * value - target
     if problem.grid_spacing is None:

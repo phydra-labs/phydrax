@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -19,7 +22,7 @@ from phydrax.operators.quantum._two_particle_green import (
 )
 
 
-def _crossing_vertex(labels=jnp.arange(-2, 3, dtype=jnp.int32)):
+def _crossing_vertex(labels: Any = jnp.arange(-2, 3, dtype=jnp.int32)) -> Any:
     convention = FermionicTwoParticleChannelConvention("particle-hole-direct")
     route = convention.route(
         labels[:, None, None], labels[None, :, None], labels[None, None, :]
@@ -37,7 +40,7 @@ def _crossing_vertex(labels=jnp.arange(-2, 3, dtype=jnp.int32)):
     )
 
 
-def _fermion_diagram(order):
+def _fermion_diagram(order: Any) -> Any:
     fermion = df.FieldSpec(f"psi-{order}", statistics="fermion", mass_dimension=1.0)
     propagator = df.PropagatorSpec(fermion, mass=1.0)
     rule = df.VertexRule(
@@ -54,13 +57,14 @@ def _fermion_diagram(order):
                 propagator,
                 "v",
                 "v",
+                # ty: ignore[invalid-argument-type]
                 df.MomentumRoute([0.0]),
             ),
         ),
     )
 
 
-def test_patch_frg_closes_reciprocal_routing_crossing_and_regulated_flow():
+def test_patch_frg_closes_reciprocal_routing_crossing_and_regulated_flow() -> None:
     pi = np.pi
     prepared = frg.FermiSurfacePatchRGPlan(
         jnp.asarray(((0.0, 0.0), (pi, 0.0), (0.0, pi), (pi, pi))),
@@ -89,7 +93,7 @@ def test_patch_frg_closes_reciprocal_routing_crossing_and_regulated_flow():
     assert jnp.max(jnp.abs(result.beta_vertex)) > 0.0
 
 
-def test_lattice_parquet_channels_and_schwinger_dyson_sign_close():
+def test_lattice_parquet_channels_and_schwinger_dyson_sign_close() -> None:
     bare = _crossing_vertex()
     parquet = (
         df.LatticeParquetPlan(tolerance=1e-12)
@@ -125,14 +129,14 @@ def test_lattice_parquet_channels_and_schwinger_dyson_sign_close():
     np.testing.assert_allclose(schwinger_dyson.computed_self_energy, expected_self_energy)
 
 
-def test_sign_free_ctint_keeps_exact_birth_death_ratios_and_raw_chain():
+def test_sign_free_ctint_keeps_exact_birth_death_ratios_and_raw_chain() -> None:
     signs = jnp.asarray((1, -1), dtype=jnp.int32)
 
-    def up_kernel(source, target, delta):
+    def up_kernel(source: Any, target: Any, delta: Any) -> Any:
         diagonal = source == target
         return jnp.where(diagonal, jnp.where(delta >= 0.0, 0.75, -0.25), 0.1)
 
-    def down_kernel(source, target, delta):
+    def down_kernel(source: Any, target: Any, delta: Any) -> Any:
         return -signs[source] * signs[target] * jnp.conj(up_kernel(source, target, delta))
 
     plan = df.SignFreeCTINTPlan(2.0, 0.5, signs, steps=256, maximum_order=2)
@@ -165,7 +169,7 @@ def test_sign_free_ctint_keeps_exact_birth_death_ratios_and_raw_chain():
     np.testing.assert_allclose(result.chain.proposal_ratios, expected_ratio)
 
 
-def test_low_order_diagram_mc_retains_order_sign_and_exact_mh_evidence():
+def test_low_order_diagram_mc_retains_order_sign_and_exact_mh_evidence() -> None:
     result = (
         df.LowOrderFermionDiagramMonteCarloPlan(
             steps=512, maximum_order=2, maximum_diagrams=2
@@ -191,7 +195,7 @@ def test_low_order_diagram_mc_retains_order_sign_and_exact_mh_evidence():
     assert result.evidence.phase_covariance.shape == (2, 2)
 
 
-def test_fermionic_keldysh_car_causality_and_second_born_conservation():
+def test_fermionic_keldysh_car_causality_and_second_born_conservation() -> None:
     grid = nef.ClosedTimePathPlan(jnp.linspace(0.0, 0.3, 4)).prepare()
     propagators = jnp.broadcast_to(jnp.eye(1, dtype="complex128"), (4, 1, 1))
     free = nef.fermionic_keldysh_from_propagators(
@@ -228,7 +232,7 @@ def test_fermionic_keldysh_car_causality_and_second_born_conservation():
     assert jnp.max(jnp.abs(result.self_energy.lesser)) > 0.0
 
 
-def test_controlled_sign_study_reports_raw_ess_covariance_and_abstains():
+def test_controlled_sign_study_reports_raw_ess_covariance_and_abstains() -> None:
     alternating = jnp.tile(jnp.asarray((1.0 + 0.0j, -1.0 + 0.0j)), (2, 32))
     observables = jnp.ones(alternating.shape + (1,))
     plan = sp.ControlledSignStudyPlan(

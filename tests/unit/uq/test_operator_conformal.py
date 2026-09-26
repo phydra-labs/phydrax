@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -11,9 +14,9 @@ import phydrax as phx
 def _batch(
     *,
     cases: int,
-    coordinates,
-    weights,
-    mask=None,
+    coordinates: Any,
+    weights: Any,
+    mask: Any = None,
 ) -> phx.nn.operator.OperatorBatch:
     nodes = jnp.asarray(coordinates, dtype="float64")
     query_coordinates = jnp.broadcast_to(nodes[None, :, None], (cases, nodes.size, 1))
@@ -38,7 +41,7 @@ def _batch(
     )
 
 
-def _prediction(values, batch):
+def _prediction(values: Any, batch: Any) -> Any:
     return phx.nn.operator.OperatorPrediction.from_field(
         "output",
         jnp.asarray(values, dtype="float64"),
@@ -50,7 +53,7 @@ def _prediction(values, batch):
     )
 
 
-def test_operator_functional_conformal_calibrates_complete_physical_cases():
+def test_operator_functional_conformal_calibrates_complete_physical_cases() -> None:
     calibration_batch = _batch(
         cases=5,
         coordinates=[0.0, 0.5, 1.0],
@@ -101,7 +104,7 @@ def test_operator_functional_conformal_calibrates_complete_physical_cases():
     )
 
 
-def test_normalized_operator_conformal_uses_scale_field():
+def test_normalized_operator_conformal_uses_scale_field() -> None:
     batch = _batch(
         cases=5,
         coordinates=[0.0, 1.0],
@@ -129,7 +132,7 @@ def test_normalized_operator_conformal_uses_scale_field():
         calibrator.interval(center)
 
 
-def test_l2_operator_conformal_is_quadrature_split_invariant_and_not_pointwise():
+def test_l2_operator_conformal_is_quadrature_split_invariant_and_not_pointwise() -> None:
     base_batch = _batch(
         cases=5,
         coordinates=[0.0, 1.0],

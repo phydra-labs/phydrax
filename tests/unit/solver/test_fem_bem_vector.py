@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -30,7 +32,7 @@ _FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int
 
 
 @pytest.fixture(scope="module")
-def elasticity_bem():
+def elasticity_bem() -> Any:
     return prepare_elasticity_single_layer_dp0_3d(
         phx.geometry.MeshRegion(_VERTICES, _FACES),
         shear_modulus=2.0,
@@ -47,7 +49,9 @@ def elasticity_bem():
     )
 
 
-def _qualified_blocks(elasticity_bem, *, orientation="outward-from-fem-interior"):
+def _qualified_blocks(
+    elasticity_bem: Any, *, orientation: Any = "outward-from-fem-interior"
+) -> Any:
     boundary = elasticity_bem.weak_operator.source
     interior = ArraySpace(
         (5,),
@@ -104,8 +108,8 @@ def _qualified_blocks(elasticity_bem, *, orientation="outward-from-fem-interior"
 
 
 def test_symmetric_elasticity_block_executes_and_solves_manufactured_state(
-    elasticity_bem,
-):
+    elasticity_bem: Any,
+) -> None:
     blocks = _qualified_blocks(elasticity_bem)
     linear = LinearSolvePolicy(
         DenseLU(),
@@ -113,7 +117,11 @@ def test_symmetric_elasticity_block_executes_and_solves_manufactured_state(
         failure=FailurePolicy("status"),
     )
     prepared = prepare_elasticity_fem_bem_3d(
-        *blocks[:3], elasticity_bem, blocks[3], linear=linear
+        *blocks[:3],
+        # ty: ignore[too-many-positional-arguments]
+        elasticity_bem,
+        blocks[3],
+        linear=linear,
     )
     interior_exact = jnp.asarray([0.2, -0.1, 0.3, -0.25, 0.15])
     traction_exact = jnp.linspace(
@@ -138,8 +146,11 @@ def test_symmetric_elasticity_block_executes_and_solves_manufactured_state(
     assert "Costabel symmetric" in result.formulation
 
 
-def test_symmetric_elasticity_block_preserves_exact_transpose(elasticity_bem):
+def test_symmetric_elasticity_block_preserves_exact_transpose(
+    elasticity_bem: Any,
+) -> None:
     blocks = _qualified_blocks(elasticity_bem)
+    # ty: ignore[too-many-positional-arguments]
     prepared = prepare_elasticity_fem_bem_3d(*blocks[:3], elasticity_bem, blocks[3])
     vector = (
         jnp.linspace(-0.3, 0.4, prepared.interior_operator.source.size),
@@ -154,7 +165,7 @@ def test_symmetric_elasticity_block_preserves_exact_transpose(elasticity_bem):
     assert jnp.allclose(transposed[1], forward[1], rtol=1e-6, atol=1e-7)
 
 
-def test_elasticity_coupling_rejects_space_mismatch(elasticity_bem):
+def test_elasticity_coupling_rejects_space_mismatch(elasticity_bem: Any) -> None:
     interior_operator, trace_operator, _, qualification = _qualified_blocks(
         elasticity_bem
     )
@@ -195,14 +206,15 @@ def test_elasticity_coupling_rejects_space_mismatch(elasticity_bem):
         )
 
 
-def test_elasticity_coupling_rejects_orientation_mismatch(elasticity_bem):
+def test_elasticity_coupling_rejects_orientation_mismatch(elasticity_bem: Any) -> None:
     blocks = _qualified_blocks(elasticity_bem, orientation="outward-from-bem-exterior")
 
     with pytest.raises(ValueError, match="orientation"):
+        # ty: ignore[too-many-positional-arguments]
         prepare_elasticity_fem_bem_3d(*blocks[:3], elasticity_bem, blocks[3])
 
 
-def test_elasticity_coupling_rejects_unpaired_conormal_map(elasticity_bem):
+def test_elasticity_coupling_rejects_unpaired_conormal_map(elasticity_bem: Any) -> None:
     interior_operator, trace_operator, _, qualification = _qualified_blocks(
         elasticity_bem
     )
@@ -236,7 +248,7 @@ def test_elasticity_coupling_rejects_unpaired_conormal_map(elasticity_bem):
         )
 
 
-def test_vector_support_report_explicitly_rejects_maxwell_interface():
+def test_vector_support_report_explicitly_rejects_maxwell_interface() -> None:
     report = vector_fem_bem_support_report()
 
     assert len(report.implemented) == 1

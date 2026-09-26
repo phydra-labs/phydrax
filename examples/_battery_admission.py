@@ -10,6 +10,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 from phydrax.applications import battery
 from phydrax.qualification import CapabilityProfile, RuntimeDistributionAttestation
@@ -45,7 +46,7 @@ def add_admission_arguments(parser: argparse.ArgumentParser, /) -> None:
     parser.add_argument("--maximum-index-age-s", type=int, default=86400)
 
 
-def _unique_object(pairs):
+def _unique_object(pairs: Any) -> Any:
     record = {}
     for key, value in pairs:
         if key in record:
@@ -54,7 +55,7 @@ def _unique_object(pairs):
     return record
 
 
-def _nonfinite(token):
+def _nonfinite(token: Any) -> None:
     raise ValueError(f"Nonfinite admission record value: {token}")
 
 

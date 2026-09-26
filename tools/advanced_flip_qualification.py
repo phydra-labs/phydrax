@@ -9,6 +9,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -30,7 +31,7 @@ class AdvancedFLIPQualification:
     successful: bool
 
 
-def _case(count):
+def _case(count: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(count) for _ in range(2)),
         axis_names=("x", "y"),
@@ -56,12 +57,12 @@ def _case(count):
     return finite_volume, mac, ghost, interface, capillary, velocity
 
 
-def run(*, smoke=False):
+def run(*, smoke: Any = False) -> Any:
     count = 8 if smoke else 24
     finite_volume, mac, ghost, interface, capillary, velocity = _case(count)
 
     @jax.jit
-    def project(values):
+    def project(values: Any) -> Any:
         return ghost.project(
             values,
             interface,
@@ -123,7 +124,7 @@ def run(*, smoke=False):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)

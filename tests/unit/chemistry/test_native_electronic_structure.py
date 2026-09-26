@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -8,13 +10,17 @@ _H_EXPONENTS = [3.42525091, 0.62391373, 0.16885540]
 _H_COEFFICIENTS = [0.15432897, 0.53532814, 0.44463454]
 
 
-def _hydrogen_dimer():
+def _hydrogen_dimer() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, -0.37], [0.0, 0.0, 0.37]],
+        # ty: ignore[invalid-argument-type]
         [1.008, 1.008],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[11, 17],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -22,20 +28,27 @@ def _hydrogen_dimer():
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
         [11, 17],
+        # ty: ignore[invalid-argument-type]
         [_H_EXPONENTS, _H_EXPONENTS],
+        # ty: ignore[invalid-argument-type]
         [_H_COEFFICIENTS, _H_COEFFICIENTS],
         source_id="sto-3g-hydrogen-fixture",
     ).prepare(system)
     return units, structure, system, basis
 
 
-def test_contracted_gaussian_integrals_obey_normalization_and_permutation_symmetry():
+def test_contracted_gaussian_integrals_obey_normalization_and_permutation_symmetry() -> (
+    None
+):
     _, structure, system, basis = _hydrogen_dimer()
     positions_bohr = np.asarray(structure.positions) * float(
         phx.units.conversion_factor(system.units.scale.length_unit, phx.units.BOHR)
     )
     integrals = phx.operators.quantum.gaussian.molecular_integrals(
-        basis, positions_bohr, [1.0, 1.0]
+        basis,
+        positions_bohr,
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
     )
 
     np.testing.assert_allclose(np.diag(integrals.overlap), 1.0, atol=2.0e-7)
@@ -52,7 +65,7 @@ def test_contracted_gaussian_integrals_obey_normalization_and_permutation_symmet
     )
 
 
-def test_native_rhf_closes_energy_force_and_excited_spectrum_chain():
+def test_native_rhf_closes_energy_force_and_excited_spectrum_chain() -> None:
     units, structure, system, basis = _hydrogen_dimer()
     rhf = phx.chemistry.NativeRHFPlan(
         system,
@@ -75,6 +88,7 @@ def test_native_rhf_closes_energy_force_and_excited_spectrum_chain():
     np.testing.assert_allclose(
         np.sum(np.asarray(kernel.forces), axis=0), 0.0, atol=2.0e-5
     )
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(kernel.dipole, 0.0, atol=1.0e-8)
 
     manifold_plan = phx.chemistry.ExcitedStateManifoldPlan(1)
@@ -102,7 +116,7 @@ def test_native_rhf_closes_energy_force_and_excited_spectrum_chain():
     )
 
 
-def test_native_rhf_tda_rejects_unsupported_spin_and_symmetry_sectors():
+def test_native_rhf_tda_rejects_unsupported_spin_and_symmetry_sectors() -> None:
     units, structure, system, basis = _hydrogen_dimer()
     rhf = phx.chemistry.NativeRHFPlan(
         system,
@@ -135,10 +149,11 @@ def test_native_rhf_tda_rejects_unsupported_spin_and_symmetry_sectors():
         )
 
 
-def test_native_lda_produces_symmetric_static_polarizability():
+def test_native_lda_produces_symmetric_static_polarizability() -> None:
     _, structure, system, basis = _hydrogen_dimer()
     grid = phx.chemistry.MolecularIntegrationGridPlan.cartesian_box(
         system,
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.0, 0.0],
         half_width=4.0,
         points_per_axis=9,
@@ -161,7 +176,7 @@ def test_native_lda_produces_symmetric_static_polarizability():
     assert np.all(np.isfinite(np.asarray(result.tensor)))
 
 
-def test_native_rhf_embedding_returns_conservative_point_charge_forces():
+def test_native_rhf_embedding_returns_conservative_point_charge_forces() -> None:
     units, structure, system, basis = _hydrogen_dimer()
     plan = phx.chemistry.NativeRHFPlan(
         system,
@@ -173,8 +188,11 @@ def test_native_rhf_embedding_returns_conservative_point_charge_forces():
     )
     provider = phx.chemistry.NativeRHFEmbeddedRegionProvider(plan)
     embedding = phx.chemistry.ElectrostaticEmbeddingState(
+        # ty: ignore[invalid-argument-type]
         [101],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 3.0]],
+        # ty: ignore[invalid-argument-type]
         [0.1],
         units,
     )

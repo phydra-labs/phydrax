@@ -6,6 +6,7 @@ import argparse
 import json
 import platform
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -39,7 +40,7 @@ from phydrax.stochastic import OrnsteinUhlenbeckRealization
 jax.config.update("jax_enable_x64", True)
 
 
-def _periodic_problem(*, count: int = 4, viscosity: float = 0.04):
+def _periodic_problem(*, count: int = 4, viscosity: float = 0.04) -> Any:
     space = TensorSpectralPlan(
         tuple(FourierBasisPlan(count) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -230,7 +231,7 @@ def _initial_velocity(basis: SolenoidalHermitianFourierBasis) -> jax.Array:
     )
 
 
-def _rollout(method, initial, *, step_size: float, end_time: float):
+def _rollout(method: Any, initial: Any, *, step_size: float, end_time: float) -> Any:
     count = int(round(end_time / step_size))
     state = method.initial_state(initial, 0.0)
     energies = []
@@ -432,7 +433,7 @@ def _fixed_realization_derivatives() -> dict[str, object]:
     method = prepare_ou_forced_periodic_method(base, forcing, realization)
     seed_velocity = _initial_velocity(basis)
 
-    def terminal(amplitude):
+    def terminal(amplitude: Any) -> Any:
         state = method.initial_state(amplitude * seed_velocity, 0.0)
         successful = jnp.asarray(True)
         for step_index in range(4):
@@ -448,7 +449,7 @@ def _fixed_realization_derivatives() -> dict[str, object]:
         energy = 0.5 * jnp.real(jnp.sum(jnp.conj(state.velocity) * state.velocity))
         return energy, successful
 
-    def terminal_energy(amplitude):
+    def terminal_energy(amplitude: Any) -> Any:
         return terminal(amplitude)[0]
 
     primal, tangent = jax.jvp(terminal_energy, (jnp.asarray(1.0),), (jnp.asarray(0.25),))
@@ -502,6 +503,7 @@ def qualification(
             "jax": jax.__version__,
             "backend": jax.default_backend(),
             "platform": platform.platform(),
+            # ty: ignore[unresolved-attribute]
             "x64": bool(jax.config.x64_enabled),
         },
         "coefficient_covariance_and_subdivision": coefficient,

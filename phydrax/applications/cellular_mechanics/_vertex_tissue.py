@@ -908,8 +908,13 @@ class VertexTissueState(StrictModule):
         positions_ = jnp.asarray(positions)
         fields_ = jnp.asarray(cell_fields)
         time_ = jnp.asarray(time)
-        if positions_.ndim != 2 or positions_.shape[-1] not in (2, 3):
+        if positions_.ndim != 2:
             raise ValueError("positions must have shape (vertex_capacity, 2|3).")
+        parse(
+            positions_.shape[-1],
+            VertexTissueDimension,
+            "positions spatial dimension",
+        )
         if fields_.ndim != 2:
             raise ValueError("cell_fields must have shape (cell_capacity, field_count).")
         if time_.shape != ():

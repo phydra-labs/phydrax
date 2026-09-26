@@ -13,7 +13,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _correlated_problem():
+def _correlated_problem() -> Any:
     precision = jnp.asarray([[4.0, 1.2], [1.2, 2.5]])
     center = jnp.asarray([0.4, -0.7])
     space = phx.uq.ParameterSpace(
@@ -30,12 +30,12 @@ def _correlated_problem():
     )
 
 
-def _assert_tree_equal(left, right):
+def _assert_tree_equal(left: Any, right: Any) -> None:
     comparisons = jax.tree_util.tree_map(jnp.array_equal, left, right)
     assert all(jax.tree_util.tree_leaves(comparisons))
 
 
-def _assert_tree_close(left, right, *, atol=1e-10):
+def _assert_tree_close(left: Any, right: Any, *, atol: Any = 1e-10) -> None:
     comparisons = jax.tree_util.tree_map(
         lambda x, y: jnp.allclose(x, y, rtol=0.0, atol=atol),
         left,
@@ -44,7 +44,7 @@ def _assert_tree_close(left, right, *, atol=1e-10):
     assert all(jax.tree_util.tree_leaves(comparisons))
 
 
-def test_vectorized_nuts_replays_and_matches_independent_sequential_chains():
+def test_vectorized_nuts_replays_and_matches_independent_sequential_chains() -> None:
     problem = _correlated_problem()
     settings: dict[str, Any] = dict(
         key=jr.key(200),
@@ -129,7 +129,7 @@ def test_vectorized_nuts_replays_and_matches_independent_sequential_chains():
     assert full.samples.shape == (3, 60, 9)
 
 
-def test_vectorized_hmc_preserves_fixed_trajectory_and_diagnostics():
+def test_vectorized_hmc_preserves_fixed_trajectory_and_diagnostics() -> None:
     problem = _correlated_problem()
     settings: dict[str, Any] = dict(
         key=jr.key(201),
@@ -155,7 +155,7 @@ def test_vectorized_hmc_preserves_fixed_trajectory_and_diagnostics():
 
 
 @pytest.mark.parametrize("algorithm", ["nuts", "hmc"])
-def test_chain_specific_initial_positions_are_checked_and_used(algorithm):
+def test_chain_specific_initial_positions_are_checked_and_used(algorithm: Any) -> None:
     problem = _correlated_problem()
     initial_positions = jnp.asarray([[-1.0, 0.25], [1.0, -0.25]])
     settings: dict[str, Any] = dict(
@@ -178,7 +178,9 @@ def test_chain_specific_initial_positions_are_checked_and_used(algorithm):
 
 
 @pytest.mark.parametrize("algorithm", ["nuts", "hmc"])
-def test_chain_specific_invalid_initial_positions_fail_before_warmup(algorithm):
+def test_chain_specific_invalid_initial_positions_fail_before_warmup(
+    algorithm: Any,
+) -> None:
     problem = _correlated_problem()
     settings: dict[str, Any] = dict(
         key=jr.key(209),
@@ -196,7 +198,7 @@ def test_chain_specific_invalid_initial_positions_fail_before_warmup(algorithm):
 
 
 @pytest.mark.parametrize("algorithm", ["nuts", "hmc"])
-def test_every_chain_specific_initial_log_density_is_checked(algorithm):
+def test_every_chain_specific_initial_log_density_is_checked(algorithm: Any) -> None:
     space = phx.uq.ParameterSpace(
         jnp.zeros((1,)),
         priors=phx.uq.Normal(0.0, 1.0),
@@ -221,7 +223,9 @@ def test_every_chain_specific_initial_log_density_is_checked(algorithm):
 
 
 @pytest.mark.parametrize("chain_method", ["vectorized", "interleaved"])
-def test_vectorized_nuts_supports_dense_and_diagonal_mass_adaptation(chain_method):
+def test_vectorized_nuts_supports_dense_and_diagonal_mass_adaptation(
+    chain_method: Any,
+) -> None:
     problem = _correlated_problem()
     settings: dict[str, Any] = dict(
         key=jr.key(202),
@@ -252,7 +256,7 @@ def test_vectorized_nuts_supports_dense_and_diagonal_mass_adaptation(chain_metho
     assert diagonal.sample_memory_bytes == dense.sample_memory_bytes
 
 
-def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree():
+def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree() -> None:
     model = phx.nn.layers.inference_mode(
         phx.nn.models.SeparableMLP(
             in_size=2,
@@ -264,6 +268,7 @@ def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree():
         )
     )
     final_layers = tuple(
+        # ty: ignore[unresolved-attribute]
         f".model.models[{index}].layers[{len(factor.layers) - 1}]"
         for index, factor in enumerate(model.model.models)
     )
@@ -294,7 +299,7 @@ def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree():
     baseline = jax.vmap(model)(inputs)
     targets = baseline + jnp.asarray([0.02, -0.01, 0.03, -0.02, 0.01])
 
-    def predict(selected):
+    def predict(selected: Any) -> Any:
         return jax.vmap(subspace.reconstruct(selected))(inputs)
 
     problem = phx.uq.PosteriorProblem(
@@ -334,7 +339,7 @@ def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree():
         assert jnp.all(jnp.isfinite(jax.vmap(subspace.reconstruct(first_draw))(inputs)))
 
 
-def test_interleaved_chain_method_is_nuts_specific():
+def test_interleaved_chain_method_is_nuts_specific() -> None:
     problem = _correlated_problem()
     invalid_hmc_method: Any = "interleaved"
     invalid_nuts_method: Any = "unknown"

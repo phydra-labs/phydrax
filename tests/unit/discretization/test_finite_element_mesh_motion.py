@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _diamond_mesh():
+def _diamond_mesh() -> Any:
     coordinates = jnp.asarray(
         [
             [1.0, 0.0],
@@ -27,7 +30,7 @@ def _diamond_mesh():
     return phx.discretization.CellMesh.from_triangles(coordinates, triangles)
 
 
-def _discretization():
+def _discretization() -> Any:
     field = phx.discretization.FiniteElementFieldSpec(
         "u",
         phx.discretization.lagrange_element("triangle", 1),
@@ -35,7 +38,7 @@ def _discretization():
     return phx.discretization.FiniteElementPlan(_diamond_mesh(), field).prepare()
 
 
-def _circle_motion():
+def _circle_motion() -> Any:
     geometry = phx.geometry.Circle(
         (0.0, 0.0),
         1.0,
@@ -54,7 +57,7 @@ def _circle_motion():
     return geometry, motion
 
 
-def test_runtime_rejects_changed_coordinate_count():
+def test_runtime_rejects_changed_coordinate_count() -> None:
     discretization = _discretization()
 
     with pytest.raises(ValueError, match="preserve coordinate shape"):
@@ -64,7 +67,7 @@ def test_runtime_rejects_changed_coordinate_count():
         )
 
 
-def test_three_dimensional_cell_mesh_coordinate_refresh_preserves_topology():
+def test_three_dimensional_cell_mesh_coordinate_refresh_preserves_topology() -> None:
     prism_coordinates = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -139,6 +142,7 @@ def test_three_dimensional_cell_mesh_coordinate_refresh_preserves_topology():
     )
     polyhedron = phx.discretization.CellMesh.from_polyhedra(
         cube_coordinates,
+        # ty: ignore[invalid-argument-type]
         (
             (
                 (0, 3, 2, 1),
@@ -175,7 +179,7 @@ def test_three_dimensional_cell_mesh_coordinate_refresh_preserves_topology():
     assert refreshed_polyhedron.connectivity is polyhedron.connectivity
 
 
-def test_harmonic_mesh_motion_preserves_topology_and_has_shape_derivative():
+def test_harmonic_mesh_motion_preserves_topology_and_has_shape_derivative() -> None:
     geometry, motion = _circle_motion()
     radius_index = geometry.schema.index(phx.geometry.ParameterId("circle", "radius"))
     state = geometry.state.replace_at(radius_index, jnp.asarray(1.1))
@@ -196,7 +200,7 @@ def test_harmonic_mesh_motion_preserves_topology_and_has_shape_derivative():
     )
     assert other.runtime.runtime_id != result.runtime.runtime_id
 
-    def coordinate_sum(radius):
+    def coordinate_sum(radius: Any) -> Any:
         design = geometry.state.replace_at(radius_index, radius)
         return jnp.sum(
             motion.realize(
@@ -211,7 +215,7 @@ def test_harmonic_mesh_motion_preserves_topology_and_has_shape_derivative():
     assert derivative > 0.0
 
 
-def test_invalid_boundary_motion_returns_base_runtime_and_rejected_evidence():
+def test_invalid_boundary_motion_returns_base_runtime_and_rejected_evidence() -> None:
     geometry, motion = _circle_motion()
     radius_index = geometry.schema.index(phx.geometry.ParameterId("circle", "radius"))
     expired = geometry.state.replace_at(radius_index, jnp.asarray(1.8))
@@ -231,11 +235,11 @@ class _InvertingProvider(eqx.Module):
     reference_points: jax.Array
     mapping_id: str = eqx.field(static=True)
 
-    def __init__(self, reference_points):
+    def __init__(self, reference_points: Any) -> None:
         self.reference_points = jnp.asarray(reference_points)
         self.mapping_id = "inverting-boundary"
 
-    def realize(self, design, /):
+    def realize(self, design: Any, /) -> Any:
         del design
         proposed = self.reference_points.at[0].set(jnp.asarray([-1.5, 0.0]))
         return phx.discretization.FiniteElementBoundaryRealization(
@@ -248,7 +252,7 @@ class _InvertingProvider(eqx.Module):
         )
 
 
-def test_signed_jacobian_rejects_orientation_reversal():
+def test_signed_jacobian_rejects_orientation_reversal() -> None:
     discretization = _discretization()
     provider = _InvertingProvider(discretization.mesh.coordinates[:4])
     motion = phx.discretization.FiniteElementMeshMotionPlan(

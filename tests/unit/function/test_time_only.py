@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -9,13 +12,13 @@ import phydrax as phx
 from phydrax.domain import Interval1d, SampleLayout, TimeInterval
 
 
-def test_time_only_function_broadcasts_over_space_and_time_axes():
+def test_time_only_function_broadcasts_over_space_and_time_axes() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     dom = geom @ time
 
     @dom.Function("t")
-    def f(t):
+    def f(t: Any) -> Any:
         return 3.0 * t
 
     component = dom.component()

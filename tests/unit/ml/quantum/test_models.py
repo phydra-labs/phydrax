@@ -14,7 +14,7 @@ from phydrax.ml.quantum import (
 from phydrax.operators.quantum import HilbertRegisterLayout
 
 
-def test_projected_iqp_feature_map_returns_ordered_real_features():
+def test_projected_iqp_feature_map_returns_ordered_real_features() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     model = projected_iqp_feature_map(
         layout,
@@ -29,7 +29,7 @@ def test_projected_iqp_feature_map_returns_ordered_real_features():
     assert jnp.all(jnp.isfinite(values))
 
 
-def test_parameter_shift_model_matches_autodiff_primal_and_input_jacobian():
+def test_parameter_shift_model_matches_autodiff_primal_and_input_jacobian() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     key = jr.key(7)
     kwargs = {
@@ -42,6 +42,7 @@ def test_parameter_shift_model_matches_autodiff_primal_and_input_jacobian():
         1,
         key,
         gradient_method="autodiff",
+        # ty: ignore[invalid-argument-type]
         **kwargs,
     )
     shift_model = data_reuploading_feature_map(
@@ -50,6 +51,7 @@ def test_parameter_shift_model_matches_autodiff_primal_and_input_jacobian():
         1,
         key,
         gradient_method="parameter-shift",
+        # ty: ignore[invalid-argument-type]
         **kwargs,
     )
     point = jnp.asarray([0.15, -0.31], dtype=jnp.float64)
@@ -62,7 +64,7 @@ def test_parameter_shift_model_matches_autodiff_primal_and_input_jacobian():
     )
 
 
-def test_prepared_circuit_execution_is_not_trainable():
+def test_prepared_circuit_execution_is_not_trainable() -> None:
     layout = HilbertRegisterLayout(("q",), (2,))
     model = data_reuploading_feature_map(1, layout, 1, jr.key(3))
     trainable, _model_state, _fixed = phx.partition_parameters(model)

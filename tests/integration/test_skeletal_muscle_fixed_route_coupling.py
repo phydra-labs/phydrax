@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -17,7 +20,7 @@ from phydrax.applications.skeletal_muscle.musculotendon import (
 from phydrax.discretization.particle import ReducedArticulationPlan
 
 
-def _one_hinge():
+def _one_hinge() -> Any:
     body_ids = jnp.asarray([100, 101], dtype=jnp.int64)
     particles = phx.discretization.ParticleSetPlan(
         body_ids, jnp.ones((2,)), ambient_dimension=3
@@ -46,7 +49,7 @@ def _one_hinge():
     ).prepare(graph, reference)
 
 
-def test_de_groote_force_is_the_single_owner_pulled_back_through_fixed_route():
+def test_de_groote_force_is_the_single_owner_pulled_back_through_fixed_route() -> None:
     body_ids, articulation = _one_hinge()
     route = FixedBodyRoutePlan(
         ("flexor",), (0, 2), (int(body_ids[0]), int(body_ids[1]))

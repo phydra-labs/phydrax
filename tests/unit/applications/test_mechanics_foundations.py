@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -13,7 +15,7 @@ import phydrax as phx
 sm = phx.applications.solid_mechanics
 
 
-def _certified_properties(*, positive_definite=False):
+def _certified_properties(*, positive_definite: Any = False) -> Any:
     evidence = {"self_adjoint": "verified"}
     if positive_definite:
         evidence.update(
@@ -25,11 +27,12 @@ def _certified_properties(*, positive_definite=False):
     return phx.linalg.OperatorProperties(
         self_adjoint=True,
         positive_definite=positive_definite,
+        # ty: ignore[invalid-argument-type]
         evidence=evidence,
     )
 
 
-def test_mechanics_wrapper_keeps_one_authoritative_nonlinear_root():
+def test_mechanics_wrapper_keeps_one_authoritative_nonlinear_root() -> None:
     space = phx.linalg.ArraySpace((2,), space_id="mechanics-physical-root")
     root = phx.nonlinear.NonlinearSystemProblem(
         lambda state, args: state - args,
@@ -55,7 +58,7 @@ def test_mechanics_wrapper_keeps_one_authoritative_nonlinear_root():
     assert not mechanics.admissible(jnp.asarray((-2.0, 0.0)), jnp.zeros(2))
 
 
-def test_physical_stability_refuses_field_parameter_hessian_semantics():
+def test_physical_stability_refuses_field_parameter_hessian_semantics() -> None:
     parameter_space = phx.linalg.ArraySpace(
         (2,),
         space_id="selected-field-parameters",

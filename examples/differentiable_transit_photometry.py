@@ -1,12 +1,14 @@
 """Differentiable circular occultation, photon counts, and Poisson likelihood."""
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def build_workflow():
+def build_workflow() -> Any:
     astrophysics = phx.applications.astrophysics
     disk = astrophysics.PolynomialLimbDarkenedDisk(jnp.asarray([0.3, 0.2]))
     occultation = astrophysics.CircularOccultationPlan(disk)
@@ -30,10 +32,10 @@ def build_workflow():
     return cadence, occultation, plan, spectrum
 
 
-def main():
+def main() -> None:
     cadence, occultation, plan, spectrum = build_workflow()
 
-    def expected_counts(radius_ratio):
+    def expected_counts(radius_ratio: Any) -> Any:
         relative = occultation.evaluate(jnp.abs(cadence), radius_ratio).relative_flux
         return plan.evaluate(relative, spectrum).expected_counts
 

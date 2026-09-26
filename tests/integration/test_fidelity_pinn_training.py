@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -9,7 +12,7 @@ import optax
 import phydrax as phx
 
 
-def _poisson_dataset():
+def _poisson_dataset() -> Any:
     low = phx.fidelity.FidelityLevelSpec(
         "low",
         problem_id="poisson",
@@ -70,7 +73,7 @@ def _poisson_dataset():
     return phx.fidelity.FidelityDataset(hierarchy, cases, tuple(evaluations))
 
 
-def test_staged_multifidelity_pinn_improves_held_out_target_error():
+def test_staged_multifidelity_pinn_improves_held_out_target_error() -> None:
     dataset = _poisson_dataset()
     split = phx.fidelity.split_fidelity_dataset(
         dataset,

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -13,24 +16,24 @@ class _QuadraticQueryOperator(AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 1
         self.out_size = "scalar"
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         coordinates = batch.require_single_query().coordinates_array(
             case_shape=batch.case_shape
         )
         return coordinates[..., 0] ** 2
 
-    def __call__(self, x, *, key=None):
+    def __call__(self, x: Any, *, key: Any = None) -> Any:
         if not isinstance(x, phx.nn.operator.OperatorBatch):
             raise TypeError("_QuadraticQueryOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
 
 
-def _batch(resolution):
+def _batch(resolution: Any) -> Any:
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(-1.0, 1.0, resolution))
     source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((2, resolution)),
@@ -44,7 +47,7 @@ def _batch(resolution):
     )
 
 
-def test_operator_context_is_coordinate_aware_and_differentiable():
+def test_operator_context_is_coordinate_aware_and_differentiable() -> None:
     model = _QuadraticQueryOperator()
     context = phx.nn.operator.adapters.bind_operator_context(model, _batch(9))
     values = context(jnp.asarray([[-0.4], [0.2], [0.7]]))
@@ -57,7 +60,7 @@ def test_operator_context_is_coordinate_aware_and_differentiable():
     assert jnp.allclose(second_derivative.func(jnp.asarray([0.3])), 2.0)
 
 
-def test_native_differential_pino_residual_holds_across_resolutions():
+def test_native_differential_pino_residual_holds_across_resolutions() -> None:
     domain = phx.domain.Interval1d(-1.0, 1.0)
     model = _QuadraticQueryOperator()
     function = domain.Model("x")(model)

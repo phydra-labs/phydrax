@@ -2,6 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
+# ty: ignore[unresolved-import]
 import marimo
 
 
@@ -10,13 +14,17 @@ app = marimo.App(width="full", app_title="1D Wave Equation in Phydrax")
 
 
 @app.cell
-def _():
+def _() -> Any:
     import time
 
     import jax
     import jax.numpy as jnp
     import jax.random as jr
+
+    # ty: ignore[unresolved-import]
     import marimo as mo
+
+    # ty: ignore[unresolved-import]
     import matplotlib.pyplot as plt
     import optax
 
@@ -27,7 +35,7 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _(mo: Any) -> None:
     mo.md(
         r"""
     # 1D Wave Equation in Phydrax
@@ -76,7 +84,7 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _(mo: Any) -> None:
     mo.md(
         r"""
     ## Why exact enforcement changes the optimization problem
@@ -119,7 +127,7 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _(mo: Any) -> None:
     mo.callout(
         mo.md(
             r"""
@@ -184,7 +192,7 @@ def _(mo):
 
 
 @app.cell
-def _():
+def _() -> Any:
     # -------------------------------------------------------------------------
     # Configurations
     # -------------------------------------------------------------------------
@@ -223,7 +231,7 @@ def _():
 
 
 @app.cell
-def _(jax, jnp, jr, phx):
+def _(jax: Any, jnp: Any, jr: Any, phx: Any) -> Any:
     # -------------------------------------------------------------------------
     # Utility functions
     # -------------------------------------------------------------------------
@@ -340,11 +348,11 @@ def _(jax, jnp, jr, phx):
         initial = domain.component({"t": phx.domain.FixedStart()})
 
         @domain.Function("x")
-        def u0_target(x):
+        def u0_target(x: Any) -> Any:
             return jnp.sin(x[0])
 
         @domain.Function("x")
-        def ut0_target(x):
+        def ut0_target(x: Any) -> Any:
             return jnp.sin(x[0])
 
         # Exact boundary and initial conditions are compiled from semantics.
@@ -399,25 +407,25 @@ def _(jax, jnp, jr, phx):
 
 @app.cell
 def _(
-    c,
-    depth,
-    jr,
-    latent_size,
-    learning_rate,
-    make_solver,
-    mo,
-    num_iter,
-    num_t_interior,
-    num_x_interior,
-    optax,
-    seed,
-    t_max,
-    t_min,
-    time,
-    width_size,
-    x_max,
-    x_min,
-):
+    c: Any,
+    depth: Any,
+    jr: Any,
+    latent_size: Any,
+    learning_rate: Any,
+    make_solver: Any,
+    mo: Any,
+    num_iter: Any,
+    num_t_interior: Any,
+    num_x_interior: Any,
+    optax: Any,
+    seed: Any,
+    t_max: Any,
+    t_min: Any,
+    time: Any,
+    width_size: Any,
+    x_max: Any,
+    x_min: Any,
+) -> Any:
     # -------------------------------------------------------------------------
     # Main execution path
     # -------------------------------------------------------------------------
@@ -467,17 +475,17 @@ def _(
 
 @app.cell
 def _(
-    constraint_errors,
-    evaluate_on_grid,
-    jnp,
-    nt_plot,
-    nx_plot,
-    t_max,
-    t_min,
-    trained_solver,
-    x_max,
-    x_min,
-):
+    constraint_errors: Any,
+    evaluate_on_grid: Any,
+    jnp: Any,
+    nt_plot: Any,
+    nx_plot: Any,
+    t_max: Any,
+    t_min: Any,
+    trained_solver: Any,
+    x_max: Any,
+    x_min: Any,
+) -> Any:
     u = trained_solver.ansatz_functions()["u"]
     x, t, u_pred, u_true, diff = evaluate_on_grid(
         u,
@@ -505,7 +513,7 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(diag_stats, mo, train_stats):
+def _(diag_stats: Any, mo: Any, train_stats: Any) -> None:
     diagnostics_panel = mo.callout("Diagnostics unavailable.", kind="warn")
     if diag_stats is not None:
         msg = f"""
@@ -525,7 +533,7 @@ def _(diag_stats, mo, train_stats):
 
 
 @app.cell(hide_code=True)
-def _(jnp, mo, plot_data, plt):
+def _(jnp: Any, mo: Any, plot_data: Any, plt: Any) -> None:
     plot_panel = mo.callout("No plot data available.", kind="warn")
     if plot_data is not None:
         x_plot, t_plot, u_pred_plot, u_true_plot, diff_plot = plot_data
@@ -595,7 +603,14 @@ def _(jnp, mo, plot_data, plt):
 
 
 @app.cell(hide_code=True)
-def _(diag_stats, mo, num_iter, num_t_interior, num_x_interior, train_stats):
+def _(
+    diag_stats: Any,
+    mo: Any,
+    num_iter: Any,
+    num_t_interior: Any,
+    num_x_interior: Any,
+    train_stats: Any,
+) -> None:
     physicsnemo_linf = 0.025
     phydrax_reference_linf = 0.00186
     physicsnemo_steps = 10_000
@@ -666,7 +681,7 @@ def _(diag_stats, mo, num_iter, num_t_interior, num_x_interior, train_stats):
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _(mo: Any) -> None:
     mo.md(
         """
     ---

@@ -965,7 +965,10 @@ class CellMesh(StrictModule, NonTrainableState):
         if any(isinstance(block, PolyhedralBlock) for block in self.blocks):
             connectivity = self.connectivity
             # Polyhedron blocks are only accepted with an explicit PolyhedralConnectivity.
-            assert isinstance(connectivity, PolyhedralConnectivity)
+            if not (isinstance(connectivity, PolyhedralConnectivity)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(connectivity, PolyhedralConnectivity)."
+                )
             polyhedral_connectivity = connectivity
         return CellMesh(
             points,

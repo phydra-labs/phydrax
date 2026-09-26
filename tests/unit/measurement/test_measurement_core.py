@@ -1,14 +1,20 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
 import phydrax as phx
 
 
-def _quantity(name="signal", key="test.signal", unit=phx.units.ONE):
+def _quantity(
+    name: Any = "signal", key: Any = "test.signal", unit: Any = phx.units.ONE
+) -> Any:
     return phx.measurement.QuantitySpec("test", name, name, unit, key)
 
 
-def test_quantity_fields_keep_sample_validity_separate_from_components_and_units():
+def test_quantity_fields_keep_sample_validity_separate_from_components_and_units() -> (
+    None
+):
     support = phx.measurement.IndexSampleSupport((2,), ("sample",))
     layout = phx.measurement.ValueLayout(
         phx.measurement.ValueKind.VECTOR,
@@ -36,7 +42,7 @@ def test_quantity_fields_keep_sample_validity_separate_from_components_and_units
         phx.measurement.ValueLayout(phx.measurement.ValueKind.VECTOR, (2,))
 
 
-def test_measurement_comparison_requires_semantic_and_support_compatibility():
+def test_measurement_comparison_requires_semantic_and_support_compatibility() -> None:
     support = phx.measurement.IndexSampleSupport((2,), ("sample",))
     sampling = phx.measurement.SamplingSemantics(
         phx.measurement.SpatialSamplingKind.POINT
@@ -89,7 +95,7 @@ def test_measurement_comparison_requires_semantic_and_support_compatibility():
         phx.observation.MeasurementComparisonPlan(observed).evaluate(incompatible)
 
 
-def test_complex_measurement_residual_uses_hermitian_magnitude():
+def test_complex_measurement_residual_uses_hermitian_magnitude() -> None:
     support = phx.measurement.IndexSampleSupport((1,), ("sample",))
     quantity = _quantity("complex-signal", "test.complex-signal")
     layout = phx.measurement.ValueLayout(phx.measurement.ValueKind.COMPLEX_SCALAR)
@@ -117,7 +123,7 @@ def test_complex_measurement_residual_uses_hermitian_magnitude():
     assert bool(result.successful)
 
 
-def test_time_and_lineage_do_not_collapse_acquisition_semantics():
+def test_time_and_lineage_do_not_collapse_acquisition_semantics() -> None:
     axis = phx.measurement.SampleTimeAxis.uniform(
         "camera-clock", 3, 0.5, phx.units.SECOND
     )
@@ -134,7 +140,7 @@ def test_time_and_lineage_do_not_collapse_acquisition_semantics():
         )
 
 
-def test_physical_supports_require_three_dimensions_and_typed_monotone_time():
+def test_physical_supports_require_three_dimensions_and_typed_monotone_time() -> None:
     contract = phx.SpatialCoordinateContract(
         phx.units.METER,
         coordinate_system="cartesian",

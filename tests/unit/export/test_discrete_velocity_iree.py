@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -48,18 +50,18 @@ class _ZeroDualModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, *, offset=0.0):
+    def __init__(self, *, offset: Any = 0.0) -> None:
         self.weight = jnp.zeros((2, 4), dtype=jnp.float64)
         self.bias = jnp.full((2,), offset, dtype=jnp.float64)
         self.in_size = 4
         self.out_size = 2
 
-    def __call__(self, values, /, *, key=None):
+    def __call__(self, values: Any, /, *, key: Any = None) -> Any:
         del key
         return self.weight @ values + self.bias
 
 
-def _runtime_and_binding(*, model_offset=0.0):
+def _runtime_and_binding(*, model_offset: Any = 0.0) -> Any:
     quadrature = d2v17_quadrature()
     material = IdealGasMaterial(1.4, 1.0)
     energy_plan = PositiveEnergyEquilibriumPlan(quadrature)
@@ -144,7 +146,7 @@ def _runtime_and_binding(*, model_offset=0.0):
     return runtime, binding
 
 
-def _state(runtime, *, density=1.0):
+def _state(runtime: Any, *, density: Any = 1.0) -> Any:
     conserved = jnp.asarray((density, 0.0, 0.0, 1.25 * density), dtype=jnp.float64)
     equilibrium = runtime.method.equilibrium(conserved)
     shape = runtime.transport.spatial_shape + (17,)
@@ -154,19 +156,21 @@ def _state(runtime, *, density=1.0):
     )
 
 
-def _available():
+def _available() -> Any:
     class Available:
         @staticmethod
-        def require(capability):
+        def require(capability: Any) -> None:
             assert capability == "compiled-inference"
 
     return Available()
 
 
-def _install_fake_save(monkeypatch, *, validation_ok=True, target_backend=None):
+def _install_fake_save(
+    monkeypatch: Any, *, validation_ok: Any = True, target_backend: Any = None
+) -> Any:
     calls = []
 
-    def fake_save(function, path, /, **kwargs):
+    def fake_save(function: Any, path: Any, /, **kwargs: Any) -> Any:
         native = function(*kwargs["inputs"], key=None)
         deployed = tuple(np.asarray(value) for value in native)
         output_names = tuple(kwargs["output_names"])
@@ -206,7 +210,7 @@ def _install_fake_save(monkeypatch, *, validation_ok=True, target_backend=None):
     return calls
 
 
-def test_d2v_iree_modes_have_one_fixed_ordered_heterogeneous_abi():
+def test_d2v_iree_modes_have_one_fixed_ordered_heterogeneous_abi() -> None:
     runtime, binding = _runtime_and_binding()
     state = _state(runtime)
     conserved = runtime.method.moments(state).conserved
@@ -284,8 +288,8 @@ def test_d2v_iree_modes_have_one_fixed_ordered_heterogeneous_abi():
 
 
 def test_d2v_iree_native_and_export_boundaries_agree_for_accept_and_reject(
-    monkeypatch, tmp_path
-):
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     runtime, binding = _runtime_and_binding()
     calls = _install_fake_save(monkeypatch)
     accepted_input = _state(runtime)
@@ -348,8 +352,8 @@ def test_d2v_iree_native_and_export_boundaries_agree_for_accept_and_reject(
 
 
 def test_d2v_iree_unavailable_backend_fails_before_export_without_fallback(
-    monkeypatch, tmp_path
-):
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     runtime, binding = _runtime_and_binding()
     state = _state(runtime)
     unavailable = BackendAvailability(
@@ -360,7 +364,7 @@ def test_d2v_iree_unavailable_backend_fails_before_export_without_fallback(
     )
     called = False
 
-    def forbidden_save(*args, **kwargs):
+    def forbidden_save(*args: Any, **kwargs: Any) -> None:
         nonlocal called
         called = True
         raise AssertionError("generic exporter must not run after a failed gate")
@@ -387,8 +391,8 @@ def test_d2v_iree_unavailable_backend_fails_before_export_without_fallback(
     ((False, None), (True, "cuda")),
 )
 def test_d2v_iree_refuses_parity_or_backend_identity_changes(
-    monkeypatch, tmp_path, validation_ok, target_backend
-):
+    monkeypatch: Any, tmp_path: Any, validation_ok: Any, target_backend: Any
+) -> None:
     runtime, binding = _runtime_and_binding()
     calls = _install_fake_save(
         monkeypatch,
@@ -407,7 +411,7 @@ def test_d2v_iree_refuses_parity_or_backend_identity_changes(
     assert len(calls) == 1
 
 
-def test_d2v_iree_refuses_foreign_frozen_artifact_identity():
+def test_d2v_iree_refuses_foreign_frozen_artifact_identity() -> None:
     runtime, binding = _runtime_and_binding()
     _, foreign_binding = _runtime_and_binding(model_offset=0.1)
     contract = d2v_iree.prepare_discrete_velocity_iree_contract(

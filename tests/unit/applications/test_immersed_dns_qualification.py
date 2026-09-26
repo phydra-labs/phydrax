@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -35,7 +38,7 @@ from phydrax.discretization.particle._resolved_lubrication import (
 from phydrax.solver._mac_sharp_interface import MACSharpInterfaceProjectionPlan
 
 
-def _flow(count=6):
+def _flow(count: Any = 6) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(2)
@@ -57,7 +60,7 @@ def _flow(count=6):
     return finite_volume, operators, boundaries, dynamics
 
 
-def _marker_owner(operators, boundaries):
+def _marker_owner(operators: Any, boundaries: Any) -> Any:
     positions = jnp.asarray(((0.35, 0.35), (0.65, 0.35), (0.65, 0.65), (0.35, 0.65)))
     markers = phx.discretization.LagrangianMarkerSetPlan(
         jnp.arange(4), positions, jnp.full((4,), 0.25)
@@ -69,7 +72,7 @@ def _marker_owner(operators, boundaries):
     return markers, transfer, owner
 
 
-def _rigid_owner(finite_volume, operators, dynamics):
+def _rigid_owner(finite_volume: Any, operators: Any, dynamics: Any) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray((0,)), jnp.asarray((1.0,)), ambient_dimension=2
     ).prepare()
@@ -107,7 +110,7 @@ def _rigid_owner(finite_volume, operators, dynamics):
     return markers, projection, contact
 
 
-def _deformable_owner(operators, boundaries, dynamics):
+def _deformable_owner(operators: Any, boundaries: Any, dynamics: Any) -> Any:
     positions = jnp.asarray(((0.35, 0.5), (0.65, 0.5)))
     markers = phx.discretization.LagrangianMarkerSetPlan(
         jnp.arange(2), positions, jnp.asarray((0.5, 0.5))
@@ -138,7 +141,7 @@ def _deformable_owner(operators, boundaries, dynamics):
     return markers, method
 
 
-def _sharp_owner(finite_volume, operators, boundaries):
+def _sharp_owner(finite_volume: Any, operators: Any, boundaries: Any) -> Any:
     pairing_id = canonical_fingerprint(
         {
             "pressure": operators.pressure_space.space_id,
@@ -163,7 +166,7 @@ def _sharp_owner(finite_volume, operators, boundaries):
 
 
 @pytest.fixture(scope="module")
-def regimes():
+def regimes() -> Any:
     finite_volume, operators, boundaries, dynamics = _flow()
     markers, transfer, marker_owner = _marker_owner(operators, boundaries)
     marker = ImmersedBodyRegimePlan(
@@ -250,7 +253,7 @@ def regimes():
     }
 
 
-def _preflight(regime, **updates):
+def _preflight(regime: Any, **updates: Any) -> Any:
     values = {
         "owner_plan_id": regime.owner_plan_id,
         "support_tuple_id": regime.support_tuple.support_tuple_id,
@@ -273,7 +276,7 @@ def _preflight(regime, **updates):
     )
 
 
-def _runtime(regime, **updates):
+def _runtime(regime: Any, **updates: Any) -> Any:
     values = {
         "owner_plan_id": regime.owner_plan_id,
         "support_tuple_id": regime.support_tuple.support_tuple_id,
@@ -299,7 +302,7 @@ def _runtime(regime, **updates):
     )
 
 
-def test_profile_declares_separate_unsigned_candidate_support_and_campaigns():
+def test_profile_declares_separate_unsigned_candidate_support_and_campaigns() -> None:
     profile = ImmersedDNSQualificationProfile()
     regimes = {dict(value.attributes)["regime"] for value in profile.support_tuples}
 
@@ -328,7 +331,9 @@ def test_profile_declares_separate_unsigned_candidate_support_and_campaigns():
     assert len(profile.qualification_matrix.predicates) == 9
 
 
-def test_load_provenance_distinguishes_unavailable_from_available_zero(regimes):
+def test_load_provenance_distinguishes_unavailable_from_available_zero(
+    regimes: Any,
+) -> None:
     regime = regimes["marker"]
     plan = regime.load_plan(jnp.asarray((41,)), 2, reference_point_id="body-41-center")
     velocity = jnp.asarray(((0.25, 0.0),))
@@ -369,7 +374,7 @@ def test_load_provenance_distinguishes_unavailable_from_available_zero(regimes):
     assert jnp.allclose(available_zero.work, jnp.asarray((0.25,)))
 
 
-def test_reference_campaign_covers_complete_body_portfolio(regimes):
+def test_reference_campaign_covers_complete_body_portfolio(regimes: Any) -> None:
     profile = ImmersedDNSQualificationProfile()
     bound = (
         regimes["marker"],
@@ -439,7 +444,7 @@ def test_reference_campaign_covers_complete_body_portfolio(regimes):
     assert jnp.all(result.passed)
 
 
-def test_marker_rank_condition_resource_and_runtime_epoch_refusal(regimes):
+def test_marker_rank_condition_resource_and_runtime_epoch_refusal(regimes: Any) -> None:
     profile = ImmersedDNSQualificationProfile()
     regime = regimes["marker"]
     plan = ImmersedRuntimeAdmissionPlan(
@@ -482,7 +487,7 @@ def test_marker_rank_condition_resource_and_runtime_epoch_refusal(regimes):
     )
 
 
-def test_moving_body_epoch_and_near_gap_crossover_are_fail_closed(regimes):
+def test_moving_body_epoch_and_near_gap_crossover_are_fail_closed(regimes: Any) -> None:
     profile = ImmersedDNSQualificationProfile()
     rigid = regimes["rigid"]
     rigid_plan = ImmersedRuntimeAdmissionPlan(
@@ -519,7 +524,9 @@ def test_moving_body_epoch_and_near_gap_crossover_are_fail_closed(regimes):
     assert admitted.admitted
 
 
-def test_distributed_owner_work_force_reduction_and_sharp_topology_scope(regimes):
+def test_distributed_owner_work_force_reduction_and_sharp_topology_scope(
+    regimes: Any,
+) -> None:
     profile = ImmersedDNSQualificationProfile()
     distributed = regimes["distributed"]
     transfer = distributed.distributed_transfer

@@ -1,7 +1,7 @@
 import phydrax as phx
 
 
-def test_nuclear_tokamak_and_reactor_profiles_remain_unreleased_and_scoped():
+def test_nuclear_tokamak_and_reactor_profiles_remain_unreleased_and_scoped() -> None:
     profiles = (
         *phx.nuclear.nuclear_candidate_profiles(),
         *phx.applications.tokamak.tokamak_candidate_profiles(),

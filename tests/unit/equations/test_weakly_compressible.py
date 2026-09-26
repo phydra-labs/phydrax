@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _components(*, continuity=True):
+def _components(*, continuity: Any = True) -> Any:
     count = 6
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
@@ -25,6 +28,7 @@ def _components(*, continuity=True):
     )
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(
         count * (count - 1) // 2,
+        # ty: ignore[invalid-argument-type]
         box=phx.discretization.ParticleBox([0.0], [1.0]),
     )
     problem = phx.equations.WeaklyCompressibleFluidProblemIR(
@@ -33,10 +37,10 @@ def _components(*, continuity=True):
     return particles, method, neighborhood, problem
 
 
-def test_weakly_compressible_problem_requires_stable_forcing_identity():
+def test_weakly_compressible_problem_requires_stable_forcing_identity() -> None:
     material = phx.equations.TaitBarotropicMaterial(1.0, 1.0)
 
-    def forcing(time, position, velocity, density, args):
+    def forcing(time: Any, position: Any, velocity: Any, density: Any, args: Any) -> Any:
         del time, velocity, density, args
         return jnp.zeros_like(position)
 
@@ -50,7 +54,7 @@ def test_weakly_compressible_problem_requires_stable_forcing_identity():
         )
 
 
-def test_wc_sph_compiler_initializes_continuity_density_once_by_summation():
+def test_wc_sph_compiler_initializes_continuity_density_once_by_summation() -> None:
     particles, method, neighborhood, problem = _components(continuity=True)
     compiled = phx.equations.compile_weakly_compressible_sph_problem(
         problem, particles, method, neighborhood=neighborhood
@@ -77,7 +81,7 @@ def test_wc_sph_compiler_initializes_continuity_density_once_by_summation():
     )
 
 
-def test_wc_sph_summation_state_rejects_explicit_density():
+def test_wc_sph_summation_state_rejects_explicit_density() -> None:
     particles, method, neighborhood, problem = _components(continuity=False)
     compiled = phx.equations.compile_weakly_compressible_sph_problem(
         problem, particles, method, neighborhood=neighborhood
@@ -90,8 +94,9 @@ def test_wc_sph_summation_state_rejects_explicit_density():
         compiled.initialize_state(position, velocity, jnp.ones((6,)))
 
 
-def test_wc_sph_compiler_validates_cell_search_and_execution_backend():
+def test_wc_sph_compiler_validates_cell_search_and_execution_backend() -> None:
     particles, method, _, problem = _components(continuity=True)
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     too_short = phx.discretization.CellListParticleNeighborhoodPlan(
         0.99 * method.kernel.support_factor * method.smoothing_length,

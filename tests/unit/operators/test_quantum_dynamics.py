@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -14,13 +17,13 @@ SIGMA_Y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype="complex128")
 SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 
-def test_two_level_schrodinger_residual_is_zero():
+def test_two_level_schrodinger_residual_is_zero() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     omega = 1.7
     hamiltonian = time.Function()(0.5 * omega * SIGMA_Z)
 
     @time.Function("t")
-    def state(t):
+    def state(t: Any) -> Any:
         return jnp.asarray([jnp.exp(-0.5j * omega * t), 0.0j])
 
     residual = phx.operators.schrodinger_residual(state, hamiltonian)
@@ -28,26 +31,26 @@ def test_two_level_schrodinger_residual_is_zero():
     assert jnp.allclose(value, jnp.zeros((2,), dtype="complex128"), atol=1e-11)
 
 
-def test_heisenberg_spin_precession_residual_is_zero():
+def test_heisenberg_spin_precession_residual_is_zero() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     omega = 1.3
     hamiltonian = time.Function()(0.5 * omega * SIGMA_Z)
 
     @time.Function("t")
-    def observable(t):
+    def observable(t: Any) -> Any:
         return jnp.cos(omega * t) * SIGMA_X - jnp.sin(omega * t) * SIGMA_Y
 
     residual = phx.operators.heisenberg_residual(observable, hamiltonian)
     assert jnp.allclose(residual.func(0.29), jnp.zeros((2, 2)), atol=1e-11)
 
 
-def test_von_neumann_density_evolution_preserves_structure():
+def test_von_neumann_density_evolution_preserves_structure() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     omega = 0.9
     hamiltonian = time.Function()(0.5 * omega * SIGMA_Z)
 
     @time.Function("t")
-    def density(t):
+    def density(t: Any) -> Any:
         return 0.5 * (
             jnp.eye(2, dtype="complex128")
             + jnp.cos(omega * t) * SIGMA_X
@@ -60,7 +63,7 @@ def test_von_neumann_density_evolution_preserves_structure():
     assert jnp.allclose(phx.operators.hermiticity_residual(density).func(0.41), 0.0)
 
 
-def test_schrodinger_residual_accepts_differential_hamiltonian_action():
+def test_schrodinger_residual_accepts_differential_hamiltonian_action() -> None:
     space = phx.domain.Interval1d(-1.0, 1.0)
     time = phx.domain.TimeInterval(0.0, 1.0)
     spacetime = space @ time
@@ -70,10 +73,10 @@ def test_schrodinger_residual_accepts_differential_hamiltonian_action():
     frequency = hbar * wave_number**2 / (2.0 * mass)
 
     @spacetime.Function("x", "t")
-    def wave(x, t):
+    def wave(x: Any, t: Any) -> Any:
         return jnp.exp(1j * (wave_number * x[0] - frequency * t))
 
-    def free_particle_action(state):
+    def free_particle_action(state: Any) -> Any:
         return -(hbar**2 / (2.0 * mass)) * phx.operators.laplacian(state, var="x")
 
     residual = phx.operators.schrodinger_residual(
@@ -84,7 +87,7 @@ def test_schrodinger_residual_accepts_differential_hamiltonian_action():
     assert jnp.allclose(residual.func(jnp.asarray([0.2]), 0.31), 0.0, atol=1e-10)
 
 
-def test_quantum_dynamics_validates_state_and_action_contracts():
+def test_quantum_dynamics_validates_state_and_action_contracts() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     hamiltonian = time.Function()(jnp.eye(2))
     static_state = time.Function()(jnp.ones((2,)))
@@ -93,7 +96,7 @@ def test_quantum_dynamics_validates_state_and_action_contracts():
         phx.operators.schrodinger_residual(static_state, hamiltonian)
 
     @time.Function("t")
-    def state(t):
+    def state(t: Any) -> Any:
         return jnp.asarray([jnp.exp(-1j * t), 0.0j])
 
     bad_residual = phx.operators.schrodinger_residual(

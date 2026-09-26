@@ -9,6 +9,7 @@ import hashlib
 import importlib.metadata
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -50,11 +51,12 @@ def _rules_literal(rules: dict[int, tuple[np.ndarray, np.ndarray]], /) -> str:
     return "\n".join(blocks)
 
 
-def _simplex_rules(modepy_root: Path, /):
+def _simplex_rules(modepy_root: Path, /) -> Any:
     sys.path.insert(0, str(modepy_root))
+    # ty: ignore[unresolved-import]
     from modepy.quadrature.xiao_gimbutas import XiaoGimbutasSimplexQuadrature
 
-    def family(dimension: int, degrees: tuple[int, ...]):
+    def family(dimension: int, degrees: tuple[int, ...]) -> Any:
         scale = 2.0**dimension
         rules = {}
         for degree in degrees:
@@ -72,7 +74,7 @@ def _simplex_rules(modepy_root: Path, /):
     )
 
 
-def _lebedev_rules():
+def _lebedev_rules() -> Any:
     from scipy.integrate._lebedev import lebedev_rule
 
     rules = {}

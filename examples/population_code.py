@@ -6,6 +6,7 @@ Run from the repository: python examples/population_code.py
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -15,7 +16,7 @@ from phydrax.domain import HyperRectangle
 from phydrax.nn import population as pc
 
 
-def target(point):
+def target(point: Any) -> Any:
     return jnp.asarray([point[0] ** 2, jnp.sin(2.0 * point[0])])
 
 
@@ -23,7 +24,11 @@ def main() -> None:
     population_key, training_key, held_out_key, phase_key = jr.split(jr.key(42), 4)
     neuron = ep.LeakyIntegrateAndFire(0.2, 0.01, -65.0, -50.0, -62.0, refractory_ms=2.0)
     population = pc.prepare_lif_population(
-        HyperRectangle([-1.0], [1.0]), neuron, 64, key=population_key
+        # ty: ignore[invalid-argument-type]
+        HyperRectangle([-1.0], [1.0]),
+        neuron,
+        64,
+        key=population_key,
     )
     training = pc.sample_population_points(population, 512, key=training_key)
     held_out = pc.sample_population_points(population, 256, key=held_out_key)

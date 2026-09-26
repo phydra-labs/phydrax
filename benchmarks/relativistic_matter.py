@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -26,7 +28,7 @@ import phydrax as phx
 from phydrax.units import KILOGRAM
 
 
-def _compiler_record(compiled) -> dict[str, object]:
+def _compiler_record(compiled: Any) -> dict[str, object]:
     evidence = compiler_evidence(
         compiled.cost_analysis(),
         compiled.memory_analysis(),
@@ -38,7 +40,7 @@ def _compiler_record(compiled) -> dict[str, object]:
     return record
 
 
-def _measure(function, arguments, warmup, repeats):
+def _measure(function: Any, arguments: Any, warmup: Any, repeats: Any) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: jax.jit(function).lower(*arguments),
         lambda lowered: lowered.compile(),
@@ -53,7 +55,7 @@ def _measure(function, arguments, warmup, repeats):
     }
 
 
-def _setup(cell_count: int):
+def _setup(cell_count: int) -> Any:
     scale = phx.RelativityScaleContract.geometric(KILOGRAM)
     eos = phx.equations.GammaLawEOS(scale, 5.0 / 3.0)
     system = phx.equations.SRHDSystem(eos, 3)
@@ -86,7 +88,7 @@ def run(cell_count: int, warmup: int, repeats: int) -> dict[str, object]:
     setup, setup_seconds = measure_synchronized(lambda: _setup(cell_count))
     scale, eos, system, primitive, direction = setup
 
-    def matter_kernel(values):
+    def matter_kernel(values: Any) -> Any:
         evaluation = system.primitive_evaluation(values)
         conserved = system.primitive_to_conserved(values)
         recovered = system.conserved_to_primitive(conserved)
@@ -107,8 +109,8 @@ def run(cell_count: int, warmup: int, repeats: int) -> dict[str, object]:
             evaluation.derivative_valid,
         )
 
-    def derivative_kernel(values, tangent):
-        def objective(candidate):
+    def derivative_kernel(values: Any, tangent: Any) -> Any:
+        def objective(candidate: Any) -> Any:
             conserved = system.primitive_to_conserved(candidate)
             flux = system.physical_flux(conserved, 0)
             return jnp.mean(conserved[..., -1] + 0.25 * flux[..., -1])

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,7 +20,7 @@ from phydrax.ml.manifold import (
 )
 
 
-def _features():
+def _features() -> Any:
     return jnp.array(
         [
             [-2.0, -0.3, 0.4],
@@ -31,12 +34,14 @@ def _features():
     )
 
 
-def _embedding_loss(model):
+def _embedding_loss(model: Any) -> Any:
     coefficients = jnp.arange(1.0, model.embedding.shape[-2] + 1.0)
     return jnp.sum(coefficients[:, None] * jnp.square(model.embedding))
 
 
-def test_tsne_requires_explicit_key_is_deterministic_and_is_exactly_transductive():
+def test_tsne_requires_explicit_key_is_deterministic_and_is_exactly_transductive() -> (
+    None
+):
     features = _features()
     recipe = TSNERecipe(
         2,
@@ -59,7 +64,9 @@ def test_tsne_requires_explicit_key_is_deterministic_and_is_exactly_transductive
     assert isinstance(model, TSNEModel)
     assert model.embedding.shape == (7, 2)
     assert model.training_features.shape == features.shape
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.embedding, repeated.as_trainable().embedding)
+    # ty: ignore[unresolved-attribute]
     assert not jnp.allclose(model.embedding, changed.as_trainable().embedding)
     assert first.diagnostics.eigenvalues.shape == (0,)
     assert first.diagnostics.iterations == 4
@@ -99,7 +106,7 @@ def test_tsne_requires_explicit_key_is_deterministic_and_is_exactly_transductive
         ).fit_batch(MLBatch(features), key=key)
 
 
-def test_tsne_jitted_fit_and_case_key_splitting_preserve_case_sample_axes():
+def test_tsne_jitted_fit_and_case_key_splitting_preserve_case_sample_axes() -> None:
     base = _features()
     features = jnp.stack((base, 1.1 * base), axis=0)
     targets = jnp.stack(
@@ -123,19 +130,21 @@ def test_tsne_jitted_fit_and_case_key_splitting_preserve_case_sample_axes():
     result = recipe.fit_batch(batch, key=key)
     compiled_embedding = jax.jit(
         lambda value, random_key: (
+            # ty: ignore[unresolved-attribute]
             recipe.fit_batch(MLBatch(value, targets), key=random_key)
             .as_trainable()
             .embedding
         )
     )(features, key)
 
+    # ty: ignore[unresolved-attribute]
     assert result.as_trainable().embedding.shape == (2, 7, 1)
     assert result.diagnostics.objective.shape == (2,)
     assert result.diagnostics.residual.shape == (2,)
     assert compiled_embedding.shape == (2, 7, 1)
 
 
-def test_fuzzy_graph_embedding_key_transform_jit_vmap_and_gradient_surfaces():
+def test_fuzzy_graph_embedding_key_transform_jit_vmap_and_gradient_surfaces() -> None:
     features = _features()
     weights = jnp.array([1.0, 1.3, 0.9, 1.5, 1.1, 0.8, 1.2])
     recipe = FuzzyGraphEmbeddingRecipe(
@@ -161,7 +170,9 @@ def test_fuzzy_graph_embedding_key_transform_jit_vmap_and_gradient_surfaces():
 
     assert isinstance(model, FuzzyGraphEmbeddingModel)
     assert model.embedding.shape == (7, 2)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.embedding, repeated.as_trainable().embedding)
+    # ty: ignore[unresolved-attribute]
     assert not jnp.allclose(model.embedding, changed.as_trainable().embedding)
     assert jax.jit(model)(points).shape == (2, 2)
     assert jax.vmap(model)(points).shape == (2, 2)
@@ -187,6 +198,7 @@ def test_fuzzy_graph_embedding_key_transform_jit_vmap_and_gradient_surfaces():
     assert contract.level(DerivativeSurface.MODEL_PARAMETER) is (
         GradientLevel.ALMOST_EVERYWHERE
     )
+    # ty: ignore[unresolved-attribute]
     assert contract.regularity.continuity == -1
     assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
     assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
@@ -224,18 +236,20 @@ def test_fuzzy_graph_embedding_key_transform_jit_vmap_and_gradient_surfaces():
         ),
     ],
 )
-def test_stochastic_manifold_fit_feature_and_weight_gradients_use_fixed_keys(recipe):
+def test_stochastic_manifold_fit_feature_and_weight_gradients_use_fixed_keys(
+    recipe: Any,
+) -> None:
     features = _features()
     weights = jnp.array([1.0, 1.2, 0.9, 1.4, 1.1, 0.8, 1.3])
     key = jax.random.key(41)
 
-    def feature_loss(value):
+    def feature_loss(value: Any) -> Any:
         model = recipe.fit_batch(
             MLBatch(value, sample_weight=weights), key=key
         ).as_trainable()
         return _embedding_loss(model)
 
-    def weight_loss(value):
+    def weight_loss(value: Any) -> Any:
         model = recipe.fit_batch(
             MLBatch(features, sample_weight=value), key=key
         ).as_trainable()
@@ -247,7 +261,7 @@ def test_stochastic_manifold_fit_feature_and_weight_gradients_use_fixed_keys(rec
     assert jnp.all(jnp.isfinite(weight_gradient))
 
 
-def test_stochastic_embeddings_return_insufficient_data_status_for_masked_cases():
+def test_stochastic_embeddings_return_insufficient_data_status_for_masked_cases() -> None:
     features = _features()
     mask = jnp.array([True, True, False, False, False, False, False])
     key = jax.random.key(51)

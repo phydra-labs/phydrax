@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -18,26 +21,26 @@ class _LinearOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, weight=1.0):
+    def __init__(self, weight: Any = 1.0) -> None:
         self.weight = jnp.asarray([[weight]], dtype=jnp.float32)
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         values = batch.input("state").values
         assert values is not None
         return (values[..., None] @ self.weight)[..., 0]
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _dataset(cases=4, resolution=8):
+def _dataset(cases: Any = 4, resolution: Any = 8) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, resolution),
@@ -52,7 +55,7 @@ def _dataset(cases=4, resolution=8):
     )
 
 
-def test_dtype_policy_casts_values_without_quantizing_geometry():
+def test_dtype_policy_casts_values_without_quantizing_geometry() -> None:
     dataset = _dataset()
     original = dataset.batch.input("state")
     policy = phx.nn.operator.training.OperatorDTypePolicy(
@@ -72,14 +75,16 @@ def test_dtype_policy_casts_values_without_quantizing_geometry():
     assert cast_targets.field("output").values.dtype == jnp.bfloat16
     assert jnp.array_equal(cast_axis.nodes, original_axis.nodes)
     assert jnp.array_equal(
+        # ty: ignore[invalid-argument-type]
         cast_axis.quadrature_weights,
         original_axis.quadrature_weights,
     )
     assert cast_axis.nodes.dtype == original_axis.nodes.dtype
+    # ty: ignore[unresolved-attribute]
     assert cast_axis.quadrature_weights.dtype == original_axis.quadrature_weights.dtype
 
 
-def test_point_geometry_and_topology_are_not_compute_cast():
+def test_point_geometry_and_topology_are_not_compute_cast() -> None:
     coordinates = jnp.asarray(
         [[[0.0, 0.1], [0.3, 0.7], [1.0, 0.9]]],
         dtype=jnp.float64,
@@ -109,13 +114,17 @@ def test_point_geometry_and_topology_are_not_compute_cast():
     cast = policy.cast_batch(batch)
     cast_samples = cast.input("state")
 
+    # ty: ignore[unresolved-attribute]
     assert cast_samples.values.dtype == jnp.float16
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(cast_samples.coordinates, samples.coordinates)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(cast_samples.quadrature_weights, samples.quadrature_weights)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(cast_samples.mask, samples.mask)
 
 
-def test_persistent_parameters_and_gradients_remain_float32():
+def test_persistent_parameters_and_gradients_remain_float32() -> None:
     policy = phx.nn.operator.training.OperatorDTypePolicy(
         parameter_dtype="float32",
         compute_dtype="bfloat16",
@@ -129,7 +138,7 @@ def test_persistent_parameters_and_gradients_remain_float32():
 
     inputs = jnp.ones((4, 1), dtype=jnp.bfloat16)
 
-    def objective(weight):
+    def objective(weight: Any) -> Any:
         compute_weight = policy.cast_compute_parameters(weight)
         return jnp.sum(inputs @ compute_weight)
 
@@ -139,7 +148,7 @@ def test_persistent_parameters_and_gradients_remain_float32():
     np.testing.assert_array_equal(gradient, jnp.full_like(storage_model.weight, 4.0))
 
 
-def test_dtype_policy_serializes_effective_complex_precision():
+def test_dtype_policy_serializes_effective_complex_precision() -> None:
     policy = phx.nn.operator.training.OperatorDTypePolicy(
         parameter_dtype="float64",
         compute_dtype="bfloat16",
@@ -173,7 +182,7 @@ def test_dtype_policy_serializes_effective_complex_precision():
         )
 
 
-def test_fno_bfloat16_values_preserve_uniform_physical_grid():
+def test_fno_bfloat16_values_preserve_uniform_physical_grid() -> None:
     dataset = _dataset(cases=1)
     policy = phx.nn.operator.training.OperatorDTypePolicy(
         parameter_dtype="float32",
@@ -201,7 +210,7 @@ def test_fno_bfloat16_values_preserve_uniform_physical_grid():
     )
 
 
-def test_loss_scale_state_transitions_are_jittable_and_complete():
+def test_loss_scale_state_transitions_are_jittable_and_complete() -> None:
     policy = phx.nn.operator.training.OperatorLossScalePolicy(
         initial_scale=8.0,
         growth_interval=2,
@@ -246,22 +255,24 @@ def test_loss_scale_state_transitions_are_jittable_and_complete():
         ({"growth_interval": 0}, "growth_interval"),
     ),
 )
-def test_loss_scale_policy_rejects_invalid_configuration(kwargs, message):
+def test_loss_scale_policy_rejects_invalid_configuration(
+    kwargs: Any, message: Any
+) -> None:
     with pytest.raises(ValueError, match=message):
         phx.nn.operator.training.OperatorLossScalePolicy(**kwargs)
 
 
 def _overflow_first_batch(
-    prediction,
-    batch,
-    targets,
+    prediction: Any,
+    batch: Any,
+    targets: Any,
     *,
-    model,
-    key,
-    step,
-    training,
-    context,
-):
+    model: Any,
+    key: Any,
+    step: Any,
+    training: Any,
+    context: Any,
+) -> Any:
     del model, key, step, training, context
     values = prediction.field("output").values
     target = targets.field("output").values
@@ -271,7 +282,7 @@ def _overflow_first_batch(
     return jnp.where(jnp.mean(source) < 1.0, jnp.inf, loss)
 
 
-def test_float16_fit_backs_off_and_keeps_float32_master_parameters():
+def test_float16_fit_backs_off_and_keeps_float32_master_parameters() -> None:
     dataset = _dataset(cases=2, resolution=4)
     result = phx.nn.operator.training.fit_operator(
         _LinearOperator(),
@@ -300,6 +311,7 @@ def test_float16_fit_backs_off_and_keeps_float32_master_parameters():
     )
 
     assert result.completed_steps == 1
+    # ty: ignore[unresolved-attribute]
     assert result.execution_model.weight.dtype == jnp.float32
     assert result.loss_scale_state is not None
     assert float(result.loss_scale_state.scale) == 4.0
@@ -307,7 +319,7 @@ def test_float16_fit_backs_off_and_keeps_float32_master_parameters():
     assert result.precision_evidence.compute_dtype == "float16"
 
 
-def test_training_precision_combinations_are_explicit():
+def test_training_precision_combinations_are_explicit() -> None:
     dataset = _dataset(cases=1, resolution=4)
 
     with pytest.raises(ValueError, match="requires an explicit loss_scale_policy"):
@@ -343,16 +355,16 @@ def test_training_precision_combinations_are_explicit():
 
 
 def _overflow_second_batch(
-    prediction,
-    batch,
-    targets,
+    prediction: Any,
+    batch: Any,
+    targets: Any,
     *,
-    model,
-    key,
-    step,
-    training,
-    context,
-):
+    model: Any,
+    key: Any,
+    step: Any,
+    training: Any,
+    context: Any,
+) -> Any:
     del model, key, step, training, context
     values = prediction.field("output").values
     target = targets.field("output").values
@@ -366,7 +378,7 @@ def _overflow_second_batch(
     return jnp.where(overflow, jnp.inf, case_loss)
 
 
-def _mixed_precision_fit_kwargs():
+def _mixed_precision_fit_kwargs() -> Any:
     return {
         "batch_size": 1,
         "shuffle": False,
@@ -385,7 +397,7 @@ def _mixed_precision_fit_kwargs():
     }
 
 
-def test_nonfinite_microbatch_discards_the_complete_accumulation_window():
+def test_nonfinite_microbatch_discards_the_complete_accumulation_window() -> None:
     dataset = _dataset(cases=4, resolution=4)
     term = phx.nn.operator.training.OperatorLossTerm(
         "overflow_second_batch",
@@ -413,14 +425,16 @@ def test_nonfinite_microbatch_discards_the_complete_accumulation_window():
     )
 
     assert jnp.array_equal(
+        # ty: ignore[unresolved-attribute]
         mixed.execution_model.weight,
+        # ty: ignore[unresolved-attribute]
         reference.execution_model.weight,
     )
     assert mixed.loss_scale_state is not None
     assert int(mixed.loss_scale_state.nonfinite_microsteps) == 1
 
 
-def test_dynamic_loss_scale_resume_is_bitwise_exact(tmp_path):
+def test_dynamic_loss_scale_resume_is_bitwise_exact(tmp_path: Any) -> None:
     dataset = _dataset(cases=2, resolution=4)
     term = phx.nn.operator.training.OperatorLossTerm(
         "overflow_first_batch",
@@ -438,6 +452,7 @@ def test_dynamic_loss_scale_resume_is_bitwise_exact(tmp_path):
         dataset,
         epochs=2,
         steps=2,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     checkpoint = tmp_path / "precision-checkpoint"
@@ -447,6 +462,7 @@ def test_dynamic_loss_scale_resume_is_bitwise_exact(tmp_path):
         epochs=1,
         steps=1,
         checkpoint_path=checkpoint,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     resumed = phx.nn.operator.training.fit_operator(
@@ -456,11 +472,14 @@ def test_dynamic_loss_scale_resume_is_bitwise_exact(tmp_path):
         steps=2,
         checkpoint_path=checkpoint,
         resume=True,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
 
     assert jnp.array_equal(
+        # ty: ignore[unresolved-attribute]
         uninterrupted.execution_model.weight,
+        # ty: ignore[unresolved-attribute]
         resumed.execution_model.weight,
     )
     assert uninterrupted.history == resumed.history
@@ -481,12 +500,12 @@ def test_dynamic_loss_scale_resume_is_bitwise_exact(tmp_path):
     )
 
 
-def _nonfinite_optimizer():
-    def init_fn(parameters):
+def _nonfinite_optimizer() -> Any:
+    def init_fn(parameters: Any) -> Any:
         del parameters
         return optax.EmptyState()
 
-    def update_fn(updates, state, parameters=None):
+    def update_fn(updates: Any, state: Any, parameters: Any = None) -> Any:
         del parameters
         return (
             jax.tree_util.tree_map(
@@ -496,10 +515,11 @@ def _nonfinite_optimizer():
             state,
         )
 
+    # ty: ignore[invalid-argument-type]
     return optax.GradientTransformation(init_fn, update_fn)
 
 
-def test_nonfinite_optimizer_candidate_is_not_treated_as_scale_overflow():
+def test_nonfinite_optimizer_candidate_is_not_treated_as_scale_overflow() -> None:
     with pytest.raises(FloatingPointError, match="optimizer produced non-finite"):
         phx.nn.operator.training.fit_operator(
             _LinearOperator(),
@@ -516,14 +536,14 @@ def test_nonfinite_optimizer_candidate_is_not_treated_as_scale_overflow():
     not bool(jax.config.read("jax_enable_x64")),
     reason="Float64 accumulator coverage requires JAX x64.",
 )
-def test_float64_accumulation_casts_back_to_float32_optimizer_boundary():
+def test_float64_accumulation_casts_back_to_float32_optimizer_boundary() -> None:
     observed_dtypes = []
 
-    def init_fn(parameters):
+    def init_fn(parameters: Any) -> Any:
         del parameters
         return optax.EmptyState()
 
-    def update_fn(updates, state, parameters=None):
+    def update_fn(updates: Any, state: Any, parameters: Any = None) -> Any:
         del parameters
         observed_dtypes.extend(
             leaf.dtype
@@ -542,6 +562,7 @@ def test_float64_accumulation_casts_back_to_float32_optimizer_boundary():
         steps=1,
         batch_size=1,
         gradient_accumulation=2,
+        # ty: ignore[invalid-argument-type]
         optimizer=optax.GradientTransformation(init_fn, update_fn),
         optimizer_id="tests.record-gradient-dtype",
         dtype_policy=phx.nn.operator.training.OperatorDTypePolicy(
@@ -561,15 +582,15 @@ def test_float64_accumulation_casts_back_to_float32_optimizer_boundary():
     jax.device_count() < 2,
     reason="Global finite consensus requires at least two JAX devices.",
 )
-def test_sharded_overflow_produces_one_replicated_skip_decision():
+def test_sharded_overflow_produces_one_replicated_skip_decision() -> None:
     dataset = _dataset(cases=4, resolution=4)
 
     def overflow_first_shard(
-        prediction,
-        batch,
-        targets,
-        **kwargs,
-    ):
+        prediction: Any,
+        batch: Any,
+        targets: Any,
+        **kwargs: Any,
+    ) -> Any:
         del kwargs
         values = prediction.field("output").values
         target = targets.field("output").values

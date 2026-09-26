@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,14 +14,16 @@ import numpy as np
 import phydrax as phx
 
 
-def _svec(matrix):
+def _svec(matrix: Any) -> Any:
     value = jnp.asarray(matrix)
     rows, columns = jnp.triu_indices(value.shape[-1])
     scale = jnp.where(rows == columns, 1.0, jnp.sqrt(2.0)).astype(value.dtype)
     return value[..., rows, columns] * scale
 
 
-def _free_neuron(base, features, *, eigen_index=0, in_size=None):
+def _free_neuron(
+    base: Any, features: Any, *, eigen_index: Any = 0, in_size: Any = None
+) -> Any:
     feature_matrices = jnp.asarray(features)
     feature_count = feature_matrices.shape[0]
     model = phx.nn.layers.SpectralNeuron(
@@ -34,7 +39,7 @@ def _free_neuron(base, features, *, eigen_index=0, in_size=None):
     return eqx.tree_at(lambda item: item.free_coordinates, model, coordinates)
 
 
-def test_inspection_matches_simple_projector_gradient_and_global_bounds():
+def test_inspection_matches_simple_projector_gradient_and_global_bounds() -> None:
     base = jnp.diag(jnp.asarray([-1.0, 0.3, 2.0]))
     features = jnp.asarray(
         [
@@ -70,7 +75,7 @@ def test_inspection_matches_simple_projector_gradient_and_global_bounds():
     assert not report.convex and not report.concave
 
 
-def test_inspection_reports_full_repeated_cluster_without_basis_leakage():
+def test_inspection_reports_full_repeated_cluster_without_basis_leakage() -> None:
     base = jnp.diag(jnp.asarray([0.0, 0.0, 2.0]))
     features = jnp.asarray([jnp.diag(jnp.asarray([1.0, -1.0, 0.2]))])
     model = _free_neuron(base, features, eigen_index=0, in_size="scalar")
@@ -94,7 +99,7 @@ def test_inspection_reports_full_repeated_cluster_without_basis_leakage():
     np.testing.assert_allclose(report.upper_gap, 2.0)
 
 
-def test_inspection_near_repetition_follows_declared_tolerance():
+def test_inspection_near_repetition_follows_declared_tolerance() -> None:
     separation = 5e-9
     base = jnp.diag(jnp.asarray([0.0, separation, 2.0]))
     features = jnp.zeros((1, 3, 3), dtype=jnp.float64)
@@ -118,7 +123,7 @@ def test_inspection_near_repetition_follows_declared_tolerance():
     assert bool(separated.selected_is_numerically_simple)
 
 
-def test_inspection_jit_preserves_fixed_shapes_across_variable_clusters():
+def test_inspection_jit_preserves_fixed_shapes_across_variable_clusters() -> None:
     base = jnp.diag(jnp.asarray([0.0, 0.0, 2.0]))
     features = jnp.asarray([jnp.diag(jnp.asarray([-1.0, 1.0, 0.0]))])
     model = _free_neuron(base, features, eigen_index=0, in_size="scalar")

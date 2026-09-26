@@ -2084,7 +2084,10 @@ def _solve_sqp(
                         accepted_filter_size = state.filter_size
                     else:
                         # The filter branch above produced this search result.
-                        assert isinstance(search, _FilterSearchResult)
+                        if not (isinstance(search, _FilterSearchResult)):
+                            raise RuntimeError(
+                                "Internal invariant failed: isinstance(search, _FilterSearchResult)."
+                            )
                         filter_insertion = jnp.minimum(
                             state.filter_size,
                             state.filter_objectives.size - 1,

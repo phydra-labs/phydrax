@@ -20,7 +20,7 @@ import phydrax.ein as ein
 from .._strict import StrictModule
 from ..stochastic._bsde import BSDEPathBatch
 from ..stochastic._path_dependent_bsde import ReflectedPathDependentBSDEProblem
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._regression_bsde import (
     _basis_matrix,
     _normal_equation_error,
@@ -279,8 +279,7 @@ def solve_reflected_path_dependent_bsde(
         raise TypeError("basis must implement AbstractBSDERegressionBasis.")
     if basis.state_shape != problem.regression_state_shape:
         raise ValueError("basis state_shape must match regression_state_shape.")
-    if scheme not in ("explicit", "implicit"):
-        raise ValueError("scheme must be 'explicit' or 'implicit'.")
+    scheme = parse(scheme, BSDERegressionScheme, "scheme")
     ridge_value = float(ridge)
     rcond_value = float(rcond)
     tolerance = float(picard_tolerance)

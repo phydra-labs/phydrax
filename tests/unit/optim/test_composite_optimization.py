@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _termination(*, maximum_steps=40):
+def _termination(*, maximum_steps: Any = 40) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=1e-10,
         relative_optimality=0.0,
@@ -17,7 +20,7 @@ def _termination(*, maximum_steps=40):
     )
 
 
-def test_composite_problem_preserves_signed_scalar_semantics():
+def test_composite_problem_preserves_signed_scalar_semantics() -> None:
     problem = phx.optim.CompositeLeastSquaresProblem(
         lambda parameters, _: jnp.array([parameters[0] - 1.0]),
         lambda parameters, _: -0.25 * parameters[0] ** 2,
@@ -35,7 +38,7 @@ def test_composite_problem_preserves_signed_scalar_semantics():
     assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
 
 
-def test_generalized_gauss_newton_matches_linear_quadratic_solution():
+def test_generalized_gauss_newton_matches_linear_quadratic_solution() -> None:
     design = jnp.array([[1.0, 2.0], [2.0, -1.0], [1.0, 1.0]])
     target = jnp.array([1.0, -2.0, 0.5])
     regularizer = jnp.array([[2.0, 0.25], [0.25, 1.0]])
@@ -64,7 +67,7 @@ def test_generalized_gauss_newton_matches_linear_quadratic_solution():
     assert int(result.diagnostics.vjp_evaluations) > 0
 
 
-def test_composite_optimizer_retries_indefinite_model_then_falls_back():
+def test_composite_optimizer_retries_indefinite_model_then_falls_back() -> None:
     problem = phx.optim.CompositeLeastSquaresProblem(
         lambda parameters, _: jnp.array([parameters[0] - 1.0]),
         lambda parameters, _: -2.0 * parameters[0] ** 2 + 0.25 * parameters[0] ** 4,
@@ -88,7 +91,7 @@ def test_composite_optimizer_retries_indefinite_model_then_falls_back():
     assert jnp.all(jnp.isfinite(result.parameters))
 
 
-def test_composite_optimizer_compiles_with_dynamic_arguments():
+def test_composite_optimizer_compiles_with_dynamic_arguments() -> None:
     problem = phx.optim.CompositeLeastSquaresProblem(
         lambda parameters, target: parameters - target,
         lambda parameters, _: 0.5 * jnp.sum(parameters**2),
@@ -107,7 +110,7 @@ def test_composite_optimizer_compiles_with_dynamic_arguments():
     assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
 
 
-def test_composite_problem_rejects_non_scalar_auxiliary_objective():
+def test_composite_problem_rejects_non_scalar_auxiliary_objective() -> None:
     problem = phx.optim.CompositeLeastSquaresProblem(
         lambda parameters, _: parameters,
         lambda parameters, _: parameters,

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -6,7 +8,9 @@ import phydrax as phx
 import phydrax.discretization as spectral
 
 
-def _heat_problem(*, periodic=False, target=None, reaction=False):
+def _heat_problem(
+    *, periodic: Any = False, target: Any = None, reaction: Any = False
+) -> Any:
     x = phx.equations.PDECoordinate(
         "x",
         "space",
@@ -50,8 +54,10 @@ def _heat_problem(*, periodic=False, target=None, reaction=False):
     )
 
 
-def test_spatial_calculus_preserves_trailing_components_and_basis_semantics():
+def test_spatial_calculus_preserves_trailing_components_and_basis_semantics() -> None:
+    # ty: ignore[invalid-argument-type]
     x_axis = phx.discretization.FourierAxisSpec(24).materialize(0.0, 1.0)
+    # ty: ignore[invalid-argument-type]
     y_axis = phx.discretization.FourierAxisSpec(20).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((x_axis, y_axis))
     x = x_axis.nodes[:, None]
@@ -83,6 +89,7 @@ def test_spatial_calculus_preserves_trailing_components_and_basis_semantics():
     assert partial_integral.shape == (y_axis.nodes.size, 2)
     assert jnp.allclose(
         partial_integral,
+        # ty: ignore[invalid-argument-type]
         jnp.tensordot(x_axis.quad_weights, channels, axes=((0,), (0,))),
     )
 
@@ -111,7 +118,9 @@ def test_spatial_calculus_preserves_trailing_components_and_basis_semantics():
         uniform.laplacian(uniform_state),
     )
 
+    # ty: ignore[invalid-argument-type]
     sine_axis = phx.discretization.SineAxisSpec(32).materialize(0.0, 1.0)
+    # ty: ignore[invalid-argument-type]
     cosine_axis = phx.discretization.CosineAxisSpec(33).materialize(0.0, 1.0)
     sine = phx.discretization.TensorSpectralDiscretization.from_axes((sine_axis,))
     cosine = phx.discretization.TensorSpectralDiscretization.from_axes((cosine_axis,))
@@ -143,9 +152,11 @@ def test_spatial_calculus_preserves_trailing_components_and_basis_semantics():
     )
 
 
-def test_spatial_curl_uses_trailing_vector_axis():
+def test_spatial_curl_uses_trailing_vector_axis() -> None:
     axes = tuple(
-        phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0) for _ in range(3)
+        # ty: ignore[invalid-argument-type]
+        phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
+        for _ in range(3)
     )
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes(axes)
     x = axes[0].nodes[:, None, None]
@@ -178,7 +189,8 @@ def test_spatial_curl_uses_trailing_vector_axis():
     assert jnp.allclose(spatial.curl(vector), expected, atol=1e-9, rtol=1e-9)
 
 
-def test_compiled_heat_matches_handwritten_jit_and_parameter_gradient():
+def test_compiled_heat_matches_handwritten_jit_and_parameter_gradient() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.SineAxisSpec(32).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     problem = _heat_problem(target=0.0)
@@ -194,6 +206,7 @@ def test_compiled_heat_matches_handwritten_jit_and_parameter_gradient():
     assert compiled.layout.field_spaces[0].representation == "point_value"
     assert (
         compiled.layout.field_spaces[0].vector_space.dtype
+        # ty: ignore[unresolved-attribute]
         == spatial.physical_space.vector_space.dtype
     )
     state = jnp.sin(jnp.pi * axis.nodes)
@@ -247,7 +260,8 @@ def test_compiled_heat_matches_handwritten_jit_and_parameter_gradient():
     )
 
 
-def test_compiled_reaction_diffusion_matches_handwritten_drift():
+def test_compiled_reaction_diffusion_matches_handwritten_drift() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(24).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     problem = _heat_problem(periodic=True, reaction=True)
@@ -260,9 +274,11 @@ def test_compiled_reaction_diffusion_matches_handwritten_drift():
     assert compiled.semilinear_drift is not None
 
 
-def test_compiler_executes_gradient_divergence_integral_and_coordinate_nodes():
+def test_compiler_executes_gradient_divergence_integral_and_coordinate_nodes() -> None:
     axes = tuple(
-        phx.discretization.FourierAxisSpec(12).materialize(0.0, 1.0) for _ in range(2)
+        # ty: ignore[invalid-argument-type]
+        phx.discretization.FourierAxisSpec(12).materialize(0.0, 1.0)
+        for _ in range(2)
     )
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes(axes)
     x = phx.equations.PDECoordinate(
@@ -304,7 +320,8 @@ def test_compiler_executes_gradient_divergence_integral_and_coordinate_nodes():
     assert jnp.all(jnp.isfinite(result))
 
 
-def test_boundary_basis_failures_and_explicit_nonhomogeneous_lift():
+def test_boundary_basis_failures_and_explicit_nonhomogeneous_lift() -> None:
+    # ty: ignore[invalid-argument-type]
     sine_axis = phx.discretization.SineAxisSpec(16).materialize(0.0, 1.0)
     sine = phx.discretization.TensorSpectralDiscretization.from_axes((sine_axis,))
     problem = _heat_problem(target=1.0)
@@ -325,11 +342,13 @@ def test_boundary_basis_failures_and_explicit_nonhomogeneous_lift():
     assert jnp.allclose(compiled.physical_state(0.0, residual_state), 1.0)
     assert jnp.allclose(compiled(0.0, residual_state, None), 0.0, atol=1e-10)
 
+    # ty: ignore[invalid-argument-type]
     periodic_axis = phx.discretization.FourierAxisSpec(16).materialize(0.0, 1.0)
     periodic = phx.discretization.TensorSpectralDiscretization.from_axes((periodic_axis,))
     with pytest.raises(ValueError, match="periodic=False"):
         phx.equations.compile_semidiscrete_pde(problem, periodic)
 
+    # ty: ignore[invalid-argument-type]
     cosine_axis = phx.discretization.CosineAxisSpec(16).materialize(0.0, 1.0)
     cosine = phx.discretization.TensorSpectralDiscretization.from_axes((cosine_axis,))
     homogeneous_dirichlet = _heat_problem(target=0.0)
@@ -362,7 +381,7 @@ def test_boundary_basis_failures_and_explicit_nonhomogeneous_lift():
     )
 
 
-def test_compiler_requires_one_evolution_equation_per_field_and_static_packing():
+def test_compiler_requires_one_evolution_equation_per_field_and_static_packing() -> None:
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)
     t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
     fields = (
@@ -375,6 +394,7 @@ def test_compiler_requires_one_evolution_equation_per_field_and_static_packing()
         ),
     )
     u = phx.equations.PDEExpression.field("u")
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     invalid = phx.equations.PDEProblemIR(
@@ -414,7 +434,7 @@ def test_compiler_requires_one_evolution_equation_per_field_and_static_packing()
     assert jnp.allclose(compiled(0.0, packed, None), packed)
 
 
-def test_spectral_laplacian_compilation_preserves_exact_representation():
+def test_spectral_laplacian_compilation_preserves_exact_representation() -> None:
     eigenvalues = jnp.asarray([0.0, 1.0, 4.0])
     plan = spectral.SpectralDecomposition.from_eigenpairs(
         eigenvalues,
@@ -433,7 +453,7 @@ def test_spectral_laplacian_compilation_preserves_exact_representation():
     assert jnp.allclose(compiled(0.0, state, None), -0.2 * eigenvalues * state)
 
 
-def test_semidiscrete_pde_benchmark_tracks_parity_and_provenance():
+def test_semidiscrete_pde_benchmark_tracks_parity_and_provenance() -> None:
     from tools.high_dimensional_pde_benchmarks import (
         run_semidiscrete_pde_compiler_benchmark,
     )
@@ -448,8 +468,10 @@ def test_semidiscrete_pde_benchmark_tracks_parity_and_provenance():
     assert record.compiled_mean_wall_ms >= 0.0
 
 
-def test_divergence_distinguishes_primal_vectors_from_gradient_duals():
+def test_divergence_distinguishes_primal_vectors_from_gradient_duals() -> None:
+    # ty: ignore[invalid-argument-type]
     sine_axis = phx.discretization.SineAxisSpec(32).materialize(0.0, 1.0)
+    # ty: ignore[invalid-argument-type]
     cosine_axis = phx.discretization.CosineAxisSpec(33).materialize(0.0, 1.0)
     sine = phx.discretization.TensorSpectralDiscretization.from_axes((sine_axis,))
     cosine = phx.discretization.TensorSpectralDiscretization.from_axes((cosine_axis,))
@@ -470,7 +492,8 @@ def test_divergence_distinguishes_primal_vectors_from_gradient_duals():
     )
 
 
-def test_coordinate_and_time_scalar_coefficients_broadcast_over_fields():
+def test_coordinate_and_time_scalar_coefficients_broadcast_over_fields() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(16).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)
@@ -480,7 +503,7 @@ def test_coordinate_and_time_scalar_coefficients_broadcast_over_fields():
     coordinate_rhs = phx.equations.PDEExpression.coordinate_value("x") * u
     time_rhs = phx.equations.PDEExpression.coordinate_value("t") * u
 
-    def problem(rhs):
+    def problem(rhs: Any) -> Any:
         return phx.equations.PDEProblemIR(
             coordinates=(x, t),
             fields=(field,),
@@ -504,9 +527,11 @@ def test_coordinate_and_time_scalar_coefficients_broadcast_over_fields():
     assert time_compiled.resolved_method == "direct"
 
 
-def test_partial_integrals_reinsert_integrated_axes_for_field_arithmetic():
+def test_partial_integrals_reinsert_integrated_axes_for_field_arithmetic() -> None:
     axes = (
+        # ty: ignore[invalid-argument-type]
         phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0),
+        # ty: ignore[invalid-argument-type]
         phx.discretization.FourierAxisSpec(10).materialize(0.0, 1.0),
     )
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes(axes)
@@ -543,7 +568,7 @@ def test_partial_integrals_reinsert_integrated_axes_for_field_arithmetic():
     assert jnp.allclose(compiled(0.0, state, None), expected)
 
 
-def test_temporal_derivatives_are_rejected_anywhere_on_evolution_rhs():
+def test_temporal_derivatives_are_rejected_anywhere_on_evolution_rhs() -> None:
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)
     t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
     field = phx.equations.PDEField("u", coordinates=("x", "t"))
@@ -559,13 +584,15 @@ def test_temporal_derivatives_are_rejected_anywhere_on_evolution_rhs():
             ),
         ),
     )
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     with pytest.raises(ValueError, match="temporal derivative"):
         phx.equations.compile_semidiscrete_pde(problem, spatial)
 
 
-def test_functional_parameters_validate_shapes_and_broadcast_components():
+def test_functional_parameters_validate_shapes_and_broadcast_components() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(12).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)
@@ -616,7 +643,8 @@ def test_functional_parameters_validate_shapes_and_broadcast_components():
         )
 
 
-def test_missing_and_complex_parameter_bindings_fail_explicitly():
+def test_missing_and_complex_parameter_bindings_fail_explicitly() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)
@@ -650,7 +678,8 @@ def test_missing_and_complex_parameter_bindings_fail_explicitly():
         )
 
 
-def test_additive_evolution_isolation_and_nonlinearity_guard():
+def test_additive_evolution_isolation_and_nonlinearity_guard() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(16).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)
@@ -695,7 +724,7 @@ def test_additive_evolution_isolation_and_nonlinearity_guard():
         )
 
 
-def test_boundary_lifts_require_derivatives_and_match_constant_targets():
+def test_boundary_lifts_require_derivatives_and_match_constant_targets() -> None:
     with pytest.raises(ValueError, match="time_derivative"):
         phx.equations.BoundaryLift(
             "u",
@@ -703,6 +732,7 @@ def test_boundary_lifts_require_derivatives_and_match_constant_targets():
             lift_id="time-dependent",
         )
 
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.SineAxisSpec(16).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     problem = _heat_problem(target=1.0)
@@ -719,9 +749,11 @@ def test_boundary_lifts_require_derivatives_and_match_constant_targets():
         )
 
 
-def test_boundary_regions_and_field_spatial_layouts_must_match():
+def test_boundary_regions_and_field_spatial_layouts_must_match() -> None:
     axes = (
+        # ty: ignore[invalid-argument-type]
         phx.discretization.SineAxisSpec(8).materialize(0.0, 1.0),
+        # ty: ignore[invalid-argument-type]
         phx.discretization.SineAxisSpec(10).materialize(0.0, 1.0),
     )
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes(axes)
@@ -774,17 +806,18 @@ def test_boundary_regions_and_field_spatial_layouts_must_match():
         phx.equations.compile_semidiscrete_pde(heterogeneous, spatial)
 
 
-def test_uniform_tensor_grid_rejects_nonperiodic_roll_semantics():
+def test_uniform_tensor_grid_rejects_nonperiodic_roll_semantics() -> None:
     axis = phx.discretization.UniformAxisSpec(
         8,
         endpoint=True,
         periodic=False,
+        # ty: ignore[invalid-argument-type]
     ).materialize(0.0, 1.0)
     with pytest.raises(ValueError, match="require FiniteDifferencePlan"):
         phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
 
 
-def test_spectral_compilation_rejects_frames_and_only_preserves_full_bases():
+def test_spectral_compilation_rejects_frames_and_only_preserves_full_bases() -> None:
     full_plan = spectral.SpectralDecomposition.from_eigenpairs(
         jnp.asarray((0.0, 1.0, 4.0)),
         jnp.eye(3),
@@ -832,7 +865,8 @@ def test_spectral_compilation_rejects_frames_and_only_preserves_full_bases():
     assert compiled.semilinear_drift.spectral_representation is None
 
 
-def test_compiled_operator_identity_includes_parameters_and_lifts():
+def test_compiled_operator_identity_includes_parameters_and_lifts() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.SineAxisSpec(16).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     problem = _heat_problem(target=0.0)
@@ -867,7 +901,8 @@ def test_compiled_operator_identity_includes_parameters_and_lifts():
     assert first.compilation_id != lifted.compilation_id
 
 
-def test_one_dimensional_gradient_products_keep_the_vector_axis():
+def test_one_dimensional_gradient_products_keep_the_vector_axis() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(16).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)
@@ -900,9 +935,11 @@ def test_one_dimensional_gradient_products_keep_the_vector_axis():
     )
 
 
-def test_partial_integrals_are_full_spatial_fields_for_parent_nodes():
+def test_partial_integrals_are_full_spatial_fields_for_parent_nodes() -> None:
     axes = (
+        # ty: ignore[invalid-argument-type]
         phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0),
+        # ty: ignore[invalid-argument-type]
         phx.discretization.FourierAxisSpec(10).materialize(0.0, 1.0),
     )
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes(axes)
@@ -913,7 +950,7 @@ def test_partial_integrals_are_full_spatial_fields_for_parent_nodes():
     u = phx.equations.PDEExpression.field("u")
     region = phx.equations.PDERegion("x-domain", "interior", ("x",))
 
-    def problem(rhs):
+    def problem(rhs: Any) -> Any:
         return phx.equations.PDEProblemIR(
             coordinates=(x, y, t),
             fields=(field,),
@@ -945,9 +982,11 @@ def test_partial_integrals_are_full_spatial_fields_for_parent_nodes():
     )
 
 
-def test_nested_derivatives_honor_spectral_and_uniform_duals():
+def test_nested_derivatives_honor_spectral_and_uniform_duals() -> None:
     sine_axes = tuple(
-        phx.discretization.SineAxisSpec(16).materialize(0.0, 1.0) for _ in range(2)
+        # ty: ignore[invalid-argument-type]
+        phx.discretization.SineAxisSpec(16).materialize(0.0, 1.0)
+        for _ in range(2)
     )
     sine = phx.discretization.TensorSpectralDiscretization.from_axes(sine_axes)
     x = phx.equations.PDECoordinate(
@@ -990,6 +1029,7 @@ def test_nested_derivatives_honor_spectral_and_uniform_duals():
             16,
             endpoint=False,
             periodic=True,
+            # ty: ignore[invalid-argument-type]
         ).materialize(0.0, 1.0)
         for _ in range(2)
     )
@@ -1032,7 +1072,8 @@ def test_nested_derivatives_honor_spectral_and_uniform_duals():
     )
 
 
-def test_nonperiodic_composite_parity_is_rejected_but_coordinates_are_exact():
+def test_nonperiodic_composite_parity_is_rejected_but_coordinates_are_exact() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.SineAxisSpec(16).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0))
@@ -1040,7 +1081,7 @@ def test_nonperiodic_composite_parity_is_rejected_but_coordinates_are_exact():
     field = phx.equations.PDEField("u", coordinates=("x", "t"))
     u = phx.equations.PDEExpression.field("u")
 
-    def problem(rhs):
+    def problem(rhs: Any) -> Any:
         return phx.equations.PDEProblemIR(
             coordinates=(x, t),
             fields=(field,),
@@ -1062,7 +1103,8 @@ def test_nonperiodic_composite_parity_is_rejected_but_coordinates_are_exact():
     )
 
 
-def test_one_component_vector_fields_keep_semantic_component_axes():
+def test_one_component_vector_fields_keep_semantic_component_axes() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(16).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)
@@ -1107,7 +1149,8 @@ def test_one_component_vector_fields_keep_semantic_component_axes():
     assert jnp.allclose(result["v"], vector)
 
 
-def test_lifts_propagate_through_gradient_divergence_composition():
+def test_lifts_propagate_through_gradient_divergence_composition() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.SineAxisSpec(32).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     base = _heat_problem(target=1.0)
@@ -1167,7 +1210,8 @@ def test_lifts_propagate_through_gradient_divergence_composition():
     )
 
 
-def test_unsupported_region_and_condition_semantics_fail_at_compile_time():
+def test_unsupported_region_and_condition_semantics_fail_at_compile_time() -> None:
+    # ty: ignore[invalid-argument-type]
     sine_axis = phx.discretization.SineAxisSpec(16).materialize(0.0, 1.0)
     sine = phx.discretization.TensorSpectralDiscretization.from_axes((sine_axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0))
@@ -1242,7 +1286,8 @@ def test_unsupported_region_and_condition_semantics_fail_at_compile_time():
         phx.equations.compile_semidiscrete_pde(interface_problem, sine)
 
 
-def test_coordinate_bounds_and_grouped_derivative_capabilities_are_validated():
+def test_coordinate_bounds_and_grouped_derivative_capabilities_are_validated() -> None:
+    # ty: ignore[invalid-argument-type]
     mismatched_axis = phx.discretization.FourierAxisSpec(16).materialize(0.0, 2.0)
     mismatched = phx.discretization.TensorSpectralDiscretization.from_axes(
         (mismatched_axis,)
@@ -1254,7 +1299,9 @@ def test_coordinate_bounds_and_grouped_derivative_capabilities_are_validated():
         )
 
     axes = tuple(
-        phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0) for _ in range(2)
+        # ty: ignore[invalid-argument-type]
+        phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
+        for _ in range(2)
     )
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes(axes)
     x = phx.equations.PDECoordinate(
@@ -1282,7 +1329,8 @@ def test_coordinate_bounds_and_grouped_derivative_capabilities_are_validated():
         phx.equations.compile_semidiscrete_pde(problem, spatial)
 
 
-def test_full_integrals_and_second_uniform_gradients_preserve_field_shape():
+def test_full_integrals_and_second_uniform_gradients_preserve_field_shape() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(16).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)
@@ -1318,6 +1366,7 @@ def test_full_integrals_and_second_uniform_gradients_preserve_field_shape():
             16,
             endpoint=False,
             periodic=True,
+            # ty: ignore[invalid-argument-type]
         ).materialize(0.0, 1.0)
         for _ in range(2)
     )
@@ -1362,7 +1411,8 @@ def test_full_integrals_and_second_uniform_gradients_preserve_field_shape():
     )
 
 
-def test_affine_lifts_and_coordinate_calculus_are_composition_safe():
+def test_affine_lifts_and_coordinate_calculus_are_composition_safe() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.SineAxisSpec(32).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     base = _heat_problem(target=1.0)
@@ -1373,7 +1423,7 @@ def test_affine_lifts_and_coordinate_calculus_are_composition_safe():
         lift_id="affine-composition-lift",
     )
 
-    def problem(rhs):
+    def problem(rhs: Any) -> Any:
         return phx.equations.PDEProblemIR(
             coordinates=base.coordinates,
             fields=base.fields,
@@ -1430,7 +1480,8 @@ def test_affine_lifts_and_coordinate_calculus_are_composition_safe():
     )
 
 
-def test_functional_parameter_parity_and_integral_region_contracts_are_explicit():
+def test_functional_parameter_parity_and_integral_region_contracts_are_explicit() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.SineAxisSpec(16).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0))
@@ -1479,7 +1530,8 @@ def test_functional_parameter_parity_and_integral_region_contracts_are_explicit(
         phx.equations.compile_semidiscrete_pde(invalid_integral, spatial)
 
 
-def test_variable_flux_parity_and_scalar_divergence_fail_explicitly():
+def test_variable_flux_parity_and_scalar_divergence_fail_explicitly() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.SineAxisSpec(16).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0))
@@ -1488,7 +1540,7 @@ def test_variable_flux_parity_and_scalar_divergence_fail_explicitly():
     u = phx.equations.PDEExpression.field("u")
     coordinate = phx.equations.PDEExpression.coordinate_value("x")
 
-    def problem(rhs, *, parameters=()):
+    def problem(rhs: Any, *, parameters: Any = ()) -> Any:
         return phx.equations.PDEProblemIR(
             coordinates=(x, t),
             fields=(field,),
@@ -1520,7 +1572,8 @@ def test_variable_flux_parity_and_scalar_divergence_fail_explicitly():
         )
 
 
-def test_vector_lift_multiplication_uses_semantic_axis_alignment():
+def test_vector_lift_multiplication_uses_semantic_axis_alignment() -> None:
+    # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(16).materialize(0.0, 1.0)
     spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)

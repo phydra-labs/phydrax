@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +18,7 @@ from scipy.special import sph_harm_y
 from phydrax.discretization import SphericalHarmonicPlan
 
 
-def _real_bandlimited_field(plan):
+def _real_bandlimited_field(plan: Any) -> Any:
     theta, phi = np.meshgrid(
         np.asarray(plan.theta),
         np.asarray(plan.phi),
@@ -29,7 +32,9 @@ def _real_bandlimited_field(plan):
 
 
 @pytest.mark.parametrize("sampling", ("mw", "mwss", "dh", "gl"))
-def test_spherical_plan_roundtrips_sampling_theorems_and_integrates_constants(sampling):
+def test_spherical_plan_roundtrips_sampling_theorems_and_integrates_constants(
+    sampling: Any,
+) -> None:
     plan = SphericalHarmonicPlan(4, sampling=sampling)
     values = _real_bandlimited_field(plan)
 
@@ -45,7 +50,7 @@ def test_spherical_plan_roundtrips_sampling_theorems_and_integrates_constants(sa
     assert jnp.allclose(sphere_measure, 4.0 * jnp.pi, rtol=1e-12, atol=1e-12)
 
 
-def test_spherical_plan_roundtrips_complex_spin_coefficients():
+def test_spherical_plan_roundtrips_complex_spin_coefficients() -> None:
     plan = SphericalHarmonicPlan(5, spin=1, reality=False)
     degree = jnp.arange(plan.bandlimit)[:, None]
     order = jnp.arange(-(plan.bandlimit - 1), plan.bandlimit)[None, :]
@@ -60,7 +65,7 @@ def test_spherical_plan_roundtrips_complex_spin_coefficients():
     assert jnp.allclose(actual, coefficients, rtol=1e-11, atol=1e-11)
 
 
-def test_spherical_plan_matches_s2fft_and_handles_batch_channel_axes():
+def test_spherical_plan_matches_s2fft_and_handles_batch_channel_axes() -> None:
     plan = SphericalHarmonicPlan(4, sampling="mw")
     first = _real_bandlimited_field(plan)
     values = jnp.stack(
@@ -105,7 +110,7 @@ def test_spherical_plan_matches_s2fft_and_handles_batch_channel_axes():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_recursive_and_precomputed_spherical_plans_share_semantic_identity():
+def test_recursive_and_precomputed_spherical_plans_share_semantic_identity() -> None:
     recursive = SphericalHarmonicPlan(4, execution="recursive")
     precomputed = SphericalHarmonicPlan(4, execution="precomputed")
     values = _real_bandlimited_field(recursive)
@@ -128,14 +133,16 @@ def test_recursive_and_precomputed_spherical_plans_share_semantic_identity():
     )
 
 
-def test_spherical_plan_rejects_invalid_configuration_shapes_and_memory():
+def test_spherical_plan_rejects_invalid_configuration_shapes_and_memory() -> None:
     with pytest.raises(ValueError, match="exceed the absolute spin"):
         SphericalHarmonicPlan(2, spin=2, reality=False)
     with pytest.raises(ValueError, match="spin-zero"):
         SphericalHarmonicPlan(4, spin=1, reality=True)
     with pytest.raises(ValueError, match="sampling"):
+        # ty: ignore[invalid-argument-type]
         SphericalHarmonicPlan(4, sampling="healpix")
     with pytest.raises(ValueError, match="execution"):
+        # ty: ignore[invalid-argument-type]
         SphericalHarmonicPlan(4, execution="dense")
     with pytest.raises(ValueError, match="max_precompute_bytes"):
         SphericalHarmonicPlan(4, max_precompute_bytes=1)
@@ -151,7 +158,9 @@ def test_spherical_plan_rejects_invalid_configuration_shapes_and_memory():
 
 @pytest.mark.parametrize("execution", ("recursive", "precomputed"))
 @pytest.mark.parametrize(("spin", "reality"), ((0, True), (1, False)))
-def test_fixed_spherical_transform_jvp_and_real_linear_adjoint(execution, spin, reality):
+def test_fixed_spherical_transform_jvp_and_real_linear_adjoint(
+    execution: Any, spin: Any, reality: Any
+) -> None:
     plan = SphericalHarmonicPlan(
         4, sampling="mwss", execution=execution, spin=spin, reality=reality
     )
@@ -191,7 +200,7 @@ def test_fixed_spherical_transform_jvp_and_real_linear_adjoint(execution, spin, 
         )
 
 
-def test_recursive_transform_forward_over_reverse_quadratic_derivative():
+def test_recursive_transform_forward_over_reverse_quadratic_derivative() -> None:
     plan = SphericalHarmonicPlan(4, sampling="mwss", spin=1, reality=False)
     coefficients = jr.normal(jr.key(41), plan.coefficient_shape) + 1j * jr.normal(
         jr.key(42), plan.coefficient_shape
@@ -206,12 +215,13 @@ def test_recursive_transform_forward_over_reverse_quadratic_derivative():
     np.testing.assert_allclose(action, gradient(tangent), atol=3e-10, rtol=3e-10)
 
 
-def test_recursive_numeric_preparation_derivatives_are_explicitly_rejected():
+def test_recursive_numeric_preparation_derivatives_are_explicitly_rejected() -> None:
     plan = SphericalHarmonicPlan(4)
     values = _real_bandlimited_field(plan)
+    # ty: ignore[unresolved-attribute]
     table = plan.transform.forward_precomputes[0]
 
-    def alter_table(replacement):
+    def alter_table(replacement: Any) -> Any:
         changed = eqx.tree_at(
             lambda prepared: prepared.transform.forward_precomputes[0],
             plan,

@@ -70,7 +70,10 @@ def compress_operator_cases(
     feature_values = jnp.asarray(features)
     if feature_values.ndim != 2 or feature_values.shape[0] != dataset.size:
         raise ValueError("features must have shape (case, feature).")
-    assert dataset.case_log_weights is not None and dataset.case_mask is not None
+    if not (dataset.case_log_weights is not None and dataset.case_mask is not None):
+        raise RuntimeError(
+            "Internal invariant failed: dataset.case_log_weights is not None and dataset.case_mask is not None."
+        )
     source_log_weights = (
         dataset.case_log_weights
         if log_weights is None

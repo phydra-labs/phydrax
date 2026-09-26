@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -50,7 +52,7 @@ def main() -> None:
         tolerance=1.0e-8,
     )
 
-    def stationary_motion(_time, _args):
+    def stationary_motion(_time: Any, _args: Any) -> Any:
         return markers.kinematics(marker_position, jnp.zeros_like(marker_position))
 
     method = phx.solver.MACImmersedBoundaryIMEXEulerMethod(

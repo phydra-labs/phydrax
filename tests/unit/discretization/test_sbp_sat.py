@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _grid(points=33, *, lower=0.0, upper=1.0):
+def _grid(points: Any = 33, *, lower: Any = 0.0, upper: Any = 1.0) -> Any:
     return phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(points),),
         axis_names=("x",),
@@ -17,7 +20,9 @@ def _grid(points=33, *, lower=0.0, upper=1.0):
 
 
 @pytest.mark.parametrize("order", [2, 4, 6, 8])
-def test_diagonal_norm_sbp_families_certify_identity_and_closure_exactness(order):
+def test_diagonal_norm_sbp_families_certify_identity_and_closure_exactness(
+    order: Any,
+) -> None:
     grid = _grid(41)
     sbp = phx.discretization.SBPDerivativePlan(
         grid,
@@ -40,7 +45,9 @@ def test_diagonal_norm_sbp_families_certify_identity_and_closure_exactness(order
     np.testing.assert_allclose(derivative, exact, rtol=2e-8, atol=2e-8)
 
 
-def test_compatible_second_derivative_annihilates_constants_and_is_dissipative_on_zero_trace():
+def test_compatible_second_derivative_annihilates_constants_and_is_dissipative_on_zero_trace() -> (
+    None
+):
     grid = _grid(65)
     sbp = phx.discretization.SBPDerivativePlan(
         grid,
@@ -62,7 +69,7 @@ def test_compatible_second_derivative_annihilates_constants_and_is_dissipative_o
     np.testing.assert_allclose(left, right, rtol=2e-11, atol=2e-11)
 
 
-def test_advection_inflow_sat_makes_discrete_energy_nonincreasing():
+def test_advection_inflow_sat_makes_discrete_energy_nonincreasing() -> None:
     grid = _grid(49)
     sbp = phx.discretization.SBPDerivativePlan(
         grid,
@@ -80,7 +87,7 @@ def test_advection_inflow_sat_makes_discrete_energy_nonincreasing():
     assert energy_rate <= 2e-10
 
 
-def test_conforming_central_and_upwind_sat_interfaces_have_expected_energy():
+def test_conforming_central_and_upwind_sat_interfaces_have_expected_energy() -> None:
     left = phx.discretization.SBPDerivativePlan(
         _grid(33, lower=0.0, upper=0.5),
         "x",
@@ -118,7 +125,7 @@ def test_conforming_central_and_upwind_sat_interfaces_have_expected_energy():
     assert rates[1] <= rates[0] + 2e-10
 
 
-def test_sbp_tensor_axis_preserves_other_entity_axes_and_norm_measure():
+def test_sbp_tensor_axis_preserves_other_entity_axes_and_norm_measure() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(33),
@@ -146,7 +153,7 @@ def test_sbp_tensor_axis_preserves_other_entity_axes_and_norm_measure():
     )
 
 
-def test_sbp_family_rejects_grid_too_short_for_boundary_closures():
+def test_sbp_family_rejects_grid_too_short_for_boundary_closures() -> None:
     with pytest.raises(ValueError, match="requires at least"):
         phx.discretization.SBPDerivativePlan(
             _grid(15),

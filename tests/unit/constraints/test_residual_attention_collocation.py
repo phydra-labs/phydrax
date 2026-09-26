@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -10,7 +13,9 @@ import pytest
 import phydrax as phx
 
 
-def _interval_term(policy, *, scale=1.0, zero=False, trainable=False):
+def _interval_term(
+    policy: Any, *, scale: Any = 1.0, zero: Any = False, trainable: Any = False
+) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     component = domain.component()
     if zero:
@@ -18,7 +23,7 @@ def _interval_term(policy, *, scale=1.0, zero=False, trainable=False):
     else:
 
         @domain.Function("x")
-        def residual(x):
+        def residual(x: Any) -> Any:
             return scale * x[0] ** 2
 
     condition = phx.conditions.Residual(
@@ -50,11 +55,11 @@ def _interval_term(policy, *, scale=1.0, zero=False, trainable=False):
     return domain, term, functions
 
 
-def _coordinates(population):
+def _coordinates(population: Any) -> Any:
     return jnp.asarray(population.batch.points["x"].data).reshape((-1,))
 
 
-def test_residual_attention_preserves_points_and_global_weight_mass():
+def test_residual_attention_preserves_points_and_global_weight_mass() -> None:
     policy = phx.sampling.collocation.ResidualAttentionCollocation(
         refresh_every=1,
         decay=0.0,
@@ -75,7 +80,7 @@ def test_residual_attention_preserves_points_and_global_weight_mass():
     assert refreshed.effective_sample_size <= coordinates.size
 
 
-def test_zero_residual_attention_remains_uniform_and_finite():
+def test_zero_residual_attention_remains_uniform_and_finite() -> None:
     policy = phx.sampling.collocation.ResidualAttentionCollocation(
         decay=0.0,
         minimum_ess_fraction=0.5,
@@ -89,7 +94,7 @@ def test_zero_residual_attention_remains_uniform_and_finite():
     assert jnp.isclose(refreshed.effective_sample_size, 16.0)
 
 
-def test_attention_work_charges_candidates_only_when_replacement_runs():
+def test_attention_work_charges_candidates_only_when_replacement_runs() -> None:
     policy = phx.sampling.collocation.ResidualAttentionCollocation(
         candidate_count=7,
         replacement_count=0,
@@ -100,7 +105,7 @@ def test_attention_work_charges_candidates_only_when_replacement_runs():
     assert policy.refresh_residual_evaluations(population) == 16
 
 
-def test_attention_is_invariant_to_residual_units_and_enforces_ess_guard():
+def test_attention_is_invariant_to_residual_units_and_enforces_ess_guard() -> None:
     policy = phx.sampling.collocation.ResidualAttentionCollocation(
         decay=0.0,
         uniform_fraction=0.0,
@@ -124,7 +129,7 @@ def test_attention_is_invariant_to_residual_units_and_enforces_ess_guard():
     assert bool(base.ess_guard_triggered)
 
 
-def test_attention_support_is_conditional_and_anchors_mark_reference_rows():
+def test_attention_support_is_conditional_and_anchors_mark_reference_rows() -> None:
     policy = phx.sampling.collocation.ResidualAttentionCollocation()
     support = phx.sampling.collocation.collocation_policy_support(policy)
 
@@ -151,7 +156,7 @@ def test_attention_support_is_conditional_and_anchors_mark_reference_rows():
     assert jnp.array_equal(refreshed.current.anchor_mask, jnp.arange(16) < 4)
 
 
-def test_functional_solver_persists_attention_population_and_diagnostics():
+def test_functional_solver_persists_attention_population_and_diagnostics() -> None:
     policy = phx.sampling.collocation.ResidualAttentionCollocation(
         refresh_every=1,
         decay=0.5,
@@ -167,6 +172,7 @@ def test_functional_solver_persists_attention_population_and_diagnostics():
         log_every=0,
     )
     population = trained.collocation[0]
+    # ty: ignore[invalid-argument-type]
     metrics = policy.data_metrics(population)
 
     assert isinstance(
@@ -179,7 +185,7 @@ def test_functional_solver_persists_attention_population_and_diagnostics():
     assert metrics["attention_effective_sample_size"] > 0.0
 
 
-def test_residual_attention_validates_configuration():
+def test_residual_attention_validates_configuration() -> None:
     with pytest.raises(ValueError, match="decay"):
         phx.sampling.collocation.ResidualAttentionCollocation(decay=1.0)
     with pytest.raises(ValueError, match="minimum_ess_fraction"):

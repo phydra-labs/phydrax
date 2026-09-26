@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _burgers_pair():
+def _burgers_pair() -> Any:
     system = phx.equations.ScalarConservationSystem(
         1,
         lambda state, axis, args: 0.5 * state**2,
@@ -29,7 +32,7 @@ def _burgers_pair():
     )
 
 
-def test_scalar_convex_entropy_pair_matches_burgers_identities():
+def test_scalar_convex_entropy_pair_matches_burgers_identities() -> None:
     pair = _burgers_pair()
     states = jnp.asarray([[-0.7], [0.2], [1.1]])
     reference = jnp.asarray([[-0.3], [0.4], [0.9]])
@@ -55,7 +58,9 @@ def test_scalar_convex_entropy_pair_matches_burgers_identities():
     assert jnp.allclose(pair.symmetrizer_action(states, jnp.ones_like(states)), 1.0)
 
 
-def test_entropy_pair_interface_residual_matches_conservative_and_dissipative_fluxes():
+def test_entropy_pair_interface_residual_matches_conservative_and_dissipative_fluxes() -> (
+    None
+):
     pair = _burgers_pair()
     left = jnp.asarray([[-0.5], [0.2]])
     right = jnp.asarray([[0.7], [-0.4]])
@@ -71,7 +76,7 @@ def test_entropy_pair_interface_residual_matches_conservative_and_dissipative_fl
     )
 
 
-def test_euler_entropy_pair_matches_existing_variables_and_all_axes():
+def test_euler_entropy_pair_matches_existing_variables_and_all_axes() -> None:
     system = phx.equations.EulerSystem(2)
     pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     primitive = jnp.asarray(
@@ -111,7 +116,7 @@ def test_euler_entropy_pair_matches_existing_variables_and_all_axes():
     )
 
 
-def test_entropy_pair_methods_are_jittable_and_batch_local():
+def test_entropy_pair_methods_are_jittable_and_batch_local() -> None:
     pair = _burgers_pair()
     states = jnp.asarray([[-0.4], [0.6], [1.2]])
     directions = jnp.asarray([[0.3], [-0.1], [0.8]])
@@ -123,7 +128,7 @@ def test_entropy_pair_methods_are_jittable_and_batch_local():
     assert jnp.allclose(action, directions)
 
 
-def test_entropy_validation_reports_invalid_pair_without_raising_when_requested():
+def test_entropy_validation_reports_invalid_pair_without_raising_when_requested() -> None:
     pair = _burgers_pair()
     invalid = phx.equations.ConvexEntropyPair(
         pair.system,
@@ -149,7 +154,7 @@ def test_entropy_validation_reports_invalid_pair_without_raising_when_requested(
         )
 
 
-def test_entropy_pair_rejects_wrong_shapes_axes_and_domains():
+def test_entropy_pair_rejects_wrong_shapes_axes_and_domains() -> None:
     pair = _burgers_pair()
     with pytest.raises(ValueError, match="trailing component dimension"):
         pair.entropy(jnp.ones((2, 2)))
@@ -165,7 +170,9 @@ def test_entropy_pair_rejects_wrong_shapes_axes_and_domains():
         )
 
 
-def test_public_entropy_methods_reject_nonfinite_states_with_permissive_predicate():
+def test_public_entropy_methods_reject_nonfinite_states_with_permissive_predicate() -> (
+    None
+):
     base = _burgers_pair()
     pair = phx.equations.ConvexEntropyPair(
         base.system,
@@ -188,7 +195,7 @@ def test_public_entropy_methods_reject_nonfinite_states_with_permissive_predicat
         jax.jit(pair.entropy)(invalid)
 
 
-def test_entropy_pair_rejects_nonfloating_callable_outputs():
+def test_entropy_pair_rejects_nonfloating_callable_outputs() -> None:
     base = _burgers_pair()
     state = jnp.asarray([[0.2]])
     integer_entropy = phx.equations.ConvexEntropyPair(
@@ -224,7 +231,7 @@ def test_entropy_pair_rejects_nonfloating_callable_outputs():
         complex_flux.entropy_flux(state, 0)
 
 
-def test_entropy_flux_and_validation_propagate_runtime_args():
+def test_entropy_flux_and_validation_propagate_runtime_args() -> None:
     system = phx.equations.ScalarConservationSystem(
         1,
         lambda state, axis, args: 0.5 * args["scale"] * state**2,
@@ -260,7 +267,7 @@ def test_entropy_flux_and_validation_propagate_runtime_args():
     )
 
 
-def test_entropy_validation_rejects_empty_axes_and_reports_nonfinite_evidence():
+def test_entropy_validation_rejects_empty_axes_and_reports_nonfinite_evidence() -> None:
     base = _burgers_pair()
     with pytest.raises(ValueError, match="must be non-empty"):
         phx.equations.validate_convex_entropy_pair(

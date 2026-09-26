@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -42,7 +43,7 @@ from phydrax.discretization.particle._rigid_thermal import (
 from phydrax.qualification._reference import ReferenceArtifactManifest
 
 
-def _artifact_data(data):
+def _artifact_data(data: Any) -> Any:
     payload = json.dumps(data, sort_keys=True).encode()
     manifest = ReferenceArtifactManifest(
         "independent-equation-regression",
@@ -63,8 +64,13 @@ def _artifact_data(data):
 
 
 def _model(
-    *, fixed=False, periodic=False, backbone=False, family="average-dna", data=None
-):
+    *,
+    fixed: Any = False,
+    periodic: Any = False,
+    backbone: Any = False,
+    family: Any = "average-dna",
+    data: Any = None,
+) -> Any:
     if backbone:
         construct = NucleicAcidConstruct(("s",), ("AT",), ("DNA",), (False,))
     elif family == "rna":
@@ -101,7 +107,7 @@ def _model(
     return model, state
 
 
-def test_energy_gradient_wrench_virtual_work_and_reaction_balance():
+def test_energy_gradient_wrench_virtual_work_and_reaction_balance() -> None:
     model, state = _model(fixed=True)
     evaluation = eqx.filter_jit(model.evaluate)(state)
     assert evaluation.successful
@@ -120,7 +126,7 @@ def test_energy_gradient_wrench_virtual_work_and_reaction_balance():
     translation = jnp.array([[0.2, -0.1, 0.3], [-0.1, 0.2, 0.1]])
     rotation = jnp.array([[0.1, 0.3, -0.2], [-0.3, 0.1, 0.2]])
 
-    def energy_at(t):
+    def energy_at(t: Any) -> Any:
         moved = RigidBodyKinematics(
             state.position + t * translation,
             state.velocity,
@@ -138,7 +144,7 @@ def test_energy_gradient_wrench_virtual_work_and_reaction_balance():
     assert np.linalg.norm(result.kinematics.angular_velocity[0]) > 0
 
 
-def test_quaternion_sign_and_proper_rotation_covariance():
+def test_quaternion_sign_and_proper_rotation_covariance() -> None:
     model, state = _model()
     reference = model.evaluate(state)
     negative = RigidBodyKinematics(
@@ -168,7 +174,7 @@ def test_quaternion_sign_and_proper_rotation_covariance():
     )
 
 
-def test_point_force_binding_is_order_invariant_not_quadrature_weighted():
+def test_point_force_binding_is_order_invariant_not_quadrature_weighted() -> None:
     model, state = _model(fixed=True)
     marker = model.marker_map.markers
     weighted = LagrangianMarkerSetPlan(
@@ -194,7 +200,7 @@ def test_point_force_binding_is_order_invariant_not_quadrature_weighted():
         mapping.bind_site_forces(ids[:-1], owners[:-1])
 
 
-def test_all_fixed_marker_map_retains_full_reactions():
+def test_all_fixed_marker_map_retains_full_reactions() -> None:
     model, state = _model()
     fixed = RigidBodySetPlan(
         np.zeros(2, dtype="int64"),
@@ -210,12 +216,12 @@ def test_all_fixed_marker_map_retains_full_reactions():
     np.testing.assert_allclose(result.reaction_load.force, result.load.force)
 
 
-def test_energy_drift_decreases_with_kdk_timestep():
+def test_energy_drift_decreases_with_kdk_timestep() -> None:
     model, state = _model()
     initial = model.energy(state) + model.kinetic_energy(state)
 
-    def rollout(dt, count):
-        def body(q, i):
+    def rollout(dt: Any, count: Any) -> Any:
+        def body(q: Any, i: Any) -> Any:
             step = model.step(q, i * dt, dt)
             return step.kinematics, model.energy(step.kinematics) + model.kinetic_energy(
                 step.kinematics
@@ -231,7 +237,7 @@ def test_energy_drift_decreases_with_kdk_timestep():
     assert fine_error < 1e-3
 
 
-def test_periodic_com_face_crossing_preserves_sites_and_pair_energy():
+def test_periodic_com_face_crossing_preserves_sites_and_pair_energy() -> None:
     model, state = _model(periodic=True)
     baseline = model.evaluate(state)
     shifted = RigidBodyKinematics(
@@ -264,7 +270,7 @@ def test_periodic_com_face_crossing_preserves_sites_and_pair_energy():
     )
 
 
-def test_fene_domain_and_published_geometry_are_not_silently_repaired():
+def test_fene_domain_and_published_geometry_are_not_silently_repaired() -> None:
     model, state = _model(backbone=True)
     assert model.evaluate(state).successful
     invalid = RigidBodyKinematics(
@@ -290,7 +296,7 @@ def test_fene_domain_and_published_geometry_are_not_silently_repaired():
         ).prepare()
 
 
-def test_anisotropic_heat_bath_has_fluctuation_dissipation_covariance():
+def test_anisotropic_heat_bath_has_fluctuation_dissipation_covariance() -> None:
     particles = ParticleSetPlan(
         np.array([10, 20]), np.array([2.0, 3.0]), ambient_dimension=3
     ).prepare()
@@ -330,7 +336,7 @@ def test_anisotropic_heat_bath_has_fluctuation_dissipation_covariance():
     )
 
 
-def test_piecewise_published_windows_match_value_and_force_at_joins():
+def test_piecewise_published_windows_match_value_and_force_at_joins() -> None:
     for kind, p in (
         ("morse", [1.0, 1.0, 2.0, 0.7, 1.7, 2.0]),
         ("harmonic", [1.0, 1.0, 1.8, 0.25, 1.6, 1.0]),
@@ -369,7 +375,9 @@ def test_piecewise_published_windows_match_value_and_force_at_joins():
     assert float(dh(0.91)) == 0.0
 
 
-def test_model_variants_execute_distinct_geometry_conditions_and_hybrid_strengths():
+def test_model_variants_execute_distinct_geometry_conditions_and_hybrid_strengths() -> (
+    None
+):
     dna, state = _model()
     dna2, q2 = _model(family="groove-salt-dna")
     rna, qr = _model(family="rna")
@@ -391,7 +399,7 @@ def test_model_variants_execute_distinct_geometry_conditions_and_hybrid_strength
         _artifact_data(data)
 
 
-def test_parameter_payload_tampering_and_false_family_geometry_are_refused():
+def test_parameter_payload_tampering_and_false_family_geometry_are_refused() -> None:
     artifact = parameter_artifact()
     with pytest.raises(ValueError, match="source manifest"):
         NucleotideParameterArtifact(
@@ -409,7 +417,7 @@ def test_parameter_payload_tampering_and_false_family_geometry_are_refused():
         _artifact_data(data)
 
 
-def test_directed_sequence_stacking_keeps_five_to_three_table_order():
+def test_directed_sequence_stacking_keeps_five_to_three_table_order() -> None:
     artifact = parameter_artifact("sequence-dna")
     energies = []
     for sequence in ("AT", "TA"):
@@ -440,7 +448,7 @@ def test_directed_sequence_stacking_keeps_five_to_three_table_order():
     np.testing.assert_allclose(energies[0] - energies[1], expected, atol=1e-12)
 
 
-def test_inactive_marker_force_nan_is_not_material_and_never_enters_loads():
+def test_inactive_marker_force_nan_is_not_material_and_never_enters_loads() -> None:
     particles = ParticleSetPlan(
         np.array([41, 13, 7]),
         np.ones(3),
@@ -483,7 +491,7 @@ def test_inactive_marker_force_nan_is_not_material_and_never_enters_loads():
     np.testing.assert_allclose(result.mobile_load.force[1:], 0.0)
 
 
-def test_coincident_inactive_coaxial_sites_preserve_finite_repulsive_force():
+def test_coincident_inactive_coaxial_sites_preserve_finite_repulsive_force() -> None:
     model, state = _model()
     state = RigidBodyKinematics(
         jnp.array([[0.0, 0.0, 0.0], [0.16, 0.0, 0.0]]),
@@ -495,7 +503,7 @@ def test_coincident_inactive_coaxial_sites_preserve_finite_repulsive_force():
     assert result.successful
     displacement = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
 
-    def energy_shift(amount):
+    def energy_shift(amount: Any) -> Any:
         return model.energy(
             RigidBodyKinematics(
                 state.position + amount * displacement,

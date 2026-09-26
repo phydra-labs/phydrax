@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def _brownian_paths(*, num_paths=128, num_steps=8):
+def _brownian_paths(*, num_paths: Any = 128, num_steps: Any = 8) -> Any:
     times = jnp.linspace(0.0, 1.0, num_steps + 1)
     increments = (
         jr.normal(jr.key(30), (num_paths, num_steps, 1))
@@ -30,7 +30,7 @@ def _brownian_paths(*, num_paths=128, num_steps=8):
     )
 
 
-def _problem(paths):
+def _problem(paths: Any) -> Any:
     return phx.stochastic.BSDEProblem(
         lambda key: paths,
         lambda time, state, args: jnp.zeros_like(state),
@@ -45,7 +45,7 @@ def _problem(paths):
     )
 
 
-def test_bsde_path_contract_rejects_misaligned_increments():
+def test_bsde_path_contract_rejects_misaligned_increments() -> None:
     paths = _brownian_paths(num_paths=4, num_steps=3)
     assert paths.num_steps == 3
     assert jnp.all(paths.successful)
@@ -63,7 +63,7 @@ def test_bsde_path_contract_rejects_misaligned_increments():
         )
 
 
-def test_exact_linear_bsde_has_zero_local_global_and_terminal_residuals():
+def test_exact_linear_bsde_has_zero_local_global_and_terminal_residuals() -> None:
     paths = _brownian_paths()
     problem = _problem(paths)
     value = lambda time, state: jnp.asarray([state[0]])
@@ -86,7 +86,7 @@ def test_exact_linear_bsde_has_zero_local_global_and_terminal_residuals():
     assert phx.stochastic.bsde_diagnostics(evaluation).passed
 
 
-def test_scalar_bsde_preserves_sample_and_time_axes():
+def test_scalar_bsde_preserves_sample_and_time_axes() -> None:
     times = jnp.asarray([0.0, 0.5, 1.0])
     increments = jnp.asarray([[0.2, -0.1], [-0.3, 0.4]])
     states = jnp.concatenate(
@@ -128,7 +128,7 @@ def test_scalar_bsde_preserves_sample_and_time_axes():
     assert jnp.allclose(evaluation.global_residual, 0.0)
 
 
-def test_bsde_objective_masks_nonfinite_invalid_paths_before_squaring():
+def test_bsde_objective_masks_nonfinite_invalid_paths_before_squaring() -> None:
     paths = _brownian_paths(num_paths=2, num_steps=2)
     terminal = jnp.asarray([[1.0, 2.0], [jnp.nan, jnp.nan]])
     local = jnp.asarray(
@@ -139,7 +139,9 @@ def test_bsde_objective_masks_nonfinite_invalid_paths_before_squaring():
     )
     global_residual = jnp.asarray([[2.0, 1.0], [jnp.nan, jnp.nan]])
 
-    def objective(terminal_residual, local_residuals, complete_residual):
+    def objective(
+        terminal_residual: Any, local_residuals: Any, complete_residual: Any
+    ) -> Any:
         evaluation = phx.stochastic.BSDEEvaluation(
             values=jnp.zeros((2, 3, 2)),
             controls=jnp.zeros((2, 2, 2, 1)),
@@ -180,7 +182,7 @@ def test_bsde_objective_masks_nonfinite_invalid_paths_before_squaring():
     )
 
 
-def test_autodiff_control_matches_explicit_control_and_heat_pde_residual():
+def test_autodiff_control_matches_explicit_control_and_heat_pde_residual() -> None:
     paths = _brownian_paths()
     problem = _problem(paths)
     linear_value = lambda time, state: jnp.asarray([state[0]])
@@ -226,7 +228,7 @@ def test_autodiff_control_matches_explicit_control_and_heat_pde_residual():
     )
 
 
-def test_bsde_objective_integrates_domain_functions_and_fixed_paths():
+def test_bsde_objective_integrates_domain_functions_and_fixed_paths() -> None:
     paths = _brownian_paths(num_paths=32)
     problem = _problem(paths)
     domain = phx.domain.Interval1d(-5.0, 5.0) @ phx.domain.TimeInterval(0.0, 1.0)
@@ -244,7 +246,7 @@ def test_bsde_objective_integrates_domain_functions_and_fixed_paths():
     assert jnp.allclose(objective.loss({"value": value}), 0.0)
 
 
-def test_bsde_quadrature_modes_are_explicit_and_finite():
+def test_bsde_quadrature_modes_are_explicit_and_finite() -> None:
     paths = _brownian_paths(num_paths=32)
     problem = _problem(paths)
     value = lambda time, state: jnp.asarray([state[0] + time])
@@ -272,7 +274,7 @@ def test_bsde_quadrature_modes_are_explicit_and_finite():
         )
 
 
-def test_differential_solution_conversion_collapses_shared_batched_time_grid():
+def test_differential_solution_conversion_collapses_shared_batched_time_grid() -> None:
     times = jnp.linspace(0.0, 1.0, 4)
     realization = phx.stochastic.WienerRealization(
         jr.key(31),

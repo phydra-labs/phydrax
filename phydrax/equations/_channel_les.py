@@ -287,7 +287,10 @@ class CompiledChannelLESDynamics(StrictModule):
             )
         evaluation = base.spatial_method.dealiasing.evaluation
         # Dealiasing keeps the tensor family of the channel discretization.
-        assert isinstance(evaluation, TensorSpectralDiscretization)
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
         geometry = ChannelLESFilterGeometry(discretization, evaluation)
         evaluation_axis = evaluation.axes[1]
         if (
@@ -399,7 +402,10 @@ class CompiledChannelLESDynamics(StrictModule):
         dealiasing = self.spatial_method.dealiasing
         evaluation = dealiasing.evaluation
         # Dealiasing keeps the tensor family of the channel discretization.
-        assert isinstance(evaluation, TensorSpectralDiscretization)
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
         padded = dealiasing.embed(value)
         velocity = evaluation.reconstruct(padded)
         derivative_modes = tuple(
@@ -454,7 +460,10 @@ class CompiledChannelLESDynamics(StrictModule):
     ) -> ChannelLESEnergyLedger:
         grid = self.spatial_method.dealiasing.evaluation
         # Dealiasing keeps the tensor family of the channel discretization.
-        assert isinstance(grid, TensorSpectralDiscretization)
+        if not (isinstance(grid, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(grid, TensorSpectralDiscretization)."
+            )
         weights = grid.quadrature_weights
         gradient_squared = ein.contract(
             "...ij,...ij->...",

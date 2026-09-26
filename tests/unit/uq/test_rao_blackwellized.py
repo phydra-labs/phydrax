@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _observations():
+def _observations() -> Any:
     return phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[1.0], [2.0]]),
@@ -14,8 +16,8 @@ def _observations():
 
 
 def _rao_blackwellized_problem(
-    *, args=None, input_signal=None, diagonal_observation=False
-):
+    *, args: Any = None, input_signal: Any = None, diagonal_observation: Any = False
+) -> Any:
     if args is None:
         args = {
             "initial_mean": 0.0,
@@ -77,7 +79,7 @@ def _rao_blackwellized_problem(
     )
 
 
-def _kalman_problem():
+def _kalman_problem() -> Any:
     prior = phx.stochastic.GaussianStatePrior(
         jnp.asarray([0.0]),
         jnp.asarray([[1.0]]),
@@ -110,7 +112,7 @@ def _kalman_problem():
     )
 
 
-def test_rao_callbacks_observe_typed_input_context():
+def test_rao_callbacks_observe_typed_input_context() -> None:
     input_signal = phx.stochastic.SampledStateSpaceInput(
         jnp.asarray([0.0, 0.5, 1.0]),
         jnp.asarray([[0.0], [2.0], [4.0]]),
@@ -150,7 +152,7 @@ def test_rao_callbacks_observe_typed_input_context():
     )
 
 
-def test_single_mode_rao_blackwellized_filter_matches_exact_kalman_filter():
+def test_single_mode_rao_blackwellized_filter_matches_exact_kalman_filter() -> None:
     result = phx.uq.rao_blackwellized_particle_filter(
         jr.key(5),
         _rao_blackwellized_problem(),
@@ -180,7 +182,7 @@ def test_single_mode_rao_blackwellized_filter_matches_exact_kalman_filter():
     assert jnp.all(result.nonlinear_particles == 0)
 
 
-def test_diagonal_observation_covariance_matches_dense_conditioning():
+def test_diagonal_observation_covariance_matches_dense_conditioning() -> None:
     dense = phx.uq.rao_blackwellized_particle_filter(
         jr.key(17),
         _rao_blackwellized_problem(),

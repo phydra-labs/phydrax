@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -17,7 +19,14 @@ MATRIX = jnp.asarray([[4.0, 1.0, 0.3], [1.0, 3.0, 0.2], [0.3, 0.2, 5.0]])
 VECTOR = jnp.asarray([1.0, 2.0, 3.0])
 
 
-def _solve(mode, rhs=VECTOR, *, matrix=MATRIX, failing=False, rhs_layout=None):
+def _solve(
+    mode: Any,
+    rhs: Any = VECTOR,
+    *,
+    matrix: Any = MATRIX,
+    failing: Any = False,
+    rhs_layout: Any = None,
+) -> Any:
     method = phx.linalg.FGMRES(restart=1) if failing else None
     tolerance = (
         phx.linalg.TolerancePolicy(relative=1e-14, absolute=0.0, max_steps=1)
@@ -43,8 +52,8 @@ def _solve(mode, rhs=VECTOR, *, matrix=MATRIX, failing=False, rhs_layout=None):
     ),
 )
 def test_linear_solve_reports_the_contract_of_its_differentiation_mode(
-    mode, route, surfaces, conditions
-):
+    mode: Any, route: Any, surfaces: Any, conditions: Any
+) -> None:
     result = _solve(mode)
     contract = result.derivative_contract
 
@@ -57,7 +66,7 @@ def test_linear_solve_reports_the_contract_of_its_differentiation_mode(
     assert contract.conditions == conditions
 
 
-def test_rhs_only_solves_stop_operator_derivatives():
+def test_rhs_only_solves_stop_operator_derivatives() -> None:
     contract = _solve("rhs-only").derivative_contract
 
     assert contract.admit(DifferentiationRequest({RHS})).supported
@@ -66,7 +75,7 @@ def test_rhs_only_solves_stop_operator_derivatives():
     assert admission.level(OPERATOR) is GradientLevel.NONE
 
 
-def test_failed_mathematical_solve_reports_an_invalid_poisoned_derivative():
+def test_failed_mathematical_solve_reports_an_invalid_poisoned_derivative() -> None:
     failed = _solve("mathematical", failing=True)
     converged = _solve("mathematical")
 
@@ -79,7 +88,7 @@ def test_failed_mathematical_solve_reports_an_invalid_poisoned_derivative():
     assert not bool(jnp.all(jnp.isfinite(gradient)))
 
 
-def test_derivative_validity_is_reported_per_right_hand_side():
+def test_derivative_validity_is_reported_per_right_hand_side() -> None:
     stacked = jnp.stack([VECTOR, jnp.zeros(3)], axis=-1)
     result = _solve(
         "mathematical",
@@ -92,7 +101,7 @@ def test_derivative_validity_is_reported_per_right_hand_side():
     assert result.derivative_valid.tolist() == [False, True]
 
 
-def test_unrolled_and_stopped_contracts_do_not_depend_on_convergence():
+def test_unrolled_and_stopped_contracts_do_not_depend_on_convergence() -> None:
     unrolled = _solve("algorithmic", failing=True)
     stopped = _solve("none")
 

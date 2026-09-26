@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _affine_map_problem():
+def _affine_map_problem() -> Any:
     generator = np.random.default_rng(62)
     cases = 10
     capacity = 9
@@ -32,7 +35,7 @@ def _affine_map_problem():
     )
 
 
-def test_selection_splits_complete_cases_and_retains_invalid_candidates():
+def test_selection_splits_complete_cases_and_retains_invalid_candidates() -> None:
     problem = _affine_map_problem()
     regressors = (
         phx.dynamics.identification.SequentialThresholdedLeastSquares(
@@ -74,7 +77,7 @@ def test_selection_splits_complete_cases_and_retains_invalid_candidates():
     assert bool(jnp.all(jnp.isfinite(result.rollout_error[:2])))
 
 
-def test_ensemble_bootstrap_is_deterministic_and_reports_inclusion():
+def test_ensemble_bootstrap_is_deterministic_and_reports_inclusion() -> None:
     problem = _affine_map_problem()
     regressor = phx.dynamics.identification.SequentialThresholdedLeastSquares(
         1e-8, threshold_space="physical"
@@ -113,7 +116,7 @@ def test_ensemble_bootstrap_is_deterministic_and_reports_inclusion():
     )
 
 
-def test_single_trajectory_selection_embargoes_overlapping_weak_windows():
+def test_single_trajectory_selection_embargoes_overlapping_weak_windows() -> None:
     time = jnp.linspace(0.0, 4.0, 81)
     state = jnp.exp(-time)[:, None]
     layout = phx.dynamics.StateLayout((1,), component_names=("x",))
@@ -145,7 +148,7 @@ def test_single_trajectory_selection_embargoes_overlapping_weak_windows():
     )
 
 
-def test_sr3_l0_recovers_sparse_fourier_law_with_unbiased_refit():
+def test_sr3_l0_recovers_sparse_fourier_law_with_unbiased_refit() -> None:
     state = np.linspace(-np.pi, np.pi, 257, endpoint=False)[:, None]
     derivative = 1.2 * np.sin(state) - 0.7 * np.cos(2.0 * state)
     layout = phx.dynamics.StateLayout((1,), component_names=("angle",))
@@ -187,7 +190,9 @@ def test_sr3_l0_recovers_sparse_fourier_law_with_unbiased_refit():
     assert result.regression.solver_diagnostics.objective.shape[0] == 201
 
 
-def test_identification_transform_supports_scalar_layout_and_selection_contracts():
+def test_identification_transform_supports_scalar_layout_and_selection_contracts() -> (
+    None
+):
     layout = phx.dynamics.StateLayout((), component_names=("temperature",))
     transform = phx.dynamics.identification.IdentificationStateTransform(
         layout,

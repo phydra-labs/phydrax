@@ -2,9 +2,11 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import subprocess
 import sys
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +15,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def _axes():
+def _axes() -> Any:
     source_nodes = jnp.asarray([0.0, 0.12, 0.31, 0.55, 0.79, 1.0])
     query_nodes = jnp.asarray([0.04, 0.24, 0.49, 0.73, 0.96])
     source_axis = phx.nn.operator.OperatorAxis(
@@ -29,7 +31,7 @@ def _axes():
     return source_axis, query_axis
 
 
-def _dataset(cases=4):
+def _dataset(cases: Any = 4) -> Any:
     source_axis, query_axis = _axes()
     coefficients = jnp.stack(
         (
@@ -65,7 +67,7 @@ def _dataset(cases=4):
     )
 
 
-def _model(seed=0):
+def _model(seed: Any = 0) -> Any:
     source_key, target_key, map_key = jr.split(jr.key(seed), 3)
     source_frame = phx.nn.operator.architectures.LearnedFunctionFrame(
         basis_model=phx.nn.layers.Linear(
@@ -113,7 +115,7 @@ def _model(seed=0):
     )
 
 
-def _task():
+def _task() -> Any:
     return phx.nn.operator.OperatorTask(
         "function-frame-polynomial-map",
         dimension_basis=("length",),
@@ -146,7 +148,7 @@ def _task():
     )
 
 
-def _solution_binding(task):
+def _solution_binding(task: Any) -> Any:
     port = task.field_by_name["solution"].value_port()
     return {
         "output_ports": {"output": port},
@@ -154,7 +156,7 @@ def _solution_binding(task):
     }
 
 
-def _trained(model):
+def _trained(model: Any) -> Any:
     return phx.nn.operator.training.TrainedOperator(
         model,
         _task(),
@@ -164,12 +166,12 @@ def _trained(model):
     )
 
 
-def _trainable_arrays(model):
+def _trainable_arrays(model: Any) -> Any:
     parameters, _, _ = phx.partition_parameters(model)
     return tuple(jax.tree.leaves(parameters))
 
 
-def test_function_frame_reconstructor_trains_through_fit_operator():
+def test_function_frame_reconstructor_trains_through_fit_operator() -> None:
     dataset = _dataset()
     model = _model(seed=1)
     initial = _trainable_arrays(model)
@@ -185,6 +187,7 @@ def test_function_frame_reconstructor_trains_through_fit_operator():
         batch_size=2,
     )
     updated = _trainable_arrays(result.last_execution_model)
+    # ty: ignore[unresolved-attribute]
     prediction = result.trained_operator.predict(dataset.batch)
 
     assert result.completed_steps == 1
@@ -197,7 +200,7 @@ def test_function_frame_reconstructor_trains_through_fit_operator():
     )
 
 
-def test_function_frame_artifact_round_trips_in_a_fresh_process(tmp_path):
+def test_function_frame_artifact_round_trips_in_a_fresh_process(tmp_path: Any) -> None:
     dataset = _dataset(cases=2)
     trained = _trained(_model(seed=2))
     expected = trained.predict(dataset.batch).field("solution").values

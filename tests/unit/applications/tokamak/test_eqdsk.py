@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import math
+from typing import Any
 
 import numpy as np
 
 import phydrax as phx
 
 
-def _eqdsk_bytes():
+def _eqdsk_bytes() -> Any:
     nw, nh = 3, 3
     header = "synthetic equilibrium".ljust(48) + f" 0 {nw} {nh}\n"
     scalars = [
@@ -46,7 +47,7 @@ def _eqdsk_bytes():
     return (header + " ".join(f"{value:.12E}" for value in body) + "\n").encode()
 
 
-def _reference(payload):
+def _reference(payload: Any) -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "synthetic-eqdsk",
         checksum_algorithm="sha256",
@@ -64,7 +65,7 @@ def _reference(payload):
     )
 
 
-def _resource(payload):
+def _resource(payload: Any) -> Any:
     return phx.interchange.bounded_resource_from_bytes(
         payload,
         limits=phx.interchange.ResourceLimits(
@@ -77,7 +78,7 @@ def _resource(payload):
     )
 
 
-def test_tokamak_flux_normalization_round_trip_is_complete():
+def test_tokamak_flux_normalization_round_trip_is_complete() -> None:
     canonical = phx.applications.tokamak.TokamakMagneticConvention.canonical()
     total_flux = phx.applications.tokamak.TokamakMagneticConvention(
         "total-weber",
@@ -95,7 +96,7 @@ def test_tokamak_flux_normalization_round_trip_is_complete():
     assert math.isclose(forward.poloidal_flux_factor * reverse.poloidal_flux_factor, 1.0)
 
 
-def test_eqdsk_import_preserves_fields_and_canonicalizes_flux():
+def test_eqdsk_import_preserves_fields_and_canonicalizes_flux() -> None:
     payload = _eqdsk_bytes()
     canonical = phx.applications.tokamak.TokamakMagneticConvention.canonical()
     result = phx.applications.tokamak.interchange.import_eqdsk(
@@ -116,7 +117,7 @@ def test_eqdsk_import_preserves_fields_and_canonicalizes_flux():
     assert equilibrium.prepare().equilibrium_id == equilibrium.equilibrium_id
 
 
-def test_eqdsk_import_rejects_unsupported_trailing_fields():
+def test_eqdsk_import_rejects_unsupported_trailing_fields() -> None:
     payload = _eqdsk_bytes() + b"1.0\n"
     with np.testing.assert_raises_regex(ValueError, "trailing numeric"):
         phx.applications.tokamak.interchange.import_eqdsk(

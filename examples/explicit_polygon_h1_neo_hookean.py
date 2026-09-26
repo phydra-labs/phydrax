@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -17,6 +20,7 @@ def main() -> None:
         (3, 4, 7, 6),
         (4, 5, 8, 7),
     )
+    # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(coordinates, cells)
     field = phx.discretization.ExplicitPolygonH1FieldSpec("u", component_shape=(2,))
     discretization = phx.discretization.ExplicitPolygonH1Plan(mesh, field).prepare()
@@ -28,7 +32,7 @@ def main() -> None:
         "u", parameters
     )
 
-    def load_density(fields, geometry, context):
+    def load_density(fields: Any, geometry: Any, context: Any) -> Any:
         del geometry, context
         return -0.05 * fields["u"].value[..., 1]
 

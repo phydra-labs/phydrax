@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
+from typing import Any
 
 import jax
 import numpy as np
@@ -19,20 +20,20 @@ def _contract() -> phx.SpatialCoordinateContract:
     return phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 
 
-def _timed(call):
+def _timed(call: Any) -> Any:
     started = perf_counter()
     result = call()
     return result, perf_counter() - started
 
 
-def _range(values) -> dict[str, float]:
+def _range(values: Any) -> dict[str, float]:
     samples = np.asarray(tuple(values), dtype="float64")
     if samples.ndim != 1 or not samples.size:
         raise ValueError("Benchmark ranges require one nonempty scalar sequence.")
     return {"minimum": float(np.min(samples)), "maximum": float(np.max(samples))}
 
 
-def _integer_range(values) -> dict[str, int]:
+def _integer_range(values: Any) -> dict[str, int]:
     samples = np.asarray(tuple(values), dtype=np.int64)
     if samples.ndim != 1 or not samples.size:
         raise ValueError("Benchmark ranges require one nonempty integer sequence.")
@@ -47,7 +48,7 @@ def _planar_region(name: str, x0: float, x1: float) -> phx.geometry.PlanarMeshRe
     )
 
 
-def _planar_partition(count: int, destination: Path):
+def _planar_partition(count: int, destination: Path) -> Any:
     contract = _contract()
     embedding = phx.geometry.PlanarEmbedding(
         (0.0, 0.0, 0.0),
@@ -73,11 +74,13 @@ def _planar_partition(count: int, destination: Path):
     return embedding, plan, phx.geometry.partition_planar(plan, destination=destination)
 
 
-def _persist_shape(shape, path: Path, contract: phx.SpatialCoordinateContract):
+def _persist_shape(
+    shape: Any, path: Path, contract: phx.SpatialCoordinateContract
+) -> Any:
     return phx.geometry.persist_occt_shape(shape, path, coordinate_contract=contract)
 
 
-def _cad_partition(count: int, destination: Path):
+def _cad_partition(count: int, destination: Path) -> Any:
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
 
@@ -104,6 +107,7 @@ def _cad_partition(count: int, destination: Path):
 
 
 def _layout_bytes(count: int) -> bytes:
+    # ty: ignore[unresolved-import]
     import gdstk
 
     with TemporaryDirectory(prefix="phydrax-layout-benchmark-") as temporary:
@@ -500,7 +504,7 @@ def benchmark_hybrid_slab(resolution: int) -> dict[str, object]:
     }
 
 
-def _semantic_gmsh_specification(provider, partition):
+def _semantic_gmsh_specification(provider: Any, partition: Any) -> Any:
     source = partition.model
     whole = provider.whole_scope(source, 3)
     regions = tuple(
@@ -540,7 +544,7 @@ def _semantic_gmsh_specification(provider, partition):
     )
 
 
-def _semantic_gmsh_plan(provider, partition):
+def _semantic_gmsh_plan(provider: Any, partition: Any) -> Any:
     specification = _semantic_gmsh_specification(provider, partition)
     return specification, provider.plan(partition.model, specification)
 
@@ -624,7 +628,7 @@ def _benchmark_gmsh_semantic_case(
 
 
 def _repeated_case(
-    runner,
+    runner: Any,
     resolution: int,
     repeats: int,
     /,

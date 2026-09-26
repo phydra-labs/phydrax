@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -7,7 +9,9 @@ import phydrax as phx
 from phydrax.nn.operator.architectures.spectral._cno import _coordinate_features
 
 
-def _batch(values, axis, *, source_mask, query_mask, quadrature):
+def _batch(
+    values: Any, axis: Any, *, source_mask: Any, query_mask: Any, quadrature: Any
+) -> Any:
     source = phx.nn.operator.FunctionSamples(
         values=values,
         axes=(axis,),
@@ -25,7 +29,7 @@ def _batch(values, axis, *, source_mask, query_mask, quadrature):
     )
 
 
-def test_cno_masks_invalid_sources_before_lifting_and_zeros_invalid_queries():
+def test_cno_masks_invalid_sources_before_lifting_and_zeros_invalid_queries() -> None:
     nodes = jnp.arange(9, dtype="float64") / 9
     quadrature = jnp.linspace(0.5, 1.5, 9)
     axis = phx.nn.operator.OperatorAxis(
@@ -72,7 +76,7 @@ def test_cno_masks_invalid_sources_before_lifting_and_zeros_invalid_queries():
     assert nan_output[-1] == 0.0
 
 
-def test_cno_uniform_measure_full_support_matches_array_evaluation():
+def test_cno_uniform_measure_full_support_matches_array_evaluation() -> None:
     nodes = -1.0 + 2.0 * jnp.arange(11, dtype="float64") / 11
     axis = phx.nn.operator.OperatorAxis(
         "x",
@@ -105,7 +109,7 @@ def test_cno_uniform_measure_full_support_matches_array_evaluation():
     assert jnp.allclose(batch_output, array_output, atol=2e-6, rtol=2e-6)
 
 
-def test_periodic_coordinate_features_have_equal_interior_and_seam_chords():
+def test_periodic_coordinate_features_have_equal_interior_and_seam_chords() -> None:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.arange(13, dtype="float64") / 13,
@@ -143,7 +147,7 @@ def test_periodic_coordinate_features_have_equal_interior_and_seam_chords():
         phx.nn.operator.OperatorAxis("x", jnp.asarray([0.0]), periodic=True),
     ),
 )
-def test_cno_rejects_axes_outside_periodic_uniform_fourier_contract(axis):
+def test_cno_rejects_axes_outside_periodic_uniform_fourier_contract(axis: Any) -> None:
     model = phx.nn.operator.architectures.CNO(
         spatial_ndim=1,
         width=3,
@@ -168,7 +172,7 @@ def test_cno_rejects_axes_outside_periodic_uniform_fourier_contract(axis):
         model(batch)
 
 
-def test_cno_rejects_noncoincident_source_and_query_axes():
+def test_cno_rejects_noncoincident_source_and_query_axes() -> None:
     source_axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.arange(7, dtype="float64") / 7,
@@ -209,7 +213,7 @@ def test_cno_rejects_noncoincident_source_and_query_axes():
         model(batch)
 
 
-def test_cno_uses_circular_measure_layers_and_periodic_feature_width():
+def test_cno_uses_circular_measure_layers_and_periodic_feature_width() -> None:
     model = phx.nn.operator.architectures.CNO(
         spatial_ndim=2,
         in_channels=2,
@@ -223,7 +227,7 @@ def test_cno_uses_circular_measure_layers_and_periodic_feature_width():
     assert all(block.first.circular and block.second.circular for block in model.blocks)
 
 
-def test_cno_oversampled_activation_uses_explicit_periodic_spatial_axes():
+def test_cno_oversampled_activation_uses_explicit_periodic_spatial_axes() -> None:
     layer = phx.nn.operator.architectures.AntiAliasedConvND(
         spatial_ndim=1,
         in_channels=1,
@@ -241,7 +245,7 @@ def test_cno_oversampled_activation_uses_explicit_periodic_spatial_axes():
     assert jnp.all(jnp.isfinite(output))
 
 
-def test_cno_rejects_missing_physical_source_quadrature():
+def test_cno_rejects_missing_physical_source_quadrature() -> None:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.arange(7, dtype="float64") / 7,
@@ -274,7 +278,7 @@ def test_cno_rejects_missing_physical_source_quadrature():
         model(batch)
 
 
-def test_uno_transports_masked_measure_and_zeros_invalid_queries():
+def test_uno_transports_masked_measure_and_zeros_invalid_queries() -> None:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.arange(7, dtype="float64") / 7,

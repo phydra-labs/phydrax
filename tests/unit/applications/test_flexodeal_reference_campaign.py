@@ -5,6 +5,7 @@ import hashlib
 import json
 import tarfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -15,12 +16,12 @@ ROOT = Path(__file__).resolve().parents[3]
 FROZEN = ROOT / "tests/fixtures/flexodeal_0698e3d/reference_outputs"
 
 
-def _digest(path):
+def _digest(path: Any) -> Any:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def test_frozen_executable_packages_match_content_identified_manifest():
+def test_frozen_executable_packages_match_content_identified_manifest() -> None:
     manifest = json.loads((FROZEN / "manifest.json").read_text())
     payload = dict(manifest)
     content_id = payload.pop("content_id")
@@ -41,6 +42,7 @@ def test_frozen_executable_packages_match_content_identified_manifest():
         },
     ]
     for record in records:
+        # ty: ignore[unsupported-operator]
         archive_path = ROOT / record["path"]
         assert archive_path.stat().st_size == record["byte_count"]
         assert _digest(archive_path) == record["sha256"]
@@ -48,14 +50,16 @@ def test_frozen_executable_packages_match_content_identified_manifest():
             names = set(archive.getnames())
             assert set(record["retained_members"]) <= names
             source_record = json.load(
+                # ty: ignore[invalid-argument-type]
                 archive.extractfile(
+                    # ty: ignore[invalid-argument-type]
                     record.get("full_raw_artifact_inventory_member", "run-record.json")
                 )
             )
         assert source_record["content_id"] == record["source_record_content_id"]
 
 
-def test_reference_asset_rejects_same_size_content_tampering(tmp_path):
+def test_reference_asset_rejects_same_size_content_tampering(tmp_path: Any) -> None:
     path = tmp_path / "activation.dat"
     original = b"0.0 0.0\n1.0 1.0\n"
     path.write_bytes(original)
@@ -71,7 +75,7 @@ def test_reference_asset_rejects_same_size_content_tampering(tmp_path):
         verify_files(tmp_path, entries)
 
 
-def test_reference_asset_rejects_indirect_mutable_source(tmp_path):
+def test_reference_asset_rejects_indirect_mutable_source(tmp_path: Any) -> None:
     original = tmp_path / "source.dat"
     original.write_bytes(b"0 0\n")
     link = tmp_path / "reference.dat"
@@ -97,8 +101,8 @@ def test_reference_asset_rejects_indirect_mutable_source(tmp_path):
     ],
 )
 def test_reference_history_rejects_incomplete_or_invalid_output(
-    tmp_path, last_row, expected_error
-):
+    tmp_path: Any, last_row: Any, expected_error: Any
+) -> None:
     path = tmp_path / "force.csv"
     beginning = "Time [s],Total [N],Volume [m^3]\n0,0,1e-4\n0.01,1,1e-4\n"
     times = [0.0, 0.01, 0.02]

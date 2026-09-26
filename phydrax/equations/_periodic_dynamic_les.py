@@ -568,7 +568,10 @@ class PreparedPeriodicDynamicLES(StrictModule, NonTrainableState):
         dealiasing = self.closure_method.dealiasing
         evaluation = dealiasing.evaluation
         # Dealiasing keeps the tensor family of the periodic discretization.
-        assert isinstance(evaluation, TensorSpectralDiscretization)
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
         embedded = dealiasing.embed(live)
         physical_velocity = evaluation.reconstruct(embedded)
         resolved_gradient = jnp.stack(

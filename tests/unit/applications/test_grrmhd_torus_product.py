@@ -40,7 +40,7 @@ from phydrax.solver._grrmhd_source import GRRMHDImplicitSourcePlan
 from phydrax.units import KILOGRAM
 
 
-def test_kerr_torus_initialization_evolves_and_exports_fast_light_snapshot():
+def test_kerr_torus_initialization_evolves_and_exports_fast_light_snapshot() -> None:
     scale = RelativityScaleContract.geometric(KILOGRAM)
     convention = RelativityConvention.canonical()
     eos = GammaLawEOS(scale, 4.0 / 3.0, minimum_density=1.0e-12)
@@ -148,6 +148,7 @@ def test_kerr_torus_initialization_evolves_and_exports_fast_light_snapshot():
         runtime,
         evolved.state,
         stages[-1],
+        # ty: ignore[invalid-argument-type]
         axes,
         electron_mass_per_particle=1.0,
         caloric_temperature_scale=1.0,

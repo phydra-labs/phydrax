@@ -181,7 +181,10 @@ class CompiledChannelFlowDynamics(StrictModule):
         dealiasing = self.spatial_method.dealiasing
         evaluation = dealiasing.evaluation
         # Dealiasing keeps the tensor family of the channel discretization.
-        assert isinstance(evaluation, TensorSpectralDiscretization)
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
         padded = dealiasing.embed(value)
         velocity = evaluation.reconstruct(padded)
         derivatives = tuple(

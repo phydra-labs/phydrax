@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import copy
 from dataclasses import replace
+from typing import Any
 
 import jax.random as jr
 import pytest
@@ -16,7 +18,7 @@ pytest.importorskip("dp_accounting")
 pytest.importorskip("jax_privacy")
 
 
-def _prepared(*, epsilon: float = 3.0, iterations: int = 3):
+def _prepared(*, epsilon: float = 3.0, iterations: int = 3) -> Any:
     definition = phx.privacy.PrivacyDefinition(
         phx.privacy.PrivacyUnit("operator-case"),
         phx.privacy.NeighboringRelation.ADD_OR_REMOVE_ONE,
@@ -41,7 +43,7 @@ def _prepared(*, epsilon: float = 3.0, iterations: int = 3):
     )
 
 
-def test_accounting_event_certificate_and_release_ledger_are_content_verified():
+def test_accounting_event_certificate_and_release_ledger_are_content_verified() -> None:
     prepared = _prepared()
     trace = prepared.trace(3)
     event = phx.privacy.dp_event_from_record(trace.event_record)
@@ -95,7 +97,9 @@ def test_accounting_event_certificate_and_release_ledger_are_content_verified():
         phx.privacy.PrivacyReleaseLedger.from_record(charged.to_record())
     fork_record = copy.deepcopy(charged.to_record())
     fork_record.pop("ledger_id")
+    # ty: ignore[not-subscriptable]
     fork_record["receipts"][0].pop("receipt_id")
+    # ty: ignore[not-subscriptable]
     fork_record["receipts"][0]["release_root_id"] = "forked-root"
     with pytest.raises(ValueError, match="monotonically extend"):
         phx.privacy.PrivacyReleaseLedger.from_record(fork_record, previous=charged)
@@ -117,7 +121,7 @@ def test_accounting_event_certificate_and_release_ledger_are_content_verified():
         replace(certificate, guarantee=forged_guarantee)
 
 
-def test_privacy_records_reject_coerced_counts_and_flags():
+def test_privacy_records_reject_coerced_counts_and_flags() -> None:
     prepared = _prepared()
     definition_record = prepared.training_plan.scope.definition.to_record()
     definition_record.pop("definition_id")
@@ -126,12 +130,13 @@ def test_privacy_records_reject_coerced_counts_and_flags():
         phx.privacy.PrivacyDefinition.from_record(definition_record)
 
     with pytest.raises(TypeError, match="repetitions must be an integer"):
+        # ty: ignore[invalid-argument-type]
         phx.privacy.MechanismTrace(prepared.per_step_trace.event_json, 1.5)
     with pytest.raises(TypeError, match="iterations must be an integer"):
         replace(prepared.training_plan.mechanism, iterations=1.5)
 
 
-def test_private_plan_rejects_mismatched_definition_and_unsafe_policies():
+def test_private_plan_rejects_mismatched_definition_and_unsafe_policies() -> None:
     definition = phx.privacy.PrivacyDefinition(
         phx.privacy.PrivacyUnit("subject"),
         phx.privacy.NeighboringRelation.REPLACE_ONE,

@@ -779,7 +779,10 @@ def plan_force_density(
     )
     if derivative_policy is None and uses_setup:
         # uses_setup is only set for NewtonKrylov/NewtonTrustRegion methods.
-        assert isinstance(method, (NewtonKrylov, NewtonTrustRegion))
+        if not (isinstance(method, (NewtonKrylov, NewtonTrustRegion))):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(method, (NewtonKrylov, NewtonTrustRegion))."
+            )
         derivative_linear_policy = eqx.tree_at(
             lambda selected: selected.preconditioning,
             method.linear_policy,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -40,8 +43,8 @@ from phydrax.solver._dark_sector_epoch_runtime import (
 )
 
 
-def test_centered_first_gradient_poisson_bracket_converges_at_second_order():
-    def error(node_count):
+def test_centered_first_gradient_poisson_bracket_converges_at_second_order() -> None:
+    def error(node_count: Any) -> Any:
         coordinates = np.arange(node_count) * (2.0 * np.pi / node_count)
         x, p = np.meshgrid(coordinates, coordinates, indexing="ij")
         left = np.sin(x) * np.cos(p)
@@ -57,7 +60,7 @@ def test_centered_first_gradient_poisson_bracket_converges_at_second_order():
     assert fine < coarse / 3.5
 
 
-def _units_and_frame():
+def _units_and_frame() -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 3, 2, 1)
     units = RelativisticUnitContract(
         scale, RelativityConvention(metric_signature="mostly_minus")
@@ -99,7 +102,7 @@ def _units_and_frame():
     )
 
 
-def _plans():
+def _plans() -> Any:
     units, frame = _units_and_frame()
     species = (
         DarkSectorSpeciesPlan(
@@ -160,7 +163,9 @@ def _plans():
     )
 
 
-def test_fixed_depth_memory_is_solvable_reports_initial_tail_and_restarts_exactly():
+def test_fixed_depth_memory_is_solvable_reports_initial_tail_and_restarts_exactly() -> (
+    None
+):
     off_shell, plan = _plans()
     runtime = empty_dark_sector_epoch_state(plan.epoch, epoch_sequence=0)
     state = breit_wigner_off_shell_state(
@@ -232,7 +237,7 @@ def test_fixed_depth_memory_is_solvable_reports_initial_tail_and_restarts_exactl
     assert int(continued_memory.epoch_sequence) == 1
 
 
-def test_invalid_kb_candidate_rolls_back_state_and_memory_transactionally():
+def test_invalid_kb_candidate_rolls_back_state_and_memory_transactionally() -> None:
     off_shell, plan = _plans()
     runtime = empty_dark_sector_epoch_state(plan.epoch, epoch_sequence=0)
     state = breit_wigner_off_shell_state(

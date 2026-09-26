@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -9,8 +12,8 @@ import pytest
 import phydrax as phx
 
 
-def _quadratic_functional():
-    def density(fields, geometry, context):
+def _quadratic_functional() -> Any:
+    def density(fields: Any, geometry: Any, context: Any) -> Any:
         del geometry, context
         return 0.5 * fields["u"].value ** 2
 
@@ -29,7 +32,7 @@ def _quadratic_functional():
     )
 
 
-def test_domain_function_binding_executes_portable_functional():
+def test_domain_function_binding_executes_portable_functional() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     coordinate = domain.Function("x")(lambda x: x[0])
     field = domain.Parameter(2.0) * coordinate
@@ -50,7 +53,7 @@ def test_domain_function_binding_executes_portable_functional():
     assert jnp.allclose(solver.loss(key=jr.key(0)), 2.0 / 3.0, atol=1.0e-12)
 
 
-def test_domain_function_binding_validates_field_and_region_maps():
+def test_domain_function_binding_validates_field_and_region_maps() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Function("x")(lambda x: x[0])
     target = phx.integration.over(domain.component())
@@ -69,7 +72,7 @@ def test_domain_function_binding_validates_field_and_region_maps():
         )
 
 
-def test_boundary_normal_accepts_density_wrapped_component_target():
+def test_boundary_normal_accepts_density_wrapped_component_target() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     boundary = domain.component({"x": phx.domain.Boundary()})
     field = domain.Function("x")(lambda x: x[0])
@@ -107,7 +110,7 @@ def test_boundary_normal_accepts_density_wrapped_component_target():
     assert len(terms) == 1
 
 
-def test_boundary_normal_rejects_component_sum_target_with_contract_error():
+def test_boundary_normal_rejects_component_sum_target_with_contract_error() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     left = domain.component(
         {"x": phx.domain.Boundary()}, where={"x": lambda point: point[0] < 0.5}

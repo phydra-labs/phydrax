@@ -353,7 +353,10 @@ def _validate_physical_exchange(
         source_unit = source.measure_unit
         target_unit = target.measure_unit
         # CouplingPort construction requires a UnitDefinition for measured ports.
-        assert source_unit is not None and target_unit is not None
+        if not (source_unit is not None and target_unit is not None):
+            raise RuntimeError(
+                "Internal invariant failed: source_unit is not None and target_unit is not None."
+            )
         if (
             source_unit.dimension != target_unit.dimension
             or source_unit.reference_system_id != target_unit.reference_system_id
@@ -414,7 +417,10 @@ def _validate_physical_exchange(
             source_unit = source.measure_unit
             target_unit = target.measure_unit
             # CouplingPort construction requires a UnitDefinition for measured ports.
-            assert source_unit is not None and target_unit is not None
+            if not (source_unit is not None and target_unit is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: source_unit is not None and target_unit is not None."
+                )
 
             # One transposed operator action proves the measure pairing without a
             # dense transfer matrix or a basis-by-basis allocation.

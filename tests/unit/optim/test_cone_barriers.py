@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_builtin_cone_barriers_have_finite_symmetric_hessians():
+def test_builtin_cone_barriers_have_finite_symmetric_hessians() -> None:
     cases = (
         (phx.optim.NonnegativeCone(2), jnp.asarray([1.0, 2.0])),
         (phx.optim.SecondOrderCone(3), jnp.asarray([2.0, 0.2, -0.1])),
@@ -31,7 +31,7 @@ def test_builtin_cone_barriers_have_finite_symmetric_hessians():
         assert step > 0.0
 
 
-def test_batched_cone_differentials_are_independent_per_leading_index():
+def test_batched_cone_differentials_are_independent_per_leading_index() -> None:
     psd = phx.optim.PositiveSemidefiniteCone(2)
     cases = (
         (phx.optim.SecondOrderCone(3), jnp.asarray([2.0, 0.2, -0.1])),
@@ -78,7 +78,7 @@ def test_batched_cone_differentials_are_independent_per_leading_index():
             assert jnp.allclose(actions[index], expected_hessian @ vector, atol=1e-6)
 
 
-def test_batched_product_cone_interior_steps_are_independent():
+def test_batched_product_cone_interior_steps_are_independent() -> None:
     cone = phx.optim.ProductCone(
         (phx.optim.NonnegativeCone(1), phx.optim.NonnegativeCone(1))
     )
@@ -92,7 +92,7 @@ def test_batched_product_cone_interior_steps_are_independent():
     assert jnp.allclose(step, 0.995 * jnp.asarray([1.0, 2.0, 4.0]), atol=1e-5)
 
 
-def test_native_homogeneous_predictor_corrector_recovers_qp_solution():
+def test_native_homogeneous_predictor_corrector_recovers_qp_solution() -> None:
     program = phx.optim.ConicProgram(
         jnp.asarray([[1.0]]),
         jnp.asarray([-1.0]),
@@ -117,7 +117,7 @@ def test_native_homogeneous_predictor_corrector_recovers_qp_solution():
     assert result.provenance.backend_version == "native-jax-hsd"
 
 
-def test_soc_and_psd_barriers_reject_points_outside_positive_cone_branches():
+def test_soc_and_psd_barriers_reject_points_outside_positive_cone_branches() -> None:
     soc = phx.optim.cone_barrier_oracle(phx.optim.SecondOrderCone(2))
     psd_cone = phx.optim.PositiveSemidefiniteCone(2)
     psd = phx.optim.cone_barrier_oracle(psd_cone)
@@ -128,7 +128,7 @@ def test_soc_and_psd_barriers_reject_points_outside_positive_cone_branches():
     assert jnp.all(jnp.isnan(psd.hessian(psd_cone.pack(-jnp.eye(2)))))
 
 
-def test_product_cone_normalizes_nested_and_empty_products():
+def test_product_cone_normalizes_nested_and_empty_products() -> None:
     nested = phx.optim.ProductCone(
         (
             phx.optim.NonnegativeCone(1),
@@ -144,7 +144,7 @@ def test_product_cone_normalizes_nested_and_empty_products():
     assert isinstance(empty.cones[0], phx.optim.ZeroCone)
 
 
-def test_safeguarded_root_uses_final_bracket_residual_scale():
+def test_safeguarded_root_uses_final_bracket_residual_scale() -> None:
     from phydrax.optim._programming._cone_root import safeguarded_newton_bisection
 
     result = safeguarded_newton_bisection(
@@ -154,7 +154,9 @@ def test_safeguarded_root_uses_final_bracket_residual_scale():
         ),
         jnp.asarray(1000.0),
         jnp.asarray(1001.0),
+        # ty: ignore[invalid-argument-type]
         absolute_tolerance=0.0,
+        # ty: ignore[invalid-argument-type]
         relative_tolerance=0.2,
         maximum_steps=3,
     )

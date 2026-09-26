@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +20,7 @@ import phydrax as phx
 from benchmarks._runtime import measure_synchronized
 
 
-def _state_problem():
+def _state_problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.linspace(0.25, 2.0, 8),
         jnp.sin(jnp.linspace(0.25, 2.0, 8))[:, None],
@@ -57,11 +58,11 @@ def _state_problem():
     )
 
 
-def _timed(function):
+def _timed(function: Any) -> Any:
     return measure_synchronized(function)
 
 
-def run_sequence_inference_benchmarks(*, quick: bool = False):
+def run_sequence_inference_benchmarks(*, quick: bool = False) -> Any:
     optimization_steps = 20 if quick else 200
     posterior = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _case():
+def _case() -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(12, periodic=True, endpoint=False)
@@ -51,7 +53,7 @@ def _case():
     return compiled, arguments, initial
 
 
-def test_adaptive_mpm_retries_transactionally_and_builds_realized_mesh():
+def test_adaptive_mpm_retries_transactionally_and_builds_realized_mesh() -> None:
     compiled, arguments, initial = _case()
     plan = phx.solver.AdaptiveMPMRolloutPlan(
         compiled.dynamics,
@@ -88,7 +90,7 @@ def test_adaptive_mpm_retries_transactionally_and_builds_realized_mesh():
         np.testing.assert_allclose(adaptive, scheduled, rtol=1e-11, atol=1e-11)
 
 
-def test_adaptive_mpm_reports_step_capacity_without_partial_failure():
+def test_adaptive_mpm_reports_step_capacity_without_partial_failure() -> None:
     compiled, arguments, initial = _case()
     plan = phx.solver.AdaptiveMPMRolloutPlan(
         compiled.dynamics,

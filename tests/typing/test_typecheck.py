@@ -19,7 +19,7 @@ _CASES = tuple(sorted((Path(__file__).parent / "cases").glob("*.py")))
 
 
 @pytest.mark.typecheck
-def test_pinned_ty_matches_every_fixture_expectation():
+def test_pinned_ty_matches_every_fixture_expectation() -> None:
     verify_pinned(_ROOT, "ty")
     assert _CASES
     result = run_tool(

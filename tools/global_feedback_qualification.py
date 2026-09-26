@@ -14,6 +14,7 @@ import argparse
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -61,19 +62,21 @@ RESPONSE_TOLERANCES = {
 REQUIRED_SENSITIVITIES = ("half_dt", "higher_resolution", "half_filter_rate")
 
 
-def _checkpoint_path(directory, scenario, bandlimit, dt, filter_days):
+def _checkpoint_path(
+    directory: Any, scenario: Any, bandlimit: Any, dt: Any, filter_days: Any
+) -> Any:
     return Path(directory) / f"{scenario}-L{bandlimit}-dt{dt:g}-filter{filter_days:g}.npz"
 
 
 def make_model(
     *,
-    scenario="baseline",
-    bandlimit=6,
-    levels=4,
-    dt=300.0,
-    filter_days=2.0,
-    initialization="flux-preconditioned",
-):
+    scenario: Any = "baseline",
+    bandlimit: Any = 6,
+    levels: Any = 4,
+    dt: Any = 300.0,
+    filter_days: Any = 2.0,
+    initialization: Any = "flux-preconditioned",
+) -> Any:
     """Declared synthetic parameters, not a calibrated terrestrial climatology."""
     greenhouse, solar, capacity = SCENARIOS[scenario]
     thermo = MoistThermodynamicPlan()
@@ -219,7 +222,7 @@ def make_model(
     return model, current, evidence
 
 
-def snapshot(model, continuation):
+def snapshot(model: Any, continuation: Any) -> Any:
     """Resolved diagnostics using native quadrature, operators and modal layout."""
     state = continuation.state
     view = model.view(state)
@@ -348,13 +351,20 @@ def snapshot(model, continuation):
 
 
 @eqx.filter_jit
-def native_chunk(model, continuation, *, steps_per_sample, samples, spinup_time=0.0):
+def native_chunk(
+    model: Any,
+    continuation: Any,
+    *,
+    steps_per_sample: Any,
+    samples: Any,
+    spinup_time: Any = 0.0,
+) -> Any:
     """Only native model.advance inside compiled scans; no alternate state/solver."""
 
-    def sample(current, _):
+    def sample(current: Any, _: Any) -> Any:
         sample_start = current.time
 
-        def step(carry, _):
+        def step(carry: Any, _: Any) -> Any:
             result = model.advance(carry)
             return result.continuation, result.evidence
 
@@ -488,7 +498,9 @@ def native_chunk(model, continuation, *, steps_per_sample, samples, spinup_time=
     return jax.lax.scan(sample, continuation, None, length=samples)
 
 
-def block_statistics(times_days, values, *, spinup_days, block_days):
+def block_statistics(
+    times_days: Any, values: Any, *, spinup_days: Any, block_days: Any
+) -> Any:
     """Nonoverlapping batch means; incomplete final blocks are excluded explicitly."""
     times, values = np.asarray(times_days), np.asarray(values)
     selected = times > spinup_days
@@ -545,18 +557,18 @@ def block_statistics(times_days, values, *, spinup_days, block_days):
 
 
 def deterministic_equilibrium_assessment(
-    statistics,
-    last_record,
+    statistics: Any,
+    last_record: Any,
     *,
-    numerical_accounting,
-    radiative_equilibrium,
-    duration_adequate,
-    temperature_change_k,
-    flux_change_w_m2,
-    endpoint_flux_w_m2,
-    eke_change_m2_s2,
-    precipitation_change_kg_m2_s,
-):
+    numerical_accounting: Any,
+    radiative_equilibrium: Any,
+    duration_adequate: Any,
+    temperature_change_k: Any,
+    flux_change_w_m2: Any,
+    endpoint_flux_w_m2: Any,
+    eke_change_m2_s2: Any,
+    precipitation_change_kg_m2_s: Any,
+) -> Any:
     """Qualify a near-fixed equilibrium without inventing independent samples."""
     limits = {
         "sst_k": temperature_change_k,
@@ -602,7 +614,7 @@ def deterministic_equilibrium_assessment(
     }
 
 
-def _bitwise(left, right):
+def _bitwise(left: Any, right: Any) -> Any:
     return all(
         np.array_equal(np.asarray(a), np.asarray(b))
         for a, b in zip(
@@ -613,26 +625,26 @@ def _bitwise(left, right):
 
 def qualify(
     *,
-    scenario,
-    bandlimit,
-    levels,
-    dt,
-    filter_days,
-    days,
-    spinup_days,
-    sample_days,
-    block_days,
-    chunk_samples,
-    maximum_drift_w_m2,
-    deterministic_temperature_change_k=0.2,
-    deterministic_flux_change_w_m2=0.5,
-    deterministic_endpoint_flux_w_m2=0.1,
-    deterministic_eke_change_m2_s2=0.01,
-    deterministic_precipitation_change_kg_m2_s=1e-7,
-    checkpoint_dir=None,
-    initialization="flux-preconditioned",
-    resume_checkpoint=None,
-):
+    scenario: Any,
+    bandlimit: Any,
+    levels: Any,
+    dt: Any,
+    filter_days: Any,
+    days: Any,
+    spinup_days: Any,
+    sample_days: Any,
+    block_days: Any,
+    chunk_samples: Any,
+    maximum_drift_w_m2: Any,
+    deterministic_temperature_change_k: Any = 0.2,
+    deterministic_flux_change_w_m2: Any = 0.5,
+    deterministic_endpoint_flux_w_m2: Any = 0.1,
+    deterministic_eke_change_m2_s2: Any = 0.01,
+    deterministic_precipitation_change_kg_m2_s: Any = 1e-7,
+    checkpoint_dir: Any = None,
+    initialization: Any = "flux-preconditioned",
+    resume_checkpoint: Any = None,
+) -> Any:
     steps_per_sample = round(sample_days * DAY / dt)
     samples_total = round(days / sample_days)
     samples_per_block = round(block_days / sample_days)
@@ -864,6 +876,7 @@ def qualify(
         execution
         and finite
         and exact_restart
+        # ty: ignore[invalid-argument-type]
         and abs(drift) <= maximum_drift_w_m2
         and peak_drift <= maximum_drift_w_m2
     )
@@ -1122,16 +1135,16 @@ def qualify(
 
 
 def compare(
-    left,
-    right,
+    left: Any,
+    right: Any,
     *,
-    sensitivity_pairs=None,
-    tolerances=None,
-    maximum_response_sensitivity_fraction=0.25,
-    maximum_filter_work_w_m2=0.1,
-    target_signal_w_m2=1.0,
-    maximum_filter_signal_fraction=0.1,
-):
+    sensitivity_pairs: Any = None,
+    tolerances: Any = None,
+    maximum_response_sensitivity_fraction: Any = 0.25,
+    maximum_filter_work_w_m2: Any = 0.1,
+    target_signal_w_m2: Any = 1.0,
+    maximum_filter_signal_fraction: Any = 0.1,
+) -> Any:
     """Measured paired-response robustness, not a rigorous continuum-error bound.
 
     Statistical significance alone never licenses a physical-response claim.
@@ -1160,7 +1173,7 @@ def compare(
             "Sensitivity and filter fractions must be smaller than the declared signal."
         )
 
-    def difference(a, b, key):
+    def difference(a: Any, b: Any, key: Any) -> Any:
         first, second = a["statistics"][key], b["statistics"][key]
         if first["mean"] is None or second["mean"] is None:
             return None, None, False
@@ -1174,7 +1187,7 @@ def compare(
         maximum_filter_work_w_m2, target_signal_w_m2 * maximum_filter_signal_fraction
     )
 
-    def filter_budget(a, b):
+    def filter_budget(a: Any, b: Any) -> Any:
         first, second = a["production_filter_work_w_m2"], b["production_filter_work_w_m2"]
         first_abs = a["production_absolute_filter_work_w_m2"]
         second_abs = b["production_absolute_filter_work_w_m2"]
@@ -1195,6 +1208,7 @@ def compare(
                 "filter work prevents signed/channel cancellation."
             ),
             "within_declared_budget": bool(
+                # ty: ignore[invalid-argument-type]
                 finite and maximum <= filter_limit and abs(contrast) <= filter_limit
             ),
         }
@@ -1266,7 +1280,7 @@ def compare(
     return results
 
 
-def json_ready(value):
+def json_ready(value: Any) -> Any:
     """Report nonfinite measurements as null, without turning a failed gate green."""
     if isinstance(value, dict):
         return {key: json_ready(item) for key, item in value.items()}
@@ -1277,7 +1291,7 @@ def json_ready(value):
     return value
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,7 +15,7 @@ from phydrax.meshing._coupling import (
 )
 
 
-def _part(name, coordinates=None, cells=None):
+def _part(name: Any, coordinates: Any = None, cells: Any = None) -> Any:
     points = (
         np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
         if coordinates is None
@@ -30,7 +32,7 @@ def _part(name, coordinates=None, cells=None):
     )
 
 
-def test_conformal_bijection_maps_global_ids_and_rejects_stale_endpoint():
+def test_conformal_bijection_maps_global_ids_and_rejects_stale_endpoint() -> None:
     source = _part("left")
     target = _part("right", ((1.0, 0.0), (0.0, 0.0), (0.0, 1.0)), ((1, 0, 2),))
     source_scope, target_scope = source.scope(0, [0, 1]), target.scope(0, [0, 1])
@@ -50,7 +52,7 @@ def test_conformal_bijection_maps_global_ids_and_rejects_stale_endpoint():
         )
 
 
-def test_periodic_isometry_transports_vectors_not_just_scalar_values():
+def test_periodic_isometry_transports_vectors_not_just_scalar_values() -> None:
     source = _part("source")
     rotation = np.asarray(((0.0, -1.0), (1.0, 0.0)))
     translation = np.asarray((2.0, 1.0))
@@ -80,7 +82,7 @@ def test_periodic_isometry_transports_vectors_not_just_scalar_values():
         )
 
 
-def test_node_contact_activation_and_equal_opposite_differentiable_forces():
+def test_node_contact_activation_and_equal_opposite_differentiable_forces() -> None:
     source = _part("source")
     target = _part("target", np.asarray(source.carrier.mesh.coordinates) - [0.0, 0.1])
     coupling = ContactCoupling(
@@ -102,7 +104,7 @@ def test_node_contact_activation_and_equal_opposite_differentiable_forces():
     np.testing.assert_allclose(derivative, np.tile([0.0, -10.0], (3, 1)))
 
 
-def test_overset_interpolates_constants_and_linear_values_with_exact_transpose():
+def test_overset_interpolates_constants_and_linear_values_with_exact_transpose() -> None:
     source = _part("donor")
     target = _part("receptor", ((0.25, 0.25), (0.5, 0.25), (0.25, 0.5)))
     overlay = OversetCoupling(
@@ -140,7 +142,9 @@ def test_overset_interpolates_constants_and_linear_values_with_exact_transpose()
         MeshAssembly((source, target, duplicate_donor), couplings=(overlay, duplicate))
 
 
-def test_overset_rejects_nonpartition_weights_unknown_donors_and_conflicting_holes():
+def test_overset_rejects_nonpartition_weights_unknown_donors_and_conflicting_holes() -> (
+    None
+):
     source, target = _part("source"), _part("target")
     args = (source, target, source.scope(0, [0, 1]), target.scope(0, [0]))
     with pytest.raises(ValueError, match="summing to one"):

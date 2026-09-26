@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,10 +12,10 @@ import pytest
 import phydrax as phx
 
 
-def _scaled_decay_problem(scale: float, rate: float = 2.0):
+def _scaled_decay_problem(scale: float, rate: float = 2.0) -> Any:
     initial = jnp.asarray([1.0, scale])
 
-    def drift(time, state, runtime_rate):
+    def drift(time: Any, state: Any, runtime_rate: Any) -> Any:
         del time
         return -runtime_rate * state
 
@@ -26,7 +29,7 @@ def _scaled_decay_problem(scale: float, rate: float = 2.0):
     )
 
 
-def _controller():
+def _controller() -> Any:
     return phx.solver.RosenbrockAdaptivePolicy(
         relative_tolerance=1.0e-4,
         absolute_tolerance=1.0e-10,
@@ -37,14 +40,14 @@ def _controller():
     )
 
 
-def _grid(identifier: str = "replay-grid"):
+def _grid(identifier: str = "replay-grid") -> Any:
     return phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.5, 1.0]),
         time_id=identifier,
     )
 
 
-def test_adaptive_rosenbrock_wrms_is_covariant_to_component_scale():
+def test_adaptive_rosenbrock_wrms_is_covariant_to_component_scale() -> None:
     unit = phx.solver.solve_rosenbrock(
         _scaled_decay_problem(1.0),
         _grid("wrms-unit"),
@@ -71,7 +74,7 @@ def test_adaptive_rosenbrock_wrms_is_covariant_to_component_scale():
     assert scaled_adequacy.maximum_error_ratio <= 1.0
 
 
-def test_scheduled_rosenbrock_replays_differentiates_and_refreshes_explicitly():
+def test_scheduled_rosenbrock_replays_differentiates_and_refreshes_explicitly() -> None:
     problem = _scaled_decay_problem(10.0)
     prepared = phx.solver.prepare_rosenbrock(
         problem,
@@ -94,9 +97,10 @@ def test_scheduled_rosenbrock_replays_differentiates_and_refreshes_explicitly():
     assert not replayed.temporal_mesh.adaptive
     assert scheduled.temporal_mesh.interval_count == int(source.stats["accepted_steps"])
     assert jnp.allclose(replayed.states, source.states, rtol=2e-6, atol=2e-8)
+    # ty: ignore[unresolved-attribute]
     assert replayed.temporal_evidence.differentiation.checkpointing == "chunked-replay"
 
-    def terminal(rate):
+    def terminal(rate: Any) -> Any:
         return phx.solver.solve_scheduled_rosenbrock(
             scheduled,
             args=rate,
@@ -133,7 +137,7 @@ def test_scheduled_rosenbrock_replays_differentiates_and_refreshes_explicitly():
     assert refreshed.record_point_id != scheduled.record_point_id
 
 
-def test_scheduled_rosenbrock_rejects_incompatible_sources_and_inputs():
+def test_scheduled_rosenbrock_rejects_incompatible_sources_and_inputs() -> None:
     prepared = phx.solver.prepare_rosenbrock(
         _scaled_decay_problem(1.0),
         _grid("compatible"),

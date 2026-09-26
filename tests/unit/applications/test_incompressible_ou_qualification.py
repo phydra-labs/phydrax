@@ -3,7 +3,7 @@ import math
 from tools.incompressible_ou_qualification import qualification
 
 
-def test_ou_forced_etdrk_qualification_closes_every_declared_gate():
+def test_ou_forced_etdrk_qualification_closes_every_declared_gate() -> None:
     evidence = qualification(sample_count=512, stationary_steps=48)
 
     assert evidence["passed"]
@@ -16,11 +16,17 @@ def test_ou_forced_etdrk_qualification_closes_every_declared_gate():
         "stationary_energy_budget_and_block_uncertainty": True,
         "fixed_realization_jvp_vjp": True,
     }
+    # ty: ignore[not-subscriptable]
     assert evidence["coefficient_covariance_and_subdivision"]["sample_count"] == 512
+    # ty: ignore[not-subscriptable]
     assert evidence["logical_randomness"]["maximum_sharding_difference"] == 0.0
     assert (
+        # ty: ignore[not-subscriptable]
         evidence["fluid_temporal_refinement_and_restart"]["restart_forcing_error"] == 0.0
     )
+    # ty: ignore[not-subscriptable]
     assert evidence["stationary_energy_budget_and_block_uncertainty"]["block_count"] >= 2
+    # ty: ignore[not-subscriptable]
     assert math.isfinite(evidence["fixed_realization_jvp_vjp"]["jvp"])
+    # ty: ignore[not-subscriptable]
     assert math.isfinite(evidence["fixed_realization_jvp_vjp"]["vjp"])

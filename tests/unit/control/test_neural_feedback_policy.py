@@ -4,6 +4,8 @@
 
 """Learned state feedback in the control-parameterization decision slot."""
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -23,7 +25,7 @@ from tests._control_systems import make_discrete_control_dynamics
 from tests._ported_models import full_port, in_order, PortedAffine
 
 
-def _network(in_size=2, out_size=1, seed=0):
+def _network(in_size: Any = 2, out_size: Any = 1, seed: Any = 0) -> Any:
     return MLP(
         in_size=in_size,
         out_size=out_size,
@@ -33,7 +35,7 @@ def _network(in_size=2, out_size=1, seed=0):
     )
 
 
-def test_policy_is_jittable_vmappable_and_requires_the_state():
+def test_policy_is_jittable_vmappable_and_requires_the_state() -> None:
     network = _network()
     policy = NeuralFeedbackPolicy(
         network, state_shape=(2,), control_shape=(1,), policy_id="neural"
@@ -60,7 +62,7 @@ def test_policy_is_jittable_vmappable_and_requires_the_state():
         policy.evaluate(jnp.ones((2,)), 0.25, state=states[0])
 
 
-def test_policy_sizes_and_binding_are_exact():
+def test_policy_sizes_and_binding_are_exact() -> None:
     with pytest.raises(ValueError, match="in_size must be 3"):
         NeuralFeedbackPolicy(
             _network(),
@@ -88,7 +90,7 @@ def test_policy_sizes_and_binding_are_exact():
     assert contract.slot_semantic_id == AbstractControlParameterization.slot_semantic_id
 
 
-def test_port_declaring_policy_binds_only_to_declared_owner_ports():
+def test_port_declaring_policy_binds_only_to_declared_owner_ports() -> None:
     owner = phx.ModelPorts(
         inputs=(full_port("plant.state", (2,)), full_port("plant.time", ())),
         outputs=(full_port("plant.control", (1,)),),
@@ -98,26 +100,35 @@ def test_port_declaring_policy_binds_only_to_declared_owner_ports():
         state_shape=(2,), control_shape=(1,), policy_id="ported", time_input=True
     )
     with pytest.raises(ValueError, match="parameterization'.*owner_ports"):
+        # ty: ignore[invalid-argument-type]
         NeuralFeedbackPolicy(model, **arguments)
     with pytest.raises(ValueError, match="event shapes"):
         NeuralFeedbackPolicy(
             model,
+            # ty: ignore[invalid-argument-type]
             **arguments,
             ports=phx.ModelPorts(inputs=owner.inputs[:1], outputs=owner.outputs),
         )
 
     policy = NeuralFeedbackPolicy(
-        model, **arguments, ports=owner, port_mapping=in_order(owner, owner)
+        model,
+        # ty: ignore[invalid-argument-type]
+        **arguments,
+        ports=owner,
+        port_mapping=in_order(owner, owner),
     )
     evidence = policy.component_contract().port_binding
+    # ty: ignore[unresolved-attribute]
     assert evidence.inputs == tuple((port.port_id,) * 2 for port in owner.inputs)
+    # ty: ignore[unresolved-attribute]
     assert evidence.outputs == ((owner.outputs[0].port_id,) * 2,)
+    # ty: ignore[unresolved-attribute]
     assert evidence.unverified == ()
     value = policy.evaluate(jnp.asarray(0.0), 0.5, state=jnp.asarray([1.0, 1.0]))
     np.testing.assert_allclose(value, [1.0 - 2.0 + 0.25])
 
 
-def test_rollout_trains_only_the_policy_network():
+def test_rollout_trains_only_the_policy_network() -> None:
     grid = TimeGrid(jnp.linspace(0.0, 1.0, 5), time_id="time:neural-feedback")
     dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + 0.25 * control,
@@ -153,7 +164,7 @@ def test_rollout_trains_only_the_policy_network():
         id(leaf) for leaf in jax.tree.leaves(eqx.filter(policy.model, eqx.is_array))
     }
 
-    def loss(parameters):
+    def loss(parameters: Any) -> Any:
         bound = phx.combine_parameters(parameters, model_state, fixed)
         return problem.evaluate(bound, token).sampled_loss.total
 

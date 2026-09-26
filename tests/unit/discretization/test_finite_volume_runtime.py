@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -11,14 +14,14 @@ import phydrax as phx
 
 
 def _runtime(
-    cells=64,
+    cells: Any = 64,
     *,
-    cfl=0.4,
-    retries=4,
-    source=None,
-    mapped=False,
-    interface_solver=None,
-):
+    cfl: Any = 0.4,
+    retries: Any = 4,
+    source: Any = None,
+    mapped: Any = False,
+    interface_solver: Any = None,
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cells),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -58,6 +61,7 @@ def _runtime(
     )
     compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         compiled.dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(
@@ -76,14 +80,14 @@ def _runtime(
     return runtime, system.primitive_to_conserved(primitive)
 
 
-def _assert_exact_journal(left, right):
+def _assert_exact_journal(left: Any, right: Any) -> None:
     assert left.journal_id == right.journal_id
     assert left.to_archive_record() == right.to_archive_record()
     for name, left_array in left.archive_arrays().items():
         np.testing.assert_array_equal(left_array, right.archive_arrays()[name])
 
 
-def test_einfeldt_fallback_is_consistent_and_has_finite_bounds():
+def test_einfeldt_fallback_is_consistent_and_has_finite_bounds() -> None:
     system = phx.equations.EulerSystem()
     state = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, 1.0]]))
     result = phx.discretization.EinfeldtHLLFluxPlan().face_flux(system, state, state, 0)
@@ -93,7 +97,7 @@ def test_einfeldt_fallback_is_consistent_and_has_finite_bounds():
     assert jnp.all(jnp.isfinite(result.max_speed))
 
 
-def test_global_flux_blending_preserves_conservation_and_admissibility():
+def test_global_flux_blending_preserves_conservation_and_admissibility() -> None:
     system = phx.equations.EulerSystem()
     fallback = system.primitive_to_conserved(
         jnp.asarray([[1.0, 0.0, 1.0], [1.0, 0.0, 1.0]])
@@ -111,7 +115,7 @@ def test_global_flux_blending_preserves_conservation_and_admissibility():
     )
 
 
-def test_runtime_initialization_binds_static_content_and_round_trips_averages():
+def test_runtime_initialization_binds_static_content_and_round_trips_averages() -> None:
     runtime, average = _runtime(cells=20)
     state = runtime.initialize_state(average, 0.25, 0.001)
     volumes = runtime.dynamics.effective_volumes.reshape((-1,))
@@ -153,7 +157,7 @@ def test_runtime_initialization_binds_static_content_and_round_trips_averages():
     )
 
 
-def test_runtime_accepts_admissible_step_and_advances_state_atomically():
+def test_runtime_accepts_admissible_step_and_advances_state_atomically() -> None:
     runtime, state = _runtime()
     initial = runtime.initialize_state(state, 0.0, 0.002)
     result = runtime.advance(initial)
@@ -220,7 +224,7 @@ def test_runtime_accepts_admissible_step_and_advances_state_atomically():
     )
 
 
-def test_runtime_rejects_invalid_initial_state_without_mutating_content():
+def test_runtime_rejects_invalid_initial_state_without_mutating_content() -> None:
     runtime, state = _runtime(retries=1)
     invalid = state.at[0, 0].set(-1.0)
     initial = runtime.initialize_state(invalid, 0.0, 0.01)
@@ -270,7 +274,7 @@ def test_runtime_rejects_invalid_initial_state_without_mutating_content():
     )
 
 
-def test_runtime_step_is_jittable_and_status_is_bounded():
+def test_runtime_step_is_jittable_and_status_is_bounded() -> None:
     runtime, state = _runtime(cells=32)
     initial = runtime.initialize_state(state, 0.0, 0.001)
     result = eqx.filter_jit(runtime.advance)(initial)
@@ -282,7 +286,7 @@ def test_runtime_step_is_jittable_and_status_is_bounded():
     assert result.retries <= runtime.policy.maximum_retries
 
 
-def test_face_local_positivity_blending_preserves_shared_flux_conservation():
+def test_face_local_positivity_blending_preserves_shared_flux_conservation() -> None:
     cells = 6
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cells),),
@@ -316,7 +320,7 @@ def test_face_local_positivity_blending_preserves_shared_flux_conservation():
     )
 
 
-def test_runtime_exposes_one_stable_accepted_flux_integral_ledger():
+def test_runtime_exposes_one_stable_accepted_flux_integral_ledger() -> None:
     runtime, state = _runtime(cells=24)
     result = runtime.advance(runtime.initialize_state(state, 0.0, 0.001))
     second = runtime.advance(result.runtime_state)
@@ -333,7 +337,7 @@ def test_runtime_exposes_one_stable_accepted_flux_integral_ledger():
     )
 
 
-def test_mapped_runtime_high_order_fallback_and_ledger_routes_are_deterministic():
+def test_mapped_runtime_high_order_fallback_and_ledger_routes_are_deterministic() -> None:
     left_runtime, left_average = _runtime(cells=18, mapped=True)
     right_runtime, right_average = _runtime(cells=18, mapped=True)
     assert isinstance(
@@ -368,7 +372,7 @@ def test_mapped_runtime_high_order_fallback_and_ledger_routes_are_deterministic(
     )
 
 
-def test_mapped_runtime_admits_arbitrary_normal_hllc_and_refuses_axis_only_roe():
+def test_mapped_runtime_admits_arbitrary_normal_hllc_and_refuses_axis_only_roe() -> None:
     runtime, average = _runtime(
         cells=18,
         mapped=True,
@@ -381,10 +385,10 @@ def test_mapped_runtime_admits_arbitrary_normal_hllc_and_refuses_axis_only_roe()
         _runtime(cells=18, mapped=True, interface_solver=phx.discretization.RoeFluxPlan())
 
 
-def test_static_accepted_ledger_accounts_source_and_boundary_content():
+def test_static_accepted_ledger_accounts_source_and_boundary_content() -> None:
     source_vector = jnp.asarray((0.0, 0.0, 0.2))
 
-    def source(time, state, coordinates, args):
+    def source(time: Any, state: Any, coordinates: Any, args: Any) -> Any:
         del time, coordinates, args
         return jnp.broadcast_to(source_vector, state.shape)
 
@@ -426,7 +430,7 @@ def test_static_accepted_ledger_accounts_source_and_boundary_content():
     )
 
 
-def test_unstructured_accepted_step_coupling_sets_journal_capacity():
+def test_unstructured_accepted_step_coupling_sets_journal_capacity() -> None:
     vertices = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     system = phx.equations.EulerSystem(2)
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
@@ -462,6 +466,7 @@ def test_unstructured_accepted_step_coupling_sets_journal_capacity():
         coupling=coupling,
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
     )

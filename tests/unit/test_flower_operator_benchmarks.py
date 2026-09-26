@@ -25,14 +25,14 @@ def _array_target(
     return jnp.asarray(target)
 
 
-def _architecture_map(scenario):
+def _architecture_map(scenario: Any) -> Any:
     return {
         architecture.name: architecture
         for architecture in compatible_architectures(scenario, quick=True)
     }
 
 
-def test_constant_advection_is_an_exact_periodic_grid_translation():
+def test_constant_advection_is_an_exact_periodic_grid_translation() -> None:
     scenario = periodic_advection_scenario(
         train_resolution=16,
         test_resolution=16,
@@ -56,7 +56,7 @@ def test_constant_advection_is_an_exact_periodic_grid_translation():
     assert jnp.all(jnp.isfinite(_array_target(scenario.train_target)))
 
 
-def test_variable_advection_is_reproducible_conservative_and_nonuniform():
+def test_variable_advection_is_reproducible_conservative_and_nonuniform() -> None:
     settings: dict[str, Any] = dict(
         train_resolution=24,
         test_resolution=32,
@@ -88,7 +88,7 @@ def test_variable_advection_is_reproducible_conservative_and_nonuniform():
     )
 
 
-def test_acoustic_wave_preserves_characteristic_phase_and_energy():
+def test_acoustic_wave_preserves_characteristic_phase_and_energy() -> None:
     scenario = periodic_acoustic_wave_scenario(
         train_resolution=20,
         test_resolution=20,
@@ -129,7 +129,7 @@ def test_acoustic_wave_preserves_characteristic_phase_and_energy():
     )
 
 
-def test_multichannel_acoustic_flower_and_comparators_run_all_resolutions():
+def test_multichannel_acoustic_flower_and_comparators_run_all_resolutions() -> None:
     scenario = periodic_acoustic_wave_scenario(
         train_resolution=8,
         test_resolution=12,
@@ -162,7 +162,7 @@ def test_multichannel_acoustic_flower_and_comparators_run_all_resolutions():
     assert configuration["out_channels"] == "2"
 
 
-def test_viscous_burgers_shock_rollout_is_finite_and_conservative():
+def test_viscous_burgers_shock_rollout_is_finite_and_conservative() -> None:
     scenario = periodic_burgers_scenario(
         train_resolution=32,
         test_resolution=48,
@@ -190,7 +190,7 @@ def test_viscous_burgers_shock_rollout_is_finite_and_conservative():
     )
 
 
-def test_flower_factories_and_comparators_obey_tensor_grid_contracts():
+def test_flower_factories_and_comparators_obey_tensor_grid_contracts() -> None:
     scenario = periodic_advection_scenario(
         train_resolution=8,
         test_resolution=12,
@@ -246,7 +246,7 @@ def test_flower_factories_and_comparators_obey_tensor_grid_contracts():
     )
 
 
-def test_masked_ladder_keeps_only_resolution_consistent_flower():
+def test_masked_ladder_keeps_only_resolution_consistent_flower() -> None:
     unmasked = periodic_advection_scenario(
         train_resolution=8,
         test_resolution=8,
@@ -262,7 +262,7 @@ def test_masked_ladder_keeps_only_resolution_consistent_flower():
     assert flower_names == {"flower_resolution_consistent"}
 
 
-def test_multilevel_flower_rejects_below_minimum_and_nondivisible_axes():
+def test_multilevel_flower_rejects_below_minimum_and_nondivisible_axes() -> None:
     for resolution in (8, 18):
         scenario = periodic_burgers_scenario(
             train_resolution=resolution,
@@ -278,7 +278,7 @@ def test_multilevel_flower_rejects_below_minimum_and_nondivisible_axes():
         assert flower_names == {"flower_one_level"}
 
 
-def test_transport_wave_ladders_join_non_smoke_registry_only():
+def test_transport_wave_ladders_join_non_smoke_registry_only() -> None:
     smoke_names = {
         ladder.name for ladder in standard_operator_benchmark_ladders(quick=True)
     }

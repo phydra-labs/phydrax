@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _termination(*, maximum_steps=100):
+def _termination(*, maximum_steps: Any = 100) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=1e-6,
         relative_optimality=0.0,
@@ -19,7 +22,7 @@ def _termination(*, maximum_steps=100):
     )
 
 
-def _bound_problem():
+def _bound_problem() -> Any:
     return phx.optim.MinimizationProblem(
         lambda state, target: 0.5 * jnp.sum((state - target) ** 2),
         bounds=phx.optim.Bounds(-jnp.inf, 1.0),
@@ -43,9 +46,9 @@ def _bound_problem():
     ],
 )
 def test_compatible_constrained_methods_supply_implicit_kkt_derivatives(
-    method,
-    uses_nonlinear_constraint,
-):
+    method: Any,
+    uses_nonlinear_constraint: Any,
+) -> None:
     if uses_nonlinear_constraint:
         constraint = phx.optim.NonlinearConstraint(lambda state, _: state, upper=1.0)
         problem = phx.optim.MinimizationProblem(
@@ -68,7 +71,7 @@ def test_compatible_constrained_methods_supply_implicit_kkt_derivatives(
     assert method.capabilities.implicit_differentiation
     assert result.provenance.implicit_differentiation
 
-    def solution(target):
+    def solution(target: Any) -> Any:
         return phx.optim.implicit_constrained_minimize(
             problem,
             jnp.array([0.0]),
@@ -81,10 +84,10 @@ def test_compatible_constrained_methods_supply_implicit_kkt_derivatives(
     np.testing.assert_allclose(jax.grad(solution)(jnp.array(2.0)), 0.0, atol=2e-6)
 
 
-def test_active_and_inactive_bounds_compose_with_jit_jvp_and_vmap():
+def test_active_and_inactive_bounds_compose_with_jit_jvp_and_vmap() -> None:
     problem = _bound_problem()
 
-    def solution(target):
+    def solution(target: Any) -> Any:
         return phx.optim.implicit_constrained_minimize(
             problem,
             jnp.array([0.0]),
@@ -106,7 +109,7 @@ def test_active_and_inactive_bounds_compose_with_jit_jvp_and_vmap():
     np.testing.assert_allclose(batched, jnp.array([0.25, 1.0]), atol=2e-5)
 
 
-def test_equality_kkt_derivative_supports_nested_parameters_and_dynamic_args():
+def test_equality_kkt_derivative_supports_nested_parameters_and_dynamic_args() -> None:
     initial = {"fixed": jnp.array([0.0]), "free": jnp.array([0.0])}
     constraint = phx.optim.NonlinearConstraint(
         lambda state, target: state["fixed"] - target["fixed"],
@@ -121,7 +124,7 @@ def test_equality_kkt_derivative_supports_nested_parameters_and_dynamic_args():
         constraints=(constraint,),
     )
 
-    def summed_solution(target):
+    def summed_solution(target: Any) -> Any:
         solution = phx.optim.implicit_constrained_minimize(
             problem,
             initial,
@@ -138,7 +141,7 @@ def test_equality_kkt_derivative_supports_nested_parameters_and_dynamic_args():
     np.testing.assert_allclose(derivative, 1.0, atol=2e-6)
 
 
-def test_nonlinear_active_constraint_derivative_matches_finite_difference():
+def test_nonlinear_active_constraint_derivative_matches_finite_difference() -> None:
     constraint = phx.optim.NonlinearConstraint(
         lambda state, parameter: state**2 - parameter,
         upper=0.0,
@@ -148,7 +151,7 @@ def test_nonlinear_active_constraint_derivative_matches_finite_difference():
         constraints=(constraint,),
     )
 
-    def solution(parameter):
+    def solution(parameter: Any) -> Any:
         return phx.optim.implicit_constrained_minimize(
             problem,
             jnp.array([0.5]),
@@ -172,10 +175,10 @@ def test_nonlinear_active_constraint_derivative_matches_finite_difference():
     )
 
 
-def test_constrained_initial_guess_has_zero_implicit_sensitivity():
+def test_constrained_initial_guess_has_zero_implicit_sensitivity() -> None:
     problem = _bound_problem()
 
-    def solution(initial):
+    def solution(initial: Any) -> Any:
         return phx.optim.implicit_constrained_minimize(
             problem,
             initial,
@@ -190,7 +193,7 @@ def test_constrained_initial_guess_has_zero_implicit_sensitivity():
     )
 
 
-def test_ambiguous_active_set_fails_instead_of_selecting_a_subgradient():
+def test_ambiguous_active_set_fails_instead_of_selecting_a_subgradient() -> None:
     problem = _bound_problem()
     solve = eqx.filter_jit(
         lambda target: phx.optim.implicit_constrained_minimize(
@@ -205,7 +208,7 @@ def test_ambiguous_active_set_fails_instead_of_selecting_a_subgradient():
         solve(jnp.array(1.0))
 
 
-def test_rank_deficient_active_kkt_system_fails_explicitly():
+def test_rank_deficient_active_kkt_system_fails_explicitly() -> None:
     constraint = phx.optim.NonlinearConstraint(
         lambda state, target: jnp.repeat(state - target, 2),
         lower=0.0,
@@ -228,7 +231,7 @@ def test_rank_deficient_active_kkt_system_fails_explicitly():
         solve(jnp.array([1.0]))
 
 
-def test_unsuccessful_constrained_primal_solve_fails_explicitly():
+def test_unsuccessful_constrained_primal_solve_fails_explicitly() -> None:
     problem = _bound_problem()
     solve = eqx.filter_jit(
         lambda target: phx.optim.implicit_constrained_minimize(

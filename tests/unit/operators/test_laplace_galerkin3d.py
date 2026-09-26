@@ -1,4 +1,5 @@
 from importlib import import_module
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -16,7 +17,7 @@ _VERTICES = jnp.asarray(
 _FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32)
 
 
-def _prepared():
+def _prepared() -> Any:
     policy = phx.operators.LaplaceSingleLayerDP0GalerkinPolicy3D(
         singular_order=3,
         near_ratio=1.0,
@@ -34,7 +35,7 @@ def _prepared():
     )
 
 
-def test_pair_coverage_gram_symmetry_and_blocked_dense_parity():
+def test_pair_coverage_gram_symmetry_and_blocked_dense_parity() -> None:
     prepared = _prepared()
     report = prepared.assembly_report
     dense = prepared.dense_oracle.matrix
@@ -72,7 +73,7 @@ def test_pair_coverage_gram_symmetry_and_blocked_dense_parity():
     assert jnp.allclose(diagonal, jnp.diag(dense))
 
 
-def test_production_operator_refuses_materialization_and_reports_exact_cost():
+def test_production_operator_refuses_materialization_and_reports_exact_cost() -> None:
     prepared = _prepared()
     with pytest.raises(phx.linalg.LinearCapabilityError, match="does not support"):
         phx.linalg.materialize(
@@ -89,7 +90,7 @@ def test_production_operator_refuses_materialization_and_reports_exact_cost():
     )
 
 
-def test_dp0_potential_reconstruction_does_not_apply_area_or_permittivity():
+def test_dp0_potential_reconstruction_does_not_apply_area_or_permittivity() -> None:
     prepared = _prepared()
     coefficients = jnp.asarray([2.0, 0.0, -1.0, 0.5])
     potential = prepared.potential(coefficients)
@@ -105,8 +106,10 @@ def test_dp0_potential_reconstruction_does_not_apply_area_or_permittivity():
     assert jnp.all(jnp.isfinite(values))
 
 
-def test_resource_capacity_failures_precede_pair_state_allocation(monkeypatch):
-    def allocation_forbidden(*args, **kwargs):
+def test_resource_capacity_failures_precede_pair_state_allocation(
+    monkeypatch: Any,
+) -> None:
+    def allocation_forbidden(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("surface binding allocation was reached")
 
     monkeypatch.setattr(galerkin3d, "_SurfaceFEMBinding3D", allocation_forbidden)
@@ -119,6 +122,7 @@ def test_resource_capacity_failures_precede_pair_state_allocation(monkeypatch):
             near_ratio=1.0,
             absolute_tolerance=1.0e-3,
             relative_tolerance=1.0e-3,
+            # ty: ignore[invalid-argument-type]
             **{limit_name: 1},
         )
         with pytest.raises(ValueError, match=rf"^\[{failure_code}\]"):
@@ -127,8 +131,10 @@ def test_resource_capacity_failures_precede_pair_state_allocation(monkeypatch):
             )
 
 
-def test_exception_and_dense_oracle_capacities_have_exact_failure_codes(monkeypatch):
-    def binding_allocation_forbidden(*args, **kwargs):
+def test_exception_and_dense_oracle_capacities_have_exact_failure_codes(
+    monkeypatch: Any,
+) -> None:
+    def binding_allocation_forbidden(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("surface binding allocation was reached")
 
     monkeypatch.setattr(galerkin3d, "_SurfaceFEMBinding3D", binding_allocation_forbidden)
@@ -159,7 +165,7 @@ def test_exception_and_dense_oracle_capacities_have_exact_failure_codes(monkeypa
         )
 
 
-def test_benchmark_declares_the_deterministic_sphere_refinement_ladder():
+def test_benchmark_declares_the_deterministic_sphere_refinement_ladder() -> None:
     assert laplace_capacitance_benchmarks._SPHERE_FACE_LADDER == (20, 80, 320, 1280)
     assert laplace_capacitance_benchmarks._SPHERE_SUBDIVISIONS == {
         20: 0,

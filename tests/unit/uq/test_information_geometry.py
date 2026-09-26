@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def test_bernoulli_information_geometry_matches_analytic_fisher_and_duality():
+def test_bernoulli_information_geometry_matches_analytic_fisher_and_duality() -> None:
     family = phx.uq.BernoulliFamily()
     geometry = phx.uq.ExponentialFamilyInformationGeometry(family)
     natural = family.natural(jnp.asarray([0.0]))
@@ -27,7 +30,7 @@ def test_bernoulli_information_geometry_matches_analytic_fisher_and_duality():
     assert geometry.kl_divergence(natural, right) >= 0.0
 
 
-def test_information_geometry_rejects_coordinates_from_another_family():
+def test_information_geometry_rejects_coordinates_from_another_family() -> None:
     geometry = phx.uq.ExponentialFamilyInformationGeometry(phx.uq.BernoulliFamily())
     natural = phx.uq.PoissonFamily().natural(jnp.asarray([0.0]))
 
@@ -35,7 +38,7 @@ def test_information_geometry_rejects_coordinates_from_another_family():
         geometry.fisher_action(natural, jnp.asarray([1.0]))
 
 
-def _log_normalizer_bregman(family, left, right):
+def _log_normalizer_bregman(family: Any, left: Any, right: Any) -> Any:
     right_mean = family.mean_from_natural(right)
     return (
         family.log_normalizer(left)
@@ -44,7 +47,7 @@ def _log_normalizer_bregman(family, left, right):
     )
 
 
-def test_exponential_family_kl_has_documented_bregman_orientation():
+def test_exponential_family_kl_has_documented_bregman_orientation() -> None:
     cases = (
         (
             phx.uq.BernoulliFamily(),

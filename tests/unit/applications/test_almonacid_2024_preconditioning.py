@@ -2,6 +2,7 @@
 """Defend mixed-coordinate permutation, row scaling, and exact condensation."""
 
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -27,11 +28,13 @@ INPUTS = Path(__file__).resolve().parents[2] / "fixtures/flexodeal_0698e3d"
 
 
 @eqx.filter_jit
-def _actions(model, coordinates, control, direction, cotangent):
+def _actions(
+    model: Any, coordinates: Any, control: Any, direction: Any, cotangent: Any
+) -> Any:
     setup = almonacid_2024_setup_operator(model, coordinates, control)
     flat, restore = ravel_pytree(coordinates)
 
-    def residual(value):
+    def residual(value: Any) -> Any:
         return ravel_pytree(model._root_residual(restore(value), control))[0]
 
     _, expected = jax.jvp(residual, (flat,), (direction,))
@@ -40,6 +43,7 @@ def _actions(model, coordinates, control, direction, cotangent):
     mechanical = direction[: setup.mechanical_schur.source.size]
     # Exact local elimination must annihilate BOTH scalar rows, despite the
     # pressure pivot's identically zero diagonal. It is not scalar Jacobi.
+    # ty: ignore[unresolved-attribute]
     scalar = -setup.scalar_inverse.apply(blocks[0][1].mv(mechanical))
     scalar_residual, mechanical_residual = setup.block_operator.mv((scalar, mechanical))
     builder = model.plan.method.linear_policy.preconditioning.builder
@@ -92,8 +96,8 @@ def _actions(model, coordinates, control, direction, cotangent):
     ids=("quasistatic-triangular", "dynamic-condensed", "dynamic-full-mixed"),
 )
 def test_source_scaled_tangent_adjoint_and_local_schur_under_numeric_refresh(
-    dynamic, mechanical_solver
-):
+    dynamic: Any, mechanical_solver: Any
+) -> None:
     with jax.enable_x64(True):
         source_plan, parameters, _, _, _ = almonacid_2024_repository_case(
             INPUTS, refinement=0

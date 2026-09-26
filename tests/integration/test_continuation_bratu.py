@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def test_weighted_bratu_branch_crosses_the_discrete_fold():
+def test_weighted_bratu_branch_crosses_the_discrete_fold() -> None:
     size = 7
     spacing = 1.0 / (size - 1)
     weights = (
@@ -23,7 +26,7 @@ def test_weighted_bratu_branch_crosses_the_discrete_fold():
         - jnp.eye(size, k=-1, dtype=jnp.float64)
     ) / spacing**2
 
-    def residual(state, parameter, args):
+    def residual(state: Any, parameter: Any, args: Any) -> Any:
         del args
         value = laplacian @ state - parameter * jnp.exp(state)
         return value.at[0].set(state[0]).at[-1].set(state[-1])
@@ -66,7 +69,7 @@ def test_weighted_bratu_branch_crosses_the_discrete_fold():
     assert result.branch.geometry.execution_state_space.space_id == state_space.space_id
     phases = []
 
-    def phase(event):
+    def phase(event: Any) -> Any:
         return int(event.record.coordinates.phase)
 
     session = phx.execution.IterationSession(

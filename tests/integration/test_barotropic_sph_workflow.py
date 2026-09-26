@@ -2,19 +2,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _compiled_problem(count=8, *, backend="dense"):
+def _compiled_problem(count: Any = 8, *, backend: Any = "dense") -> Any:
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count),
         jnp.full((count,), spacing),
         ambient_dimension=1,
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     method = phx.discretization.BarotropicSPHMethodPlan(
         phx.discretization.WendlandC2SPHKernel(1),
@@ -45,14 +49,14 @@ def _compiled_problem(count=8, *, backend="dense"):
     )
 
 
-def _initial_state(count, amplitude):
+def _initial_state(count: Any, amplitude: Any) -> Any:
     spacing = 1.0 / count
     lattice = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     mode = jnp.sin(2.0 * jnp.pi * lattice)
     return lattice + amplitude * mode, jnp.zeros_like(lattice)
 
 
-def test_barotropic_sph_compiles_and_solves_with_stormer_verlet():
+def test_barotropic_sph_compiles_and_solves_with_stormer_verlet() -> None:
     compiled = _compiled_problem()
     position, velocity = _initial_state(8, 2.0e-3)
     ivp = compiled.as_differential_problem(
@@ -90,17 +94,18 @@ def test_barotropic_sph_compiles_and_solves_with_stormer_verlet():
     assert solution.discretization_bundle_id == compiled.discretization_bundle.bundle_id
     assert solution.state_geometry_id == "state-geometry:canonical-phase"
     assert solution.solver_id == "solver:stormer-verlet:canonical"
+    # ty: ignore[unresolved-attribute]
     assert len(solution.discretization_bundle.records) == 3
     assert jnp.all(jnp.isfinite(solution.states))
     assert jnp.allclose(final.linear_momentum, initial.linear_momentum, atol=2e-13)
     assert jnp.allclose(final.total_energy, initial.total_energy, rtol=2e-8, atol=2e-12)
 
 
-def test_short_sph_trajectory_has_the_fixed_discrete_gradient():
+def test_short_sph_trajectory_has_the_fixed_discrete_gradient() -> None:
     compiled = _compiled_problem(count=6)
     final_time = 0.001
 
-    def terminal(amplitude):
+    def terminal(amplitude: Any) -> Any:
         position, velocity = _initial_state(6, amplitude)
         ivp = compiled.as_differential_problem(
             position,
@@ -128,12 +133,12 @@ def test_short_sph_trajectory_has_the_fixed_discrete_gradient():
     assert jnp.allclose(derivative, finite_difference, rtol=2e-5, atol=2e-7)
 
 
-def test_cell_list_and_dense_backends_produce_the_same_trajectory():
+def test_cell_list_and_dense_backends_produce_the_same_trajectory() -> None:
     dense = _compiled_problem(backend="dense")
     cell = _compiled_problem(backend="cell")
     position, velocity = _initial_state(8, 2.0e-3)
 
-    def solve(compiled):
+    def solve(compiled: Any) -> Any:
         return phx.solver.solve_diffrax(
             compiled.as_differential_problem(
                 position,

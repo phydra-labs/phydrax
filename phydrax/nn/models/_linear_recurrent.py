@@ -41,8 +41,7 @@ class LinearRecurrentModel(StrictModule, ParameterOwner):
     ) -> None:
         if not isinstance(unit, LinearRecurrentUnit):
             raise TypeError("unit must be a LinearRecurrentUnit.")
-        if execution not in ("serial", "associative"):
-            raise ValueError("execution must be 'serial' or 'associative'.")
+        execution = parse(execution, LinearRecurrenceExecution, "execution")
         return_mode = parse(return_mode, LinearRecurrentReturnMode, "return_mode")
         self.unit = unit
         self.execution = execution

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 
 
@@ -58,7 +60,7 @@ from phydrax.sampling._rhmc import (
 class _ToyLatticeDiracOperator(AbstractLatticeDiracOperator):
     mass: float
 
-    def __init__(self, links, /, *, mass: float = 2.0):
+    def __init__(self, links: Any, /, *, mass: float = 2.0) -> None:
         links_ = jnp.asarray(links, dtype=jnp.float64)
         if links_.shape != (2,):
             raise ValueError("Toy links must have shape (2,).")
@@ -66,10 +68,12 @@ class _ToyLatticeDiracOperator(AbstractLatticeDiracOperator):
         self.mass = float(mass)
         self.source = space
         self.target = space
+        # ty: ignore[invalid-assignment]
         self.boundary = None
         self.links = links_
         self.gamma_matrices = jnp.ones((1, 1, 1), dtype=jnp.float64)
         self.gamma5 = jnp.ones((1, 1), dtype=jnp.float64)
+        # ty: ignore[invalid-assignment]
         self.resources = None
         self.resource_policy = LatticeFermionResourcePolicy()
         self.lattice_shape = (2,)
@@ -96,27 +100,27 @@ class _ToyLatticeDiracOperator(AbstractLatticeDiracOperator):
         self.batch_shape = ()
         self.operator_id = f"toy-dirac-mass-{self.mass.hex()}"
 
-    def _apply(self, vector):
+    def _apply(self, vector: Any) -> Any:
         return (self.mass + 0.25 * jnp.cos(self.links)) * vector
 
-    def _adjoint_apply(self, vector):
+    def _adjoint_apply(self, vector: Any) -> Any:
         return self._apply(vector)
 
-    def _gamma5_apply(self, vector):
+    def _gamma5_apply(self, vector: Any) -> Any:
         return vector
 
-    def diagonal_mv(self, vector):
+    def diagonal_mv(self, vector: Any) -> Any:
         return self._apply(self.source.validate(vector))
 
-    def diagonal_inverse_mv(self, vector):
+    def diagonal_inverse_mv(self, vector: Any) -> Any:
         value = self.source.validate(vector)
         return value / (self.mass + 0.25 * jnp.cos(self.links))
 
-    def with_links(self, links):
+    def with_links(self, links: Any) -> Any:
         return _ToyLatticeDiracOperator(links, mass=self.mass)
 
 
-def _dirac_interval():
+def _dirac_interval() -> Any:
     dirac = _ToyLatticeDiracOperator(jnp.asarray((0.2, -0.4)))
     interval = SpectralInterval(
         dirac_normal_operator(dirac),
@@ -128,7 +132,7 @@ def _dirac_interval():
     return dirac, interval
 
 
-def _approximation(interval, target, poles=8):
+def _approximation(interval: Any, target: Any, poles: Any = 8) -> Any:
     plan = plan_minimax_rational_approximation(
         target,
         num_poles=poles,
@@ -138,7 +142,7 @@ def _approximation(interval, target, poles=8):
     return generate_minimax_rational_approximation(interval, plan)
 
 
-def _streaming_rational_policy():
+def _streaming_rational_policy() -> Any:
     return RationalFunctionPolicy(
         shifted=ShiftedSolvePolicy(
             "lanczos",
@@ -152,7 +156,7 @@ def _streaming_rational_policy():
     )
 
 
-def test_remez_certificate_bounds_error_on_its_spectral_interval():
+def test_remez_certificate_bounds_error_on_its_spectral_interval() -> None:
     _, interval = _dirac_interval()
     target = power_rational_target(-0.5)
     approximation = _approximation(interval, target)
@@ -165,7 +169,7 @@ def test_remez_certificate_bounds_error_on_its_spectral_interval():
     assert float(approximation.witness) <= float(interval.upper)
 
 
-def test_two_flavor_and_rhmc_refresh_actions_recover_gaussian_identity():
+def test_two_flavor_and_rhmc_refresh_actions_recover_gaussian_identity() -> None:
     dirac, interval = _dirac_interval()
     two_flavor = TwoFlavorPseudofermionTerm(dirac, interval)
     two_refresh = refresh_pseudofermion(two_flavor, jax.random.key(1))
@@ -233,7 +237,7 @@ def test_two_flavor_and_rhmc_refresh_actions_recover_gaussian_identity():
     )
 
 
-def test_pseudofermion_force_matches_action_directional_derivative():
+def test_pseudofermion_force_matches_action_directional_derivative() -> None:
     dirac, interval = _dirac_interval()
     term = TwoFlavorPseudofermionTerm(dirac, interval)
     refresh = refresh_pseudofermion(term, jax.random.key(4))
@@ -263,7 +267,7 @@ def test_pseudofermion_force_matches_action_directional_derivative():
     assert bool(force.successful)
 
 
-def test_streaming_solve_evidence_reaches_rhmc_transition_and_samples():
+def test_streaming_solve_evidence_reaches_rhmc_transition_and_samples() -> None:
     dirac, interval = _dirac_interval()
     streaming = _streaming_rational_policy()
     term = TwoFlavorPseudofermionTerm(
@@ -307,7 +311,7 @@ def test_streaming_solve_evidence_reaches_rhmc_transition_and_samples():
     assert jnp.all(samples.force_solve_error_bound_certified)
 
 
-def _bosonic_kernel(*, step_size=0.08, divergence_threshold=1000.0):
+def _bosonic_kernel(*, step_size: Any = 0.08, divergence_threshold: Any = 1000.0) -> Any:
     geometry = FlatTorusStateGeometry(2.0 * np.pi)
     action = SeparableActionTerm(
         lambda q: 0.7 * jnp.sum(1.0 - jnp.cos(q)),
@@ -330,7 +334,7 @@ def _bosonic_kernel(*, step_size=0.08, divergence_threshold=1000.0):
     )
 
 
-def test_nested_force_map_is_reversible():
+def test_nested_force_map_is_reversible() -> None:
     kernel = _bosonic_kernel()
     position = jnp.asarray((0.2, -0.4))
     momentum = jnp.asarray((0.7, -0.3))
@@ -347,7 +351,7 @@ def test_nested_force_map_is_reversible():
     assert int(forward.force_evaluations) == kernel.plan.force_evaluations
 
 
-def test_nested_force_work_counts_every_term_evaluation():
+def test_nested_force_work_counts_every_term_evaluation() -> None:
     forces = NestedForcePlan(
         (
             NestedForcePartition((0, 1), substeps=2),
@@ -358,7 +362,7 @@ def test_nested_force_work_counts_every_term_evaluation():
     assert forces.force_evaluations_per_step == 2 * 2 * 2 + 2 * 6
 
 
-def test_acceptance_uses_exact_endpoint_energy_and_rejection_rolls_back():
+def test_acceptance_uses_exact_endpoint_energy_and_rejection_rolls_back() -> None:
     kernel = _bosonic_kernel(step_size=0.9, divergence_threshold=1.0e-16)
     initial = jnp.asarray((0.9, -0.7))
     state = initialize_rhmc_state(kernel, initial, key=jax.random.key(8))
@@ -388,7 +392,7 @@ def test_acceptance_uses_exact_endpoint_energy_and_rejection_rolls_back():
     np.testing.assert_array_equal(transition.state.bosonic_action, state.bosonic_action)
 
 
-def test_production_restart_is_bitwise_deterministic():
+def test_production_restart_is_bitwise_deterministic() -> None:
     kernel = _bosonic_kernel()
     state = initialize_rhmc_state(
         kernel,

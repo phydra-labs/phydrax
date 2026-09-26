@@ -2,9 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -22,7 +26,20 @@ from phydrax.ml.preprocessing import (
 from phydrax.sparse import SparseLinearMap
 
 
-def _named_batch():
+def test_polynomial_features_canonicalizes_weight_policy() -> None:
+    canonical = PolynomialFeatures(weight_policy="statistical")
+    # ty: ignore[invalid-argument-type]
+    equivalent = PolynomialFeatures(weight_policy=np.str_("statistical"))
+
+    assert type(equivalent.weight_policy) is str
+    assert equivalent == canonical
+
+    with pytest.raises(TypeError):
+        # ty: ignore[invalid-argument-type]
+        PolynomialFeatures(weight_policy=1)
+
+
+def _named_batch() -> Any:
     return phx.ml.MLBatch(
         jnp.array(
             [
@@ -37,7 +54,7 @@ def _named_batch():
     )
 
 
-def test_polynomial_and_interaction_features_names_inverse_complex_and_vmap():
+def test_polynomial_and_interaction_features_names_inverse_complex_and_vmap() -> None:
     batch = phx.ml.MLBatch(
         jnp.array([[1.0, 2.0], [2.0, 3.0], [3.0, 4.0]]),
         feature_schema=phx.ml.FeatureSchema(("x", "y")),
@@ -47,8 +64,10 @@ def test_polynomial_and_interaction_features_names_inverse_complex_and_vmap():
     probe = jnp.array([[2.0, 3.0], [4.0, 5.0]])
     transformed = jax.jit(jax.vmap(model))(probe)
 
+    # ty: ignore[unresolved-attribute]
     assert model.output_schema.names == ("x", "y", "x^2", "x*y", "y^2")
     assert jnp.allclose(transformed[0], jnp.array([2.0, 3.0, 4.0, 6.0, 9.0]))
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.inverse_transform(transformed), probe)
     assert (
         result.derivative_contract.level(phx.DerivativeSurface.INPUT)
@@ -62,12 +81,15 @@ def test_polynomial_and_interaction_features_names_inverse_complex_and_vmap():
     interactions = PolynomialFeatures(
         degree=3, interaction_only=True, include_bias=False
     ).fit_batch(batch)
+    # ty: ignore[unresolved-attribute]
     assert interactions.as_trainable().output_schema.names == ("x", "y", "x*y")
     complex_output = model(jnp.array([1.0 + 2.0j, 2.0 - 1.0j]))
     assert jnp.issubdtype(complex_output.dtype, jnp.complexfloating)
 
 
-def test_spline_transformer_uses_fixed_basis_schema_partition_of_unity_and_hard_fit_contract():
+def test_spline_transformer_uses_fixed_basis_schema_partition_of_unity_and_hard_fit_contract() -> (
+    None
+):
     batch = phx.ml.MLBatch(
         jnp.stack((jnp.linspace(-1.0, 1.0, 7), jnp.linspace(0.0, 3.0, 7)), axis=-1),
         sample_weight=jnp.arange(1.0, 8.0),
@@ -84,7 +106,9 @@ def test_spline_transformer_uses_fixed_basis_schema_partition_of_unity_and_hard_
     assert jnp.allclose(
         transformed.reshape(2, 2, 5).sum(axis=-1), jnp.ones((2, 2)), atol=2e-5
     )
+    # ty: ignore[unresolved-attribute]
     assert model.output_schema.names[0] == "position_spline_0"
+    # ty: ignore[unresolved-attribute]
     assert model.output_schema.names[-1] == "time_spline_4"
     assert result.diagnostics.output_shape == (7, 10)
     assert result.derivative_contract.route is phx.DerivativeRoute.STOPPED
@@ -98,17 +122,22 @@ def test_spline_transformer_uses_fixed_basis_schema_partition_of_unity_and_hard_
     )
     assert jnp.all(jnp.isfinite(gradient))
     with pytest.raises(NotImplementedError, match="no single-valued inverse"):
+        # ty: ignore[unresolved-attribute]
         model.inverse_transform(transformed)
 
 
-def test_deterministic_fourier_features_explicit_schema_inverse_and_fit_contract():
+def test_deterministic_fourier_features_explicit_schema_inverse_and_fit_contract() -> (
+    None
+):
     batch = phx.ml.MLBatch(
         jnp.array([[0.0, 0.5], [0.5, 1.0], [1.0, 1.5]]),
         feature_schema=phx.ml.FeatureSchema(("x", "t")),
     )
     recipe = FourierFeatures(
         2,
+        # ty: ignore[invalid-argument-type]
         period=(2.0, 4.0),
+        # ty: ignore[invalid-argument-type]
         origin=0.0,
         include_bias=True,
         include_original=True,
@@ -121,7 +150,9 @@ def test_deterministic_fourier_features_explicit_schema_inverse_and_fit_contract
     second = jax.jit(jax.vmap(model))(probe)
     assert first.shape == (2, 11)
     assert jnp.array_equal(first, second)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.inverse_transform(first), probe)
+    # ty: ignore[unresolved-attribute]
     assert model.output_schema.names[:3] == ("x", "t", "fourier_bias")
     assert (
         result.derivative_contract.level(phx.DerivativeSurface.FIT_FEATURES)
@@ -132,12 +163,16 @@ def test_deterministic_fourier_features_explicit_schema_inverse_and_fit_contract
         is phx.GradientLevel.SMOOTH
     )
 
+    # ty: ignore[invalid-argument-type]
     periodic = FourierFeatures(1, period=2.0, origin=0.0).fit_batch(batch).as_trainable()
     with pytest.raises(NotImplementedError, match="not injective"):
+        # ty: ignore[unresolved-attribute]
         periodic.inverse_transform(periodic(probe[0]))
 
 
-def test_random_fourier_features_require_keys_are_deterministic_and_differentiable_on_apply():
+def test_random_fourier_features_require_keys_are_deterministic_and_differentiable_on_apply() -> (
+    None
+):
     batch = _named_batch()
     recipe = RandomFourierFeatures(12, gamma=0.5)
     with pytest.raises(ValueError, match="explicit JAX key"):
@@ -150,7 +185,9 @@ def test_random_fourier_features_require_keys_are_deterministic_and_differentiab
     model = first.as_trainable()
     probe = batch.features[:2]
 
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(model.frequencies, second.as_trainable().frequencies)
+    # ty: ignore[unresolved-attribute]
     assert not jnp.array_equal(model.frequencies, other.as_trainable().frequencies)
     assert jax.jit(jax.vmap(model))(probe).shape == (2, 12)
     gradient = jax.grad(lambda value: jnp.sum(model(value)))(probe[0])
@@ -161,10 +198,13 @@ def test_random_fourier_features_require_keys_are_deterministic_and_differentiab
     )
     assert "random_frequencies" in first.derivative_contract.nondifferentiable_outputs
     with pytest.raises(NotImplementedError, match="not invertible"):
+        # ty: ignore[unresolved-attribute]
         model.inverse_transform(model(probe[0]))
 
 
-def test_feature_hasher_is_name_deterministic_sparse_in_action_and_noninvertible():
+def test_feature_hasher_is_name_deterministic_sparse_in_action_and_noninvertible() -> (
+    None
+):
     batch = _named_batch()
     first = FeatureHasher(4).fit_batch(batch)
     second = FeatureHasher(4).fit_batch(batch)
@@ -172,11 +212,14 @@ def test_feature_hasher_is_name_deterministic_sparse_in_action_and_noninvertible
     probe = jnp.array([[2.0, -1.0, 3.0], [1.0, 4.0, -2.0]])
     transformed = jax.jit(jax.vmap(model))(probe)
     expected = jax.vmap(
+        # ty: ignore[unresolved-attribute]
         lambda row: jnp.zeros(4).at[model.buckets].add(row * model.signs)
     )(probe)
 
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(model.buckets, second.as_trainable().buckets)
     assert jnp.allclose(transformed, expected)
+    # ty: ignore[unresolved-attribute]
     assert model.output_schema.names == ("hash_0", "hash_1", "hash_2", "hash_3")
     assert (
         first.derivative_contract.level(phx.DerivativeSurface.MODEL_PARAMETER)
@@ -184,6 +227,7 @@ def test_feature_hasher_is_name_deterministic_sparse_in_action_and_noninvertible
     )
     assert "hash_routes" in first.derivative_contract.nondifferentiable_outputs
     with pytest.raises(NotImplementedError, match="not invertible"):
+        # ty: ignore[unresolved-attribute]
         model.inverse_transform(transformed)
 
 
@@ -191,8 +235,8 @@ def test_feature_hasher_is_name_deterministic_sparse_in_action_and_noninvertible
     "recipe", [GaussianRandomProjection(2), SparseRandomProjection(2, density=0.5)]
 )
 def test_random_projections_require_explicit_keys_are_deterministic_jittable_and_reject_inverse(
-    recipe,
-):
+    recipe: Any,
+) -> None:
     batch = _named_batch()
     with pytest.raises(ValueError, match="explicit JAX key"):
         recipe.fit_batch(batch)
@@ -227,7 +271,7 @@ def test_random_projections_require_explicit_keys_are_deterministic_jittable_and
         model.inverse_transform(output)
 
 
-def test_power_transformer_hard_fit_smooth_apply_inverse_domains_and_schema():
+def test_power_transformer_hard_fit_smooth_apply_inverse_domains_and_schema() -> None:
     batch = phx.ml.MLBatch(
         jnp.array([[-2.0, 0.25], [-1.0, 0.5], [0.0, 1.0], [1.0, 2.0], [3.0, 4.0]]),
         feature_schema=phx.ml.FeatureSchema(("signed", "positive")),
@@ -237,7 +281,9 @@ def test_power_transformer_hard_fit_smooth_apply_inverse_domains_and_schema():
     probe = jnp.array([[-1.5, 0.75], [2.0, 3.0]])
     transformed = jax.jit(jax.vmap(model))(probe)
 
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.inverse_transform(transformed), probe, rtol=2e-5, atol=2e-5)
+    # ty: ignore[unresolved-attribute]
     assert model.output_schema.names == ("signed", "positive")
     assert result.derivative_contract.route is phx.DerivativeRoute.STOPPED
     assert (
@@ -257,7 +303,9 @@ def test_power_transformer_hard_fit_smooth_apply_inverse_domains_and_schema():
         box(jnp.array([-1.0]))
 
 
-def test_quantile_transform_uniform_normal_inverse_ties_empty_status_and_grad_contract():
+def test_quantile_transform_uniform_normal_inverse_ties_empty_status_and_grad_contract() -> (
+    None
+):
     features = jnp.stack((jnp.linspace(-2.0, 2.0, 9), jnp.linspace(1.0, 5.0, 9)), axis=-1)
     batch = phx.ml.MLBatch(features, feature_schema=phx.ml.FeatureSchema(("x", "y")))
     uniform_result = QuantileTransformer(9).fit_batch(batch)
@@ -266,8 +314,13 @@ def test_quantile_transform_uniform_normal_inverse_ties_empty_status_and_grad_co
     transformed = jax.jit(jax.vmap(uniform))(probe)
 
     assert jnp.allclose(
-        uniform.inverse_transform(transformed), probe, rtol=2e-5, atol=2e-5
+        # ty: ignore[unresolved-attribute]
+        uniform.inverse_transform(transformed),
+        probe,
+        rtol=2e-5,
+        atol=2e-5,
     )
+    # ty: ignore[unresolved-attribute]
     assert uniform.output_schema.names == ("x", "y")
     assert uniform_result.derivative_contract.route is phx.DerivativeRoute.STOPPED
     assert (
@@ -289,9 +342,11 @@ def test_quantile_transform_uniform_normal_inverse_ties_empty_status_and_grad_co
     assert jnp.all(jnp.isfinite(normal(jnp.array([0.0, 3.0]))))
     tied = QuantileTransformer(5).fit_batch(phx.ml.MLBatch(jnp.ones((5, 1))))
     with pytest.raises(eqx.EquinoxRuntimeError, match="not bijective"):
+        # ty: ignore[unresolved-attribute]
         tied.as_trainable().inverse_transform(jnp.array([0.5]))
     empty = QuantileTransformer(5).fit_batch(
         phx.ml.MLBatch(jnp.ones((3, 1)), sample_mask=jnp.zeros(3, dtype="bool"))
     )
     assert int(empty.status) == phx.ml.ML_INSUFFICIENT_DATA
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.isfinite(empty.as_trainable().quantiles))

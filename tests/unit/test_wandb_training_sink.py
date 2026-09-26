@@ -27,7 +27,7 @@ from phydrax.service import WandbTrainingSink
 
 
 class _FakeRun:
-    def __init__(self, *, fail: bool = False):
+    def __init__(self, *, fail: bool = False) -> None:
         self.defined: list[tuple[str, dict[str, Any]]] = []
         self.logged: list[dict[str, object]] = []
         self.fail = bool(fail)
@@ -42,7 +42,7 @@ class _FakeRun:
         self.logged.append(dict(data))
 
 
-def _scope():
+def _scope() -> Any:
     return bind_iteration_scope(
         IterationPlan(granularity="step"),
         IterationCapabilities(
@@ -185,7 +185,7 @@ def test_wandb_sink_bounds_redacts_and_normalizes_metrics() -> None:
     assert payload["phydrax/omitted_metric_count"] == 3
 
 
-def test_wandb_sink_disables_after_provider_failure(phydrax_events) -> None:
+def test_wandb_sink_disables_after_provider_failure(phydrax_events: Any) -> None:
     run = _FakeRun(fail=True)
     sink = WandbTrainingSink(run)
     event = _event(
@@ -226,6 +226,7 @@ def test_wandb_sink_rejects_nontraining_records() -> None:
 
 def test_wandb_sink_validates_constructor_contract() -> None:
     with pytest.raises(TypeError, match="define_metric"):
+        # ty: ignore[invalid-argument-type]
         WandbTrainingSink(object())
     with pytest.raises(ValueError, match="update_every"):
         WandbTrainingSink(_FakeRun(), update_every=0)

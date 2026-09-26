@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _surrogate():
+def _surrogate() -> Any:
     uncertainty = phx.domain.ProbabilityDomain(
         phx.uq.Uniform(-1.0, 1.0),
         label="u",
@@ -21,7 +24,7 @@ def _surrogate():
     return surrogate
 
 
-def _adapter(*, deterministic_base):
+def _adapter(*, deterministic_base: Any) -> Any:
     surrogate = _surrogate()
     expectation = (
         phx.integration.smolyak_surrogate_expectation(
@@ -44,7 +47,7 @@ def _adapter(*, deterministic_base):
     )
 
 
-def test_smolyak_control_hierarchy_recovers_fine_expectation():
+def test_smolyak_control_hierarchy_recovers_fine_expectation() -> None:
     adapter = _adapter(deterministic_base=True)
     result = phx.integration.integrate(
         adapter.observable,
@@ -68,7 +71,7 @@ def test_smolyak_control_hierarchy_recovers_fine_expectation():
     assert result.diagnostics.correction_variance_norms[0] == 0.0
 
 
-def test_smolyak_fine_correction_is_paired_prefix_stable_and_lower_variance():
+def test_smolyak_fine_correction_is_paired_prefix_stable_and_lower_variance() -> None:
     adapter = _adapter(deterministic_base=False)
     root_key = jr.key(62)
     whole = adapter.sample(1, jnp.arange(1024), root_key)
@@ -89,7 +92,7 @@ def test_smolyak_fine_correction_is_paired_prefix_stable_and_lower_variance():
     assert jnp.all(whole.costs > 0.0)
 
 
-def test_smolyak_base_and_correction_use_independent_level_namespaces():
+def test_smolyak_base_and_correction_use_independent_level_namespaces() -> None:
     adapter = _adapter(deterministic_base=False)
     indices = jnp.arange(16)
     root_key = jr.key(63)

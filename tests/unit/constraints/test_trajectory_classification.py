@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -23,7 +26,7 @@ from phydrax.terms import (
 from phydrax.terms._trajectory_classification import TrajectoryCaseClassificationBatch
 
 
-def _regular_domain(*, measure="case_time_probability"):
+def _regular_domain(*, measure: Any = "case_time_probability") -> Any:
     return TrajectoryDatasetDomain(
         jnp.asarray([[0.0], [1.0], [2.0]]),
         jnp.asarray([2, 4, 3]),
@@ -32,7 +35,7 @@ def _regular_domain(*, measure="case_time_probability"):
     )
 
 
-def _irregular_domain(*, measure="case_time_probability"):
+def _irregular_domain(*, measure: Any = "case_time_probability") -> Any:
     return IrregularTrajectoryDatasetDomain(
         jnp.asarray([[0.0], [1.0], [2.0]]),
         jnp.asarray(
@@ -47,7 +50,7 @@ def _irregular_domain(*, measure="case_time_probability"):
     )
 
 
-def _paired_sampling(count=24):
+def _paired_sampling(count: Any = 24) -> Any:
     return phx.domain.PointSampling(
         count,
         layout=SampleLayout((("data", "t"),)),
@@ -55,7 +58,7 @@ def _paired_sampling(count=24):
     )
 
 
-def _binary_case_term(domain, *, case_time="start", **kwargs):
+def _binary_case_term(domain: Any, *, case_time: Any = "start", **kwargs: Any) -> Any:
     return TrajectoryCaseClassificationTerm(
         "classify",
         domain.component(),
@@ -68,7 +71,7 @@ def _binary_case_term(domain, *, case_time="start", **kwargs):
 
 
 @pytest.mark.parametrize("make_domain", [_regular_domain, _irregular_domain])
-def test_case_classification_start_and_end_times(make_domain):
+def test_case_classification_start_and_end_times(make_domain: Any) -> None:
     domain = make_domain()
     start_batch = _binary_case_term(domain, case_time="start").sample(key=jr.key(0))
     end_batch = _binary_case_term(domain, case_time="end").sample(key=jr.key(1))
@@ -87,7 +90,9 @@ def test_case_classification_start_and_end_times(make_domain):
     ("make_domain", "fixed_time"),
     [(_regular_domain, 0.5), (_irregular_domain, 0.25)],
 )
-def test_case_classification_fixed_time_samples_only_valid_cases(make_domain, fixed_time):
+def test_case_classification_fixed_time_samples_only_valid_cases(
+    make_domain: Any, fixed_time: Any
+) -> None:
     domain = make_domain()
     batch = _binary_case_term(domain, case_time=fixed_time).sample(key=jr.key(2))
 
@@ -102,7 +107,9 @@ def test_case_classification_fixed_time_samples_only_valid_cases(make_domain, fi
 
 
 @pytest.mark.parametrize("make_domain", [_regular_domain, _irregular_domain])
-def test_hard_ragged_nearest_lookup_preserves_labels_and_skips_padding(make_domain):
+def test_hard_ragged_nearest_lookup_preserves_labels_and_skips_padding(
+    make_domain: Any,
+) -> None:
     domain = make_domain()
     targets = jnp.full((domain.size, domain.max_length), 99, dtype=jnp.int32)
     valid = jnp.arange(domain.max_length)[None, :] < domain.lengths[:, None]
@@ -126,7 +133,7 @@ def test_hard_ragged_nearest_lookup_preserves_labels_and_skips_padding(make_doma
     assert not bool(jnp.any(batch.target == 99))
 
 
-def test_shared_trajectory_data_batches_preserve_discrete_target_dtype():
+def test_shared_trajectory_data_batches_preserve_discrete_target_dtype() -> None:
     domain = _regular_domain()
     case_term = TrajectoryCaseDataTerm(
         "value",
@@ -149,7 +156,7 @@ def test_shared_trajectory_data_batches_preserve_discrete_target_dtype():
 @pytest.mark.parametrize(
     "selection", ["observation_uniform", "case_uniform", "case_time_uniform"]
 )
-def test_ragged_selection_policies_respect_case_subset(selection):
+def test_ragged_selection_policies_respect_case_subset(selection: Any) -> None:
     domain = _regular_domain()
     targets = jnp.zeros((domain.size, domain.max_length), dtype="bool")
     term = RaggedTimeSeriesClassificationTerm(
@@ -167,7 +174,7 @@ def test_ragged_selection_policies_respect_case_subset(selection):
     assert jnp.all(batch.time_indices < domain.lengths[batch.case_indices])
 
 
-def test_hard_targets_reject_linear_interpolation():
+def test_hard_targets_reject_linear_interpolation() -> None:
     domain = _regular_domain()
     targets = jnp.zeros((domain.size, domain.max_length), dtype=jnp.int32)
     with pytest.raises(ValueError, match="Hard.*nearest"):
@@ -183,7 +190,7 @@ def test_hard_targets_reject_linear_interpolation():
         )
 
 
-def test_soft_multiclass_linear_interpolation_stays_on_simplex():
+def test_soft_multiclass_linear_interpolation_stays_on_simplex() -> None:
     domain = _regular_domain()
     time = jnp.arange(domain.max_length, dtype="float64")
     probability = jnp.broadcast_to(
@@ -207,7 +214,7 @@ def test_soft_multiclass_linear_interpolation_stays_on_simplex():
     assert jnp.allclose(jnp.sum(batch.target, axis=-1), 1.0, atol=1e-6)
 
 
-def test_soft_multiclass_linear_rejects_invalid_active_simplex():
+def test_soft_multiclass_linear_rejects_invalid_active_simplex() -> None:
     domain = _regular_domain()
     probability = jnp.full((domain.size, domain.max_length, 3), 1.0 / 3.0)
     probability = probability.at[1, 1].set(jnp.asarray([0.8, 0.8, -0.6]))
@@ -224,7 +231,7 @@ def test_soft_multiclass_linear_rejects_invalid_active_simplex():
         )
 
 
-def test_multilabel_case_time_grid_retains_case_time_and_label_axes():
+def test_multilabel_case_time_grid_retains_case_time_and_label_axes() -> None:
     domain = _regular_domain()
     targets = jnp.zeros((domain.size, domain.max_length, 3), dtype="bool")
     targets = targets.at[..., 0].set(True)
@@ -249,7 +256,7 @@ def test_multilabel_case_time_grid_retains_case_time_and_label_axes():
     assert batch.geometry_weight.shape == (2, 5)
 
     @domain.Function("data", "t")
-    def logits(data, time):
+    def logits(data: Any, time: Any) -> Any:
         del data, time
         return jnp.zeros((3,))
 
@@ -258,7 +265,7 @@ def test_multilabel_case_time_grid_retains_case_time_and_label_axes():
     assert jnp.isfinite(loss)
 
 
-def _all_case_batch(term):
+def _all_case_batch(term: Any) -> Any:
     domain = term.domain
     case_indices = jnp.arange(domain.size, dtype=jnp.int32)
     times = jnp.full((domain.size,), domain.start)
@@ -282,7 +289,7 @@ def _all_case_batch(term):
     )
 
 
-def test_multilabel_mean_sums_observed_labels_before_averaging_cases():
+def test_multilabel_mean_sums_observed_labels_before_averaging_cases() -> None:
     domain = _regular_domain()
     targets = jnp.zeros((domain.size, 3), dtype=jnp.int32)
     target_mask = jnp.asarray(
@@ -299,7 +306,7 @@ def test_multilabel_mean_sums_observed_labels_before_averaging_cases():
     batch = _all_case_batch(term)
 
     @domain.Function("data", "t")
-    def zero_logits(data, time):
+    def zero_logits(data: Any, time: Any) -> Any:
         del data, time
         return jnp.zeros((3,))
 
@@ -307,7 +314,7 @@ def test_multilabel_mean_sums_observed_labels_before_averaging_cases():
     assert jnp.allclose(loss, 1.5 * jnp.log(2.0), atol=1e-7)
 
 
-def test_target_mask_and_case_weights_define_statistical_mean_and_sum():
+def test_target_mask_and_case_weights_define_statistical_mean_and_sum() -> None:
     domain = _regular_domain()
     common = dict(
         target_mask=jnp.asarray([True, False, True]),
@@ -318,7 +325,7 @@ def test_target_mask_and_case_weights_define_statistical_mean_and_sum():
     batch = _all_case_batch(mean_term)
 
     @domain.Function("data", "t")
-    def zero_logit(data, time):
+    def zero_logit(data: Any, time: Any) -> float:
         del data, time
         return 0.0
 
@@ -328,7 +335,9 @@ def test_target_mask_and_case_weights_define_statistical_mean_and_sum():
     assert jnp.allclose(sum_loss, 4.0 * jnp.log(2.0), atol=1e-7)
 
 
-def test_masked_invalid_hard_label_is_inert_but_active_invalid_label_is_infinite():
+def test_masked_invalid_hard_label_is_inert_but_active_invalid_label_is_infinite() -> (
+    None
+):
     domain = _regular_domain()
     targets = jnp.asarray([0, 99, 1], dtype=jnp.int32)
     schema = TargetSchema("multiclass", class_labels=(0, 1, 2))
@@ -360,7 +369,7 @@ def test_masked_invalid_hard_label_is_inert_but_active_invalid_label_is_infinite
     )
 
     @domain.Function("data", "t")
-    def logits(data, time):
+    def logits(data: Any, time: Any) -> Any:
         del data, time
         return jnp.zeros((3,))
 
@@ -368,7 +377,7 @@ def test_masked_invalid_hard_label_is_inert_but_active_invalid_label_is_infinite
     assert jnp.isinf(active.loss({"classify": logits}, batch=active_batch))
 
 
-def test_focal_objective_preserves_case_shape_and_returns_scalar():
+def test_focal_objective_preserves_case_shape_and_returns_scalar() -> None:
     domain = _regular_domain()
     term = TrajectoryCaseClassificationTerm(
         "classify",
@@ -380,7 +389,7 @@ def test_focal_objective_preserves_case_shape_and_returns_scalar():
     )
 
     @domain.Function("data", "t")
-    def logits(data, time):
+    def logits(data: Any, time: Any) -> Any:
         del time
         return data[0] - 1.0
 
@@ -391,7 +400,7 @@ def test_focal_objective_preserves_case_shape_and_returns_scalar():
     assert jnp.isfinite(loss)
 
 
-def test_ordinal_case_classification_uses_scalar_latent_and_ordered_thresholds():
+def test_ordinal_case_classification_uses_scalar_latent_and_ordered_thresholds() -> None:
     domain = _regular_domain()
     term = TrajectoryCaseClassificationTerm(
         "classify",
@@ -403,7 +412,7 @@ def test_ordinal_case_classification_uses_scalar_latent_and_ordered_thresholds()
     )
 
     @domain.Function("data", "t")
-    def latent(data, time):
+    def latent(data: Any, time: Any) -> Any:
         del time
         return data[0] - 1.0
 
@@ -412,7 +421,7 @@ def test_ordinal_case_classification_uses_scalar_latent_and_ordered_thresholds()
     assert jnp.isfinite(loss)
 
 
-def test_physical_measure_requires_sum_and_preserves_trajectory_mass():
+def test_physical_measure_requires_sum_and_preserves_trajectory_mass() -> None:
     domain = TrajectoryDatasetDomain(
         jnp.asarray([[0.0], [1.0], [2.0]]),
         jnp.asarray([3, 3, 3]),
@@ -446,7 +455,7 @@ def test_physical_measure_requires_sum_and_preserves_trajectory_mass():
     assert jnp.allclose(jnp.sum(batch.geometry_weight), 3.0)
 
 
-def test_observation_uniform_grid_uses_global_inverse_proposal_weights():
+def test_observation_uniform_grid_uses_global_inverse_proposal_weights() -> None:
     domain = TrajectoryDatasetDomain(
         jnp.asarray([[0.0], [1.0], [2.0]]),
         jnp.asarray([2, 5, 3]),
@@ -482,17 +491,17 @@ def test_observation_uniform_grid_uses_global_inverse_proposal_weights():
     assert jnp.allclose(batch.geometry_weight, expected)
 
 
-def test_classification_and_physics_terms_share_one_trajectory_function_mapping():
+def test_classification_and_physics_terms_share_one_trajectory_function_mapping() -> None:
     domain = _regular_domain()
     classification = _binary_case_term(domain)
 
     @domain.Function("data", "t")
-    def classify(data, time):
+    def classify(data: Any, time: Any) -> Any:
         del time
         return data[0] - 0.5
 
     @domain.Function("data", "t")
-    def state(data, time):
+    def state(data: Any, time: Any) -> Any:
         return data[0] + time
 
     condition = phx.conditions.Residual(
@@ -514,12 +523,12 @@ def test_classification_and_physics_terms_share_one_trajectory_function_mapping(
     assert (classification_loss + physics_loss).shape == ()
 
 
-def test_trajectory_zero_weight_skips_nonfinite_predictions():
+def test_trajectory_zero_weight_skips_nonfinite_predictions() -> None:
     domain = _regular_domain()
     term = _binary_case_term(domain, weight=0.0)
 
     @domain.Function("data", "t")
-    def poisoned(row, time):
+    def poisoned(row: Any, time: Any) -> Any:
         del row, time
         return jnp.nan
 

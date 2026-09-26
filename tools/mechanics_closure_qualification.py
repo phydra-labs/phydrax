@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -16,7 +17,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _plane_stress():
+def _plane_stress() -> Any:
     sm = phx.applications.solid_mechanics
     law = sm.NeoHookeanLaw(sm.NeoHookeanParameters.from_shear_bulk(3.0, 11.0))
     plan = sm.BlockDiagonalPlaneStressReductionPlan()
@@ -39,13 +40,13 @@ def _plane_stress():
     }
 
 
-def _mixed_incompressibility():
+def _mixed_incompressibility() -> Any:
     sm = phx.applications.solid_mechanics
 
-    def isochoric(deformation_bar):
+    def isochoric(deformation_bar: Any) -> Any:
         return 1.5 * (jnp.sum(deformation_bar * deformation_bar) - 2.0)
 
-    def constraint(deformation):
+    def constraint(deformation: Any) -> Any:
         return jnp.log(jnp.linalg.det(deformation))
 
     exact = sm.MixedHyperelasticLaw(isochoric, constraint, minimum_jacobian=1.0e-8)
@@ -93,7 +94,7 @@ def _mixed_incompressibility():
     }
 
 
-def _follower_loads():
+def _follower_loads() -> Any:
     sm = phx.applications.solid_mechanics
     reference = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
     deformation = jnp.broadcast_to(jnp.eye(2), (3, 2, 2))
@@ -105,7 +106,13 @@ def _follower_loads():
     evaluation = dead.evaluate(reference, current, measure, sm.MechanicalLoadState())
     matrix = jnp.asarray(((0.0, 2.0), (-1.0, 0.5)))
 
-    def follower(reference_coordinates, current_coordinates, measure_state, state, args):
+    def follower(
+        reference_coordinates: Any,
+        current_coordinates: Any,
+        measure_state: Any,
+        state: Any,
+        args: Any,
+    ) -> Any:
         del reference_coordinates, measure_state, state, args
         return current_coordinates @ matrix.T
 
@@ -136,7 +143,7 @@ def _follower_loads():
     }
 
 
-def _continuation_bifurcation():
+def _continuation_bifurcation() -> Any:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, parameter, args: {"x": state["x"] ** 2 + parameter - 1.0},
         problem_id="qualification-fold",
@@ -162,11 +169,12 @@ def _continuation_bifurcation():
         "status": int(result.status),
         "points": len(result.branch.points),
         "accepted_steps": int(result.diagnostics.accepted_steps),
+        # ty: ignore[unresolved-attribute]
         "checkpoint_decisions": len(result.checkpoint.accepted_decision_ids),
     }
 
 
-def _contact():
+def _contact() -> Any:
     contact = phx.applications.contact
     collision = phx.discretization.contact
     source = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
@@ -174,6 +182,7 @@ def _contact():
         jnp.asarray((10, 11)),
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
+        # ty: ignore[unknown-argument]
         minimum_separation=0.2,
     )
     fixed_plan = collision.CollisionSurfacePlan(
@@ -182,10 +191,14 @@ def _contact():
         edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
         pair_policy=collision.ContactPairPolicy(
             2,
+            # ty: ignore[unknown-argument]
             body_ids=jnp.ones((2,), dtype=jnp.int64),
+            # ty: ignore[unknown-argument]
             material_ids=jnp.zeros((2,), dtype=jnp.int64),
+            # ty: ignore[unknown-argument]
             static_mask=jnp.ones((2,), dtype="bool"),
         ),
+        # ty: ignore[unknown-argument]
         minimum_separation=0.2,
     )
     moving = collision.PreparedCollisionSurface(
@@ -242,7 +255,7 @@ def _contact():
     }
 
 
-def _fracture():
+def _fracture() -> Any:
     fracture = phx.applications.fracture
     vertices = jnp.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
@@ -274,7 +287,7 @@ def _fracture():
     }
 
 
-def _topology():
+def _topology() -> Any:
     sm = phx.applications.solid_mechanics
     evidence = sm.hill_mandel_evidence(
         jnp.asarray(((2.0,), (2.0,))),
@@ -294,7 +307,7 @@ def _topology():
     }
 
 
-def _member_network():
+def _member_network() -> Any:
     sm = phx.applications.solid_mechanics
     mn = sm.member_network
     structure = sm.ForceDensityStructure.from_edges(
@@ -306,6 +319,7 @@ def _member_network():
     positions = jnp.asarray(((0.0, 0.0), (1.0, 0.0)))
     material = mn.LinearElasticMaterial(1_000.0, 400.0, 1.0)
     section = mn.BeamSection(0.1, 0.01, 0.01, 0.005, 0.08, 0.08)
+    # ty: ignore[invalid-argument-type]
     properties = mn.MemberPropertyMap((material,), (section,), (0,), (0,))
     reference = mn.MemberReferenceState(structure, positions)
     dofs = mn.MemberDOFLayout(
@@ -313,6 +327,7 @@ def _member_network():
         rotation_constrained=jnp.asarray(((True,), (False,))),
     )
     definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
+    # ty: ignore[invalid-argument-type]
     assembly = mn.MemberNetworkAssembly((mn.CorotationalFrameBlock((0,)),))
     problem = mn.MemberNetworkProblem(definition, assembly)
     initial = mn.MemberKinematics(positions, jnp.zeros((2, 1)))
@@ -330,7 +345,7 @@ def _member_network():
         equilibrium.state.kinematics.rotation_vectors,
     )
 
-    def energy(state):
+    def energy(state: Any) -> Any:
         kinematics = dofs.expand(
             state,
             inputs.prescribed_positions,
@@ -393,7 +408,7 @@ def _member_network():
     }
 
 
-def _operator_learning():
+def _operator_learning() -> Any:
     reduction = phx.nn.operator.training.MechanicsCaseReduction("cvar", alpha=0.5)
     result = reduction.evaluate(
         jnp.asarray((1.0, 4.0, 4.0)),
@@ -408,7 +423,7 @@ def _operator_learning():
     }
 
 
-def qualify():
+def qualify() -> Any:
     sections = {
         "plane_stress": _plane_stress(),
         "mixed_incompressibility": _mixed_incompressibility(),
@@ -427,7 +442,7 @@ def qualify():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",

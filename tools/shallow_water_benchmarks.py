@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -16,7 +17,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _case(count, *, muscl, dry):
+def _case(count: Any, *, muscl: Any, dry: Any) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
         axis_names=("x",),
@@ -55,7 +56,7 @@ def _case(count, *, muscl, dry):
     return compiled, state
 
 
-def _measure(compiled, state, repeats):
+def _measure(compiled: Any, state: Any, repeats: Any) -> Any:
     residual = eqx.filter_jit(compiled.dynamics)
     started = time.perf_counter()
     first = residual(jnp.asarray(0.0), state)
@@ -74,7 +75,7 @@ def _measure(compiled, state, repeats):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=4096)
     parser.add_argument("--repeats", type=int, default=20)

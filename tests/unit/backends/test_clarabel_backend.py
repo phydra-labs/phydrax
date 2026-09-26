@@ -7,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def test_clarabel_capabilities_are_lazy_and_host_only():
+def test_clarabel_capabilities_are_lazy_and_host_only() -> None:
     availability = phx.backends.clarabel_availability()
     capabilities = availability.capabilities
 
@@ -19,7 +19,7 @@ def test_clarabel_capabilities_are_lazy_and_host_only():
     assert availability.requirement == ("install phydrax[clarabel] (clarabel==0.11.1)")
 
 
-def test_missing_clarabel_raises_selected_backend_error():
+def test_missing_clarabel_raises_selected_backend_error() -> None:
     availability = phx.backends.clarabel_availability()
     if availability.available:
         pytest.skip("Clarabel is installed in this environment.")

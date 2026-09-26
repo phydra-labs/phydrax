@@ -983,7 +983,10 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
                 kwargs["unwrapped_positions"] = value + unwrapped_offset
             if fractional_offset is not None:
                 # fractional_offset is only bound together with a cell and cell vectors.
-                assert selected_cell is not None and vectors is not None
+                if not (selected_cell is not None and vectors is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: selected_cell is not None and vectors is not None."
+                    )
                 kwargs["fractional_positions"] = (
                     selected_cell.fractional_with_vectors(value, vectors)
                     + fractional_offset

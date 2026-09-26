@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
+from ..typing import parse
 from ._stencil import apply_gather_stencil, GatherStencil
 from ._types import BoundsMode, InterpolationResult
 
@@ -276,8 +277,7 @@ def bspline_jet_stencil(
         raise ValueError("B-spline degree must be non-negative.")
     if maximum_order_ < 0:
         raise ValueError("B-spline maximum_order must be non-negative.")
-    if bounds not in ("clip", "error", "extrapolate", "fill"):
-        raise ValueError("bounds must be 'clip', 'error', 'extrapolate', or 'fill'.")
+    bounds = parse(bounds, BoundsMode, "bounds")
 
     knots_raw = jnp.asarray(knots)
     query_raw = jnp.asarray(query)

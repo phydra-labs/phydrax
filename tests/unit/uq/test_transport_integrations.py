@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _batch(weights, *, cases=2):
+def _batch(weights: Any, *, cases: Any = 2) -> Any:
     quadrature = jnp.asarray(weights, dtype="float64")
     nodes = jnp.linspace(0.0, 1.0, quadrature.shape[0])
     coordinates = jnp.broadcast_to(
@@ -39,7 +42,7 @@ def _batch(weights, *, cases=2):
     )
 
 
-def _predictive(samples, batch, *, sample_dim):
+def _predictive(samples: Any, batch: Any, *, sample_dim: Any) -> Any:
     return phx.uq.operator_predictive_from_samples(
         jnp.asarray(samples, dtype="float64"),
         batch,
@@ -50,7 +53,7 @@ def _predictive(samples, batch, *, sample_dim):
     )
 
 
-def _measure(points, weights, *, provenance):
+def _measure(points: Any, weights: Any, *, provenance: Any) -> Any:
     return phx.integration.discrete(
         jnp.asarray(points, dtype="float64"),
         cx.AxisArray(jnp.asarray(weights, dtype="float64"), dims=("atom",)),
@@ -60,7 +63,9 @@ def _measure(points, weights, *, provenance):
     )
 
 
-def test_raw_predictive_sinkhorn_divergence_retains_all_three_solves_and_gradients():
+def test_raw_predictive_sinkhorn_divergence_retains_all_three_solves_and_gradients() -> (
+    None
+):
     source = jnp.asarray([[0.0, 0.2], [1.0, 1.2], [2.0, 2.2]])
     identity = phx.uq.predictive_sinkhorn_divergence(source, source, epsilon=1.0)
     translated = phx.uq.predictive_sinkhorn_divergence(
@@ -90,7 +95,9 @@ def test_raw_predictive_sinkhorn_divergence_retains_all_three_solves_and_gradien
     assert jnp.isfinite(gradient)
 
 
-def test_operator_transport_metrics_keep_physical_cases_independent_and_replay_keys():
+def test_operator_transport_metrics_keep_physical_cases_independent_and_replay_keys() -> (
+    None
+):
     batch = _batch([0.1, 0.2, 0.7])
     left_samples = jnp.asarray(
         [
@@ -139,7 +146,7 @@ def test_operator_transport_metrics_keep_physical_cases_independent_and_replay_k
     assert jnp.array_equal(sliced.sliced.projections, replay.sliced.projections)
 
 
-def test_operator_transport_uses_quadrature_scaled_whole_events():
+def test_operator_transport_uses_quadrature_scaled_whole_events() -> None:
     batch = _batch([0.01, 0.09, 0.9])
     left_samples = jnp.zeros((3, 2, 3))
     right_samples = left_samples.at[..., 0].set(1.0)
@@ -169,7 +176,9 @@ def test_operator_transport_uses_quadrature_scaled_whole_events():
     )
 
 
-def test_optimal_transport_ensemble_transform_preserves_weighted_mean_and_gradients():
+def test_optimal_transport_ensemble_transform_preserves_weighted_mean_and_gradients() -> (
+    None
+):
     particles = jnp.asarray([[0.0], [1.0], [3.0]])
     weights = jnp.asarray([0.1, 0.2, 0.7])
     result = phx.uq.optimal_transport_ensemble_transform(
@@ -202,7 +211,7 @@ def test_optimal_transport_ensemble_transform_preserves_weighted_mean_and_gradie
     assert "transport" not in phx.uq.ResamplingMethod.__args__
 
 
-def test_batched_particle_transform_preserves_case_and_particle_layout():
+def test_batched_particle_transform_preserves_case_and_particle_layout() -> None:
     particles = jnp.asarray(
         [
             [[0.0], [1.0], [3.0]],
@@ -225,7 +234,7 @@ def test_batched_particle_transform_preserves_case_and_particle_layout():
     assert jnp.allclose(result.transformed_mean, result.source_mean, atol=1e-8)
 
 
-def test_transport_functional_terms_return_scalar_values_and_native_diagnostics():
+def test_transport_functional_terms_return_scalar_values_and_native_diagnostics() -> None:
     solver = phx.transport.Sinkhorn(
         1.0,
         max_iterations=500,
@@ -283,7 +292,7 @@ def test_transport_functional_terms_return_scalar_values_and_native_diagnostics(
     }
 
 
-def test_transport_terms_reject_nonconverged_training_solves():
+def test_transport_terms_reject_nonconverged_training_solves() -> None:
     target = _measure([[0.0], [1.0]], [0.5, 0.5], provenance="reference")
     solver = phx.transport.Sinkhorn(
         0.05,
@@ -304,7 +313,7 @@ def test_transport_terms_reject_nonconverged_training_solves():
         jax.block_until_ready(evaluation.value)
 
 
-def test_soft_quantile_functional_reports_regularity_and_solver_precedence():
+def test_soft_quantile_functional_reports_regularity_and_solver_precedence() -> None:
     values = jnp.asarray([-2.0, -0.3, 1.4, 3.0])
     quantile_levels = jnp.asarray([0.0, 0.35, 1.0])
     solver = phx.transport.Sinkhorn(
@@ -353,7 +362,9 @@ def test_soft_quantile_functional_reports_regularity_and_solver_precedence():
     )
 
 
-def test_soft_quantile_functional_has_finite_interior_gradient_and_validates_epsilon():
+def test_soft_quantile_functional_has_finite_interior_gradient_and_validates_epsilon() -> (
+    None
+):
     term = phx.terms.SoftQuantileFunctional(
         lambda functions: functions["values"],
         jnp.asarray([0.25, 0.75]),
@@ -365,6 +376,7 @@ def test_soft_quantile_functional_has_finite_interior_gradient_and_validates_eps
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.linalg.norm(gradient) > 0.0
     assert not jnp.any(
+        # ty: ignore[invalid-argument-type]
         term.term_evaluation({"values": values}).diagnostics["endpoint_mask"]
     )
 
@@ -378,7 +390,7 @@ def test_soft_quantile_functional_has_finite_interior_gradient_and_validates_eps
             )
 
 
-def test_soft_quantile_functional_rejects_a_nonconverged_solver():
+def test_soft_quantile_functional_rejects_a_nonconverged_solver() -> None:
     solver = phx.transport.Sinkhorn(
         0.02,
         max_iterations=1,

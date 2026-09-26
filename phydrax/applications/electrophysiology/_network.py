@@ -932,7 +932,10 @@ def _advance_one(
 ) -> tuple[_CellState, Array]:
     # Group states are initialized from, and stacked alongside, their models.
     if isinstance(model, PreparedCableSolver):
-        assert isinstance(state, CableState)
+        if not (isinstance(state, CableState)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(state, CableState)."
+            )
         result = step_cable(
             model,
             state,
@@ -942,7 +945,10 @@ def _advance_one(
         return result.state, result.evidence.successful
     if isinstance(model, SpikeSource):
         return SpikeSourceState(time + elapsed), jnp.asarray(True)
-    assert isinstance(state, PointNeuronState)
+    if not (isinstance(state, PointNeuronState)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(state, PointNeuronState)."
+        )
     value = advance_point_neuron(
         model, state, elapsed, injected[0], conductance[0], offset[0], time_ms=time
     )
@@ -988,7 +994,10 @@ def _flow(
             _cell_state(runtime, groups, index),
         )
         # Plan validation restricts ion couplings to cable cells.
-        assert isinstance(old, CableState) and isinstance(new, CableState)
+        if not (isinstance(old, CableState) and isinstance(new, CableState)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(old, CableState) and isinstance(new, CableState)."
+            )
         candidate = evaluate_ion_concentration_transition(
             binding.runtime, ion, binding.current(old, new), elapsed
         )
@@ -1374,7 +1383,10 @@ def _learn(
     # Initialization allocates the learning state matching the plan kind.
     if isinstance(plan, EligibilitySTDPPlan):
         eligibility = state.learning
-        assert isinstance(eligibility, EligibilitySTDPState)
+        if not (isinstance(eligibility, EligibilitySTDPState)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(eligibility, EligibilitySTDPState)."
+            )
         candidate = evaluate_eligibility_stdp(
             runtime.synapses,
             plan,
@@ -1393,7 +1405,10 @@ def _learn(
         successful = candidate.successful
     else:
         pair = state.learning
-        assert isinstance(pair, PairSTDPState)
+        if not (isinstance(pair, PairSTDPState)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(pair, PairSTDPState)."
+            )
         candidate = evaluate_pair_stdp(
             runtime.synapses,
             plan,

@@ -148,12 +148,18 @@ class PreparedAtmosphericBalance(StrictModule, NonTrainableState):
                 ghost_lower = ghost_lower.at[..., normal].multiply(-1.0)
             else:
                 # Prescribed sides always carry exterior data by construction.
-                assert prescribed_lower is not None
+                if not (prescribed_lower is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: prescribed_lower is not None."
+                    )
                 ghost_lower = prescribed_lower - reference[0]
             if upper == "closed":
                 ghost_upper = ghost_upper.at[..., normal].multiply(-1.0)
             else:
-                assert prescribed_upper is not None
+                if not (prescribed_upper is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: prescribed_upper is not None."
+                    )
                 ghost_upper = prescribed_upper - reference[-1]
         padded = jnp.concatenate((ghost_lower[None], delta, ghost_upper[None]), axis=0)
         slope = jnp.zeros_like(padded)

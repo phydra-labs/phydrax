@@ -2,7 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import operator
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -23,20 +25,22 @@ from phydrax.operators.differential._hooks import blend_with_gate
 
 
 @pytest.fixture
-def interval():
+def interval() -> Any:
     return Interval1d(0.0, 1.0)
 
 
 @pytest.fixture
-def sample_batch(interval):
+def sample_batch(interval: Any) -> Any:
     component = interval.component()
     structure = SampleLayout((("x",),))
     return component.sample(phx.domain.PointSampling(8, layout=structure), key=jr.key(0))
 
 
-def test_function_binding_does_not_infer_key_from_signature(sample_batch, interval):
+def test_function_binding_does_not_infer_key_from_signature(
+    sample_batch: Any, interval: Any
+) -> None:
     @interval.Function("x")
-    def function(x, *, key=None):
+    def function(x: Any, *, key: Any = None) -> Any:
         del x
         return jnp.asarray(key is None, dtype="float64")
 
@@ -45,12 +49,12 @@ def test_function_binding_does_not_infer_key_from_signature(sample_batch, interv
     assert jnp.all(out.data == 1.0)
 
 
-def test_function_binding_explicitly_passes_key(sample_batch, interval):
+def test_function_binding_explicitly_passes_key(sample_batch: Any, interval: Any) -> None:
     @interval.Function(
         "x",
         binding=phx.domain.FunctionBinding(pass_key=True),
     )
-    def function(x, *, key):
+    def function(x: Any, *, key: Any) -> Any:
         del x
         return jr.uniform(key)
 
@@ -59,12 +63,14 @@ def test_function_binding_explicitly_passes_key(sample_batch, interval):
     assert jnp.allclose(jnp.asarray(out.data), jr.uniform(key))
 
 
-def test_function_binding_explicitly_passes_iteration(sample_batch, interval):
+def test_function_binding_explicitly_passes_iteration(
+    sample_batch: Any, interval: Any
+) -> None:
     @interval.Function(
         "x",
         binding=phx.domain.FunctionBinding(pass_iter=True),
     )
-    def function(x, *, iter_):
+    def function(x: Any, *, iter_: Any) -> Any:
         return iter_ * x[0]
 
     out = function(sample_batch, iter_=3)
@@ -72,13 +78,13 @@ def test_function_binding_explicitly_passes_iteration(sample_batch, interval):
     assert jnp.allclose(jnp.asarray(out.data), expected)
 
 
-def test_add(sample_batch, interval):
+def test_add(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] + 1.0
 
     @interval.Function("x")
-    def g(x):
+    def g(x: Any) -> Any:
         return 2.0 * x[0]
 
     h = f + g
@@ -87,22 +93,22 @@ def test_add(sample_batch, interval):
     )
 
 
-def test_radd(sample_batch, interval):
+def test_radd(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] + 1.0
 
     h = 3.0 + f
     assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 + f(sample_batch).data)
 
 
-def test_sub(sample_batch, interval):
+def test_sub(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] + 1.0
 
     @interval.Function("x")
-    def g(x):
+    def g(x: Any) -> Any:
         return 2.0 * x[0]
 
     h = f - g
@@ -111,22 +117,22 @@ def test_sub(sample_batch, interval):
     )
 
 
-def test_rsub(sample_batch, interval):
+def test_rsub(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] + 1.0
 
     h = 3.0 - f
     assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 - f(sample_batch).data)
 
 
-def test_mul(sample_batch, interval):
+def test_mul(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] + 1.0
 
     @interval.Function("x")
-    def g(x):
+    def g(x: Any) -> Any:
         return 2.0 * x[0]
 
     h = f * g
@@ -135,22 +141,22 @@ def test_mul(sample_batch, interval):
     )
 
 
-def test_rmul(sample_batch, interval):
+def test_rmul(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] + 1.0
 
     h = 3.0 * f
     assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 * f(sample_batch).data)
 
 
-def test_truediv(sample_batch, interval):
+def test_truediv(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] + 1.0
 
     @interval.Function("x")
-    def g(x):
+    def g(x: Any) -> Any:
         return 2.0 * x[0] + 1.0
 
     h = f / g
@@ -159,54 +165,54 @@ def test_truediv(sample_batch, interval):
     )
 
 
-def test_rtruediv(sample_batch, interval):
+def test_rtruediv(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] + 1.0
 
     h = 3.0 / f
     assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 / f(sample_batch).data)
 
 
-def test_pow(sample_batch, interval):
+def test_pow(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] + 1.0
 
     h = f**2.0
     assert jnp.allclose(jnp.asarray(h(sample_batch).data), f(sample_batch).data ** 2.0)
 
 
-def test_rpow(sample_batch, interval):
+def test_rpow(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0]
 
     h = 3.0**f
     assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 ** f(sample_batch).data)
 
 
-def test_abs(sample_batch, interval):
+def test_abs(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return -x[0]
 
     h = abs(f)
     assert jnp.allclose(jnp.asarray(h(sample_batch).data), jnp.abs(f(sample_batch).data))
 
 
-def test_neg(sample_batch, interval):
+def test_neg(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0]
 
     h = -f
     assert jnp.allclose(jnp.asarray(h(sample_batch).data), -f(sample_batch).data)
 
 
-def test_transpose(sample_batch, interval):
+def test_transpose(sample_batch: Any, interval: Any) -> None:
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         del x
         return jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
 
@@ -217,17 +223,17 @@ def test_transpose(sample_batch, interval):
     assert jnp.allclose(out_t.data[0], out.data[0].T)
 
 
-def test_domain_join_and_broadcast():
+def test_domain_join_and_broadcast() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     dom = geom @ time
 
     @geom.Function("x")
-    def fx(x):
+    def fx(x: Any) -> Any:
         return 2.0 * x[0]
 
     @time.Function("t")
-    def gt(t):
+    def gt(t: Any) -> Any:
         return t + 1.0
 
     h = fx + gt
@@ -248,7 +254,7 @@ def test_domain_join_and_broadcast():
     assert axis_t in out.named_dims
 
 
-def test_metadata_merge_rules(interval):
+def test_metadata_merge_rules(interval: Any) -> None:
     f = interval.Function("x")(lambda x: x[0]).with_metadata(m=1)
     g = interval.Function("x")(lambda x: 2.0 * x[0]).with_metadata(m=1)
     h = f + g
@@ -258,11 +264,13 @@ def test_metadata_merge_rules(interval):
     assert k.metadata == frozendict({})
 
 
-def test_constant_with_dependencies_participates_in_arithmetic(sample_batch, interval):
+def test_constant_with_dependencies_participates_in_arithmetic(
+    sample_batch: Any, interval: Any
+) -> None:
     const = interval.Function("x")(2.0)
 
     @interval.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] + 1.0
 
     out = (f - const)(sample_batch)
@@ -270,13 +278,13 @@ def test_constant_with_dependencies_participates_in_arithmetic(sample_batch, int
     assert jnp.allclose(jnp.asarray(out.data), expected)
 
 
-def test_constant_with_dependencies_works_on_coord_separable_batch():
+def test_constant_with_dependencies_works_on_coord_separable_batch() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     dom = geom @ time
 
     @dom.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + t
 
     const = dom.Function("x", "t")(1.0)
@@ -295,7 +303,7 @@ def test_constant_with_dependencies_works_on_coord_separable_batch():
     assert jnp.allclose(jnp.asarray(out.data), expected)
 
 
-def test_rank1_leading_broadcast_op_mul():
+def test_rank1_leading_broadcast_op_mul() -> None:
     w = jnp.array([1.0, 2.0, 3.0], dtype="float64")
     u = jnp.arange(12.0, dtype="float64").reshape((3, 4))
     out = _rank1_leading_broadcast_op(operator.mul, w, u)
@@ -303,7 +311,7 @@ def test_rank1_leading_broadcast_op_mul():
     assert jnp.allclose(out, expected)
 
 
-def test_rank1_leading_broadcast_op_div():
+def test_rank1_leading_broadcast_op_div() -> None:
     w = jnp.array([1.0, 2.0, 4.0], dtype="float64")
     u = jnp.arange(12.0, dtype="float64").reshape((3, 4)) + 1.0
     out = _rank1_leading_broadcast_op(operator.truediv, u, w)
@@ -311,7 +319,7 @@ def test_rank1_leading_broadcast_op_div():
     assert jnp.allclose(out, expected)
 
 
-def test_rank1_leading_broadcast_op_add():
+def test_rank1_leading_broadcast_op_add() -> None:
     w = jnp.array([1.0, 2.0, 3.0], dtype="float64")
     u = jnp.arange(12.0, dtype="float64").reshape((3, 4))
     out = _rank1_leading_broadcast_op(operator.add, u, w)
@@ -319,7 +327,7 @@ def test_rank1_leading_broadcast_op_add():
     assert jnp.allclose(out, expected)
 
 
-def test_rank1_leading_broadcast_op_sub():
+def test_rank1_leading_broadcast_op_sub() -> None:
     w = jnp.array([1.0, 2.0, 3.0], dtype="float64")
     u = jnp.arange(12.0, dtype="float64").reshape((3, 4))
     out = _rank1_leading_broadcast_op(operator.sub, u, w)
@@ -327,7 +335,7 @@ def test_rank1_leading_broadcast_op_sub():
     assert jnp.allclose(out, expected)
 
 
-def test_rank1_leading_broadcast_op_mul_outer_for_mismatched_rank1():
+def test_rank1_leading_broadcast_op_mul_outer_for_mismatched_rank1() -> None:
     x = jnp.array([1.0, 2.0, 3.0], dtype="float64")
     t = jnp.array([4.0, 5.0], dtype="float64")
     out = _rank1_leading_broadcast_op(operator.mul, x, t)
@@ -335,19 +343,19 @@ def test_rank1_leading_broadcast_op_mul_outer_for_mismatched_rank1():
     assert jnp.allclose(out, expected)
 
 
-def test_blend_with_gate_matches_manual_expression():
+def test_blend_with_gate_matches_manual_expression() -> None:
     dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def base(x, t):
+    def base(x: Any, t: Any) -> Any:
         return x[0] + 2.0 * t
 
     @dom.Function("x", "t")
-    def overlay(x, t):
+    def overlay(x: Any, t: Any) -> Any:
         return (x[0] ** 2) + (t**2)
 
     @dom.Function("x")
-    def gate(x):
+    def gate(x: Any) -> Any:
         return x[0]
 
     blended = blend_with_gate(base, overlay, gate)
@@ -382,22 +390,22 @@ def test_blend_with_gate_matches_manual_expression():
     )
 
 
-def test_blend_with_gate_evaluates_inputs_once_per_call():
+def test_blend_with_gate_evaluates_inputs_once_per_call() -> None:
     dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     calls = {"base": 0, "overlay": 0, "gate": 0}
 
     @dom.Function("x", "t")
-    def base(x, t):
+    def base(x: Any, t: Any) -> Any:
         calls["base"] += 1
         return x[0] + t
 
     @dom.Function("x", "t")
-    def overlay(x, t):
+    def overlay(x: Any, t: Any) -> Any:
         calls["overlay"] += 1
         return (x[0] ** 2) + t
 
     @dom.Function("x")
-    def gate(x):
+    def gate(x: Any) -> Any:
         calls["gate"] += 1
         return x[0]
 

@@ -5,6 +5,7 @@
 """Differentiate a path-integrated Schlieren prediction against detector data."""
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -59,7 +60,7 @@ plan = phx.imaging.SchlierenDeflectionPlan(
 target = jnp.full((2, 2), 0.3)
 
 
-def loss(scale):
+def loss(scale: Any) -> Any:
     gradients = jnp.zeros((4, 4, 3)).at[..., 0].set(scale)
     predicted = plan.evaluate(gradients)
     return jnp.mean((predicted.deflection_rc[..., 0] - target) ** 2)

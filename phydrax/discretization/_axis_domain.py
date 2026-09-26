@@ -133,7 +133,10 @@ class AxisDomain(StrictModule, NonTrainableState):
         if self.kind not in ("bounded", "periodic"):
             return None
         lower, upper = self.lower, self.upper
-        assert lower is not None and upper is not None
+        if not (lower is not None and upper is not None):
+            raise RuntimeError(
+                "Internal invariant failed: lower is not None and upper is not None."
+            )
         return jnp.stack((lower, upper))
 
     @property
@@ -141,7 +144,10 @@ class AxisDomain(StrictModule, NonTrainableState):
         if self.kind not in ("bounded", "periodic"):
             raise ValueError("Unbounded axis domains do not have a finite length.")
         lower, upper = self.lower, self.upper
-        assert lower is not None and upper is not None
+        if not (lower is not None and upper is not None):
+            raise RuntimeError(
+                "Internal invariant failed: lower is not None and upper is not None."
+            )
         return upper - lower
 
 

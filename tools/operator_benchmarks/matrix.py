@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import jax
 import numpy as np
@@ -70,7 +71,7 @@ class OperatorBenchmarkMatrixResult:
     results: tuple[OperatorBenchmarkResult, ...]
     aggregates: tuple[OperatorBenchmarkAggregate, ...]
 
-    def to_dict(self):
+    def to_dict(self) -> Any:
         return {
             "metadata": self.metadata.to_dict(),
             "results": [result.to_dict() for result in self.results],
@@ -91,14 +92,14 @@ class OperatorBenchmarkRegressionError(RuntimeError):
     pass
 
 
-def _update_checksum(digest, value) -> None:
+def _update_checksum(digest: Any, value: Any) -> None:
     array = np.asarray(jax.device_get(value))
     digest.update(str(array.dtype).encode("utf-8"))
     digest.update(str(array.shape).encode("utf-8"))
     digest.update(array.tobytes(order="C"))
 
 
-def _update_tree_checksum(digest, value) -> None:
+def _update_tree_checksum(digest: Any, value: Any) -> None:
     for leaf in jax.tree_util.tree_leaves(value):
         if isinstance(leaf, (jax.Array, np.ndarray)):
             _update_checksum(digest, leaf)
@@ -132,7 +133,7 @@ def _symmetry_contract(
     return contract
 
 
-def _batch_schema(batch) -> dict[str, object]:
+def _batch_schema(batch: Any) -> dict[str, object]:
     return {
         "case_axes": tuple(batch.case_axes),
         "case_shape": tuple(batch.case_shape),
@@ -329,7 +330,7 @@ def aggregate_benchmark_results(
     return tuple(aggregates)
 
 
-def _inference_median(evaluation) -> float:
+def _inference_median(evaluation: Any) -> float:
     value = evaluation.inference_timing.median_seconds
     if value is None:
         raise ValueError("Operator inference timing must contain measured samples.")
@@ -434,7 +435,7 @@ def assert_benchmark_thresholds(
         raise OperatorBenchmarkRegressionError("; ".join(violations))
 
 
-def _aggregate_rows(matrix: OperatorBenchmarkMatrixResult):
+def _aggregate_rows(matrix: OperatorBenchmarkMatrixResult) -> Any:
     return [asdict(row) for row in matrix.aggregates]
 
 

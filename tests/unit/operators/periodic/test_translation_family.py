@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,11 +17,15 @@ from phydrax.operators.periodic import (
 )
 
 
-def _chain(*, dense_limit=1024, finite_limit=1024):
+def _chain(*, dense_limit: Any = 1024, finite_limit: Any = 1024) -> Any:
     return coalesce_periodic_translation_family(
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [[1], [1], [-1], [-1]],
+        # ty: ignore[invalid-argument-type]
         [[[-0.5]], [[-0.5]], [[-0.5]], [[-0.5]]],
         1,
         maximum_dense_entries=dense_limit,
@@ -27,7 +33,7 @@ def _chain(*, dense_limit=1024, finite_limit=1024):
     )
 
 
-def test_reverse_coalescing_sparse_action_dense_and_derivative_agree():
+def test_reverse_coalescing_sparse_action_dense_and_derivative_agree() -> None:
     prepared = _chain()
     q = jnp.asarray([[0.0], [0.25]])
     dense = evaluate_periodic_translation_family(prepared, q)
@@ -44,7 +50,7 @@ def test_reverse_coalescing_sparse_action_dense_and_derivative_agree():
     np.testing.assert_allclose(compiled(q, jnp.ones((2, 1))), action)
 
 
-def test_refresh_preserves_structure_and_finite_boundaries_are_exact():
+def test_refresh_preserves_structure_and_finite_boundaries_are_exact() -> None:
     prepared = _chain()
     doubled_state = PeriodicTranslationFamilyState(
         prepared.plan, 2.0 * prepared.state.values
@@ -67,7 +73,7 @@ def test_refresh_preserves_structure_and_finite_boundaries_are_exact():
     assert refreshed.prepared_id != prepared.prepared_id
 
 
-def test_family_rejects_broken_adjoint_and_resources_before_materialization():
+def test_family_rejects_broken_adjoint_and_resources_before_materialization() -> None:
     prepared = _chain(dense_limit=1, finite_limit=2)
     with pytest.raises(ValueError, match="Hermitian adjoint"):
         PeriodicTranslationFamilyState(
@@ -79,7 +85,7 @@ def test_family_rejects_broken_adjoint_and_resources_before_materialization():
         realize_periodic_translation_family(prepared, (2,))
 
 
-def test_plan_rejects_noninvolutive_reverse_map():
+def test_plan_rejects_noninvolutive_reverse_map() -> None:
     relation = prepared_relation = _chain().plan.relation
     with pytest.raises(ValueError, match="opposite translations"):
         PeriodicTranslationFamilyPlan(

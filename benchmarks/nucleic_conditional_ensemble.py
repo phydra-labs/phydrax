@@ -9,6 +9,8 @@ locked observations are scored only after fitting on calibration preparations.
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import math
@@ -48,7 +50,7 @@ def _local_path(base: Path, value: str) -> Path:
     return (base / path).resolve() if not path.is_absolute() else path.resolve()
 
 
-def _construct(record) -> NucleicAcidConstruct:
+def _construct(record: Any) -> NucleicAcidConstruct:
     return NucleicAcidConstruct(
         tuple(record["strand_ids"]),
         tuple(record["sequences"]),
@@ -58,7 +60,7 @@ def _construct(record) -> NucleicAcidConstruct:
 
 
 def _support(
-    record, construct: NucleicAcidConstruct, batch
+    record: Any, construct: NucleicAcidConstruct, batch: Any
 ) -> tuple[str, StructuralEnsembleHypothesis]:
     keys = construct.nucleotide_keys
     states = []
@@ -81,7 +83,7 @@ def _support(
     )
 
 
-def _json_value(value):
+def _json_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):

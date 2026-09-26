@@ -14,7 +14,7 @@ from phydrax.applications.skeletal_muscle.personalization import (
 )
 
 
-def test_identifiable_scale_and_offset_are_recovered_in_newtons():
+def test_identifiable_scale_and_offset_are_recovered_in_newtons() -> None:
     relative = jnp.asarray([0.0, 0.1, 0.25, 0.45, 0.7, 1.0])
     nuisance = jnp.ones((relative.shape[0], 1))
     prepared = PhysicalRelativeForceCalibrationPlan(
@@ -42,7 +42,7 @@ def test_identifiable_scale_and_offset_are_recovered_in_newtons():
     assert observation.asset_id == "load-cell-LC-17-cal-2026-08"
 
 
-def test_nuisance_column_equal_to_relative_force_is_rejected_as_unidentifiable():
+def test_nuisance_column_equal_to_relative_force_is_rejected_as_unidentifiable() -> None:
     relative = jnp.linspace(0.0, 1.0, 8)
     prepared = PhysicalRelativeForceCalibrationPlan(
         relative[:, None],
@@ -68,7 +68,9 @@ def test_nuisance_column_equal_to_relative_force_is_rejected_as_unidentifiable()
     assert int(rolled_back.calibration_epoch) == 0
 
 
-def test_masked_protocol_samples_retain_identifiability_and_explicit_uncertainty():
+def test_masked_protocol_samples_retain_identifiability_and_explicit_uncertainty() -> (
+    None
+):
     relative = jnp.asarray([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
     nuisance = jnp.ones((6, 1))
     prepared = PhysicalRelativeForceCalibrationPlan(

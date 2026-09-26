@@ -21,7 +21,7 @@ from benchmarks._runtime import measure_lower_and_compile, measure_repeated
 from phydrax._frozendict import frozendict
 
 
-def _timed(operation, /, *, repeats: int) -> tuple[jax.Array, float, float]:
+def _timed(operation: Any, /, *, repeats: int) -> tuple[jax.Array, float, float]:
     jitted = jax.jit(operation)
     compiled, compilation = measure_lower_and_compile(
         lambda: jitted.lower(),
@@ -35,14 +35,15 @@ def _timed(operation, /, *, repeats: int) -> tuple[jax.Array, float, float]:
     compile_ms = 1_000.0 * (
         compilation.lowering_seconds + compilation.compilation_seconds
     )
+    # ty: ignore[invalid-argument-type]
     return value, compile_ms, 1_000.0 * float(distribution.mean_seconds)
 
 
-def _time_point(value: float):
+def _time_point(value: float) -> Any:
     return frozendict({"t": cx.Field(jnp.asarray(value), dims=())})
 
 
-def _space_time_point(space: float, time_: float):
+def _space_time_point(space: float, time_: float) -> Any:
     return frozendict(
         {
             "x": cx.Field(jnp.asarray([space]), dims=(None,)),

@@ -206,7 +206,7 @@ def test_nonreleased_declaration_refuses_released_profile() -> None:
         )
 
 
-def test_reduced_order_declarations_name_their_maturity():
+def test_reduced_order_declarations_name_their_maturity() -> None:
     from phydrax.qualification import builtin_capability_catalog
     from phydrax.rom import rom_capability_catalog
 

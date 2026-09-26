@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 
 from phydrax import units
@@ -10,7 +12,7 @@ from phydrax.chemistry.spectroscopy._scattering import (
 )
 
 
-def _elastic_plan(plan_type, positions):
+def _elastic_plan(plan_type: Any, positions: Any) -> Any:
     return plan_type(
         positions,
         np.zeros((2, 3, 3)),
@@ -22,12 +24,15 @@ def _elastic_plan(plan_type, positions):
     )
 
 
-def test_elastic_xray_and_neutron_intensities_are_origin_invariant_and_friedel_symmetric():
+def test_elastic_xray_and_neutron_intensities_are_origin_invariant_and_friedel_symmetric() -> (
+    None
+):
     q = np.asarray([[2.0 * np.pi, 0.0, 0.0], [-2.0 * np.pi, 0.0, 0.0]])
     positions = np.asarray([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
     shifted = positions + np.asarray([0.137, -0.23, 0.41])
     request = XRayFormFactorRequest(q, ("A", "B"), "two-atom-cell")
     factors = XRayFormFactorResult(
+        # ty: ignore[invalid-argument-type]
         [[1.0, 1.0], [1.0, 1.0]],
         request,
         "xray-factor-provider",
@@ -50,7 +55,7 @@ def test_elastic_xray_and_neutron_intensities_are_origin_invariant_and_friedel_s
     assert bool(neutron.evidence.successful)
 
 
-def test_exact_two_level_dynamic_structure_closes_sum_and_detailed_balance():
+def test_exact_two_level_dynamic_structure_closes_sum_and_detailed_balance() -> None:
     beta = 1.3
     energies = np.asarray([0.0, 1.0])
     probabilities = np.exp(-beta * energies)
@@ -66,6 +71,7 @@ def test_exact_two_level_dynamic_structure_closes_sum_and_detailed_balance():
         energies,
         probabilities,
         operator,
+        # ty: ignore[invalid-argument-type]
         [0],
         units.ELECTRONVOLT,
         units.ONE,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -9,7 +11,7 @@ import phydrax as phx
 fd = phx.applications.solid_mechanics
 
 
-def _design_setup():
+def _design_setup() -> Any:
     structure = fd.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
         3,
@@ -27,7 +29,7 @@ def _design_setup():
     )
     plan = fd.plan_force_density(equilibrium, sample)
 
-    def decode(design, _):
+    def decode(design: Any, _: Any) -> Any:
         return fd.ForceDensityInputs(
             jnp.repeat(design.reshape(()), 2),
             prescribed,
@@ -37,7 +39,7 @@ def _design_setup():
     return equilibrium, plan, sample, decode
 
 
-def test_force_density_reduced_design_hits_target_shape_and_recertifies_state():
+def test_force_density_reduced_design_hits_target_shape_and_recertifies_state() -> None:
     _, plan, _, decode = _design_setup()
     problem = fd.ForceDensityDesignProblem(
         plan,
@@ -63,10 +65,10 @@ def test_force_density_reduced_design_hits_target_shape_and_recertifies_state():
     assert result.equilibrium.diagnostics.free_residual_norm <= 1.0e-9
 
 
-def test_force_density_design_decoder_can_move_supports_and_loads():
+def test_force_density_design_decoder_can_move_supports_and_loads() -> None:
     equilibrium, plan, sample, _ = _design_setup()
 
-    def decode(design, _):
+    def decode(design: Any, _: Any) -> Any:
         prescribed = sample.prescribed_values.at[1].set(design[1])
         loads = sample.load_parameters.at[1, 1].set(design[2])
         return fd.ForceDensityInputs(jnp.repeat(design[0], 2), prescribed, loads)
@@ -90,7 +92,7 @@ def test_force_density_design_decoder_can_move_supports_and_loads():
     assert jnp.allclose(state_problem.residual(solved, design), 0.0, atol=1.0e-10)
 
 
-def test_force_density_physical_constraints_lower_to_structured_state_design():
+def test_force_density_physical_constraints_lower_to_structured_state_design() -> None:
     _, plan, _, decode = _design_setup()
     length_constraint = fd.ForceDensityDesignConstraint(
         lambda state, design, _: state.member_lengths,
@@ -122,7 +124,7 @@ def test_force_density_physical_constraints_lower_to_structured_state_design():
     assert jnp.array_equal(program.constraint_upper[-2:], jnp.asarray((2.0, 2.0)))
 
 
-def test_force_density_design_constraint_preserves_physical_state_callback():
+def test_force_density_design_constraint_preserves_physical_state_callback() -> None:
     _, plan, _, decode = _design_setup()
     constraint = fd.ForceDensityDesignConstraint(
         lambda state, design, _: state.positions[1, 1],

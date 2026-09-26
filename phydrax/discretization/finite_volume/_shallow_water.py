@@ -134,7 +134,10 @@ class ShallowWaterBathymetryPlan(StrictModule, NonTrainableState):
             values = self.cell_values
         else:
             # Plans carry exactly one of cell values or an evaluator.
-            assert self.evaluator is not None
+            if not (self.evaluator is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: self.evaluator is not None."
+                )
             values = self.evaluator(discretization.cell_centers)
         return PreparedShallowWaterBathymetry(
             values,

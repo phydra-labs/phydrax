@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -26,13 +29,13 @@ from phydrax.applications.sign_problem import (
 )
 
 
-def test_canonical_fugacity_round_trip_from_imaginary_chemical_potential():
+def test_canonical_fugacity_round_trip_from_imaginary_chemical_potential() -> None:
     sectors = jnp.asarray([0.25 + 0.0j, 1.0 + 0.0j, 0.25 + 0.0j])
     prepared = prepare_canonical_fugacity(
         CanonicalFugacityPlan(-1, 1, node_count=5, temperature=2.0)
     )
 
-    def partition(mu):
+    def partition(mu: Any) -> Any:
         fugacity = jnp.exp(mu / 2.0)
         return sectors[0] / fugacity + sectors[1] + sectors[2] * fugacity
 
@@ -52,7 +55,7 @@ def test_canonical_fugacity_round_trip_from_imaginary_chemical_potential():
     assert jnp.allclose(evaluated.grand_partition, partition(0.3), atol=2e-6)
 
 
-def test_complex_langevin_gaussian_one_variable_controls():
+def test_complex_langevin_gaussian_one_variable_controls() -> None:
     runtime = prepare_complex_langevin(
         ComplexLangevinPlan(
             num_steps=7000,
@@ -78,7 +81,7 @@ def test_complex_langevin_gaussian_one_variable_controls():
     assert controls.maximum_residual < 0.1
 
 
-def test_complex_langevin_rejects_heavy_drift_tail():
+def test_complex_langevin_rejects_heavy_drift_tail() -> None:
     runtime = prepare_complex_langevin(
         ComplexLangevinPlan(
             num_steps=32,
@@ -98,7 +101,7 @@ def test_complex_langevin_rejects_heavy_drift_tail():
     assert not result.successful
 
 
-def test_complex_langevin_applies_monotone_gauge_cooling():
+def test_complex_langevin_applies_monotone_gauge_cooling() -> None:
     cooling = prepare_gauge_cooling(
         GaugeCoolingPlan(iterations=2, step_size=0.5),
         lambda z: 1j * jnp.imag(z),
@@ -130,7 +133,7 @@ def test_complex_langevin_applies_monotone_gauge_cooling():
     )
 
 
-def test_holomorphic_flow_jacobian_and_residual_phase_are_consistent():
+def test_holomorphic_flow_jacobian_and_residual_phase_are_consistent() -> None:
     flow_time = 0.2
     prepared = prepare_holomorphic_flow_quadrature(
         HolomorphicFlowQuadraturePlan(
@@ -156,7 +159,7 @@ def test_holomorphic_flow_jacobian_and_residual_phase_are_consistent():
     assert jnp.allclose(result.value, 1.0 + 0.0j)
 
 
-def test_holomorphic_flow_abstains_on_residual_phase_cancellation():
+def test_holomorphic_flow_abstains_on_residual_phase_cancellation() -> None:
     prepared = prepare_holomorphic_flow_quadrature(
         HolomorphicFlowQuadraturePlan(
             flow_time=0.0,

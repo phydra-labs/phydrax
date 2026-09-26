@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -23,11 +25,13 @@ from phydrax.operators.periodic import (
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
 
-def _ssh(intercell=1.0, intracell=0.4, points=8):
+def _ssh(intercell: Any = 1.0, intracell: Any = 0.4, points: Any = 8) -> Any:
+    # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[1.0]])
     basis = PeriodicOrbitalBasisPlan(
         cell,
         ("A", "B"),
+        # ty: ignore[invalid-argument-type]
         [[0.0], [0.5]],
         ANGSTROM,
         PeriodicBlochGauge("lattice"),
@@ -37,6 +41,7 @@ def _ssh(intercell=1.0, intracell=0.4, points=8):
     blocks[1, 1, 0, 0, 0] = intracell
     blocks[0, 0, 0, 1, 0] = intercell
     blocks[2, 1, 0, 0, 0] = intercell
+    # ty: ignore[invalid-argument-type]
     family = periodic_translation_family_from_dense_blocks([[-1], [0], [1]], blocks)
     pencil = PeriodicOrbitalPencilPlan.orthonormal(
         basis, family.plan, family.state, ELECTRONVOLT
@@ -48,7 +53,7 @@ def _ssh(intercell=1.0, intracell=0.4, points=8):
     return pencil, mesh, spectrum, connectivity, connection
 
 
-def test_ssh_wilson_loop_returns_raw_links_and_quantized_zak_phase():
+def test_ssh_wilson_loop_returns_raw_links_and_quantized_zak_phase() -> None:
     _, mesh, spectrum, connectivity, connection = _ssh()
     manifold = PeriodicBandManifold(spectrum, [0])
     bundle = PeriodicOverlapBundle(manifold, connection)
@@ -61,7 +66,7 @@ def test_ssh_wilson_loop_returns_raw_links_and_quantized_zak_phase():
     assert bool(wilson.successful)
 
 
-def test_topology_rejects_gap_and_link_rank_ambiguity():
+def test_topology_rejects_gap_and_link_rank_ambiguity() -> None:
     pencil, mesh, _, connectivity, _ = _ssh(intercell=1.0, intracell=1.0)
     points = np.arange(8, dtype="float64")[:, None] / 8.0
     explicit_mesh = ReciprocalMeshPlan(
@@ -87,16 +92,20 @@ def test_topology_rejects_gap_and_link_rank_ambiguity():
         PeriodicOverlapBundle(manifold, zero_connection)
 
 
-def test_trivial_two_dimensional_chern_retains_plaquette_and_refinement_evidence():
+def test_trivial_two_dimensional_chern_retains_plaquette_and_refinement_evidence() -> (
+    None
+):
     cell = PeriodicCell(np.eye(2))
     basis = PeriodicOrbitalBasisPlan(
         cell,
         ("lower", "upper"),
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0], [0.0, 0.0]],
         ANGSTROM,
         PeriodicBlochGauge("lattice"),
     )
     family = periodic_translation_family_from_dense_blocks(
+        # ty: ignore[invalid-argument-type]
         [[0, 0]],
         np.diag([-1.0, 1.0]).reshape((1, 2, 1, 2, 1)),
     )

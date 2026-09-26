@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _positive_definite_properties():
+def _positive_definite_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -23,7 +26,7 @@ def _positive_definite_properties():
     )
 
 
-def test_inverse_materializes_batched_lu_with_matrix_level_evidence():
+def test_inverse_materializes_batched_lu_with_matrix_level_evidence() -> None:
     matrices = jnp.asarray(
         (
             ((3.0, 1.0), (0.5, 2.0)),
@@ -44,7 +47,7 @@ def test_inverse_materializes_batched_lu_with_matrix_level_evidence():
     assert jnp.all(jnp.isfinite(result.diagnostics.condition_estimate))
 
 
-def test_inverse_cholesky_is_jittable_and_has_mathematical_jvp():
+def test_inverse_cholesky_is_jittable_and_has_mathematical_jvp() -> None:
     matrix = jnp.asarray(((4.0, 1.0), (1.0, 3.0)))
     tangent = jnp.asarray(((0.2, -0.1), (-0.1, 0.3)))
     policy = la.FactorizationPolicy("cholesky")
@@ -64,7 +67,7 @@ def test_inverse_cholesky_is_jittable_and_has_mathematical_jvp():
     )
 
 
-def test_inverse_reports_singular_without_pseudoinverse_fallback():
+def test_inverse_reports_singular_without_pseudoinverse_fallback() -> None:
     matrix = jnp.asarray(((1.0, 2.0), (2.0, 4.0)))
 
     result = la.inverse(matrix)
@@ -73,7 +76,7 @@ def test_inverse_reports_singular_without_pseudoinverse_fallback():
     assert int(result.status) == int(la.LinearSolveStatus.SINGULAR)
 
 
-def test_pseudoinverse_handles_tall_wide_and_rank_deficient_batches():
+def test_pseudoinverse_handles_tall_wide_and_rank_deficient_batches() -> None:
     matrices = (
         jnp.asarray(((1.0, 0.0), (0.0, 2.0), (1.0, 1.0))),
         jnp.asarray(((1.0, 0.0, 1.0), (0.0, 2.0, 1.0))),
@@ -113,21 +116,21 @@ def test_pseudoinverse_handles_tall_wide_and_rank_deficient_batches():
 
 @pytest.mark.parametrize("transpose", (False, True))
 def test_rank_deficient_rectangular_pseudoinverse_jvp_is_fixed_rank_complete(
-    transpose,
-):
+    transpose: Any,
+) -> None:
     left = jnp.asarray((1.0, -0.5, 2.0))
     right = jnp.asarray((0.75, -1.25))
     left_tangent = jnp.asarray((0.2, 0.4, -0.3))
     right_tangent = jnp.asarray((-0.1, 0.35))
 
-    def matrix_at(parameter):
+    def matrix_at(parameter: Any) -> Any:
         matrix = jnp.outer(
             left + parameter * left_tangent,
             right + parameter * right_tangent,
         )
         return matrix.T if transpose else matrix
 
-    def pseudoinverse_at(parameter):
+    def pseudoinverse_at(parameter: Any) -> Any:
         return la.pseudoinverse(matrix_at(parameter)).value
 
     parameter = jnp.asarray(0.0)
@@ -163,14 +166,14 @@ def test_rank_deficient_rectangular_pseudoinverse_jvp_is_fixed_rank_complete(
 
 @pytest.mark.parametrize("transpose", (False, True))
 def test_complex_rank_deficient_rectangular_pseudoinverse_jvp_matches_difference(
-    transpose,
-):
+    transpose: Any,
+) -> None:
     left = jnp.asarray((1.0 + 0.2j, -0.5j, 2.0 - 0.3j))
     right = jnp.asarray((0.75 - 0.1j, -1.25 + 0.4j))
     left_tangent = jnp.asarray((0.2j, 0.4 - 0.1j, -0.3))
     right_tangent = jnp.asarray((-0.1 + 0.05j, 0.35j))
 
-    def pseudoinverse_at(parameter):
+    def pseudoinverse_at(parameter: Any) -> Any:
         matrix = jnp.outer(
             left + parameter * left_tangent,
             jnp.conj(right + parameter * right_tangent),
@@ -193,7 +196,7 @@ def test_complex_rank_deficient_rectangular_pseudoinverse_jvp_matches_difference
     assert jnp.allclose(derivative, finite_difference, rtol=3e-9, atol=3e-10)
 
 
-def test_pseudoinverse_combines_absolute_and_relative_rank_cutoffs():
+def test_pseudoinverse_combines_absolute_and_relative_rank_cutoffs() -> None:
     matrix = jnp.diag(jnp.asarray((10.0, 1.0e-3, 1.0e-7)))
     policy = la.FactorizationPolicy(
         "svd",
@@ -208,7 +211,7 @@ def test_pseudoinverse_combines_absolute_and_relative_rank_cutoffs():
     assert jnp.allclose(jnp.diag(result.value), jnp.asarray((0.1, 1.0e3, 0.0)))
 
 
-def test_pseudoinverse_full_rank_requirement_changes_status_only():
+def test_pseudoinverse_full_rank_requirement_changes_status_only() -> None:
     matrix = jnp.asarray(((1.0, 0.0), (0.0, 0.0)))
     permissive = la.pseudoinverse(matrix)
     strict = la.pseudoinverse(
@@ -224,7 +227,7 @@ def test_pseudoinverse_full_rank_requirement_changes_status_only():
     assert jnp.allclose(strict.value, permissive.value)
 
 
-def test_operator_pseudoinverse_respects_both_diagonal_pairings():
+def test_operator_pseudoinverse_respects_both_diagonal_pairings() -> None:
     matrix = jnp.asarray(((1.0, 2.0, 0.0), (0.0, 1.0, 1.0)))
     source_weights = jnp.asarray((2.0, 3.0, 5.0))
     target_weights = jnp.asarray((7.0, 11.0))
@@ -259,7 +262,7 @@ def test_operator_pseudoinverse_respects_both_diagonal_pairings():
     assert jnp.allclose(solved.value, expected @ right_hand_side, rtol=1e-9, atol=1e-9)
 
 
-def test_hermitian_pseudoinverse_and_fixed_rank_jvp_are_finite():
+def test_hermitian_pseudoinverse_and_fixed_rank_jvp_are_finite() -> None:
     matrix = jnp.asarray(((2.0, 1.0j), (-1.0j, 0.5)), dtype=jnp.complex128)
     tangent = jnp.asarray(((0.2, 0.1j), (-0.1j, -0.3)), dtype=jnp.complex128)
     properties = la.OperatorProperties(
@@ -278,7 +281,7 @@ def test_hermitian_pseudoinverse_and_fixed_rank_jvp_are_finite():
     assert jnp.allclose(value, jnp.conj(value.T), rtol=1e-9, atol=1e-9)
 
 
-def test_small_inverse_scales_extreme_complex_matrices():
+def test_small_inverse_scales_extreme_complex_matrices() -> None:
     matrix = jnp.asarray(
         (
             (2.0e100 + 1.0e99j, 1.0e100),
@@ -294,7 +297,7 @@ def test_small_inverse_scales_extreme_complex_matrices():
     assert jnp.allclose(matrix @ result.value, jnp.eye(2), rtol=1e-10, atol=1e-10)
 
 
-def test_small_determinant_is_scaled_and_batched():
+def test_small_determinant_is_scaled_and_batched() -> None:
     matrices = jnp.asarray(
         (
             ((2.0e100, 1.0e100), (1.0e100, 3.0e100)),
@@ -316,7 +319,7 @@ def test_small_determinant_is_scaled_and_batched():
     )
 
 
-def test_four_dimensional_small_solve_uses_batched_pivoted_lu():
+def test_four_dimensional_small_solve_uses_batched_pivoted_lu() -> None:
     matrices = jnp.asarray(
         (
             (
@@ -373,7 +376,7 @@ def test_four_dimensional_small_solve_uses_batched_pivoted_lu():
     assert jnp.allclose(singular.value, 0.0)
 
 
-def test_prepared_lu_slogdet_matches_complex_batched_value_and_jvp():
+def test_prepared_lu_slogdet_matches_complex_batched_value_and_jvp() -> None:
     matrices = jnp.asarray(
         (
             (
@@ -392,7 +395,7 @@ def test_prepared_lu_slogdet_matches_complex_batched_value_and_jvp():
     )
     tangent = tangent_real + 0.3j * jnp.flip(tangent_real, axis=(-2, -1))
 
-    def reference(value):
+    def reference(value: Any) -> Any:
         sign, log_abs = jnp.linalg.slogdet(value)
         return sign, log_abs
 
@@ -402,7 +405,7 @@ def test_prepared_lu_slogdet_matches_complex_batched_value_and_jvp():
         (tangent,),
     )
 
-    def evaluate(value):
+    def evaluate(value: Any) -> Any:
         factorization = la.factorize(
             la.DenseLinearOperator(value),
             la.FactorizationPolicy("lu"),
@@ -430,7 +433,7 @@ def test_prepared_lu_slogdet_matches_complex_batched_value_and_jvp():
     )
 
 
-def test_prepared_lu_log_determinant_jit_gradient_matches_dense_reference():
+def test_prepared_lu_log_determinant_jit_gradient_matches_dense_reference() -> None:
     matrices = jnp.asarray(
         (
             (
@@ -445,12 +448,12 @@ def test_prepared_lu_log_determinant_jit_gradient_matches_dense_reference():
         dtype=jnp.float64,
     )
 
-    def reference(value):
+    def reference(value: Any) -> Any:
         return jnp.sum(jnp.linalg.slogdet(value)[1])
 
     expected_value, expected_gradient = jax.value_and_grad(reference)(matrices)
 
-    def objective(value):
+    def objective(value: Any) -> Any:
         factorization = la.factorize(
             la.DenseLinearOperator(value),
             la.FactorizationPolicy("lu"),
@@ -468,7 +471,7 @@ def test_prepared_lu_log_determinant_jit_gradient_matches_dense_reference():
     )
 
 
-def test_prepared_lu_singular_determinant_preserves_status_and_zero_jvp():
+def test_prepared_lu_singular_determinant_preserves_status_and_zero_jvp() -> None:
     matrices = jnp.asarray(
         (
             ((2.0, 0.0), (0.0, -3.0)),
@@ -482,7 +485,7 @@ def test_prepared_lu_singular_determinant_preserves_status_and_zero_jvp():
         )
     )
 
-    def evaluate(value):
+    def evaluate(value: Any) -> Any:
         factorization = la.factorize(
             la.DenseLinearOperator(value),
             la.FactorizationPolicy("lu"),
@@ -528,7 +531,7 @@ def test_prepared_lu_singular_determinant_preserves_status_and_zero_jvp():
     assert jnp.allclose(near_singular_tangent, 1.0e18, rtol=2e-12)
 
 
-def test_factorization_refresh_and_batched_capabilities_remain_truthful():
+def test_factorization_refresh_and_batched_capabilities_remain_truthful() -> None:
     operator = la.DenseLinearOperator(jnp.stack((jnp.eye(2), 2.0 * jnp.eye(2))))
     prepared = la.factorize(operator)
 
@@ -547,7 +550,7 @@ def test_factorization_refresh_and_batched_capabilities_remain_truthful():
     assert not refreshed.capabilities.nullspaces
 
 
-def test_inverse_and_pseudoinverse_reject_incompatible_methods():
+def test_inverse_and_pseudoinverse_reject_incompatible_methods() -> None:
     matrix = jnp.eye(2)
 
     with pytest.raises(ValueError, match="inverse requires"):

@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -12,7 +13,7 @@ from phydrax.artifacts import ScientificArtifactEnvelope
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _source_kwargs(speeds, cosines, differential):
+def _source_kwargs(speeds: Any, cosines: Any, differential: Any) -> Any:
     payload = TwoBodyDifferentialKernelPlan.canonical_table_bytes(
         speeds, cosines, differential
     )
@@ -57,7 +58,7 @@ def _source_kwargs(speeds, cosines, differential):
 cosmology = phx.applications.cosmology
 
 
-def _gravity(particles):
+def _gravity(particles: Any) -> Any:
     axes = tuple(
         phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(3)
     )
@@ -83,6 +84,7 @@ def _gravity(particles):
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -94,7 +96,7 @@ def _gravity(particles):
     return phx.solver.ParticleMeshGravityPlan(gravity, transfer)
 
 
-def _case(cross_section, *, maximum_events=4):
+def _case(cross_section: Any, *, maximum_events: Any = 4) -> Any:
     positions = jnp.asarray(
         [
             (0.25, 0.25, 0.25),
@@ -116,6 +118,7 @@ def _case(cross_section, *, maximum_events=4):
     ).prepare()
     gravity = _gravity(particles)
     kdk = cosmology.CosmologicalKDKPlan(particles, (1.0, 1.0, 1.0))
+    # ty: ignore[invalid-argument-type]
     pm = cosmology.CosmologicalParticleMeshPlan(kdk, gravity, (0.5, 0.55))
     box = phx.discretization.ParticleBox(
         jnp.zeros((3,)), jnp.ones((3,)), periodic_axes=(True, True, True)
@@ -162,7 +165,7 @@ def _case(cross_section, *, maximum_events=4):
     return plan, pm, state, neighborhood
 
 
-def _anisotropic_kernel(*, maximum_speed=3.0):
+def _anisotropic_kernel(*, maximum_speed: Any = 3.0) -> Any:
     species = DarkSectorSpeciesPlan("chi", 1.0)
     speeds = jnp.asarray((0.0, 0.5 * maximum_speed, maximum_speed))
     cosines = jnp.linspace(-1.0, 1.0, 65)
@@ -179,7 +182,7 @@ def _anisotropic_kernel(*, maximum_speed=3.0):
     )
 
 
-def test_constant_isotropic_kernel_specialization_regresses_existing_path():
+def test_constant_isotropic_kernel_specialization_regresses_existing_path() -> None:
     value = 0.01
     legacy, _, state, _ = _case(cosmology.SIDMCrossSectionPlan(value))
     species = DarkSectorSpeciesPlan("chi", 1.0)
@@ -219,7 +222,7 @@ def test_constant_isotropic_kernel_specialization_regresses_existing_path():
     )
 
 
-def test_velocity_dependent_anisotropic_events_are_stable_and_conservative():
+def test_velocity_dependent_anisotropic_events_are_stable_and_conservative() -> None:
     plan, pm, state, neighborhood = _case(_anisotropic_kernel())
     base = neighborhood.pair_relation
     permutation = jnp.arange(base.capacity - 1, -1, -1)
@@ -270,7 +273,7 @@ def test_velocity_dependent_anisotropic_events_are_stable_and_conservative():
     )
 
 
-def test_anisotropic_kernel_domain_failure_rolls_back_atomically():
+def test_anisotropic_kernel_domain_failure_rolls_back_atomically() -> None:
     plan, _, state, _ = _case(_anisotropic_kernel(maximum_speed=0.5))
     result = plan.collide(state, jr.key(3), 2, 0.1)
 
@@ -281,7 +284,7 @@ def test_anisotropic_kernel_domain_failure_rolls_back_atomically():
     )
 
 
-def test_anisotropic_event_capacity_failure_rolls_back_atomically():
+def test_anisotropic_event_capacity_failure_rolls_back_atomically() -> None:
     plan, _, state, _ = _case(_anisotropic_kernel(), maximum_events=0)
     result = plan.collide(state, jr.key(31), 9, 2.0)
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -25,8 +26,9 @@ from phydrax.discretization.spectral._spherical_vector import (
 )
 
 
-def _measure(function, arguments, repeats):
+def _measure(function: Any, arguments: Any, repeats: Any) -> Any:
     started = time.perf_counter()
+    # ty: ignore[unresolved-attribute]
     lowered = eqx.filter_jit(function).lower(*arguments)
     trace_ms = 1e3 * (time.perf_counter() - started)
     started = time.perf_counter()
@@ -50,8 +52,13 @@ def _measure(function, arguments, repeats):
 
 
 def run_qualification(
-    bandlimit=8, *, sampling="mwss", execution="recursive", radius=2.0, repeats=5
-):
+    bandlimit: Any = 8,
+    *,
+    sampling: Any = "mwss",
+    execution: Any = "recursive",
+    radius: Any = 2.0,
+    repeats: Any = 5,
+) -> Any:
     if bandlimit < 3 or repeats < 1:
         raise ValueError("Qualification requires bandlimit >= 3 and repeats >= 1.")
     started = time.perf_counter()
@@ -119,6 +126,7 @@ def run_qualification(
         "execution": execution,
         "radius": radius,
         "repeats": repeats,
+        # ty: ignore[unresolved-attribute]
         "x64_enabled": jax.config.x64_enabled,
         "backend": jax.default_backend(),
         "sample_shape": space.sample_shape,
@@ -142,7 +150,7 @@ def run_qualification(
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bandlimit", type=int, default=8)
     parser.add_argument("--sampling", choices=("mw", "mwss", "dh", "gl"), default="mwss")

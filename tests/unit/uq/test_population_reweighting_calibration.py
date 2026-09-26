@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
@@ -5,7 +7,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _measure():
+def _measure() -> Any:
     return phx.integration.WeightedSampleTarget(
         {"x": jnp.asarray([-1.0, 0.0, 1.0])},
         jnp.zeros(3),
@@ -16,7 +18,7 @@ def _measure():
     )
 
 
-def test_posterior_reweighting_preserves_raw_weighted_measure_and_overlap():
+def test_posterior_reweighting_preserves_raw_weighted_measure_and_overlap() -> None:
     plan = phx.uq.PosteriorReweightingPlan(
         lambda sample: jnp.asarray(0.0),
         lambda sample: sample["x"],
@@ -31,13 +33,18 @@ def test_posterior_reweighting_preserves_raw_weighted_measure_and_overlap():
 
     np.testing.assert_allclose(result.log_normalizer_ratio, expected_log_ratio)
     np.testing.assert_allclose(
-        jsp.special.logsumexp(result.target.log_weights), 0.0, atol=2e-15
+        # ty: ignore[no-matching-overload]
+        jsp.special.logsumexp(result.target.log_weights),
+        0.0,
+        atol=2e-15,
     )
     assert bool(result.valid)
     assert result.target.samples["x"].shape == (3,)
 
 
-def test_posterior_reweighting_and_export_accept_named_axis_weights(tmp_path):
+def test_posterior_reweighting_and_export_accept_named_axis_weights(
+    tmp_path: Any,
+) -> None:
     target = phx.integration.WeightedSampleTarget(
         {"x": jnp.asarray([-1.0, 0.0, 1.0])},
         phx.axes.AxisArray(jnp.zeros(3), dims=("draw",)),
@@ -67,7 +74,7 @@ def test_posterior_reweighting_and_export_accept_named_axis_weights(tmp_path):
     np.testing.assert_allclose(archive.array("log_weights"), expected, atol=1e-12)
 
 
-def test_population_recycling_and_selection_match_manual_event_integrals():
+def test_population_recycling_and_selection_match_manual_event_integrals() -> None:
     event = phx.uq.EventPosterior(
         _measure(),
         jnp.zeros(3),
@@ -92,7 +99,7 @@ def test_population_recycling_and_selection_match_manual_event_integrals():
     )
     batch = phx.uq.prepare_population_sample_batch((event, second_event))
 
-    def population_log_prob(hyperparameters, sample):
+    def population_log_prob(hyperparameters: Any, sample: Any) -> Any:
         return -0.5 * (sample["x"] - hyperparameters["mean"]) ** 2 - 0.5 * jnp.log(
             2.0 * jnp.pi
         )
@@ -117,6 +124,7 @@ def test_population_recycling_and_selection_match_manual_event_integrals():
     diagnostics = term.diagnostics(hyperparameters)
 
     np.testing.assert_allclose(diagnostics.event_log_factors, expected)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(diagnostics.selection.efficiency, 1.0)
     np.testing.assert_allclose(term.per_case_log_prob(hyperparameters), expected)
     assert bool(diagnostics.valid)
@@ -130,7 +138,7 @@ def test_population_recycling_and_selection_match_manual_event_integrals():
     assert bool(jnp.all(jnp.isneginf(invalid_rate.per_case_log_prob(hyperparameters))))
 
 
-def test_simulation_calibration_retains_failures_and_uniform_rank_evidence():
+def test_simulation_calibration_retains_failures_and_uniform_rank_evidence() -> None:
     posterior_values = jnp.linspace(0.025, 0.975, 20)
     posterior = phx.integration.WeightedSampleTarget(
         {"x": posterior_values},
@@ -170,7 +178,7 @@ def test_simulation_calibration_retains_failures_and_uniform_rank_evidence():
     assert result.failed_case_ids == ("shape-failure",)
 
 
-def test_result_export_binds_explicit_context(tmp_path):
+def test_result_export_binds_explicit_context(tmp_path: Any) -> None:
     reweighting = phx.uq.reweight_posterior(
         _measure(),
         phx.uq.PosteriorReweightingPlan(
@@ -199,7 +207,7 @@ def test_result_export_binds_explicit_context(tmp_path):
     assert "log_weights" in archive.fields
 
 
-def test_population_and_calibration_results_have_portable_archives(tmp_path):
+def test_population_and_calibration_results_have_portable_archives(tmp_path: Any) -> None:
     event_target = phx.integration.WeightedSampleTarget(
         _measure().samples,
         jnp.zeros(3),

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -7,7 +9,7 @@ from phydrax.operators.quantum import AbelianGroup
 tn = phx.tensor_network
 
 
-def _charged_bell_state():
+def _charged_bell_state() -> Any:
     group = AbelianGroup((None,))
     physical = tn.AbelianLeg(group, ((0,), (1,)), (1, 1), orientation=1)
     left_boundary = tn.AbelianLeg(group, ((0,),), (1,), orientation=1)
@@ -32,7 +34,7 @@ def _charged_bell_state():
     return state, physical
 
 
-def test_global_cross_sector_truncation_reports_discarded_weight():
+def test_global_cross_sector_truncation_reports_discarded_weight() -> None:
     state, _ = _charged_bell_state()
     gate = jnp.eye(4, dtype=jnp.complex128).reshape((2, 2, 2, 2))
     truncated, evidence = tn.apply_abelian_two_site_gate(
@@ -53,7 +55,7 @@ def test_global_cross_sector_truncation_reports_discarded_weight():
     )
 
 
-def test_abelian_canonicalization_and_zero_tebd_preserve_state():
+def test_abelian_canonicalization_and_zero_tebd_preserve_state() -> None:
     state, physical = _charged_bell_state()
     canonical = tn.canonicalize_abelian_mps(state, center=1)
     zero = jnp.zeros((4, 4), dtype=jnp.complex128)

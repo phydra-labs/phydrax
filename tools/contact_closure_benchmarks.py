@@ -6,6 +6,7 @@
 
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -15,7 +16,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _timed(function, argument, repeats):
+def _timed(function: Any, argument: Any, repeats: Any) -> Any:
     compiled = eqx.filter_jit(function)
     started = time.perf_counter()
     result = compiled(argument)
@@ -28,7 +29,7 @@ def _timed(function, argument, repeats):
     return result, compile_seconds, (time.perf_counter() - started) / repeats
 
 
-def _closure_case(segment_count=128):
+def _closure_case(segment_count: Any = 128) -> Any:
     left = jnp.arange(segment_count, dtype=jnp.float64)
     right = left + 0.2
     x = jnp.stack((left, right), axis=-1).reshape((-1,))
@@ -53,8 +54,11 @@ def _closure_case(segment_count=128):
         edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
         pair_policy=phx.discretization.ContactPairPolicy(
             2,
+            # ty: ignore[unknown-argument]
             body_ids=jnp.ones((2,), dtype=jnp.int64),
+            # ty: ignore[unknown-argument]
             material_ids=jnp.zeros((2,), dtype=jnp.int64),
+            # ty: ignore[unknown-argument]
             static_mask=jnp.ones((2,), dtype="bool"),
         ),
     )
@@ -100,7 +104,7 @@ def _closure_case(segment_count=128):
     return kinematics, materials, closure, state
 
 
-def main():
+def main() -> None:
     kinematics, materials, closure, state = _closure_case()
     closure_value, closure_compile, closure_seconds = _timed(
         lambda route_state: (

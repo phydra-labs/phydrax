@@ -1,16 +1,22 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
 import phydrax as phx
 
 
-def _calculation():
+def _calculation() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [41, 73],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.008, 1.008],
         units,
+        # ty: ignore[invalid-argument-type]
         molecule_ids=[0, 0],
     )
     state = phx.chemistry.MolecularElectronicSectorPlan(0, 1)
@@ -28,7 +34,7 @@ def _calculation():
     )
 
 
-def test_qcschema_roundtrip_preserves_state_order_units_and_force_sign():
+def test_qcschema_roundtrip_preserves_state_order_units_and_force_sign() -> None:
     calculation = _calculation()
     positions = np.asarray([[0.0, 0.0, -0.35], [0.0, 0.0, 0.35]])
     payload, exported = phx.chemistry.interchange.electronic_calculation_to_qcschema(
@@ -64,6 +70,7 @@ def test_qcschema_roundtrip_preserves_state_order_units_and_force_sign():
     )
     length_factor = float(phx.units.conversion_factor(phx.units.BOHR, phx.units.ANGSTROM))
     np.testing.assert_allclose(result.energy, -1.1 * energy_factor)
+    # ty: ignore[no-matching-overload, unresolved-attribute]
     np.testing.assert_allclose(result.forces, -gradient * energy_factor / length_factor)
     assert imported.status == phx.interchange.AdapterStatus.LOSSLESS
     assert result.header.geometry_id == phx.chemistry.electronic_geometry_id(
@@ -71,7 +78,7 @@ def test_qcschema_roundtrip_preserves_state_order_units_and_force_sign():
     )
 
 
-def test_qcschema_missing_native_identity_fails_closed():
+def test_qcschema_missing_native_identity_fails_closed() -> None:
     calculation = _calculation()
     positions = np.asarray([[0.0, 0.0, -0.35], [0.0, 0.0, 0.35]])
     record = {

@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 from phydrax._interpolation import apply_gather_stencil, inverse_distance_stencil
 
 
-def test_inverse_distance_reproduces_constants_at_arbitrary_distance():
+def test_inverse_distance_reproduces_constants_at_arbitrary_distance() -> None:
     indices = jnp.asarray([[0, 1, 2]])
     distance_squared = jnp.asarray([[100.0, 400.0, 900.0]])
     stencil = inverse_distance_stencil(
@@ -26,7 +29,7 @@ def test_inverse_distance_reproduces_constants_at_arbitrary_distance():
     assert jnp.array_equal(result.support, jnp.asarray([True]))
 
 
-def test_duplicate_anchor_snap_policy_is_explicit():
+def test_duplicate_anchor_snap_policy_is_explicit() -> None:
     indices = jnp.asarray([[0, 1, 2]])
     distance_squared = jnp.asarray([[0.0, 0.0, 1.0]])
     values = jnp.asarray([2.0, 4.0, 100.0])
@@ -49,7 +52,7 @@ def test_duplicate_anchor_snap_policy_is_explicit():
     assert jnp.allclose(apply_gather_stencil(values, average).values, 3.0)
 
 
-def test_invalid_candidates_are_inert_and_no_candidate_has_no_support():
+def test_invalid_candidates_are_inert_and_no_candidate_has_no_support() -> None:
     indices = jnp.asarray([[0, 999], [999, -5]])
     distance_squared = jnp.asarray([[1.0, 0.0], [0.0, 0.0]])
     valid = jnp.asarray([[True, False], [False, False]])
@@ -66,12 +69,12 @@ def test_invalid_candidates_are_inert_and_no_candidate_has_no_support():
     assert jnp.array_equal(result.support, jnp.asarray([True, False]))
 
 
-def test_inverse_distance_supports_complex_payloads_jit_and_query_gradients():
+def test_inverse_distance_supports_complex_payloads_jit_and_query_gradients() -> None:
     values = jnp.asarray([[1.0 + 2.0j, 3.0], [4.0 - 1.0j, -2.0]])
     indices = jnp.asarray([[0, 1]])
 
     @jax.jit
-    def evaluate(query):
+    def evaluate(query: Any) -> Any:
         distance_squared = jnp.stack((query**2, (2.0 - query) ** 2))[None, :]
         stencil = inverse_distance_stencil(
             indices,

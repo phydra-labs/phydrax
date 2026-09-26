@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,30 +16,30 @@ class _AffineBijector(phx.uq.AbstractBijector, phx.ParameterOwner):
     log_scale: jax.Array
     shift: jax.Array
 
-    def __init__(self, log_scale=0.0, shift=0.0):
+    def __init__(self, log_scale: Any = 0.0, shift: Any = 0.0) -> None:
         self.log_scale = jnp.asarray([log_scale], dtype=jnp.float64)
         self.shift = jnp.asarray([shift], dtype=jnp.float64)
 
-    def forward_shape(self, raw_shape, /):
+    def forward_shape(self, raw_shape: Any, /) -> Any:
         if tuple(raw_shape) != (1,):
             raise ValueError("shape")
         return (1,)
 
-    def inverse_shape(self, physical_shape, /):
+    def inverse_shape(self, physical_shape: Any, /) -> Any:
         return self.forward_shape(physical_shape)
 
-    def forward(self, value, /):
+    def forward(self, value: Any, /) -> Any:
         return jnp.exp(self.log_scale) * jnp.asarray(value) + self.shift
 
-    def inverse(self, value, /):
+    def inverse(self, value: Any, /) -> Any:
         return (jnp.asarray(value) - self.shift) / jnp.exp(self.log_scale)
 
-    def forward_log_det_jacobian(self, value, /):
+    def forward_log_det_jacobian(self, value: Any, /) -> Any:
         del value
         return self.log_scale
 
 
-def _potentials():
+def _potentials() -> Any:
     source = phx.uq.CallableReducedPotential(
         lambda value: 0.5 * value[0] ** 2, (1,), "unit-normal"
     )
@@ -48,7 +51,7 @@ def _potentials():
     return source, target
 
 
-def test_exact_affine_map_produces_constant_generalized_work():
+def test_exact_affine_map_produces_constant_generalized_work() -> None:
     source, target = _potentials()
     mapping = phx.uq.TargetedMapPlan(
         _AffineBijector(jnp.log(0.5), 2.0),
@@ -89,16 +92,18 @@ def test_exact_affine_map_produces_constant_generalized_work():
 
     assert bool(evaluation.valid & estimate.successful)
     np.testing.assert_allclose(evaluation.forward_work, jnp.log(2.0), atol=1.0e-12)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(evaluation.reverse_work, -jnp.log(2.0), atol=1.0e-12)
     assert jnp.max(evaluation.forward_roundtrip_residual) < 1.0e-12
 
 
-def test_native_affine_flow_and_com_chart_roundtrip_exactly():
+def test_native_affine_flow_and_com_chart_roundtrip_exactly() -> None:
     adapter = phx.uq.AffineFlowBijector(
         jnp.zeros((3,)),
         jnp.ones((3,)),
         architecture_id="identity-affine",
     )
+    # ty: ignore[invalid-argument-type]
     chart = phx.uq.CenterOfMassPreservingBijector(adapter, [1.0, 3.0])
     positions = jnp.asarray([[0.2, -0.1, 0.3], [1.2, 0.4, -0.2]])
 
@@ -112,7 +117,7 @@ def test_native_affine_flow_and_com_chart_roundtrip_exactly():
     assert jnp.allclose(chart.forward_log_det_jacobian(positions), 0.0)
 
 
-def test_targeted_map_training_improves_affine_overlap():
+def test_targeted_map_training_improves_affine_overlap() -> None:
     source, target = _potentials()
     mapping = phx.uq.TargetedMapPlan(
         _AffineBijector(), (1,), architecture_id="trainable-affine"

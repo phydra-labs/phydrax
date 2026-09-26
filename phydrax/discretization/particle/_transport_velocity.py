@@ -134,7 +134,8 @@ class PreparedTransportVelocityDynamics(StrictModule, NonTrainableState):
         base_state = self.base.initialize_state(position, velocity, density)
         position_, velocity_, density_ = self.base.state_layout.unpack(base_state)
         # __init__ requires a continuity-density base, whose state always packs density.
-        assert density_ is not None
+        if not (density_ is not None):
+            raise RuntimeError("Internal invariant failed: density_ is not None.")
         transport = (
             velocity_ if transport_velocity is None else jnp.asarray(transport_velocity)
         )
@@ -150,7 +151,8 @@ class PreparedTransportVelocityDynamics(StrictModule, NonTrainableState):
             base_rate
         )
         # __init__ requires a continuity-density base, whose rate always packs density.
-        assert density_rate is not None
+        if not (density_rate is not None):
+            raise RuntimeError("Internal invariant failed: density_rate is not None.")
         evaluation = self.base._evaluate(time, base_state, args)
         pairs = evaluation.neighborhood.pair_relation
         left = pairs.left_indices

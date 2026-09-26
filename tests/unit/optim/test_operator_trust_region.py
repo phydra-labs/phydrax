@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 from jaxtyping import Array
@@ -16,7 +19,7 @@ opt = phx.optim
 class _NoMaterializeSelfAdjoint(la.AbstractLinearOperator):
     diagonal: Array
 
-    def __init__(self, diagonal):
+    def __init__(self, diagonal: Any) -> None:
         diagonal_ = jnp.asarray(diagonal)
         self.diagonal = diagonal_
         self.source = la.ArraySpace(diagonal_.shape, dtype=diagonal_.dtype)
@@ -33,20 +36,21 @@ class _NoMaterializeSelfAdjoint(la.AbstractLinearOperator):
         self.batch_shape = ()
         self.operator_id = "no-materialize-self-adjoint"
 
-    def mv(self, vector):
+    def mv(self, vector: Any) -> Any:
         return self.diagonal * self.source.validate(vector)
 
-    def transpose_mv(self, vector):
+    def transpose_mv(self, vector: Any) -> Any:
         return self.mv(vector)
 
-    def adjoint_mv(self, vector):
+    def adjoint_mv(self, vector: Any) -> Any:
         return self.mv(vector)
 
-    def _materialize(self):
+    # ty: ignore[invalid-method-override]
+    def _materialize(self) -> None:
         raise AssertionError("Trust-region solve must remain matrix-free.")
 
 
-def test_steihaug_toint_recovers_interior_newton_step_without_materialization():
+def test_steihaug_toint_recovers_interior_newton_step_without_materialization() -> None:
     operator = _NoMaterializeSelfAdjoint(jnp.asarray([2.0, 4.0]))
     result = opt.solve_trust_region_subproblem(
         opt.TrustRegionQuadraticProblem(
@@ -63,7 +67,7 @@ def test_steihaug_toint_recovers_interior_newton_step_without_materialization():
     assert not bool(result.diagnostics.boundary_hit)
 
 
-def test_steihaug_toint_reports_boundary_and_negative_curvature():
+def test_steihaug_toint_reports_boundary_and_negative_curvature() -> None:
     positive = _NoMaterializeSelfAdjoint(jnp.asarray([1.0, 1.0]))
     boundary = opt.solve_trust_region_subproblem(
         opt.TrustRegionQuadraticProblem(
@@ -88,7 +92,7 @@ def test_steihaug_toint_reports_boundary_and_negative_curvature():
     assert float(jnp.linalg.norm(negative.step)) == pytest.approx(1.0)
 
 
-def _optimization_termination(maximum_steps=30):
+def _optimization_termination(maximum_steps: Any = 30) -> Any:
     return opt.OptimizationTermination(
         absolute_optimality=1e-9,
         relative_optimality=0.0,
@@ -96,7 +100,7 @@ def _optimization_termination(maximum_steps=30):
     )
 
 
-def test_matrix_free_newton_trust_region_has_no_dense_dimension_cap():
+def test_matrix_free_newton_trust_region_has_no_dense_dimension_cap() -> None:
     size = 1024
     target = jnp.ones((size,))
     problem = opt.MinimizationProblem(
@@ -117,7 +121,7 @@ def test_matrix_free_newton_trust_region_has_no_dense_dimension_cap():
     assert int(result.diagnostics.hvp_evaluations) > 0
 
 
-def test_dense_dogleg_remains_an_explicit_small_system_method():
+def test_dense_dogleg_remains_an_explicit_small_system_method() -> None:
     problem = opt.MinimizationProblem(
         lambda parameters, _: 0.5 * jnp.sum((parameters - 1.0) ** 2)
     )
@@ -131,7 +135,7 @@ def test_dense_dogleg_remains_an_explicit_small_system_method():
     assert result.provenance.method == "dense-newton-dogleg"
 
 
-def test_bounded_newton_trust_region_preserves_active_bounds():
+def test_bounded_newton_trust_region_preserves_active_bounds() -> None:
     problem = opt.MinimizationProblem(
         lambda parameters, target: 0.5 * jnp.sum((parameters - target) ** 2),
         bounds=opt.Bounds(0.0, 1.0),
@@ -156,8 +160,10 @@ def test_bounded_newton_trust_region_preserves_active_bounds():
     "method",
     [opt.BoundedGaussNewton(), opt.BoundedLevenbergMarquardt()],
 )
-def test_bounded_least_squares_uses_residual_model_and_never_leaves_box(method):
-    def residual(parameters, target):
+def test_bounded_least_squares_uses_residual_model_and_never_leaves_box(
+    method: Any,
+) -> None:
+    def residual(parameters: Any, target: Any) -> Any:
         return jnp.where(
             (parameters < 0.0) | (parameters > 1.0),
             jnp.nan,
@@ -183,7 +189,7 @@ def test_bounded_least_squares_uses_residual_model_and_never_leaves_box(method):
     assert result.provenance.globalization == "projected-residual-trust-region"
 
 
-def test_unbounded_least_squares_method_rejects_declared_bounds():
+def test_unbounded_least_squares_method_rejects_declared_bounds() -> None:
     problem = opt.NonlinearLeastSquaresProblem(
         lambda parameters, target: parameters - target,
         bounds=opt.Bounds(0.0, 1.0),

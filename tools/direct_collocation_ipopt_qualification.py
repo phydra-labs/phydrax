@@ -7,7 +7,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
+# ty: ignore[unresolved-import]
 import cyipopt
 import jax.numpy as jnp
 
@@ -16,7 +18,7 @@ from benchmarks._io import write_json_atomic
 from benchmarks._runtime import capture_environment, measure_synchronized
 
 
-def _problem():
+def _problem() -> Any:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: control,
         state_layout=phx.dynamics.StateLayout((1,)),
@@ -38,7 +40,7 @@ def _problem():
     )
 
 
-def _solve(intervals: int, hessian: str, *, warm_start=None):
+def _solve(intervals: int, hessian: str, *, warm_start: Any = None) -> Any:
     mesh = phx.discretization.TemporalMesh.uniform(
         0.0,
         1.0,
@@ -50,6 +52,7 @@ def _solve(intervals: int, hessian: str, *, warm_start=None):
         mesh,
         method=phx.solver.ThetaMethod(0.5, endpoint=False),
         derivatives=phx.control.DirectCollocationDerivativePolicy(
+            # ty: ignore[invalid-argument-type]
             hessian=hessian,
             verify=True,
             num_verification_probes=2,

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -25,7 +26,7 @@ from phydrax.uq._multiobjective_bayesian_optimization import (
 )
 
 
-def exact_geometry(*, repetitions: int):
+def exact_geometry(*, repetitions: int) -> Any:
     front = jnp.asarray([[1.0, 4.0], [2.0, 2.0], [4.0, 1.0]])
     reference = jnp.asarray([5.0, 5.0])
     improved = jnp.concatenate((front, jnp.asarray([[1.0, 1.0]])))
@@ -59,7 +60,7 @@ def stochastic_search(
     candidates: int,
     fantasies: int,
     objectives: int,
-):
+) -> Any:
     names = ("cost", "loss") if objectives == 2 else ("cost", "loss", "burden")
     categories = phx.optim.FiniteProductSpace(
         {"material": phx.optim.FiniteAxis(jnp.asarray([0.0, 1.0]))}
@@ -71,17 +72,17 @@ def stochastic_search(
         categorical=categories,
     )
 
-    def truth(point):
+    def truth(point: Any) -> Any:
         x, material = point.continuous[0], point.categorical["material"]
         values = ((x - 0.1) ** 2 + 0.07 * material, (x - 0.9) ** 2 - 0.04 * material)
         if objectives == 3:
             values += ((x - 0.45) ** 2 + 0.03 * material,)
         return jnp.stack(values)
 
-    def objective(point, key):
+    def objective(point: Any, key: Any) -> Any:
         return truth(point) + 0.025 * jr.normal(key, (objectives,))
 
-    def constraint(point, key):
+    def constraint(point: Any, key: Any) -> Any:
         return point.continuous[0] - 0.85 + 0.01 * jr.normal(key)
 
     reference = jnp.full((objectives,), 1.5)
@@ -168,7 +169,7 @@ def stochastic_search(
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", choices=("exact", "search", "all"), default="all")
     parser.add_argument("--seed", type=int, default=7)

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ from phydrax.nn.layers import (
 from phydrax.nn.models import LinearRecurrentModel, SelectiveSequenceModel
 
 
-def _packed_sequence():
+def _packed_sequence() -> Any:
     values = jr.normal(jr.key(1), (2, 7, 3), dtype=jnp.float64)
     valid = jnp.array(
         [
@@ -35,7 +37,7 @@ def _packed_sequence():
     return RecurrentBatch(values, valid, reset=reset, time=times)
 
 
-def test_linear_recurrent_unit_is_stable_and_serial_associative_exact():
+def test_linear_recurrent_unit_is_stable_and_serial_associative_exact() -> None:
     unit = LinearRecurrentUnit(
         3,
         5,
@@ -54,7 +56,7 @@ def test_linear_recurrent_unit_is_stable_and_serial_associative_exact():
     assert jnp.all(jnp.isfinite(serial.outputs))
 
 
-def test_linear_recurrent_model_continues_exactly_across_sequence_chunks():
+def test_linear_recurrent_model_continues_exactly_across_sequence_chunks() -> None:
     unit = LinearRecurrentUnit(3, 4, dtype=jnp.float64, key=jr.key(3))
     model = LinearRecurrentModel(unit)
     values = jr.normal(jr.key(4), (8, 3), dtype=jnp.float64)
@@ -76,7 +78,9 @@ def test_linear_recurrent_model_continues_exactly_across_sequence_chunks():
     )
 
 
-def test_selective_sequence_has_serial_associative_parity_on_irregular_physical_time():
+def test_selective_sequence_has_serial_associative_parity_on_irregular_physical_time() -> (
+    None
+):
     batch = _packed_sequence()
     associative = SelectiveSequenceModel(
         3,
@@ -104,7 +108,9 @@ def test_selective_sequence_has_serial_associative_parity_on_irregular_physical_
     assert jnp.all(jnp.isfinite(associative_output))
 
 
-def test_selective_sequence_streaming_preserves_physical_time_and_convolution_state():
+def test_selective_sequence_streaming_preserves_physical_time_and_convolution_state() -> (
+    None
+):
     model = SelectiveSequenceModel(
         3,
         4,
@@ -136,7 +142,7 @@ def test_selective_sequence_streaming_preserves_physical_time_and_convolution_st
     assert bool(second.final_state[0].has_time)
 
 
-def test_selective_sequence_resets_isolate_segments_and_has_no_future_leakage():
+def test_selective_sequence_resets_isolate_segments_and_has_no_future_leakage() -> None:
     model = SelectiveSequenceModel(
         3,
         4,
@@ -189,7 +195,9 @@ def test_selective_sequence_resets_isolate_segments_and_has_no_future_leakage():
     assert jnp.array_equal(changed_output[:5], packed[:5])
 
 
-def test_recurrent_consumers_preserve_backward_time_direction_in_internal_batches():
+def test_recurrent_consumers_preserve_backward_time_direction_in_internal_batches() -> (
+    None
+):
     values = jr.normal(jr.key(20), (4, 3), dtype=jnp.float64)
     valid = jnp.ones((4,), dtype="bool")
     decreasing_times = jnp.asarray((6.0, 3.0, 1.0, 0.0))
@@ -230,7 +238,7 @@ def test_recurrent_consumers_preserve_backward_time_direction_in_internal_batche
     )
 
 
-def test_advanced_sequence_models_are_jittable_with_finite_input_gradients():
+def test_advanced_sequence_models_are_jittable_with_finite_input_gradients() -> None:
     batch = _packed_sequence()
     model = SelectiveSequenceModel(
         3,
@@ -252,7 +260,7 @@ def test_advanced_sequence_models_are_jittable_with_finite_input_gradients():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_linear_recurrent_operator_adapts_coincident_masked_sequences():
+def test_linear_recurrent_operator_adapts_coincident_masked_sequences() -> None:
     values = jr.normal(jr.key(11), (2, 7, 3), dtype=jnp.float64)
     coordinates = jnp.broadcast_to(
         jnp.linspace(0.0, 1.0, 7)[None, :, None],

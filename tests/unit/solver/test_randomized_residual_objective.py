@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,17 +13,17 @@ from phydrax.terms._randomized_residual import (
 )
 
 
-def _functions(parameter):
+def _functions(parameter: Any) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     return {"u": domain.Parameter(jnp.asarray([parameter]))}
 
 
-def _parameter(functions):
+def _parameter(functions: Any) -> Any:
     return jnp.asarray(functions["u"].func())[0]
 
 
-def _noisy_evaluator(*, num_realizations, scale):
-    def evaluate(functions, collocation, key):
+def _noisy_evaluator(*, num_realizations: Any, scale: Any) -> Any:
+    def evaluate(functions: Any, collocation: Any, key: Any) -> Any:
         count = int(collocation["count"])
         noise = jr.normal(key, (num_realizations, count))
         values = _parameter(functions) + scale * noise
@@ -35,7 +37,7 @@ def _noisy_evaluator(*, num_realizations, scale):
     return evaluate
 
 
-def test_u_statistic_is_unbiased_for_noisy_residual_and_has_exact_gradient():
+def test_u_statistic_is_unbiased_for_noisy_residual_and_has_exact_gradient() -> None:
     parameter = jnp.asarray(0.7)
     objective = RandomizedResidualTerm(
         _noisy_evaluator(num_realizations=4096, scale=1.5),
@@ -55,7 +57,7 @@ def test_u_statistic_is_unbiased_for_noisy_residual_and_has_exact_gradient():
     assert objective.diagnostics(_functions(parameter), batch=batch).passed
 
 
-def test_plugin_exposes_variance_bias_while_independent_product_is_unbiased():
+def test_plugin_exposes_variance_bias_while_independent_product_is_unbiased() -> None:
     parameter = jnp.asarray(0.4)
     collocation = {"count": 8192}
     evaluator = _noisy_evaluator(num_realizations=4, scale=2.0)
@@ -88,7 +90,7 @@ def test_plugin_exposes_variance_bias_while_independent_product_is_unbiased():
     assert jnp.allclose(biased - unbiased, 1.0, atol=8e-2)
 
 
-def test_vector_complex_residuals_masks_and_weights_reduce_correctly():
+def test_vector_complex_residuals_masks_and_weights_reduce_correctly() -> None:
     collocation = {
         "residual": jnp.asarray(
             [[1.0 + 2.0j, 0.5 - 0.5j], [3.0 + 0.0j, 4.0j], [9.0, 9.0]]
@@ -97,7 +99,7 @@ def test_vector_complex_residuals_masks_and_weights_reduce_correctly():
         "weights": jnp.asarray([1.0, 3.0, 100.0]),
     }
 
-    def evaluator(functions, batch, key):
+    def evaluator(functions: Any, batch: Any, key: Any) -> Any:
         del functions, key
         values = jnp.broadcast_to(batch["residual"], (3,) + batch["residual"].shape)
         return RandomizedResidualSamples(
@@ -118,14 +120,14 @@ def test_vector_complex_residuals_masks_and_weights_reduce_correctly():
     assert jnp.allclose(objective.loss({}, key=jr.key(0)), expected)
 
 
-def test_resampled_collocation_is_materialized_once_per_optimizer_update():
+def test_resampled_collocation_is_materialized_once_per_optimizer_update() -> None:
     calls = []
 
-    def sampler(key):
+    def sampler(key: Any) -> Any:
         calls.append(key)
         return {"target": jnp.asarray(1.0)}
 
-    def evaluator(functions, batch, key):
+    def evaluator(functions: Any, batch: Any, key: Any) -> Any:
         del key
         residual = _parameter(functions) - batch["target"]
         return RandomizedResidualSamples(jnp.stack((residual, residual)))
@@ -152,7 +154,7 @@ def test_resampled_collocation_is_materialized_once_per_optimizer_update():
     assert _parameter(trained.functions) > 0.5
 
 
-def test_signed_randomized_objective_rejects_best_sample_selection():
+def test_signed_randomized_objective_rejects_best_sample_selection() -> None:
     objective = RandomizedResidualTerm(
         _noisy_evaluator(num_realizations=2, scale=1.0),
         collocation={"count": 1},
@@ -167,8 +169,8 @@ def test_signed_randomized_objective_rejects_best_sample_selection():
         solver.solve(num_iter=1, optim=optax.sgd(0.1), log_every=0)
 
 
-def test_zero_valid_mass_is_rejected():
-    def evaluator(functions, batch, key):
+def test_zero_valid_mass_is_rejected() -> None:
+    def evaluator(functions: Any, batch: Any, key: Any) -> Any:
         del functions, batch, key
         return RandomizedResidualSamples(
             jnp.ones((2, 3)),

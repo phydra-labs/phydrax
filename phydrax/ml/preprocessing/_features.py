@@ -29,6 +29,7 @@ from ..._dtype_names import inexact_result_type
 from ..._interpolation import bspline_stencil, linear_interpolate
 from ..._trainable import fixed_field, NonTrainableState
 from ...sparse import EdgeRelation, SparseLinearMap
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -184,8 +185,7 @@ class PolynomialFeatures(AbstractRecipe):
             raise ValueError("degree must be a positive integer.")
         if int(max_output_features) <= 0:
             raise ValueError("max_output_features must be positive.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.degree = int(degree)
         self.interaction_only = bool(interaction_only)
         self.include_bias = bool(include_bias)
@@ -374,8 +374,7 @@ class SplineTransformer(AbstractRecipe):
             raise ValueError("knots must be 'uniform' or 'quantile'.")
         if bounds not in ("clip", "error"):
             raise ValueError("bounds must be 'clip' or 'error'.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_knots = int(n_knots)
         self.degree = int(degree)
         self.knots = knots
@@ -554,8 +553,7 @@ class FourierFeatures(AbstractRecipe):
     ) -> None:
         if int(n_frequencies) <= 0:
             raise ValueError("n_frequencies must be positive.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
 
         def normalize(
             value: Number | Sequence[Number] | None,
@@ -744,8 +742,7 @@ class RandomFourierFeatures(AbstractRecipe):
             ~jnp.isfinite(gamma_) | (gamma_ <= 0.0),
             "gamma must be finite and positive.",
         )
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_components = int(n_components)
         self.gamma = gamma_
         self.weight_policy = weight_policy
@@ -854,8 +851,7 @@ class FeatureHasher(AbstractRecipe):
     ) -> None:
         if int(n_features) <= 0:
             raise ValueError("n_features must be positive.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_features = int(n_features)
         self.alternate_sign = bool(alternate_sign)
         self.weight_policy = weight_policy
@@ -959,8 +955,7 @@ class GaussianRandomProjection(AbstractRecipe):
     ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_components = int(n_components)
         self.weight_policy = weight_policy
 
@@ -1062,8 +1057,7 @@ class SparseRandomProjection(AbstractRecipe):
             not jnp.isfinite(density) or not 0.0 < float(density) <= 1.0
         ):
             raise ValueError("density must lie in (0, 1].")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_components = int(n_components)
         self.density = None if density is None else float(density)
         self.weight_policy = weight_policy
@@ -1293,8 +1287,7 @@ class PowerTransformer(AbstractRecipe):
             raise ValueError("lambda_range must be finite and increasing.")
         if int(n_lambdas) < 2:
             raise ValueError("n_lambdas must be at least two.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.method = method
         self.lambda_range = (lower, upper)
         self.n_lambdas = int(n_lambdas)
@@ -1508,8 +1501,7 @@ class QuantileTransformer(AbstractRecipe):
             raise ValueError("n_quantiles must be at least two.")
         if output_distribution not in ("uniform", "normal"):
             raise ValueError("output_distribution must be 'uniform' or 'normal'.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.n_quantiles = int(n_quantiles)
         self.output_distribution = output_distribution
         self.weight_policy = weight_policy

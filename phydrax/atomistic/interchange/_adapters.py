@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from importlib import import_module
 from importlib.util import find_spec
 from types import ModuleType
-from typing import Any, TypedDict
+from typing import Any, assert_never, TypedDict
 
 import numpy as np
 import numpy.typing as npt
@@ -373,32 +373,35 @@ def force_field_from_mapping(value: dict[str, Any], /) -> AtomisticInterchangeBu
             )
         )
     if legacy_mapping and np.any(np.asarray(value["charges"]) != 0.0):
-        if policy.electrostatics == "direct":
-            terms.append(DirectCoulombPotential())
-        elif policy.electrostatics == "reaction-field":
-            terms.append(
-                ReactionFieldPotential(
-                    nonbonded.get("reaction_field_dielectric", 78.5), policy.cutoff
+        match policy.electrostatics:
+            case "direct":
+                terms.append(DirectCoulombPotential())
+            case "reaction-field":
+                terms.append(
+                    ReactionFieldPotential(
+                        nonbonded.get("reaction_field_dielectric", 78.5), policy.cutoff
+                    )
                 )
-            )
-        elif policy.electrostatics == "ewald":
-            terms.append(
-                EwaldReferencePotential(
-                    nonbonded["ewald_alpha"],
-                    policy.cutoff,
-                    nonbonded["reciprocal_extent"],
-                    neutrality=policy.charge_neutrality,
+            case "ewald":
+                terms.append(
+                    EwaldReferencePotential(
+                        nonbonded["ewald_alpha"],
+                        policy.cutoff,
+                        nonbonded["reciprocal_extent"],
+                        neutrality=policy.charge_neutrality,
+                    )
                 )
-            )
-        else:
-            terms.append(
-                ParticleMeshEwaldPotential(
-                    nonbonded["ewald_alpha"],
-                    policy.cutoff,
-                    tuple(nonbonded["grid_shape"]),
-                    neutrality=policy.charge_neutrality,
+            case "pme":
+                terms.append(
+                    ParticleMeshEwaldPotential(
+                        nonbonded["ewald_alpha"],
+                        policy.cutoff,
+                        tuple(nonbonded["grid_shape"]),
+                        neutrality=policy.charge_neutrality,
+                    )
                 )
-            )
+            case unsupported:
+                assert_never(unsupported)
     if not terms:
         raise ValueError("Interchange mapping contains no supported potential terms.")
     source_digest = canonical_source_digest(value)

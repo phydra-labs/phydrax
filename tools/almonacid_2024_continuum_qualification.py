@@ -14,6 +14,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -26,12 +27,12 @@ from phydrax.applications.skeletal_muscle.continuum import almonacid_2024_reposi
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def digest(path):
+def digest(path: Any) -> Any:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def content_id(record):
+def content_id(record: Any) -> Any:
     payload = {key: value for key, value in record.items() if key != "content_id"}
     canonical = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -39,7 +40,7 @@ def content_id(record):
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def parameter_contract(path):
+def parameter_contract(path: Any) -> Any:
     values = {}
     for line in path.read_text().splitlines():
         if line.strip().startswith("set "):
@@ -53,7 +54,7 @@ def parameter_contract(path):
     return values
 
 
-def checked_file(directory, record, name):
+def checked_file(directory: Any, record: Any, name: Any) -> Any:
     path = directory / name
     expected = record["artifacts"][name]
     if (
@@ -65,7 +66,7 @@ def checked_file(directory, record, name):
     return path
 
 
-def measure(actual, reference, *, rtol, atol):
+def measure(actual: Any, reference: Any, *, rtol: Any, atol: Any) -> Any:
     actual, reference = np.asarray(actual), np.asarray(reference)
     difference = actual - reference
     finite = np.all(np.isfinite(actual)) and np.all(np.isfinite(reference))
@@ -84,15 +85,17 @@ def measure(actual, reference, *, rtol, atol):
     }
 
 
-def compare_fields(prepared, dt, main, tensors, indices, rtol):
+def compare_fields(
+    prepared: Any, dt: Any, main: Any, tensors: Any, indices: Any, rtol: Any
+) -> Any:
     fields = prepared.quadrature_fields(dt)
     response = fields["response"]
 
-    def flat(value):
+    def flat(value: Any) -> Any:
         array = np.asarray(value)
         return array.reshape((-1,) + array.shape[2:])[indices]
 
-    def compare(value, reference, atol):
+    def compare(value: Any, reference: Any, atol: Any) -> Any:
         return measure(flat(value), reference, rtol=rtol, atol=atol)
 
     # float32 storage and source Newton tolerances are explicit, not trace-level f64 criteria.
@@ -134,7 +137,14 @@ def compare_fields(prepared, dt, main, tensors, indices, rtol):
     return comparisons, fields
 
 
-def qualify(directory, inputs, *, maximum_step=100, rtol=2e-3, save_native=None):
+def qualify(
+    directory: Any,
+    inputs: Any,
+    *,
+    maximum_step: Any = 100,
+    rtol: Any = 2e-3,
+    save_native: Any = None,
+) -> Any:
     if not np.isfinite(rtol) or rtol <= 0:
         raise ValueError("relative tolerance must be finite and positive.")
     record = json.loads((directory / "frozen-reference.json").read_text())
@@ -194,6 +204,7 @@ def qualify(directory, inputs, *, maximum_step=100, rtol=2e-3, save_native=None)
     distance, indices = cKDTree(points).query(main0[:, :3])
     if (
         len(points) != len(main0)
+        # ty: ignore[invalid-argument-type]
         or len(np.unique(indices)) != len(indices)
         or np.max(distance) > 4e-8
     ):
@@ -341,11 +352,14 @@ def qualify(directory, inputs, *, maximum_step=100, rtol=2e-3, save_native=None)
                     prepared.state.reference_velocity_gradient_per_s
                 ),
             }
+            # ty: ignore[invalid-argument-type]
             np.savez(save_native / f"native-{step:03d}.npz", **state_arrays)
     all_passed = len(rows) == maximum_step + 1 and all(
         row["native_solve_successful"]
+        # ty: ignore[not-subscriptable, unresolved-attribute]
         and all(value["passed"] for value in row.get("fields", {}).values())
         and all(
+            # ty: ignore[not-subscriptable]
             row.get(key, {"passed": False})["passed"]
             for key in (
                 "source_boundary_force_N",
@@ -389,7 +403,7 @@ def qualify(directory, inputs, *, maximum_step=100, rtol=2e-3, save_native=None)
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--reference-directory",

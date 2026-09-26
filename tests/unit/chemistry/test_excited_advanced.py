@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -5,14 +7,14 @@ import numpy as np
 import phydrax as phx
 
 
-def _dipole_unit():
+def _dipole_unit() -> Any:
     return phx.units.derived_unit(
         "e*bohr-excited-test",
         ((phx.units.ELEMENTARY_CHARGE, 1), (phx.units.BOHR, 1)),
     )
 
 
-def _tda_manifold(amplitudes, energies):
+def _tda_manifold(amplitudes: Any, energies: Any) -> Any:
     energies = jnp.asarray(energies)
     return phx.chemistry.ElectronicManifoldResult(
         energies,
@@ -33,7 +35,7 @@ def _tda_manifold(amplitudes, energies):
     )
 
 
-def test_rpa_representation_and_analytic_tda_couplings_close_exact_small_models():
+def test_rpa_representation_and_analytic_tda_couplings_close_exact_small_models() -> None:
     rpa = phx.chemistry.RandomPhaseApproximationPlan(
         jnp.asarray([[1.0]]),
         jnp.asarray([[0.2]]),
@@ -62,6 +64,7 @@ def test_rpa_representation_and_analytic_tda_couplings_close_exact_small_models(
 
     assert bool(rpa.successful)
     np.testing.assert_allclose(rpa.excitation_energies, np.sqrt(0.96), atol=2.0e-12)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(rpa.representation.symplectic_norms, 1.0, atol=2.0e-12)
     np.testing.assert_allclose(weighted[0, 1, 0], 0.2, atol=1.0e-14)
     np.testing.assert_allclose(couplings[0, 1, 0], 0.2, atol=1.0e-14)
@@ -74,7 +77,7 @@ def test_rpa_representation_and_analytic_tda_couplings_close_exact_small_models(
     )
 
 
-def test_overlap_tracking_recovers_swapped_roots():
+def test_overlap_tracking_recovers_swapped_roots() -> None:
     previous = _tda_manifold(jnp.eye(2), [1.0, 2.0])
     current = _tda_manifold(jnp.asarray([[0.0, 1.0], [1.0, 0.0]]), [1.1, 1.9])
     tracking = phx.chemistry.track_excited_states(previous, current)
@@ -85,8 +88,10 @@ def test_overlap_tracking_recovers_swapped_roots():
     np.testing.assert_allclose(tracking.unitarity_residual, 0.0, atol=1.0e-14)
 
 
-def test_meci_branching_plane_and_surface_hopping_preserve_structural_invariants():
-    def crossing_surface(positions):
+def test_meci_branching_plane_and_surface_hopping_preserve_structural_invariants() -> (
+    None
+):
+    def crossing_surface(positions: Any) -> Any:
         x = positions[0, 0]
         gradients = jnp.zeros((2, 1, 3)).at[0, 0, 0].set(1.0).at[1, 0, 0].set(-1.0)
         coupling = jnp.asarray([[0.0, 1.0, 0.0]])
@@ -116,7 +121,7 @@ def test_meci_branching_plane_and_surface_hopping_preserve_structural_invariants
         jnp.zeros((2, 2, 1, 3)).at[0, 1, 0, 0].set(0.1).at[1, 0, 0, 0].set(-0.1)
     )
 
-    def dynamics_surface(positions):
+    def dynamics_surface(positions: Any) -> Any:
         del positions
         return phx.chemistry.NonadiabaticSurfaceEvaluation(
             jnp.asarray([0.0, 0.2]),

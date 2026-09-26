@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -18,7 +21,7 @@ from phydrax.operators.quantum.lattice import (
 )
 
 
-def _resources():
+def _resources() -> Any:
     return SU2SectorResourcePolicy(
         maximum_product_dimension=128,
         maximum_sector_dimension=128,
@@ -26,7 +29,7 @@ def _resources():
     )
 
 
-def test_three_spin_half_total_half_sector_has_two_exact_multiplets():
+def test_three_spin_half_total_half_sector_has_two_exact_multiplets() -> None:
     basis = prepare_su2_sector_basis(
         SU2CouplingTreePlan(
             ("a", "b", "c"),
@@ -50,7 +53,7 @@ def test_three_spin_half_total_half_sector_has_two_exact_multiplets():
     )
 
 
-def test_su2_projected_swap_preserves_total_spin_sector():
+def test_su2_projected_swap_preserves_total_spin_sector() -> None:
     basis = prepare_su2_sector_basis(
         SU2CouplingTreePlan(("a", "b"), (1, 1), 0, _resources())
     )
@@ -69,7 +72,7 @@ def test_su2_projected_swap_preserves_total_spin_sector():
     assert bool(projected.evidence.accepted)
 
 
-def test_fuzzy_sphere_statistics_select_exact_pair_spin_sectors():
+def test_fuzzy_sphere_statistics_select_exact_pair_spin_sectors() -> None:
     fermion = prepare_fuzzy_sphere_two_particle(
         FuzzySphereTwoParticlePlan(
             1,
@@ -101,7 +104,7 @@ def test_fuzzy_sphere_statistics_select_exact_pair_spin_sectors():
     assert "no-continuum" in boson_spectrum.claim
 
 
-def test_spin_one_fermions_keep_only_antisymmetric_total_spin_one():
+def test_spin_one_fermions_keep_only_antisymmetric_total_spin_one() -> None:
     model = prepare_fuzzy_sphere_two_particle(
         FuzzySphereTwoParticlePlan(
             2,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 q = phx.operators.quantum
 
 
-def test_transmon_charge_limit_and_external_phase_periodicity():
+def test_transmon_charge_limit_and_external_phase_periodicity() -> None:
     basis = q.ChargeBasis(5)
     charging_rate = jnp.asarray(0.23)
     offset_charge = jnp.asarray(0.17)
@@ -33,7 +36,7 @@ def test_transmon_charge_limit_and_external_phase_periodicity():
         jnp.diag(jnp.diag(charge_limit.hamiltonian)),
     )
 
-    def spectrum(phase):
+    def spectrum(phase: Any) -> Any:
         problem = q.transmon_mode_problem(
             q.TransmonParameters(0.23, 8.0, 6.5, external_phase=phase),
             basis,
@@ -57,7 +60,7 @@ def test_transmon_charge_limit_and_external_phase_periodicity():
     )
 
 
-def test_fluxonium_harmonic_limit_and_canonical_quadratures():
+def test_fluxonium_harmonic_limit_and_canonical_quadratures() -> None:
     charging_rate = 0.5
     inductive_rate = 2.0
     phase_scale = (8.0 * charging_rate / inductive_rate) ** 0.25
@@ -79,7 +82,7 @@ def test_fluxonium_harmonic_limit_and_canonical_quadratures():
     assert jnp.allclose(problem.hamiltonian, jnp.conj(problem.hamiltonian.T))
 
 
-def test_harmonic_mode_uses_explicit_oscillator_scales():
+def test_harmonic_mode_uses_explicit_oscillator_scales() -> None:
     basis = q.OscillatorBasis(7, phase_scale=1.4)
     problem = q.harmonic_mode_problem(q.HarmonicModeParameters(2.3), basis)
     prepared = q.prepare_mode_reduction(
@@ -95,7 +98,7 @@ def test_harmonic_mode_uses_explicit_oscillator_scales():
     )
 
 
-def test_circuit_mode_spectrum_gradients_are_finite_away_from_crossings():
+def test_circuit_mode_spectrum_gradients_are_finite_away_from_crossings() -> None:
     basis = q.ChargeBasis(6)
     nominal = q.TransmonParameters(0.25, 10.0, 9.0, external_phase=0.2)
     prepared = q.prepare_mode_reduction(
@@ -121,7 +124,7 @@ def test_circuit_mode_spectrum_gradients_are_finite_away_from_crossings():
     assert jnp.isfinite(derivative)
 
 
-def test_circuit_mode_inputs_fail_closed():
+def test_circuit_mode_inputs_fail_closed() -> None:
     with pytest.raises(ValueError, match="positive"):
         q.ChargeBasis(0)
     with pytest.raises(ValueError, match="greater than one"):

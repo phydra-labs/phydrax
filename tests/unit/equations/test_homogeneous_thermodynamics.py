@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +15,7 @@ import phydrax as phx
 R = phx.equations.UNIVERSAL_GAS_CONSTANT
 
 
-def _model():
+def _model() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (
@@ -40,7 +43,7 @@ def _model():
     )
 
 
-def test_ideal_mixture_helmholtz_derives_consistent_caloric_state():
+def test_ideal_mixture_helmholtz_derives_consistent_caloric_state() -> None:
     model = _model()
     temperature = jnp.asarray(700.0)
     density = jnp.asarray(3.0)
@@ -65,7 +68,7 @@ def test_ideal_mixture_helmholtz_derives_consistent_caloric_state():
     assert bool(chemical.successful)
 
 
-def test_density_energy_round_trip_is_batched_and_jittable():
+def test_density_energy_round_trip_is_batched_and_jittable() -> None:
     model = _model()
     species_density = jnp.asarray(((0.2, 0.8), (0.1, 0.5)))
     temperature = jnp.asarray((500.0, 1200.0))
@@ -80,7 +83,7 @@ def test_density_energy_round_trip_is_batched_and_jittable():
     np.testing.assert_array_equal(solved.successful, (True, True))
 
 
-def test_thermodynamic_validity_is_per_batch_entry():
+def test_thermodynamic_validity_is_per_batch_entry() -> None:
     model = _model()
     state = model.evaluate(
         jnp.asarray((500.0, 5000.0)),
@@ -91,7 +94,7 @@ def test_thermodynamic_validity_is_per_batch_entry():
     np.testing.assert_array_equal(state.evidence.successful, (True, False))
 
 
-def test_component_catalog_supports_repeated_phase_occurrences():
+def test_component_catalog_supports_repeated_phase_occurrences() -> None:
     catalog = phx.equations.ChemicalComponentCatalog(
         ("water",),
         jnp.asarray((0.01801528,)),
@@ -124,7 +127,7 @@ def test_component_catalog_supports_repeated_phase_occurrences():
     assert schema.phase_slot_species_indices(2) == (2,)
 
 
-def test_homogeneous_mixture_euler_round_trip_flux_and_reflection():
+def test_homogeneous_mixture_euler_round_trip_flux_and_reflection() -> None:
     model = _model()
     system = phx.equations.HomogeneousMixtureEulerSystem(model, 2)
     primitive = jnp.asarray((0.2, 0.8, 3.0, -1.0, 900.0))

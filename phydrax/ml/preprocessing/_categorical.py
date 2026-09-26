@@ -385,8 +385,7 @@ class SimpleImputer(AbstractRecipe):
         weight_policy: WeightPolicy = "statistical",
     ) -> None:
         strategy = parse(strategy, ImputationStrategy, "strategy")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         if not isinstance(fill_value, Number) or not isinstance(missing_values, Number):
             raise TypeError(
                 "JAX-native imputation sentinels and fill values must be numeric."
@@ -595,8 +594,7 @@ class OrdinalEncoder(AbstractRecipe):
         weight_policy: WeightPolicy = "statistical",
     ) -> None:
         unknown_policy = parse(unknown_policy, UnknownPolicy, "unknown_policy")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.schema = schema
         self.unknown_policy = unknown_policy
         self.unknown_value = int(unknown_value)
@@ -743,8 +741,7 @@ class OneHotEncoder(AbstractRecipe):
         weight_policy: WeightPolicy = "statistical",
     ) -> None:
         unknown_policy = parse(unknown_policy, UnknownPolicy, "unknown_policy")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.schema = schema
         self.unknown_policy = unknown_policy
         self.weight_policy = weight_policy
@@ -891,8 +888,7 @@ class TargetEncoder(AbstractRecipe):
             "smoothing must be finite and nonnegative.",
         )
         unknown_policy = parse(unknown_policy, UnknownPolicy, "unknown_policy")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.schema = schema
         self.smoothing = smoothing_
         self.unknown_policy = unknown_policy

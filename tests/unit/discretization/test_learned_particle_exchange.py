@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -11,21 +13,21 @@ class _ScalarPairOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 2
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         values = batch.input("pair_features").values
         assert values is not None
         return values[..., 0]
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
@@ -33,25 +35,25 @@ class _VectorPairOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 2
         self.out_size = 2
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         values = batch.input("pair_features").values
         assert values is not None
         return values
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _pairs_and_geometry():
+def _pairs_and_geometry() -> Any:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray((0, 0, 1), dtype=jnp.int32),
         jnp.asarray((1, 2, 2), dtype=jnp.int32),
@@ -73,7 +75,7 @@ def _pairs_and_geometry():
     return pairs, phx.discretization.particle.particle_pair_geometry(positions, pairs)
 
 
-def _task(channels):
+def _task(channels: Any) -> Any:
     return phx.nn.operator.OperatorTask(
         "pair-exchange",
         fields=(
@@ -105,7 +107,7 @@ def _task(channels):
     )
 
 
-def _trained(model, channels, artifact):
+def _trained(model: Any, channels: Any, artifact: Any) -> Any:
     task = _task(channels)
     exchange_port = task.field_by_name["pair_exchange"].value_port()
     return phx.nn.operator.training.TrainedOperator(
@@ -120,7 +122,7 @@ def _trained(model, channels, artifact):
     )
 
 
-def _schema():
+def _schema() -> Any:
     return phx.nn.operator.adapters.PairwiseExchangeFeatureSchema(
         ("a", "b"),
         ("1", "1"),
@@ -129,7 +131,7 @@ def _schema():
     )
 
 
-def test_central_learned_exchange_conserves_linear_and_angular_momentum():
+def test_central_learned_exchange_conserves_linear_and_angular_momentum() -> None:
     pairs, geometry = _pairs_and_geometry()
     plan = phx.nn.operator.adapters.PairwiseExchangeBindingPlan(
         _schema(),
@@ -153,7 +155,7 @@ def test_central_learned_exchange_conserves_linear_and_angular_momentum():
     np.testing.assert_allclose(result.pair_values[2], 0.0)
 
 
-def test_noncentral_vector_exchange_only_claims_linear_conservation():
+def test_noncentral_vector_exchange_only_claims_linear_conservation() -> None:
     pairs, geometry = _pairs_and_geometry()
     plan = phx.nn.operator.adapters.PairwiseExchangeBindingPlan(
         _schema(),
@@ -171,7 +173,7 @@ def test_noncentral_vector_exchange_only_claims_linear_conservation():
     assert float(jnp.abs(result.ledger.torque)) > 0.0
 
 
-def test_relation_and_artifact_mismatches_are_rejected():
+def test_relation_and_artifact_mismatches_are_rejected() -> None:
     pairs, geometry = _pairs_and_geometry()
     plan = phx.nn.operator.adapters.PairwiseExchangeBindingPlan(
         _schema(),

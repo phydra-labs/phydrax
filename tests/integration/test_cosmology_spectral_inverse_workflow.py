@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_particle_inverse_realization_closes_density_and_spectral_workflow():
+def test_particle_inverse_realization_closes_density_and_spectral_workflow() -> None:
     cosmology = phx.applications.cosmology
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=True),),

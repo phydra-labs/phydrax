@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -89,7 +90,7 @@ def _sample(
     )
 
 
-def test_state_dimensionalization_series_and_lineage_are_exact():
+def test_state_dimensionalization_series_and_lineage_are_exact() -> None:
     schema = _schema()
     values = jnp.ones((4, 5))
     first = ClosureSnapshot(
@@ -126,7 +127,7 @@ def test_state_dimensionalization_series_and_lineage_are_exact():
         ClosureSeries((second, first))
 
 
-def test_box_filter_preserves_constants_affines_and_linear_algebra():
+def test_box_filter_preserves_constants_affines_and_linear_algebra() -> None:
     prepared = FilterSpec.box((5,), boundary="linear").prepare((17,))
     x = jnp.arange(17.0)
     constant = jnp.full((17,), 3.25)
@@ -139,7 +140,7 @@ def test_box_filter_preserves_constants_affines_and_linear_algebra():
     )
 
 
-def test_favre_identities_and_nonpositive_density_rejection():
+def test_favre_identities_and_nonpositive_density_rejection() -> None:
     prepared = FilterSpec.box((3,), boundary="periodic").prepare((16,))
     favre = FavreFilter(prepared)
     x = jnp.arange(16.0)
@@ -158,7 +159,7 @@ def test_favre_identities_and_nonpositive_density_rejection():
         jax.block_until_ready(favre(field, density.at[3].set(0.0)))
 
 
-def test_filter_commutes_with_periodic_difference_and_reports_refinement_defect():
+def test_filter_commutes_with_periodic_difference_and_reports_refinement_defect() -> None:
     fine = FilterSpec.box((3,), boundary="periodic").prepare((24,))
     x = 2.0 * jnp.pi * jnp.arange(24.0) / 24.0
     field = jnp.sin(x) + 0.25 * jnp.cos(2.0 * x)
@@ -170,7 +171,7 @@ def test_filter_commutes_with_periodic_difference_and_reports_refinement_defect(
     np.testing.assert_allclose(refinement.defect, 0.0, atol=1e-12)
 
 
-def test_restriction_prolongation_and_prepared_alignment_are_conservative():
+def test_restriction_prolongation_and_prepared_alignment_are_conservative() -> None:
     fine = jnp.arange(24.0).reshape((6, 4, 1))
     restricted = conservative_restrict(fine, (2, 2))
     np.testing.assert_allclose(
@@ -184,7 +185,7 @@ def test_restriction_prolongation_and_prepared_alignment_are_conservative():
     np.testing.assert_allclose(result.values, restricted, atol=1e-12)
 
 
-def test_analysis_dag_target_units_and_lineage_are_deterministic():
+def test_analysis_dag_target_units_and_lineage_are_deterministic() -> None:
     velocity = ClosureField(
         jnp.stack((jnp.arange(8.0), 2.0 * jnp.arange(8.0)), axis=-1),
         name="velocity",
@@ -286,7 +287,7 @@ def test_analysis_dag_target_units_and_lineage_are_deterministic():
     assert ClosureQualityReport((stress, energy, flux, enthalpy_flux, source)).passed
 
 
-def test_chunk_manifest_rejects_holes_and_overlaps_and_uses_repository_protocol():
+def test_chunk_manifest_rejects_holes_and_overlaps_and_uses_repository_protocol() -> None:
     extent = DatasetExtent(
         case_id="case",
         trajectory_id="trajectory",
@@ -322,30 +323,46 @@ def test_chunk_manifest_rejects_holes_and_overlaps_and_uses_repository_protocol(
     )
 
     class MemoryRepository:
-        def begin(self, artifact_id, writer_id, *, attempt_id=None, started_at=None):
+        def begin(
+            self,
+            artifact_id: Any,
+            writer_id: Any,
+            *,
+            attempt_id: Any = None,
+            started_at: Any = None,
+        ) -> Any:
             return (artifact_id, writer_id)
 
         def write_chunk(
             self,
-            transaction,
-            logical_name,
-            index,
-            offset,
-            payload,
+            transaction: Any,
+            logical_name: Any,
+            index: Any,
+            offset: Any,
+            payload: Any,
             *,
-            encoding="identity",
-        ):
+            encoding: Any = "identity",
+        ) -> Any:
             return (logical_name, index, offset, payload, encoding)
 
-        def commit(self, transaction, chunks, *, metadata=(), committed_at=None):
+        def commit(
+            self,
+            transaction: Any,
+            chunks: Any,
+            *,
+            metadata: Any = (),
+            committed_at: Any = None,
+        ) -> Any:
             return SimpleNamespace(
                 artifact_id=transaction[0], chunks=chunks, metadata=metadata
             )
 
-        def get_manifest(self, artifact_id):
+        def get_manifest(self, artifact_id: Any) -> Any:
             return SimpleNamespace(artifact_id=artifact_id)
 
-        def read_chunk(self, manifest, chunk, *, maximum_plaintext_bytes=None):
+        def read_chunk(
+            self, manifest: Any, chunk: Any, *, maximum_plaintext_bytes: Any = None
+        ) -> Any:
             return chunk[3]
 
     repository = MemoryRepository()
@@ -390,7 +407,7 @@ def test_chunk_manifest_rejects_holes_and_overlaps_and_uses_repository_protocol(
 
 
 @pytest.mark.parametrize("level", ("case", "trajectory", "realization", "time_block"))
-def test_partitioning_never_splits_the_selected_leakage_group(level):
+def test_partitioning_never_splits_the_selected_leakage_group(level: Any) -> None:
     samples = tuple(_sample(index) for index in range(5))
     plan = LeakageSafePartitionPlan(
         level,
@@ -404,7 +421,7 @@ def test_partitioning_never_splits_the_selected_leakage_group(level):
     assert len({assignment.group_key for assignment in partition.assignments}) == 1
 
 
-def test_normalizer_statistics_and_provenance_are_train_only():
+def test_normalizer_statistics_and_provenance_are_train_only() -> None:
     samples = (_sample(0), _sample(2), _sample(100))
     assignments = (
         PartitionAssignment(
@@ -438,10 +455,12 @@ def test_normalizer_statistics_and_provenance_are_train_only():
     )
 
 
-def test_binding_rejects_schema_mismatch_and_inserts_face_correction():
+def test_binding_rejects_schema_mismatch_and_inserts_face_correction() -> None:
     schema = _schema()
 
-    def correction(system, left, right, baseline, context, args):
+    def correction(
+        system: Any, left: Any, right: Any, baseline: Any, context: Any, args: Any
+    ) -> Any:
         del system, baseline, context
         return args * (right - left)
 
@@ -476,12 +495,20 @@ def test_binding_rejects_schema_mismatch_and_inserts_face_correction():
 class _FaceJumpCorrection(StrictModule, ParameterOwner):
     scale: jax.Array
 
-    def __call__(self, system, left, right, baseline, context, args=None):
+    def __call__(
+        self,
+        system: Any,
+        left: Any,
+        right: Any,
+        baseline: Any,
+        context: Any,
+        args: Any = None,
+    ) -> Any:
         del system, baseline, context, args
         return self.scale * (right - left)
 
 
-def test_trainable_face_binding_exposes_only_predictor_parameters_in_fv_method():
+def test_trainable_face_binding_exposes_only_predictor_parameters_in_fv_method() -> None:
     schema = _schema()
     artifact = LearnedClosureBindingPlan(
         _FaceJumpCorrection(jnp.asarray(0.25)),
@@ -496,7 +523,7 @@ def test_trainable_face_binding_exposes_only_predictor_parameters_in_fv_method()
     trainable = artifact.as_trainable_binding()
     assert conservative_face_numeric_revision(trainable) == revision
 
-    def method(binding):
+    def method(binding: Any) -> Any:
         return phx.discretization.FiniteVolumeMethodPlan(
             phx.discretization.PiecewiseConstantReconstruction(),
             phx.discretization.RusanovFluxPlan(),
@@ -510,6 +537,7 @@ def test_trainable_face_binding_exposes_only_predictor_parameters_in_fv_method()
     assert ArrayRole.PARAMETER not in frozen_resolution.roles
     assert not jax.tree_util.tree_leaves(partition_parameters(frozen_method)[0])
     (scale,) = jax.tree_util.tree_leaves(partition_parameters(trainable_method)[0])
+    # ty: ignore[unresolved-attribute]
     assert scale is trainable.predictor.scale
 
     left = jnp.arange(10.0).reshape((2, 5))
@@ -518,7 +546,7 @@ def test_trainable_face_binding_exposes_only_predictor_parameters_in_fv_method()
         jnp.ones((2, 1)), jnp.ones(2), geometry_id="faces"
     )
 
-    def correction(candidate):
+    def correction(candidate: Any) -> Any:
         return jnp.sum(
             candidate.closure.apply(
                 system, left, left + 1.0, jnp.zeros_like(left), context
@@ -527,10 +555,11 @@ def test_trainable_face_binding_exposes_only_predictor_parameters_in_fv_method()
 
     gradient = eqx.filter_grad(correction)(trainable_method)
     assert float(gradient.closure.correction.predictor.scale) == 10.0
+    # ty: ignore[unresolved-attribute]
     assert float(artifact.predictor.scale) == 0.25
 
 
-def _spectral_contract():
+def _spectral_contract() -> Any:
     space = TensorSpectralPlan(
         (FourierBasisPlan(6), FourierBasisPlan(6)),
         axis_names=("x", "y"),
@@ -556,7 +585,9 @@ def _spectral_contract():
     return space, projector, coordinates, dealiasing, state, schema
 
 
-def test_spectral_binding_preserves_energy_hermitian_projection_and_dealiasing_evidence():
+def test_spectral_binding_preserves_energy_hermitian_projection_and_dealiasing_evidence() -> (
+    None
+):
     _, projector, coordinates, dealiasing, state, schema = _spectral_contract()
     binding = LearnedClosureBindingPlan(
         lambda value, args: args * value,
@@ -578,7 +609,7 @@ def test_spectral_binding_preserves_energy_hermitian_projection_and_dealiasing_e
     assert not bool(result.fallback.used)
 
 
-def test_spectral_nonfinite_prediction_returns_explicit_typed_fallback_artifact():
+def test_spectral_nonfinite_prediction_returns_explicit_typed_fallback_artifact() -> None:
     _, projector, coordinates, dealiasing, state, schema = _spectral_contract()
     binding = LearnedClosureBindingPlan(
         lambda value, args: jnp.full_like(value, jnp.nan + 0.0j),
@@ -601,12 +632,12 @@ def test_spectral_nonfinite_prediction_returns_explicit_typed_fallback_artifact(
 class _SpectralDamping(StrictModule, ParameterOwner):
     rate: jax.Array
 
-    def __call__(self, value, args=None):
+    def __call__(self, value: Any, args: Any = None) -> Any:
         del args
         return -self.rate * value
 
 
-def _damping_binding(schema, predictor):
+def _damping_binding(schema: Any, predictor: Any) -> Any:
     return LearnedClosureBindingPlan(
         predictor,
         deployment_kind="spectral_drift",
@@ -618,7 +649,7 @@ def _damping_binding(schema, predictor):
     )
 
 
-def test_frozen_spectral_binding_cannot_train_but_its_trainable_binding_does():
+def test_frozen_spectral_binding_cannot_train_but_its_trainable_binding_does() -> None:
     _, projector, coordinates, dealiasing, state, schema = _spectral_contract()
     artifact = _damping_binding(schema, _SpectralDamping(jnp.asarray(0.1)))
     frozen_hook = artifact.bind_spectral_drift(schema, projector, coordinates, dealiasing)
@@ -634,7 +665,7 @@ def test_frozen_spectral_binding_cannot_train_but_its_trainable_binding_does():
     (rate,) = jax.tree_util.tree_leaves(partition_parameters(hook)[0])
     assert float(rate) == 0.1
 
-    def mismatch(candidate):
+    def mismatch(candidate: Any) -> Any:
         drift = candidate.apply(state).drift
         return jnp.sum(jnp.abs(drift + 0.5 * state) ** 2)
 
@@ -646,12 +677,12 @@ def test_frozen_spectral_binding_cannot_train_but_its_trainable_binding_does():
 class _FixedSpectralDamping(StrictModule, ParameterOwner):
     rate: jax.Array = fixed_field()
 
-    def __call__(self, value, args=None):
+    def __call__(self, value: Any, args: Any = None) -> Any:
         del args
         return -self.rate * value
 
 
-def test_trainable_closure_binding_requires_a_visible_trainable_predictor():
+def test_trainable_closure_binding_requires_a_visible_trainable_predictor() -> None:
     schema = _spectral_contract()[-1]
     with pytest.raises(ValueError, match="no PARAMETER leaf"):
         _damping_binding(schema, lambda value, args: -0.1 * value).as_trainable_binding()

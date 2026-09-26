@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -37,7 +40,7 @@ from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 from phydrax.units import COULOMB
 
 
-def _workflow():
+def _workflow() -> Any:
     units = RelativisticUnitContract(
         RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1),
         RelativityConvention(metric_signature="mostly_minus"),
@@ -202,7 +205,9 @@ def _workflow():
     return shower, string, events
 
 
-def test_dark_shower_color_chain_fragments_with_end_to_end_conservation_and_identity():
+def test_dark_shower_color_chain_fragments_with_end_to_end_conservation_and_identity() -> (
+    None
+):
     shower, string, hard = _workflow()
     showered = evolve_dark_shower_epoch(
         shower,

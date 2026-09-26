@@ -19,7 +19,7 @@ from phydrax.domain import (
 )
 
 
-def test_factor_components_bind_exact_scalar_measures():
+def test_factor_components_bind_exact_scalar_measures() -> None:
     domain = ScalarInterval(-2.0, 3.0, label="x")
 
     interior = domain.component()
@@ -30,23 +30,27 @@ def test_factor_components_bind_exact_scalar_measures():
     assert interior.factor_components[0].factor is domain
     assert isinstance(interior.mass, ExactMass)
     assert jnp.isclose(interior.mass.value, 5.0)
+    # ty: ignore[unresolved-attribute]
     assert jnp.isclose(boundary.mass.value, 2.0)
+    # ty: ignore[unresolved-attribute]
     assert jnp.isclose(fixed.mass.value, 1.0)
 
 
-def test_probability_and_count_dataset_measures_are_explicit():
+def test_probability_and_count_dataset_measures_are_explicit() -> None:
     data = jnp.arange(12.0).reshape((4, 3))
     probability = DatasetDomain(data, measure="probability").component()
     counting = DatasetDomain(data, measure="count").component()
 
     assert probability.factor_components[0].measure.kind == "probability"
     assert probability.factor_components[0].measure.normalized
+    # ty: ignore[unresolved-attribute]
     assert jnp.isclose(probability.mass.value, 1.0)
     assert counting.factor_components[0].measure.kind == "counting"
+    # ty: ignore[unresolved-attribute]
     assert jnp.isclose(counting.mass.value, 4.0)
 
 
-def test_restriction_and_density_have_typed_mass_semantics():
+def test_restriction_and_density_have_typed_mass_semantics() -> None:
     domain = ScalarInterval(0.0, 2.0, label="x")
 
     restricted = domain.component().restrict(per_coordinate={"x": lambda x: x < 1.0})
@@ -57,6 +61,7 @@ def test_restriction_and_density_have_typed_mass_semantics():
     assert isinstance(unnormalized.mass, UnknownMass)
     assert isinstance(normalized.mass, ExactMass)
     assert jnp.isclose(normalized.mass.value, 1.0)
+    # ty: ignore[unresolved-attribute]
     assert jnp.isclose(restricted.base_measure.mass.value, 2.0)
 
     field = domain.Function("x")(lambda x: jnp.ones_like(x))
@@ -68,7 +73,7 @@ def test_restriction_and_density_have_typed_mass_semantics():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 4.0)
 
 
-def test_component_sum_rejects_duplicates_and_uncertified_predicate_overlap():
+def test_component_sum_rejects_duplicates_and_uncertified_predicate_overlap() -> None:
     domain = ScalarInterval(0.0, 1.0, label="x")
     component = domain.component()
     restricted = component.restrict(per_coordinate={"x": lambda x: x < 0.5})
@@ -79,9 +84,10 @@ def test_component_sum_rejects_duplicates_and_uncertified_predicate_overlap():
         ComponentSum((restricted, component))
 
 
-def test_product_boundary_mass_is_additive_over_codimension_one_terms():
+def test_product_boundary_mass_is_additive_over_codimension_one_terms() -> None:
     x = ScalarInterval(0.0, 2.0, label="x")
     t = ScalarInterval(-1.0, 3.0, label="t")
+    # ty: ignore[unresolved-attribute]
     boundary = (x @ t).boundary()
 
     assert isinstance(boundary, ComponentSum)
@@ -90,7 +96,7 @@ def test_product_boundary_mass_is_additive_over_codimension_one_terms():
     assert jnp.isclose(boundary.mass.value, 2.0 * (2.0 + 4.0))
 
 
-def test_component_points_binds_explicit_coordinates_and_fixed_slices():
+def test_component_points_binds_explicit_coordinates_and_fixed_slices() -> None:
     space = ScalarInterval(-1.0, 1.0, label="x")
     time = TimeInterval(2.0, 3.0)
     component = (space @ time).component({"t": FixedStart()})
@@ -99,13 +105,14 @@ def test_component_points_binds_explicit_coordinates_and_fixed_slices():
     stacked = component.points(jnp.array([[-0.5], [0.75]]))
 
     assert mapped.structure == stacked.structure
+    # ty: ignore[not-subscriptable]
     assert mapped["x"].dims == (mapped.structure.axis_names[0],)
     assert mapped["t"].dims == ()
     assert jnp.array_equal(jnp.asarray(mapped["x"].data), stacked["x"].data)
     assert jnp.array_equal(jnp.asarray(mapped["t"].data), jnp.asarray(2.0))
 
 
-def test_component_points_rejects_inconsistent_coordinate_counts():
+def test_component_points_rejects_inconsistent_coordinate_counts() -> None:
     x = ScalarInterval(0.0, 1.0, label="x")
     y = ScalarInterval(0.0, 1.0, label="y")
 

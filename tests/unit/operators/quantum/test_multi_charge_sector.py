@@ -7,7 +7,7 @@ from phydrax.operators.quantum.lattice import (
 )
 
 
-def test_fixed_abelian_charge_basis_ranks_particle_and_projection_sector():
+def test_fixed_abelian_charge_basis_ranks_particle_and_projection_sector() -> None:
     basis = FixedAbelianChargeBasis(
         ("m-3", "m-1", "m+1", "m+3"),
         (

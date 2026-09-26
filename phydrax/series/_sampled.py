@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse
 from ._support import _checked_series_index, _identifier, SeriesSupport
 from ._types import SeriesAlignment
 
@@ -81,8 +82,7 @@ class SampledSeries(StrictModule):
     ) -> None:
         if not isinstance(support, SeriesSupport):
             raise TypeError("support must be a SeriesSupport.")
-        if alignment not in ("node", "edge"):
-            raise ValueError("alignment must be 'node' or 'edge'.")
+        alignment = parse(alignment, SeriesAlignment, "alignment")
         values_ = jax.tree_util.tree_map(_numeric_array, values)
         leaves = jax.tree_util.tree_leaves(values_)
         if not leaves:

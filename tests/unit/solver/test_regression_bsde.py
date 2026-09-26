@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _brownian_tree_paths(*, num_steps=4, repeats=16):
+def _brownian_tree_paths(*, num_steps: Any = 4, repeats: Any = 16) -> Any:
     num_branches = 2**num_steps
     indices = jnp.repeat(jnp.arange(num_branches, dtype=jnp.int32), repeats)
     bits = (indices[:, None] >> jnp.arange(num_steps, dtype=jnp.int32)) & 1
@@ -26,7 +28,7 @@ def _brownian_tree_paths(*, num_steps=4, repeats=16):
     )
 
 
-def _problem(paths, *, generator, terminal):
+def _problem(paths: Any, *, generator: Any, terminal: Any) -> Any:
     return phx.stochastic.BSDEProblem(
         lambda key: paths,
         lambda time, state, args: jnp.zeros((1,)),
@@ -41,7 +43,7 @@ def _problem(paths, *, generator, terminal):
     )
 
 
-def test_explicit_least_squares_recovers_linear_martingale_and_control():
+def test_explicit_least_squares_recovers_linear_martingale_and_control() -> None:
     paths = _brownian_tree_paths()
     problem = _problem(
         paths,
@@ -84,7 +86,7 @@ def test_explicit_least_squares_recovers_linear_martingale_and_control():
     assert diagnostics.max_control_normal_equation_error < 1e-8
 
 
-def test_implicit_least_squares_solves_current_value_backward_euler_equation():
+def test_implicit_least_squares_solves_current_value_backward_euler_equation() -> None:
     num_paths = 64
     num_steps = 4
     times = jnp.linspace(0.0, 1.0, num_steps + 1)
@@ -139,7 +141,7 @@ def test_implicit_least_squares_solves_current_value_backward_euler_equation():
     assert phx.solver.least_squares_bsde_diagnostics(implicit).passed
 
 
-def test_least_squares_reports_insufficient_conditional_sample_budget():
+def test_least_squares_reports_insufficient_conditional_sample_budget() -> None:
     paths = _brownian_tree_paths(num_steps=1, repeats=1)
     problem = _problem(
         paths,

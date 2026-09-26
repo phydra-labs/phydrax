@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,7 +27,7 @@ from phydrax.nn.operator.layers import (
 )
 
 
-def _constant_mlp(model, value=1.0):
+def _constant_mlp(model: Any, value: Any = 1.0) -> Any:
     model = eqx.tree_at(
         lambda item: tuple(layer.weight for layer in item.layers),
         model,
@@ -41,7 +44,7 @@ def _constant_mlp(model, value=1.0):
     return model
 
 
-def _constant_kernel_transfer(*, reduction):
+def _constant_kernel_transfer(*, reduction: Any) -> Any:
     transfer = GraphKernelTransfer(
         in_channels=1,
         out_channels=1,
@@ -64,7 +67,7 @@ def _constant_kernel_transfer(*, reduction):
     )
 
 
-def test_tensor_grid_latent_geometry_tracks_case_bounds_and_measure():
+def test_tensor_grid_latent_geometry_tracks_case_bounds_and_measure() -> None:
     source = jnp.array(
         [
             [[0.0, -1.0], [2.0, -1.0], [0.0, 3.0], [2.0, 3.0]],
@@ -85,7 +88,7 @@ def test_tensor_grid_latent_geometry_tracks_case_bounds_and_measure():
     assert tuple(axis.size for axis in geometry.axes()) == (4, 3)
 
 
-def test_regional_farthest_points_are_deterministic_case_local_and_masked():
+def test_regional_farthest_points_are_deterministic_case_local_and_masked() -> None:
     source = jnp.array(
         [
             [[0.0], [1.0], [2.0], [100.0]],
@@ -105,7 +108,7 @@ def test_regional_farthest_points_are_deterministic_case_local_and_masked():
     assert jnp.all(first[1] <= 12.0)
 
 
-def test_kernel_transfer_distinguishes_integral_and_normalized_measure():
+def test_kernel_transfer_distinguishes_integral_and_normalized_measure() -> None:
     source = (jnp.arange(8, dtype="float64") + 0.5)[:, None] / 8.0
     target = jnp.array([[0.25], [0.75]])
     values = jnp.arange(8, dtype="float64")
@@ -128,7 +131,7 @@ def test_kernel_transfer_distinguishes_integral_and_normalized_measure():
     assert jnp.allclose(normalized[:, 0], 1.0)
 
 
-def test_integral_transfer_rejects_implicit_point_cloud_measure():
+def test_integral_transfer_rejects_implicit_point_cloud_measure() -> None:
     transfer = GraphKernelTransfer(
         in_channels=1,
         out_channels=2,
@@ -147,7 +150,7 @@ def test_integral_transfer_rejects_implicit_point_cloud_measure():
         )
 
 
-def test_kernel_and_attention_transfers_are_jittable_and_differentiable():
+def test_kernel_and_attention_transfers_are_jittable_and_differentiable() -> None:
     source = jnp.array([[[0.0], [0.5], [1.0]]])
     target = jnp.array([[[0.2], [0.8]]])
     values = jnp.array([[1.0, 2.0, 3.0]])
@@ -197,13 +200,13 @@ def test_kernel_and_attention_transfers_are_jittable_and_differentiable():
         assert all(jnp.all(jnp.isfinite(leaf)) for leaf in gradient_leaves)
 
 
-def test_geometry_moments_are_permutation_invariant_and_finite_when_empty():
+def test_geometry_moments_are_permutation_invariant_and_finite_when_empty() -> None:
     source = jnp.array([[[0.0], [0.5], [1.0]]])
     target = jnp.array([[[0.25], [2.0]]])
     measure = jnp.array([[0.2, 0.3, 0.5]])
     embedding = GeometryMomentEmbedding(1, 0.6)
 
-    def evaluate(points, weights):
+    def evaluate(points: Any, weights: Any) -> Any:
         neighborhood = __import__("phydrax").graph.query_neighbors(
             points,
             target,
@@ -221,7 +224,7 @@ def test_geometry_moments_are_permutation_invariant_and_finite_when_empty():
     assert reference[0, 1, -1] == 0.0
 
 
-def test_multiscale_gates_form_a_partition_of_unity():
+def test_multiscale_gates_form_a_partition_of_unity() -> None:
     transfers = tuple(
         GraphKernelTransfer(
             in_channels=1,
@@ -261,7 +264,13 @@ def test_multiscale_gates_form_a_partition_of_unity():
     assert jnp.all(jnp.isfinite(output))
 
 
-def _gino(*, query_channels=0, in_channels="scalar", source_key="u", key=jr.key(20)):
+def _gino(
+    *,
+    query_channels: Any = 0,
+    in_channels: Any = "scalar",
+    source_key: Any = "u",
+    key: Any = jr.key(20),
+) -> Any:
     return phx.nn.operator.architectures.GINO(
         in_channels=in_channels,
         out_channels="scalar",
@@ -281,7 +290,7 @@ def _gino(*, query_channels=0, in_channels="scalar", source_key="u", key=jr.key(
     )
 
 
-def _gino_batch(*, query_covariates=False):
+def _gino_batch(*, query_covariates: Any = False) -> Any:
     source_coordinates = jnp.stack(
         (
             jnp.linspace(0.0, 1.0, 8),
@@ -320,7 +329,7 @@ def _gino_batch(*, query_covariates=False):
     )
 
 
-def test_gino_supports_per_case_geometry_independent_queries_and_masks():
+def test_gino_supports_per_case_geometry_independent_queries_and_masks() -> None:
     model = _gino()
     batch = _gino_batch()
 
@@ -331,7 +340,7 @@ def test_gino_supports_per_case_geometry_independent_queries_and_masks():
     assert jnp.allclose(output[1, 3:], 0.0)
 
 
-def test_gino_supports_query_covariates_and_source_permutation():
+def test_gino_supports_query_covariates_and_source_permutation() -> None:
     model = _gino(query_channels=1)
     batch = _gino_batch(query_covariates=True)
     reference = model(batch)
@@ -352,7 +361,7 @@ def test_gino_supports_query_covariates_and_source_permutation():
     assert jnp.allclose(model(permuted), reference, rtol=1e-10, atol=1e-10)
 
 
-def test_gino_fuses_independently_sampled_multiple_sources():
+def test_gino_fuses_independently_sampled_multiple_sources() -> None:
     first_coordinates = jnp.linspace(0.0, 1.0, 8)[:, None]
     second_coordinates = jnp.linspace(0.05, 0.95, 9)[:, None]
     query = jnp.linspace(0.1, 0.9, 4)[:, None]
@@ -385,7 +394,7 @@ def test_gino_fuses_independently_sampled_multiple_sources():
     assert jnp.all(jnp.isfinite(output))
 
 
-def test_gino_has_finite_parameter_gradients_and_serializes(tmp_path):
+def test_gino_has_finite_parameter_gradients_and_serializes(tmp_path: Any) -> None:
     model = _gino(key=jr.key(22))
     batch = _gino_batch()
     loss, gradient = eqx.filter_value_and_grad(lambda item: jnp.mean(item(batch) ** 2))(
@@ -404,14 +413,14 @@ def test_gino_has_finite_parameter_gradients_and_serializes(tmp_path):
     assert jnp.allclose(restored(batch), model(batch))
 
 
-def test_gino_training_checkpoint_resumes_exactly(tmp_path):
+def test_gino_training_checkpoint_resumes_exactly(tmp_path: Any) -> None:
     model = _gino(key=jr.key(23))
     batch = _gino_batch()
     target = jnp.sin(3.0 * batch.require_single_query().coordinates[..., 0])
     optimizer = optax.adam(1e-3)
     state = optimizer.init(eqx.filter(model, eqx.is_array))
 
-    def step(current, optimizer_state):
+    def step(current: Any, optimizer_state: Any) -> Any:
         _, gradient = eqx.filter_value_and_grad(
             lambda item: jnp.mean((item(batch) - target) ** 2)
         )(current)
@@ -459,7 +468,7 @@ def test_gino_training_checkpoint_resumes_exactly(tmp_path):
     )
 
 
-def _rigno(*, key=jr.key(30)):
+def _rigno(*, key: Any = jr.key(30)) -> Any:
     return phx.nn.operator.architectures.RIGNO(
         in_channels="scalar",
         out_channels="scalar",
@@ -479,7 +488,7 @@ def _rigno(*, key=jr.key(30)):
     )
 
 
-def test_regional_graph_processor_is_measure_scale_invariant_and_jittable():
+def test_regional_graph_processor_is_measure_scale_invariant_and_jittable() -> None:
     processor = RegionalGraphProcessor(
         3,
         1,
@@ -520,7 +529,7 @@ def test_regional_graph_processor_is_measure_scale_invariant_and_jittable():
     assert jnp.allclose(reference, rescaled, rtol=1e-10, atol=1e-10)
 
 
-def test_rigno_supports_case_geometry_query_masks_and_graph_isolation():
+def test_rigno_supports_case_geometry_query_masks_and_graph_isolation() -> None:
     model = _rigno()
     batch = _gino_batch()
     source = batch.input("u")
@@ -547,7 +556,7 @@ def test_rigno_supports_case_geometry_query_masks_and_graph_isolation():
     assert not jnp.allclose(reference[1, :3], modified[1, :3])
 
 
-def test_rigno_has_finite_parameter_gradients_and_serializes(tmp_path):
+def test_rigno_has_finite_parameter_gradients_and_serializes(tmp_path: Any) -> None:
     model = _rigno(key=jr.key(32))
     batch = _gino_batch()
     loss, gradient = eqx.filter_value_and_grad(lambda item: jnp.mean(item(batch) ** 2))(
@@ -572,7 +581,7 @@ def test_rigno_has_finite_parameter_gradients_and_serializes(tmp_path):
     assert not status.recommendation_eligible
 
 
-def test_operator_transformer_patch_roundtrip_measure_scaling_and_masks():
+def test_operator_transformer_patch_roundtrip_measure_scaling_and_masks() -> None:
     processor = OperatorTransformerProcessor(
         (4, 4),
         2,
@@ -615,7 +624,7 @@ def test_operator_transformer_patch_roundtrip_measure_scaling_and_masks():
     assert jnp.allclose(reference[1, 10:], 0.0)
 
 
-def test_operator_transformer_has_finite_parameter_gradients():
+def test_operator_transformer_has_finite_parameter_gradients() -> None:
     processor = OperatorTransformerProcessor(
         (4, 4),
         2,
@@ -650,7 +659,7 @@ def test_operator_transformer_has_finite_parameter_gradients():
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)
 
 
-def _gaot_batch():
+def _gaot_batch() -> Any:
     base = jnp.stack(
         jnp.meshgrid(
             jnp.linspace(0.0, 1.0, 3),
@@ -702,7 +711,7 @@ def _gaot_batch():
     )
 
 
-def _gaot(*, key=jr.key(50)):
+def _gaot(*, key: Any = jr.key(50)) -> Any:
     return phx.nn.operator.architectures.GAOT(
         in_channels="scalar",
         out_channels="scalar",
@@ -725,7 +734,7 @@ def _gaot(*, key=jr.key(50)):
     )
 
 
-def test_gaot_supports_case_geometry_query_masks_and_graph_isolation():
+def test_gaot_supports_case_geometry_query_masks_and_graph_isolation() -> None:
     model = _gaot()
     batch = _gaot_batch()
     source = batch.input("u")
@@ -751,7 +760,9 @@ def test_gaot_supports_case_geometry_query_masks_and_graph_isolation():
     assert not jnp.allclose(reference[1, :3], modified[1, :3])
 
 
-def test_gaot_has_finite_parameter_gradients_serializes_and_is_research(tmp_path):
+def test_gaot_has_finite_parameter_gradients_serializes_and_is_research(
+    tmp_path: Any,
+) -> None:
     model = _gaot(key=jr.key(51))
     batch = _gaot_batch()
     loss, gradient = eqx.filter_value_and_grad(lambda item: jnp.mean(item(batch) ** 2))(

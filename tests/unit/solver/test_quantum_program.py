@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +17,7 @@ Q = phx.operators.quantum
 X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
 
 
-def _phase_program(theta, *, state_kind="state-vector"):
+def _phase_program(theta: Any, *, state_kind: Any = "state-vector") -> Any:
     layout = Q.HilbertRegisterLayout(("q",), (2,))
     unitary = jnp.diag(jnp.asarray([jnp.exp(1j * theta), 1.0], dtype=jnp.complex128))
     return Q.QuantumProgram(
@@ -24,7 +27,7 @@ def _phase_program(theta, *, state_kind="state-vector"):
     )
 
 
-def test_empty_program_is_a_prepared_identity_program():
+def test_empty_program_is_a_prepared_identity_program() -> None:
     layout = Q.HilbertRegisterLayout(("q",), (2,))
     program = Q.QuantumProgram(layout, (), state_kind="state-vector")
     prepared = phx.solver.prepare_dense_quantum_program(program)
@@ -38,7 +41,7 @@ def test_empty_program_is_a_prepared_identity_program():
     assert prepared.plan.cost.operation_bytes == 0
 
 
-def test_density_program_executes_ordered_unitary_and_local_channel():
+def test_density_program_executes_ordered_unitary_and_local_channel() -> None:
     layout = Q.HilbertRegisterLayout(("a", "b"), (2, 2))
     gamma = jnp.asarray(0.25)
     kraus = jnp.stack(
@@ -76,11 +79,11 @@ def test_density_program_executes_ordered_unitary_and_local_channel():
     assert prepared.operation_evidence[1].cp_by_construction
 
 
-def test_refresh_preserves_prepared_identity_and_supports_real_gradients():
+def test_refresh_preserves_prepared_identity_and_supports_real_gradients() -> None:
     template = phx.solver.prepare_dense_quantum_program(_phase_program(0.0))
     state = jnp.asarray([1.0, 0.0], dtype=jnp.complex128)
 
-    def objective(theta):
+    def objective(theta: Any) -> Any:
         refreshed = phx.solver.refresh_dense_quantum_program(
             template, _phase_program(theta)
         )
@@ -100,7 +103,7 @@ def test_refresh_preserves_prepared_identity_and_supports_real_gradients():
     )
 
 
-def test_refresh_rejects_every_structural_program_change():
+def test_refresh_rejects_every_structural_program_change() -> None:
     prepared = phx.solver.prepare_dense_quantum_program(_phase_program(0.0))
     changed_layout = Q.HilbertRegisterLayout(("other",), (2,))
     changed = Q.QuantumProgram(
@@ -116,7 +119,7 @@ def test_refresh_rejects_every_structural_program_change():
         phx.solver.refresh_dense_quantum_program(prepared, density_program)
 
 
-def test_invalid_operations_and_initial_states_fail_closed_with_status():
+def test_invalid_operations_and_initial_states_fail_closed_with_status() -> None:
     layout = Q.HilbertRegisterLayout(("q",), (2,))
     invalid_program = Q.QuantumProgram(
         layout,
@@ -142,7 +145,7 @@ def test_invalid_operations_and_initial_states_fail_closed_with_status():
     )
 
 
-def test_dense_resource_envelope_rejects_before_execution():
+def test_dense_resource_envelope_rejects_before_execution() -> None:
     program = _phase_program(0.0)
     with pytest.raises(MemoryError, match="maximum_state_bytes"):
         phx.solver.plan_dense_quantum_program(
@@ -161,7 +164,7 @@ def test_dense_resource_envelope_rejects_before_execution():
         )
 
 
-def test_construction_audit_carries_cp_tp_closure_without_final_eigensolve():
+def test_construction_audit_carries_cp_tp_closure_without_final_eigensolve() -> None:
     layout = Q.HilbertRegisterLayout(("q",), (2,))
     kraus = jnp.eye(2, dtype=jnp.complex128)[None]
     program = Q.QuantumProgram(

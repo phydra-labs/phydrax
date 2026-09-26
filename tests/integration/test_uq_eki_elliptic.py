@@ -2,19 +2,22 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def test_eki_matches_nuts_on_elliptic_coefficient_inverse_benchmark():
+def test_eki_matches_nuts_on_elliptic_coefficient_inverse_benchmark() -> None:
     """Infer diffusivity in -k u''=1 with homogeneous Dirichlet boundaries."""
     true_coefficient = 1.7
     noise_scale = 0.006
     sensors = jnp.linspace(0.08, 0.92, 12)
 
-    def solution(coefficient, coordinates):
+    def solution(coefficient: Any, coordinates: Any) -> Any:
         return coordinates * (1.0 - coordinates) / (2.0 * coefficient)
 
     observations = solution(true_coefficient, sensors) + noise_scale * jr.normal(

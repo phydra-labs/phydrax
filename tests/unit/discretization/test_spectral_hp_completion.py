@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -36,7 +39,7 @@ from phydrax.discretization.fem import (
 )
 
 
-def _quad_mesh():
+def _quad_mesh() -> Any:
     return CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         (
@@ -50,7 +53,7 @@ def _quad_mesh():
     )
 
 
-def test_anisotropic_h_resize_and_compaction_preserve_forest_geometry():
+def test_anisotropic_h_resize_and_compaction_preserve_forest_geometry() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), (3, 2), 8)
     pattern = AnisotropicHPattern(2, (0,))
     refined = refine_anisotropic_hp_cells(
@@ -73,7 +76,7 @@ def test_anisotropic_h_resize_and_compaction_preserve_forest_geometry():
     assert np.count_nonzero(np.asarray(routes) >= 0) == 3
 
 
-def test_geometry_order_nirregular_and_cut_quadrature_contracts():
+def test_geometry_order_nirregular_and_cut_quadrature_contracts() -> None:
     source_nodes = np.asarray(((0.0,), (1.0,)))
     target_nodes = np.asarray(((0.0,), (0.5,), (1.0,)))
     coordinates = np.asarray((((0.0, 0.0), (1.0, 0.2)),))
@@ -97,7 +100,7 @@ def test_geometry_order_nirregular_and_cut_quadrature_contracts():
     assert 0.0 < cut.volume_fraction < 1.0
 
 
-def test_tensor_de_rham_piola_and_simplex_hybrid_families_are_exact():
+def test_tensor_de_rham_piola_and_simplex_hybrid_families_are_exact() -> None:
     for dimension in (2, 3):
         complex_ = TensorDeRhamComplex(2, dimension)
         np.testing.assert_allclose(np.asarray(complex_.grad_curl_defect), 0.0)
@@ -184,7 +187,7 @@ def test_tensor_de_rham_piola_and_simplex_hybrid_families_are_exact():
         assert high_order_pyramid.condition_number < 1.0e8
 
 
-def test_compatible_transfers_hybrid_mortars_and_auxiliary_correction():
+def test_compatible_transfers_hybrid_mortars_and_auxiliary_correction() -> None:
     source = TensorDeRhamComplex(1, 2)
     target = TensorDeRhamComplex(2, 2)
     transfer = TensorDeRhamTransferPlan(source, target)
@@ -221,7 +224,7 @@ def test_compatible_transfers_hybrid_mortars_and_auxiliary_correction():
     assert len(refinement.child_maps) == 2
 
 
-def test_unfitted_and_interface_transfers_conserve():
+def test_unfitted_and_interface_transfers_conserve() -> None:
 
     aggregation = UnfittedAggregationPlan(
         jnp.asarray((0.05, 0.8)),
@@ -243,7 +246,7 @@ def test_unfitted_and_interface_transfers_conserve():
     )
 
 
-def test_prism_and_pyramid_reference_families_prepare_real_cell_meshes():
+def test_prism_and_pyramid_reference_families_prepare_real_cell_meshes() -> None:
     prism_points = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -290,7 +293,7 @@ def test_prism_and_pyramid_reference_families_prepare_real_cell_meshes():
         )
 
 
-def test_physical_mass_projection_rejects_failed_column_solves():
+def test_physical_mass_projection_rejects_failed_column_solves() -> None:
     source = jnp.ones((2, 1))
     singular_target = jnp.ones((2, 2))
 

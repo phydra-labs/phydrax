@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from types import SimpleNamespace
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -22,7 +24,7 @@ from phydrax.solver._unstructured_amr_runtime import (
 )
 
 
-def _grid_plan(system, nx, ny):
+def _grid_plan(system: Any, nx: Any, ny: Any) -> Any:
     vertices = np.asarray(
         [(2.0 * i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -43,7 +45,9 @@ def _grid_plan(system, nx, ny):
     )
 
 
-def _level_runtime(plan, system, label, topology_event_policy="accepted_step"):
+def _level_runtime(
+    plan: Any, system: Any, label: Any, topology_event_policy: Any = "accepted_step"
+) -> Any:
     discretization = plan.prepare()
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
         discretization.boundary_patch_names,
@@ -74,6 +78,7 @@ def _level_runtime(plan, system, label, topology_event_policy="accepted_step"):
         coupling=coupling,
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
     )
@@ -81,10 +86,10 @@ def _level_runtime(plan, system, label, topology_event_policy="accepted_step"):
 
 
 def _runtime(
-    topology_event_policy="accepted_step",
+    topology_event_policy: Any = "accepted_step",
     *,
-    fine_topology_event_policy=None,
-):
+    fine_topology_event_policy: Any = None,
+) -> Any:
     system = phx.equations.EulerSystem(2)
     coarse_plan = _grid_plan(system, 2, 1)
     fine_plan = _grid_plan(system, 4, 2)
@@ -146,7 +151,7 @@ def _runtime(
     )
 
 
-def _uniform(system, cell_count, velocity=(0.15, -0.05)):
+def _uniform(system: Any, cell_count: Any, velocity: Any = (0.15, -0.05)) -> Any:
     primitive = jnp.broadcast_to(
         jnp.asarray((1.0, *velocity, 1.0)),
         (cell_count, system.component_count),
@@ -154,7 +159,7 @@ def _uniform(system, cell_count, velocity=(0.15, -0.05)):
     return system.primitive_to_conserved(primitive)
 
 
-def test_amr_constant_free_stream_and_exact_two_substeps():
+def test_amr_constant_free_stream_and_exact_two_substeps() -> None:
     system, coarse, _, runtime = _runtime()
     coarse_average = _uniform(system, coarse.cell_count, velocity=(0.0, 0.0))
     state = runtime.initialize_state(
@@ -221,12 +226,14 @@ def test_amr_constant_free_stream_and_exact_two_substeps():
     assert bool(continued.accepted)
 
 
-def test_amr_runtime_rejects_mismatched_level_event_policies_at_construction():
+def test_amr_runtime_rejects_mismatched_level_event_policies_at_construction() -> None:
     with pytest.raises(ValueError, match="both use accepted-step topology events"):
         _runtime("accepted_step", fine_topology_event_policy="disabled")
 
 
-def test_amr_explicit_selection_change_requires_events_before_stepping(monkeypatch):
+def test_amr_explicit_selection_change_requires_events_before_stepping(
+    monkeypatch: Any,
+) -> None:
     system, coarse, _, runtime = _runtime("disabled")
     state = runtime.initialize_state(
         _uniform(system, coarse.cell_count),
@@ -238,7 +245,7 @@ def test_amr_explicit_selection_change_requires_events_before_stepping(monkeypat
     successor = runtime.hierarchy.select(jnp.asarray((0.0, 1.0)), jnp.asarray(0.5))
     advance_called = False
 
-    def forbidden_advance(*args, **kwargs):
+    def forbidden_advance(*args: Any, **kwargs: Any) -> None:
         nonlocal advance_called
         advance_called = True
         raise AssertionError("level advance must not run")
@@ -251,7 +258,7 @@ def test_amr_explicit_selection_change_requires_events_before_stepping(monkeypat
     assert int(state.fine_state.accepted_step) == 0
 
 
-def test_amr_disabled_indicator_change_rolls_back_levels_and_journals():
+def test_amr_disabled_indicator_change_rolls_back_levels_and_journals() -> None:
     system, coarse, _, runtime = _runtime("disabled")
     state = runtime.initialize_state(
         _uniform(system, coarse.cell_count, velocity=(0.0, 0.0)),
@@ -294,7 +301,7 @@ def test_amr_disabled_indicator_change_rolls_back_levels_and_journals():
     np.testing.assert_allclose(result.runtime_state.time, state.time)
 
 
-def test_amr_disabled_unchanged_fixed_selection_remains_valid():
+def test_amr_disabled_unchanged_fixed_selection_remains_valid() -> None:
     system, coarse, _, runtime = _runtime("disabled")
     indicator = jnp.asarray((1.0, 0.0))
     state = runtime.initialize_state(
@@ -326,7 +333,7 @@ def test_amr_disabled_unchanged_fixed_selection_remains_valid():
     )
 
 
-def test_amr_ghost_fill_uses_temporal_coarse_content():
+def test_amr_ghost_fill_uses_temporal_coarse_content() -> None:
     system, coarse, _, runtime = _runtime()
     state = runtime.initialize_state(
         _uniform(system, coarse.cell_count),
@@ -365,7 +372,7 @@ def test_amr_ghost_fill_uses_temporal_coarse_content():
     )
 
 
-def test_amr_stage_provider_prescribes_all_substep_nodes_and_jits():
+def test_amr_stage_provider_prescribes_all_substep_nodes_and_jits() -> None:
     system, coarse, fine, runtime = _runtime()
     state = runtime.initialize_state(
         _uniform(system, coarse.cell_count, velocity=(0.0, 0.0)),
@@ -441,14 +448,23 @@ def test_amr_stage_provider_prescribes_all_substep_nodes_and_jits():
     assert bool(jitted.accepted)
 
 
-def _record_amr_stage_traces(monkeypatch):
+def _record_amr_stage_traces(monkeypatch: Any) -> Any:
     records = []
     original = _AMRCoarseTemporalStageTrace.__call__
 
-    def recording_call(self, stage_time, state, /):
+    def recording_call(self: Any, stage_time: Any, state: Any, /) -> Any:
         provided = original(self, stage_time, state)
 
-        def append_record(time, incoming, outgoing, start, end, owned, t0, t1):
+        def append_record(
+            time: Any,
+            incoming: Any,
+            outgoing: Any,
+            start: Any,
+            end: Any,
+            owned: Any,
+            t0: Any,
+            t1: Any,
+        ) -> None:
             records.append(
                 tuple(
                     np.asarray(value)
@@ -486,7 +502,9 @@ def _record_amr_stage_traces(monkeypatch):
     return records
 
 
-def test_amr_time_varying_coarse_trace_drives_stages_ledgers_and_reflux(monkeypatch):
+def test_amr_time_varying_coarse_trace_drives_stages_ledgers_and_reflux(
+    monkeypatch: Any,
+) -> None:
     records = _record_amr_stage_traces(monkeypatch)
     system, coarse, _, runtime = _runtime()
     primitive = jnp.asarray(
@@ -547,7 +565,7 @@ def test_amr_time_varying_coarse_trace_drives_stages_ledgers_and_reflux(monkeypa
         )
 
 
-def test_amr_fine_trace_failure_rolls_back_both_levels(monkeypatch):
+def test_amr_fine_trace_failure_rolls_back_both_levels(monkeypatch: Any) -> None:
     system, coarse, _, runtime = _runtime()
     state = runtime.initialize_state(
         _uniform(system, coarse.cell_count, velocity=(0.0, 0.0)),
@@ -559,7 +577,9 @@ def test_amr_fine_trace_failure_rolls_back_both_levels(monkeypatch):
     original_advance = PreparedFiniteVolumeRuntime.advance
     provider_ids = []
 
-    def fail_second_fine_substep(self, runtime_state, args=None, /):
+    def fail_second_fine_substep(
+        self: Any, runtime_state: Any, args: Any = None, /
+    ) -> Any:
         result = original_advance(self, runtime_state, args)
         provider = self.stage_state_provider
         if provider is None:
@@ -591,7 +611,7 @@ def test_amr_fine_trace_failure_rolls_back_both_levels(monkeypatch):
     np.testing.assert_allclose(result.reflux_register.integrated_correction, 0.0)
 
 
-def test_amr_selection_is_stable_and_reports_capacity_overflow():
+def test_amr_selection_is_stable_and_reports_capacity_overflow() -> None:
     _, _, _, runtime = _runtime()
     first = eqx.filter_jit(runtime.hierarchy.select)(
         jnp.asarray((1.0, 1.0)), jnp.asarray(0.5)
@@ -602,7 +622,7 @@ def test_amr_selection_is_stable_and_reports_capacity_overflow():
     assert bool(first.capacity_overflow)
 
 
-def test_amr_vof_transfer_and_reflux_budget_are_conservative():
+def test_amr_vof_transfer_and_reflux_budget_are_conservative() -> None:
     system, coarse, _, runtime = _runtime()
     alpha = jnp.asarray((1.0, 0.2))
     fine_alpha = runtime.transfer_volume_fraction(alpha)
@@ -623,7 +643,7 @@ def test_amr_vof_transfer_and_reflux_budget_are_conservative():
     )
 
 
-def test_amr_non_interface_ledger_rates_do_not_enter_reflux_scatter():
+def test_amr_non_interface_ledger_rates_do_not_enter_reflux_scatter() -> None:
     runtime = object.__new__(PreparedUnstructuredAMRRuntime)
     object.__setattr__(
         runtime,
@@ -644,10 +664,12 @@ def test_amr_non_interface_ledger_rates_do_not_enter_reflux_scatter():
         jnp.asarray((True, True)),
         geometry_family_id="synthetic-family",
         geometry_layout_id="synthetic-layout",
+        # ty: ignore[invalid-argument-type]
         stage_geometry_versions=(jnp.asarray(0),) * 3,
         start_geometry_version=jnp.asarray(0),
         end_geometry_version=jnp.asarray(0),
         evidence_policy_id="synthetic-evidence",
+        # ty: ignore[invalid-argument-type]
         stage_evidence_versions=(jnp.asarray(0),) * 3,
         start_evidence_version=jnp.asarray(0),
         end_evidence_version=jnp.asarray(0),

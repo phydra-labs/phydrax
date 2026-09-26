@@ -21,6 +21,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._checkpointed_scan import checkpointed_scan
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ..materials._refractive_index import (
     AbstractRefractiveIndexLaw,
     evaluate_refractive_index,
@@ -135,8 +136,7 @@ class UnidirectionalPropagationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Unidirectional propagation requires periodic-cell pulse time."
             )
-        if polarization not in ("scalar", "tangential"):
-            raise ValueError("polarization must be 'scalar' or 'tangential'.")
+        polarization = parse(polarization, AnalyticPulsePolarization, "polarization")
         steps = int(step_count)
         if steps < 2 or steps % 2 != 0:
             raise ValueError("step_count must be an even integer of at least two.")

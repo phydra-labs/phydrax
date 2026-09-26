@@ -2,6 +2,7 @@
 """Claim-bounded mechanics/electronics tests; data are independent fixtures."""
 
 import hashlib
+from typing import Any
 
 import numpy as np
 import pytest
@@ -33,7 +34,7 @@ from phydrax.qualification import (
 from phydrax.units import JOULE, ONE, SECOND
 
 
-def _reference(label: str, *, training=True) -> ReferenceArtifactManifest:
+def _reference(label: str, *, training: Any = True) -> ReferenceArtifactManifest:
     payload = label.encode()
     return ReferenceArtifactManifest(
         label,
@@ -52,7 +53,14 @@ def _reference(label: str, *, training=True) -> ReferenceArtifactManifest:
     )
 
 
-def _mechanical_data(prefix, independent_units, model, source, *, ill_conditioned=False):
+def _mechanical_data(
+    prefix: Any,
+    independent_units: Any,
+    model: Any,
+    source: Any,
+    *,
+    ill_conditioned: Any = False,
+) -> Any:
     n = len(independent_units)
     sensitivities = np.zeros((n, 2, 3))
     if ill_conditioned:
@@ -81,7 +89,7 @@ def _mechanical_data(prefix, independent_units, model, source, *, ill_conditione
     )
 
 
-def _fit_mechanics(calibration, locked, **overrides):
+def _fit_mechanics(calibration: Any, locked: Any, **overrides: Any) -> Any:
     campaign_cases = tuple(
         ScientificCase(
             case_id,
@@ -125,7 +133,7 @@ def _fit_mechanics(calibration, locked, **overrides):
     )
 
 
-def test_restricted_mechanics_propagates_fit_covariance_to_locked_units():
+def test_restricted_mechanics_propagates_fit_covariance_to_locked_units() -> None:
     model, _ = make_fixture(4)
     source = _reference("mechanical-response")
     calibration = _mechanical_data("cal", ("prep-a", "prep-b"), model, source)
@@ -190,7 +198,7 @@ def test_restricted_mechanics_propagates_fit_covariance_to_locked_units():
         )
 
 
-def test_nearly_singular_mechanics_fit_is_inconclusive_despite_binary_rank():
+def test_nearly_singular_mechanics_fit_is_inconclusive_despite_binary_rank() -> None:
     model, _ = make_fixture(4)
     source = _reference("ill-conditioned-response")
     calibration = _mechanical_data(
@@ -208,7 +216,7 @@ def test_nearly_singular_mechanics_fit_is_inconclusive_despite_binary_rank():
     assert assessment.locked_prediction_standard_errors is None
 
 
-def test_mechanics_reports_unavailable_training_rights_as_inconclusive():
+def test_mechanics_reports_unavailable_training_rights_as_inconclusive() -> None:
     model, _ = make_fixture(4)
     source = _reference("restricted-response", training=False)
     calibration = _mechanical_data("cal", ("prep-a", "prep-b"), model, source)
@@ -229,7 +237,7 @@ def test_mechanics_reports_unavailable_training_rights_as_inconclusive():
     assert "thermal-evidence" in assessment.missing_prerequisites
 
 
-def _electronic_series(values=None):
+def _electronic_series(values: Any = None) -> Any:
     observed = np.asarray(
         [
             [[1.0, 0.0], [0.7, 0.3], [0.4, 0.6]],
@@ -245,6 +253,7 @@ def _electronic_series(values=None):
         sequence_id="AG",
         environment_id="declared-buffer-temperature",
         observable_kind="charge-transfer-population",
+        # ty: ignore[invalid-argument-type]
         times=[0.0, 1.0, 2.0],
         values=observed,
         standard_errors=np.full_like(observed, 0.1),
@@ -255,7 +264,7 @@ def _electronic_series(values=None):
     )
 
 
-def _electronic_campaign(series):
+def _electronic_campaign(series: Any) -> Any:
     cases = [
         ScientificCase(
             "fit-case",
@@ -305,7 +314,7 @@ def _electronic_campaign(series):
     )
 
 
-def _electronic_prediction(series, campaign, values, *, model):
+def _electronic_prediction(series: Any, campaign: Any, values: Any, *, model: Any) -> Any:
     parameters = np.asarray([0.25, -0.5])
     parameter_id = canonical_fingerprint(
         {
@@ -360,7 +369,7 @@ def _electronic_prediction(series, campaign, values, *, model):
     )
 
 
-def test_electronic_fit_rejects_forged_execution_identity():
+def test_electronic_fit_rejects_forged_execution_identity() -> None:
     series = _electronic_series()
     campaign = _electronic_campaign(series)
     parameters = np.asarray([0.25, -0.5])
@@ -405,7 +414,7 @@ def test_electronic_fit_rejects_forged_execution_identity():
         )
 
 
-def _prediction_evidence(prediction):
+def _prediction_evidence(prediction: Any) -> Any:
     records = []
     for stage in (
         "parameter-identifiability",
@@ -445,7 +454,7 @@ def _prediction_evidence(prediction):
     return tuple(records)
 
 
-def _failed_locked_evidence(prediction):
+def _failed_locked_evidence(prediction: Any) -> Any:
     return QualificationEvidence(
         "scientific",
         "failed",
@@ -474,7 +483,7 @@ def _failed_locked_evidence(prediction):
     )
 
 
-def test_electronic_comparison_requires_frozen_heldout_model_lineage():
+def test_electronic_comparison_requires_frozen_heldout_model_lineage() -> None:
     series = _electronic_series()
     observed = np.asarray(series.values)
     campaign = _electronic_campaign(series)
@@ -622,7 +631,7 @@ def test_electronic_comparison_requires_frozen_heldout_model_lineage():
         )
 
 
-def test_charge_transfer_populations_and_predictions_obey_probability_support():
+def test_charge_transfer_populations_and_predictions_obey_probability_support() -> None:
     with pytest.raises(ValueError, match="sum to one"):
         _electronic_series(
             [

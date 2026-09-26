@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -22,12 +25,12 @@ class _ScaleModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, scale):
+    def __init__(self, scale: Any) -> None:
         self.scale = jnp.asarray(scale)
         self.in_size = 1
         self.out_size = 1
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return self.scale * x
 
@@ -37,27 +40,27 @@ class _BlockClassifier(AbstractArrayModel):
     out_size: int = eqx.field(static=True)
     _input_binding = ModelBinding.blockwise()
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.in_size = 1
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return self.decision_function(x)
 
-    def decision_function(self, x):
+    def decision_function(self, x: Any) -> Any:
         value = jnp.asarray(x)
         return jnp.concatenate((-value, value), axis=-1)
 
-    def predict_proba(self, x):
+    def predict_proba(self, x: Any) -> Any:
         return jax.nn.softmax(self.decision_function(x), axis=-1)
 
-    def predict(self, x):
+    def predict(self, x: Any) -> Any:
         return jnp.argmax(self.decision_function(x), axis=-1)
 
 
 class _ScaleRecipe(phx.ml.AbstractRecipe):
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         targets = batch.require_targets()
         scale = jnp.sum(batch.effective_weight() * targets) / jnp.sum(
@@ -86,7 +89,7 @@ class _ScaleRecipe(phx.ml.AbstractRecipe):
         )
 
 
-def test_batch_preserves_case_sample_output_and_weight_semantics():
+def test_batch_preserves_case_sample_output_and_weight_semantics() -> None:
     features = jnp.arange(24.0).reshape(2, 4, 3)
     targets = jnp.arange(16.0).reshape(2, 4, 2)
     batch = phx.ml.MLBatch(
@@ -106,10 +109,11 @@ def test_batch_preserves_case_sample_output_and_weight_semantics():
     )
     selected = batch.take_samples(jnp.array([3, 0]))
     assert selected.features.shape == (2, 2, 3)
+    # ty: ignore[invalid-argument-type]
     assert jnp.allclose(selected.targets, targets[:, jnp.array([3, 0])])
 
 
-def test_sparse_features_are_explicit_and_preserve_duplicate_entries():
+def test_sparse_features_are_explicit_and_preserve_duplicate_entries() -> None:
     sparse = phx.ml.SparseFeatures(
         jnp.array([[1.0, 2.0], [3.0, 4.0]]),
         jnp.array([[0, 2], [1, 1]]),
@@ -126,7 +130,7 @@ def test_sparse_features_are_explicit_and_preserve_duplicate_entries():
         phx.ml.MLBatch(sparse, feature_mask=jnp.ones((2, 3), dtype="bool"))
 
 
-def test_fit_is_pure_frozen_and_remains_differentiable_when_called():
+def test_fit_is_pure_frozen_and_remains_differentiable_when_called() -> None:
     recipe = _ScaleRecipe()
     features = jnp.ones((3, 1))
     targets = jnp.array([1.0, 2.0, 5.0])
@@ -144,7 +148,7 @@ def test_fit_is_pure_frozen_and_remains_differentiable_when_called():
     assert jnp.allclose(gradient, jnp.array([1.5]))
 
 
-def test_fit_result_admits_declared_derivatives_and_rejects_undeclared_surfaces():
+def test_fit_result_admits_declared_derivatives_and_rejects_undeclared_surfaces() -> None:
     result = phx.ml.fit(_ScaleRecipe(), jnp.ones((3, 1)), jnp.array([1.0, 2.0, 5.0]))
 
     mixed = phx.DifferentiationRequest((_FIT_TARGETS, _PARAMETER, _INPUT))
@@ -181,7 +185,7 @@ def test_fit_result_admits_declared_derivatives_and_rejects_undeclared_surfaces(
         )
 
 
-def test_frozen_model_preserves_binding_and_prediction_capabilities():
+def test_frozen_model_preserves_binding_and_prediction_capabilities() -> None:
     frozen = FrozenModel(_BlockClassifier())
     values = jnp.asarray(((1.0,), (-2.0,)))
 
@@ -196,7 +200,7 @@ def test_frozen_model_preserves_binding_and_prediction_capabilities():
         FrozenModel(_ScaleModel(1.0)).predict(values)
 
 
-def test_existing_batch_rejects_duplicate_metadata():
+def test_existing_batch_rejects_duplicate_metadata() -> None:
     batch = phx.ml.MLBatch(jnp.ones((3, 1)), jnp.ones((3,)))
     with pytest.raises(ValueError, match="cannot accompany"):
         phx.ml.fit(_ScaleRecipe(), batch, sample_weight=jnp.ones((3,)))

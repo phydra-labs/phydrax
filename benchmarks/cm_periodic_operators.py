@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -28,7 +30,7 @@ from phydrax.operators.periodic import (
 )
 
 
-def _family(dofs: int, rank: int, q_count: int):
+def _family(dofs: int, rank: int, q_count: int) -> Any:
     translations = []
     blocks = []
     for axis in range(rank):
@@ -47,7 +49,7 @@ def _family(dofs: int, rank: int, q_count: int):
     )
 
 
-def benchmark_case(dofs: int, rank: int, q_count: int, repeats: int):
+def benchmark_case(dofs: int, rank: int, q_count: int, repeats: int) -> Any:
     prepared, prepare_seconds = measure_host(lambda: _family(dofs, rank, q_count))
     points = jnp.linspace(-0.45, 0.45, q_count * rank).reshape(q_count, rank)
     vectors = jnp.ones((q_count, dofs))
@@ -104,7 +106,7 @@ def benchmark_case(dofs: int, rank: int, q_count: int, repeats: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=7)
     parser.add_argument("--output", type=str)

@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_electrostatic_pic_fixed_step_workflow_retains_constraints():
+def test_electrostatic_pic_fixed_step_workflow_retains_constraints() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
         axis_names=("x",),

@@ -1283,7 +1283,8 @@ class PreparedWaveAMR(StrictModule, NonTrainableState):
             raise ValueError("Cannot transition an unsuccessful Wave AMR proposal.")
         adaptivity = self.plan.adaptivity
         # Bound proposals come only from propose_topology, which requires adaptivity.
-        assert adaptivity is not None
+        if not (adaptivity is not None):
+            raise RuntimeError("Internal invariant failed: adaptivity is not None.")
         if not proposal.compilation.status.changed:
             values = self.layout.bind_state(checked.psi)
             probability = self.layout.probability(values)

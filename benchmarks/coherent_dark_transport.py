@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -35,7 +37,7 @@ from phydrax.metrix import (
 )
 
 
-def _units_and_frame():
+def _units_and_frame() -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 3, 2, 1)
     units = RelativisticUnitContract(
         scale,
@@ -167,7 +169,7 @@ def benchmark(cells: int, momenta: int, repeats: int) -> dict:
     }
 
 
-def _json_default(value):
+def _json_default(value: Any) -> Any:
     if isinstance(value, jax.Array):
         host = np.asarray(jax.device_get(value))
         return host.item() if host.shape == () else host.tolist()

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -24,7 +27,7 @@ from phydrax.finance.execution._semantics import (
 )
 
 
-def _instrument():
+def _instrument() -> Any:
     usd = Currency("USD", 2)
     instrument = InstrumentReference(
         FinancialIdentifier("test", "ABC"),
@@ -36,7 +39,7 @@ def _instrument():
     return usd, instrument
 
 
-def _submitted_order(instrument):
+def _submitted_order(instrument: Any) -> Any:
     return ExecutionOrder(
         instrument,
         10.0,
@@ -49,7 +52,7 @@ def _submitted_order(instrument):
     )
 
 
-def test_submit_partial_fill_cancel_conserves_cash_inventory_and_replays():
+def test_submit_partial_fill_cancel_conserves_cash_inventory_and_replays() -> None:
     usd, instrument = _instrument()
     ledger = ExecutionLedger(ExecutionInventory(instrument, usd))
     order = _submitted_order(instrument)
@@ -113,7 +116,7 @@ def test_submit_partial_fill_cancel_conserves_cash_inventory_and_replays():
     assert replay.pnl_residual == 0.0
 
 
-def test_duplicate_overfill_cancel_and_ambiguous_ordering_fail():
+def test_duplicate_overfill_cancel_and_ambiguous_ordering_fail() -> None:
     usd, instrument = _instrument()
     ledger = ExecutionLedger(ExecutionInventory(instrument, usd))
     order = _submitted_order(instrument)

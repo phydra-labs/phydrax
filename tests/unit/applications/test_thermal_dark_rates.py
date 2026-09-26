@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -34,7 +36,7 @@ from phydrax.metrix import (
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _units_and_frame():
+def _units_and_frame() -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 3, 2, 1)
     units = RelativisticUnitContract(
         scale, RelativityConvention(metric_signature="mostly_minus")
@@ -77,7 +79,7 @@ def _units_and_frame():
     return units, frame
 
 
-def _tables():
+def _tables() -> Any:
     temperature = np.asarray((1.0, 2.0, 3.0, 4.0))
     momentum = np.asarray((0.0, 1.0))
     frequency = np.asarray((-1.0, 0.0, 1.0))
@@ -103,7 +105,7 @@ def _tables():
     )
 
 
-def _artifact(*, external=False, commercial_use=False):
+def _artifact(*, external: Any = False, commercial_use: Any = False) -> Any:
     units, frame = _units_and_frame()
     tables = _tables()
     species_ids = (
@@ -118,6 +120,7 @@ def _artifact(*, external=False, commercial_use=False):
     if not external:
         return ThermalKernelArtifact(
             *tables,
+            # ty: ignore[too-many-positional-arguments]
             units,
             frame,
             species_plan_ids=species_ids,
@@ -159,6 +162,7 @@ def _artifact(*, external=False, commercial_use=False):
     )
     return ThermalKernelArtifact(
         *tables,
+        # ty: ignore[too-many-positional-arguments]
         units,
         frame,
         species_plan_ids=species_ids,
@@ -174,7 +178,7 @@ def _artifact(*, external=False, commercial_use=False):
     )
 
 
-def test_external_artifact_binds_rights_provenance_and_stops_table_gradients():
+def test_external_artifact_binds_rights_provenance_and_stops_table_gradients() -> None:
     artifact = _artifact(external=True)
 
     assert artifact.evidence.qualified
@@ -191,7 +195,7 @@ def test_external_artifact_binds_rights_provenance_and_stops_table_gradients():
         _artifact(external=True, commercial_use=True)
 
 
-def test_htl_has_vacuum_limit_ward_identity_and_only_spacelike_landau_support():
+def test_htl_has_vacuum_limit_ward_identity_and_only_spacelike_landau_support() -> None:
     units, frame = _units_and_frame()
     vacuum = HTLPolarizationPlan(0.0, units, frame).evaluate(
         jnp.asarray((0.5, 4.0)), jnp.asarray((1.0, 1.0))
@@ -211,7 +215,9 @@ def test_htl_has_vacuum_limit_ward_identity_and_only_spacelike_landau_support():
     assert bool(jnp.all(response.evidence.valid))
 
 
-def test_lpm_fixed_basis_matches_diagonal_analytic_solution_and_subtracts_overlap():
+def test_lpm_fixed_basis_matches_diagonal_analytic_solution_and_subtracts_overlap() -> (
+    None
+):
     units, frame = _units_and_frame()
     plan = LPMIntegralPlan(
         jnp.asarray((0.0,)),
@@ -248,7 +254,7 @@ def test_lpm_fixed_basis_matches_diagonal_analytic_solution_and_subtracts_overla
     np.testing.assert_allclose(free.rate, 0.0, atol=2.0e-7)
 
 
-def test_eos_identities_stability_covariance_and_domain_refusal_are_explicit():
+def test_eos_identities_stability_covariance_and_domain_refusal_are_explicit() -> None:
     artifact = _artifact()
     plan = ThermalDarkRatePlan(artifact)
     state = plan.evaluate(2.0)
@@ -268,7 +274,7 @@ def test_eos_identities_stability_covariance_and_domain_refusal_are_explicit():
     assert bool(jnp.isnan(refused.rates[0]))
 
 
-def test_zero_eos_covariance_keeps_canonical_qualification_evidence():
+def test_zero_eos_covariance_keeps_canonical_qualification_evidence() -> None:
     units, frame = _units_and_frame()
     species_ids = (
         DarkSectorSpeciesPlan(
@@ -281,6 +287,7 @@ def test_zero_eos_covariance_keeps_canonical_qualification_evidence():
     tables = _tables()
     zero_covariance = ThermalKernelArtifact(
         *tables[:-1],
+        # ty: ignore[too-many-positional-arguments]
         np.zeros_like(tables[-1]),
         units,
         frame,

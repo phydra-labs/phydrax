@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -30,7 +32,7 @@ from phydrax.artifacts import ScientificArtifactEnvelope
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _case(repetitions: int):
+def _case(repetitions: int) -> Any:
     species = tuple(
         DarkSectorSpeciesPlan(
             name,
@@ -49,7 +51,7 @@ def _case(repetitions: int):
     recoil_speed = np.sqrt(1.0 / 0.45)
     speeds = np.asarray((0.0, recoil_speed, 2.0, 5.0))
 
-    def kernel(first, second, total):
+    def kernel(first: Any, second: Any, total: Any) -> Any:
         cosines = np.asarray((-1.0, 0.0, 1.0))
         differential = np.full((speeds.size, cosines.size), total / (4.0 * np.pi))
         payload = TwoBodyDifferentialKernelPlan.canonical_table_bytes(
@@ -195,7 +197,7 @@ def _case(repetitions: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=100)
     parser.add_argument(

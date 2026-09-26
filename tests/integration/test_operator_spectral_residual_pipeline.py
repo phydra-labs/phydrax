@@ -4,7 +4,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_hard_initial_condition_precedes_all_coordinate_spectral_residual():
+def test_hard_initial_condition_precedes_all_coordinate_spectral_residual() -> None:
     space = phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.ChebyshevBasisPlan(6),
@@ -119,6 +119,7 @@ def test_hard_initial_condition_precedes_all_coordinate_spectral_residual():
     )
     term = phx.nn.operator.training.SpectralPDEResidualLoss(
         "unit_rate",
+        # ty: ignore[invalid-argument-type]
         compiled,
         {"u": "output"},
         {},

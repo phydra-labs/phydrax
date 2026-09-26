@@ -341,7 +341,10 @@ def _tangential_nitsche_entries(
     block = mesh.blocks[0]
     connectivity = mesh.connectivity
     # Tetrahedral BDM discretizations are only prepared on TetrahedralConnectivity.
-    assert isinstance(connectivity, TetrahedralConnectivity)
+    if not (isinstance(connectivity, TetrahedralConnectivity)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(connectivity, TetrahedralConnectivity)."
+        )
     cells = np.asarray(block.vertices, dtype=np.int32)
     coordinates = np.asarray(mesh.coordinates)
     face_vertices = np.asarray(connectivity.faces, dtype=np.int32)
@@ -459,7 +462,10 @@ def _normal_boundary_operators(
     mesh = discretization.mesh
     connectivity = mesh.connectivity
     # Tetrahedral BDM discretizations are only prepared on TetrahedralConnectivity.
-    assert isinstance(connectivity, TetrahedralConnectivity)
+    if not (isinstance(connectivity, TetrahedralConnectivity)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(connectivity, TetrahedralConnectivity)."
+        )
     face_entities = mesh.topology.entity_sets[2]
     face_ids = np.asarray(face_entities.entity_ids, dtype=np.int64)
     boundary_faces = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
@@ -732,7 +738,10 @@ class HDivStokesPlan(StrictModule):
             raise RuntimeError("Normal resistance lost its edge-list relation.")
         problem_state_space = problem.state_space
         # The velocity-pressure form always builds a product state space.
-        assert isinstance(problem_state_space, BlockSpace)
+        if not (isinstance(problem_state_space, BlockSpace)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(problem_state_space, BlockSpace)."
+            )
         state_space = (
             BlockSpace(
                 (*problem_state_space.spaces, normal_flux.target),

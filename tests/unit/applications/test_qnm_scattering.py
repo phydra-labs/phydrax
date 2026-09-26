@@ -110,7 +110,7 @@ def _schwarzschild_gravitational_plan(
     )
 
 
-def test_coupled_qnm_root_retains_reference_depth_condition_and_branch_evidence():
+def test_coupled_qnm_root_retains_reference_depth_condition_and_branch_evidence() -> None:
     plan = _schwarzschild_gravitational_plan()
     reference = schwarzschild_qnm_reference(plan.mode, 2.0e-8, 2.0e-8)
     result = solve_qnm(
@@ -166,7 +166,7 @@ def test_coupled_qnm_root_retains_reference_depth_condition_and_branch_evidence(
     assert continuation.problem_id.endswith(":spin-continuation")
 
 
-def test_qnm_reference_is_not_implicit_qualification():
+def test_qnm_reference_is_not_implicit_qualification() -> None:
     plan = _schwarzschild_gravitational_plan()
     reference = schwarzschild_qnm_reference(plan.mode, 1.0e-7, 1.0e-7)
     result = solve_qnm(
@@ -181,7 +181,7 @@ def test_qnm_reference_is_not_implicit_qualification():
     assert result.reference_id == ""
 
 
-def test_qnm_rejects_reference_matching_cf_root_when_radial_check_fails():
+def test_qnm_rejects_reference_matching_cf_root_when_radial_check_fails() -> None:
     plan = _schwarzschild_gravitational_plan(radial_qualification=False)
     reference = schwarzschild_qnm_reference(plan.mode, 1.0e-7, 1.0e-7)
     result = solve_qnm(
@@ -256,7 +256,9 @@ def _computed_scalar_scattering_plan(
     )
 
 
-def test_computed_scalar_schwarzschild_scattering_closes_flux_and_low_frequency_control():
+def test_computed_scalar_schwarzschild_scattering_closes_flux_and_low_frequency_control() -> (
+    None
+):
     plan = _computed_scalar_scattering_plan()
     result = solve_schwarzschild_scattering(plan, jnp.asarray(2.0e-2))
 
@@ -293,7 +295,7 @@ def test_computed_scalar_schwarzschild_scattering_closes_flux_and_low_frequency_
     assert np.isfinite(float(result.corotation_slope))
 
 
-def test_computed_scattering_rejects_underresolved_asymptotic_source():
+def test_computed_scattering_rejects_underresolved_asymptotic_source() -> None:
     plan = _computed_scalar_scattering_plan(asymptotically_resolved=False)
     result = solve_schwarzschild_scattering(plan, jnp.asarray(2.0e-2))
 
@@ -305,7 +307,7 @@ def test_computed_scattering_rejects_underresolved_asymptotic_source():
     assert int(result.status) == int(SchwarzschildScatteringStatus.ASYMPTOTIC_UNRESOLVED)
 
 
-def test_computed_scattering_returns_invalid_frequency_status():
+def test_computed_scattering_returns_invalid_frequency_status() -> None:
     plan = _computed_scalar_scattering_plan(asymptotically_resolved=False)
     result = solve_schwarzschild_scattering(plan, jnp.asarray(plan.frequency_step))
 
@@ -316,7 +318,7 @@ def test_computed_scattering_returns_invalid_frequency_status():
     assert int(result.status) == int(SchwarzschildScatteringStatus.INVALID_FREQUENCY)
 
 
-def test_computed_scattering_propagates_strict_flux_ledger_failure():
+def test_computed_scattering_propagates_strict_flux_ledger_failure() -> None:
     plan = _computed_scalar_scattering_plan(flux_tolerance=1.0e-14)
     result = solve_schwarzschild_scattering(plan, jnp.asarray(2.0e-2))
 
@@ -328,14 +330,16 @@ def test_computed_scattering_propagates_strict_flux_ledger_failure():
     )
 
 
-def test_computed_scattering_requires_ingoing_horizon_boundary():
+def test_computed_scattering_requires_ingoing_horizon_boundary() -> None:
     with pytest.raises(ValueError, match="ingoing horizon"):
         _computed_scalar_scattering_plan(
             boundary=RadialBoundaryCondition("outgoing", "outgoing")
         )
 
 
-def test_real_frequency_scattering_closes_flux_and_requires_explicit_qualification():
+def test_real_frequency_scattering_closes_flux_and_requires_explicit_qualification() -> (
+    None
+):
     mode = SeparatedMode(
         0,
         1,
@@ -392,7 +396,7 @@ def test_real_frequency_scattering_closes_flux_and_requires_explicit_qualificati
     )
 
 
-def test_kerr_superradiance_preserves_negative_signed_absorption():
+def test_kerr_superradiance_preserves_negative_signed_absorption() -> None:
     mode = SeparatedMode(
         0,
         1,

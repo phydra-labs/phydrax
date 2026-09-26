@@ -18,7 +18,7 @@ from tests._control_systems import (
 )
 
 
-def test_multiple_shooting_layout_uses_local_pose_coordinates():
+def test_multiple_shooting_layout_uses_local_pose_coordinates() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
@@ -51,7 +51,7 @@ def test_multiple_shooting_layout_uses_local_pose_coordinates():
     )
 
 
-def test_multiple_shooting_pose_continuity_defect_is_local_and_sign_invariant():
+def test_multiple_shooting_pose_continuity_defect_is_local_and_sign_invariant() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
@@ -98,7 +98,9 @@ def test_multiple_shooting_pose_continuity_defect_is_local_and_sign_invariant():
     assert jnp.all(jnp.isfinite(linearization.equality_jacobian))
 
 
-def _linear_problem(*, num_steps=2, path_constraints=(), terminal_constraints=()):
+def _linear_problem(
+    *, num_steps: Any = 2, path_constraints: Any = (), terminal_constraints: Any = ()
+) -> Any:
     grid = phx.dynamics.TimeGrid(
         jnp.arange(num_steps + 1, dtype="float64"),
         time_id=f"multiple-shooting-linear-{num_steps}",
@@ -123,7 +125,7 @@ def _linear_problem(*, num_steps=2, path_constraints=(), terminal_constraints=()
     )
 
 
-def test_linear_subproblem_matches_kkt_oracle_and_exact_derivatives():
+def test_linear_subproblem_matches_kkt_oracle_and_exact_derivatives() -> None:
     problem = _linear_problem()
     states = jnp.zeros((3, 1))
     controls = jnp.zeros((2, 1))
@@ -180,11 +182,11 @@ def test_linear_subproblem_matches_kkt_oracle_and_exact_derivatives():
     np.testing.assert_allclose(result.trajectory.states, result.state_nodes, atol=1e-6)
 
 
-def test_exact_boundary_continuity_path_and_terminal_defect_accounting():
-    def path(time, state, control, args):
+def test_exact_boundary_continuity_path_and_terminal_defect_accounting() -> None:
+    def path(time: Any, state: Any, control: Any, args: Any) -> Any:
         return state[0] + 2.0 * control[0] - 0.4
 
-    def terminal(time, state, args):
+    def terminal(time: Any, state: Any, args: Any) -> Any:
         return state[0] - 0.2
 
     problem = _linear_problem(
@@ -221,10 +223,10 @@ def test_exact_boundary_continuity_path_and_terminal_defect_accounting():
     )
 
 
-def test_multiple_shooting_rejects_explicit_finite_rollback_segments():
+def test_multiple_shooting_rejects_explicit_finite_rollback_segments() -> None:
     failure_status = 67
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, args
         return phx.dynamics.DiscreteTransitionResult(
             state + control + 100.0,
@@ -278,7 +280,7 @@ def test_multiple_shooting_rejects_explicit_finite_rollback_segments():
     )
 
 
-def test_nonlinear_constrained_problem_converges_without_projection_or_repair():
+def test_nonlinear_constrained_problem_converges_without_projection_or_repair() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0, 2.0]), time_id="multiple-shooting-nonlinear"
     )
@@ -316,7 +318,7 @@ def test_nonlinear_constrained_problem_converges_without_projection_or_repair():
     assert np.all(np.diff(np.asarray(result.history.merit)) <= 1e-10)
 
 
-def test_rejected_merit_line_search_is_explicit():
+def test_rejected_merit_line_search_is_explicit() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0]), time_id="multiple-shooting-rejected-line"
     )
@@ -350,8 +352,8 @@ def test_rejected_merit_line_search_is_explicit():
     np.testing.assert_allclose(result.control_nodes, jnp.asarray([[3.0]]))
 
 
-def test_infeasible_dense_qp_status_is_propagated():
-    def impossible(time, state, control, args):
+def test_infeasible_dense_qp_status_is_propagated() -> None:
+    def impossible(time: Any, state: Any, control: Any, args: Any) -> Any:
         return jnp.asarray(1.0)
 
     problem = _linear_problem(num_steps=1, path_constraints=(impossible,))
@@ -370,7 +372,7 @@ def test_infeasible_dense_qp_status_is_propagated():
     assert not result.valid
 
 
-def test_concave_qp_model_at_stationary_maximum_is_rejected():
+def test_concave_qp_model_at_stationary_maximum_is_rejected() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0]), time_id="multiple-shooting-concave"
     )
@@ -402,7 +404,9 @@ def test_concave_qp_model_at_stationary_maximum_is_rejected():
     assert result.history.num_iterations == 0
 
 
-def test_differential_segments_use_canonical_solver_and_report_failed_integration():
+def test_differential_segments_use_canonical_solver_and_report_failed_integration() -> (
+    None
+):
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.5, 1.0]), time_id="multiple-shooting-ode"
     )
@@ -445,7 +449,7 @@ def test_differential_segments_use_canonical_solver_and_report_failed_integratio
     assert not failed.trajectory.successful
 
 
-def test_differential_rollout_audit_matches_segments_at_control_jumps():
+def test_differential_rollout_audit_matches_segments_at_control_jumps() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0, 2.5]), time_id="multiple-shooting-control-jump"
     )
@@ -479,7 +483,7 @@ def test_differential_rollout_audit_matches_segments_at_control_jumps():
     np.testing.assert_allclose(result.rollout_state_error, 0.0)
 
 
-def test_solver_is_deterministic_and_rejects_batched_optimization():
+def test_solver_is_deterministic_and_rejects_batched_optimization() -> None:
     problem = _linear_problem()
     kwargs: dict[str, Any] = dict(
         initial_states=jnp.zeros((3, 1)),
@@ -507,7 +511,7 @@ def test_solver_is_deterministic_and_rejects_batched_optimization():
         phx.control.solve_multiple_shooting(batched)
 
 
-def test_global_control_search_trajectory_is_a_native_seed():
+def test_global_control_search_trajectory_is_a_native_seed() -> None:
     problem = _linear_problem()
     parameterization = phx.control.PiecewiseConstantControlParameterization(
         problem.time_grid,
@@ -543,7 +547,7 @@ def test_global_control_search_trajectory_is_a_native_seed():
     assert positional.trajectory.problem_id == global_result.trajectory.problem_id
 
 
-def test_multiple_shooting_lowers_to_structured_nlp_and_solves_natively():
+def test_multiple_shooting_lowers_to_structured_nlp_and_solves_natively() -> None:
     problem = _linear_problem()
     compilation = phx.control.compile_structured_multiple_shooting(
         problem,

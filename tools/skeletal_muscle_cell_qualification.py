@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -102,7 +103,7 @@ _REFERENCE = {
 }
 
 
-def _trajectory_error(model, states) -> dict[str, float]:
+def _trajectory_error(model: Any, states: Any) -> dict[str, float]:
     errors = {}
     for name, reference in _REFERENCE.items():
         observed = np.asarray(states[:, model.state_layout.index(name)])
@@ -164,6 +165,7 @@ def qualify() -> dict[str, object]:
     coarse = (
         ShortenIntegrationPlan(
             model,
+            # ty: ignore[invalid-argument-type]
             [0.0, 0.5, 1.0],
             relative_tolerance=2.0e-5,
             absolute_tolerance=2.0e-7,
@@ -174,6 +176,7 @@ def qualify() -> dict[str, object]:
     refined = (
         ShortenIntegrationPlan(
             model,
+            # ty: ignore[invalid-argument-type]
             [0.0, 0.5, 1.0],
             relative_tolerance=2.0e-7,
             absolute_tolerance=2.0e-9,
@@ -224,6 +227,7 @@ def qualify() -> dict[str, object]:
         jnp.max(jnp.abs(gate_full[8:18] - gate_refined[8:18]))
     )
 
+    # ty: ignore[invalid-argument-type]
     prepared = ShortenIntegrationPlan(model, [0.0, 0.5]).prepare()
     misaligned = ShortenCellState(0.1, state)
     rejected = prepared.candidate(misaligned, 0)

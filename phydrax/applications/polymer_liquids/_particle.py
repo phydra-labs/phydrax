@@ -273,7 +273,10 @@ def kremer_grest_evidence(
     margin = 1.0 - maximum_fraction
     integrator = dynamics.integrator
     # PreparedKremerGrestProfile admits only BAOAB dynamics at construction.
-    assert isinstance(integrator, BAOABLangevinPlan)
+    if not (isinstance(integrator, BAOABLangevinPlan)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(integrator, BAOABLangevinPlan)."
+        )
     dtype = state.kinematics.positions.dtype
     decay = jnp.exp(-jnp.asarray(integrator.friction * integrator.step_size, dtype=dtype))
     stationary = (

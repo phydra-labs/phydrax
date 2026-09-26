@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 from io import BytesIO
+from typing import Any
 
 import numpy as np
+
+# ty: ignore[unresolved-import]
 from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
+
+# ty: ignore[unresolved-import]
 from pydicom.filewriter import dcmwrite
+
+# ty: ignore[unresolved-import]
 from pydicom.sequence import Sequence
+
+# ty: ignore[unresolved-import]
 from pydicom.uid import ExplicitVRLittleEndian
 
 
@@ -21,14 +30,14 @@ RTPLAN_STORAGE = "1.2.840.10008.5.1.4.1.1.481.5"
 RTDOSE_STORAGE = "1.2.840.10008.5.1.4.1.1.481.2"
 
 
-def item(**values):
+def item(**values: Any) -> Any:
     result = Dataset()
     for keyword, value in values.items():
         setattr(result, keyword, value)
     return result
 
 
-def sequence(*items):
+def sequence(*items: Any) -> Any:
     return Sequence(items)
 
 

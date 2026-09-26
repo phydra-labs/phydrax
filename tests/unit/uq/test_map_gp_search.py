@@ -1,12 +1,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 
 
-def _posterior():
+def _posterior() -> Any:
     space = phx.uq.ParameterSpace(
         jnp.asarray([0.0]),
         log_prior=lambda value: -0.5 * jnp.sum(value**2),
@@ -17,7 +20,7 @@ def _posterior():
     )
 
 
-def test_search_map_consumes_canonical_q1_bayesian_optimization():
+def test_search_map_consumes_canonical_q1_bayesian_optimization() -> None:
     problem = _posterior()
     search = phx.uq.GaussianProcessBayesianOptimization(
         8,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -28,20 +31,20 @@ from phydrax.equations._les_closures import (
 )
 
 
-def _coefficients(*, eddy=1.0, limit=10.0):
+def _coefficients(*, eddy: Any = 1.0, limit: Any = 10.0) -> Any:
     return KSGSCoefficients(eddy, 1.0, 3.0, 2.0, limit)
 
 
 def _filter(
-    name,
+    name: Any,
     *,
-    family="explicit-filter",
-    axis_names=("x", "y", "z"),
-    topology="tensor-product",
-    boundary_class="periodic",
-    commutation_status="modeled",
-    repeated_filter_semantics="composed",
-):
+    family: Any = "explicit-filter",
+    axis_names: Any = ("x", "y", "z"),
+    topology: Any = "tensor-product",
+    boundary_class: Any = "periodic",
+    commutation_status: Any = "modeled",
+    repeated_filter_semantics: Any = "composed",
+) -> Any:
     scale_rule = {
         "explicit-filter": "kernel-equivalent",
         "implicit-grid-volume": "volume-equivalent",
@@ -53,13 +56,14 @@ def _filter(
         axis_names=axis_names,
         topology=topology,
         boundary_class=boundary_class,
+        # ty: ignore[invalid-argument-type]
         scale_rule=scale_rule,
         commutation_status=commutation_status,
         repeated_filter_semantics=repeated_filter_semantics,
     )
 
 
-def _provenance():
+def _provenance() -> Any:
     return LESParameterProvenance(
         _filter("explicit box filter"),
         "unit-mac-grid",
@@ -69,7 +73,9 @@ def _provenance():
     )
 
 
-def _base_inputs(gradient=None, *, width=1.0, viscosity=0.25, diffusion=0.0):
+def _base_inputs(
+    gradient: Any = None, *, width: Any = 1.0, viscosity: Any = 0.25, diffusion: Any = 0.0
+) -> Any:
     if gradient is None:
         gradient = jnp.zeros((3, 3))
     return KSGSInputs(
@@ -80,14 +86,14 @@ def _base_inputs(gradient=None, *, width=1.0, viscosity=0.25, diffusion=0.0):
     )
 
 
-def _all_state_equal(left, right):
+def _all_state_equal(left: Any, right: Any) -> Any:
     return all(
         np.array_equal(np.asarray(a), np.asarray(b))
         for a, b in zip(jax.tree.leaves(left), jax.tree.leaves(right), strict=True)
     )
 
 
-def test_static_zero_and_exact_equilibrium_limits():
+def test_static_zero_and_exact_equilibrium_limits() -> None:
     plan = StaticKSGSPlan(_coefficients(), _provenance())
     zero = plan.evaluate(plan.initialize_state(0.0), _base_inputs())
     assert zero.eddy_viscosity == 0.0
@@ -108,7 +114,7 @@ def test_static_zero_and_exact_equilibrium_limits():
     assert not bool(equilibrium.evidence.production_limited)
 
 
-def test_eddy_and_diffusion_coefficients_scale_without_changing_dissipation():
+def test_eddy_and_diffusion_coefficients_scale_without_changing_dissipation() -> None:
     gradient = jnp.diag(jnp.asarray((0.1, -0.1, 0.0)))
     inputs = _base_inputs(gradient)
     first_plan = StaticKSGSPlan(_coefficients(eddy=0.5), _provenance())
@@ -135,7 +141,7 @@ def test_eddy_and_diffusion_coefficients_scale_without_changing_dissipation():
     np.testing.assert_allclose(pre_operator.diffusivity, second.diffusivity)
 
 
-def test_production_dissipation_signs_and_explicit_production_limit():
+def test_production_dissipation_signs_and_explicit_production_limit() -> None:
     plan = StaticKSGSPlan(_coefficients(limit=2.0), _provenance())
     gradient = jnp.diag(jnp.asarray((10.0, -10.0, 0.0)))
     result = plan.evaluate(
@@ -151,7 +157,7 @@ def test_production_dissipation_signs_and_explicit_production_limit():
     np.testing.assert_allclose(result.contributions.rhs, 0.5)
 
 
-def test_buoyancy_has_stable_sink_and_unstable_source_signs():
+def test_buoyancy_has_stable_sink_and_unstable_source_signs() -> None:
     plan = BuoyancyKSGSPlan(_coefficients(), _provenance())
     state = plan.initialize_state(1.0)
     base = _base_inputs()
@@ -164,7 +170,7 @@ def test_buoyancy_has_stable_sink_and_unstable_source_signs():
     )
 
 
-def test_dynamic_update_history_acceptance_and_exact_restart_identity():
+def test_dynamic_update_history_acceptance_and_exact_restart_identity() -> None:
     plan = DynamicKSGSPlan(
         _coefficients(eddy=0.25),
         _provenance(),
@@ -203,7 +209,7 @@ def test_dynamic_update_history_acceptance_and_exact_restart_identity():
     )
 
 
-def test_dynamic_filter_semantics_are_compatible_and_non_aliasing():
+def test_dynamic_filter_semantics_are_compatible_and_non_aliasing() -> None:
     provenance = _provenance()
     coefficients = _coefficients()
     ratio = 2.0
@@ -246,7 +252,7 @@ def test_dynamic_filter_semantics_are_compatible_and_non_aliasing():
     assert plan.test_filter.filter_id == sharp_test_filter.filter_id
 
 
-def test_low_re_damping_and_viscous_dissipation_are_explicit():
+def test_low_re_damping_and_viscous_dissipation_are_explicit() -> None:
     plan = LowReKSGSPlan(_coefficients(), LowReKSGSCoefficients(2.0, 2.0), _provenance())
     result = plan.evaluate(
         plan.initialize_state(1.0),
@@ -262,7 +268,7 @@ def test_low_re_damping_and_viscous_dissipation_are_explicit():
     assert bool(result.evidence.dissipation_nonnegative)
 
 
-def test_negative_kinetic_energy_is_refused_without_a_floor_eager_and_jit():
+def test_negative_kinetic_energy_is_refused_without_a_floor_eager_and_jit() -> None:
     plan = StaticKSGSPlan(_coefficients(), _provenance())
     inputs = _base_inputs()
     with pytest.raises(Exception, match="negative"):
@@ -277,11 +283,11 @@ def test_negative_kinetic_energy_is_refused_without_a_floor_eager_and_jit():
         compiled(jnp.asarray(-1.0)).block_until_ready()
 
 
-def test_static_transition_is_jittable_differentiable_and_fixed_shape():
+def test_static_transition_is_jittable_differentiable_and_fixed_shape() -> None:
     plan = StaticKSGSPlan(_coefficients(), _provenance())
     inputs = _base_inputs(jnp.diag(jnp.asarray((0.2, -0.2, 0.0))))
 
-    def rhs(kinetic):
+    def rhs(kinetic: Any) -> Any:
         return plan.evaluate(plan.initialize_state(kinetic), inputs).contributions.rhs
 
     primal, tangent = jax.jvp(jax.jit(rhs), (jnp.asarray(1.2),), (jnp.asarray(0.3),))
@@ -313,7 +319,7 @@ def test_static_transition_is_jittable_differentiable_and_fixed_shape():
     )
 
 
-def test_nonfinite_backend_term_is_reported_by_evidence():
+def test_nonfinite_backend_term_is_reported_by_evidence() -> None:
     plan = StaticKSGSPlan(_coefficients(), _provenance())
     result = plan.evaluate(plan.initialize_state(1.0), _base_inputs(diffusion=jnp.nan))
     assert not bool(result.evidence.finite)

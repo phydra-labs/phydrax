@@ -12,7 +12,7 @@ from phydrax.discretization import (
 )
 
 
-def main():
+def main() -> None:
     fibers = continuum.UniformFiberArchitecturePlan("demo-x-fibers").prepare(
         jnp.asarray((1.0, 0.0, 0.0))
     )

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,14 +11,14 @@ import phydrax as phx
 class _TableAmplitude(eqx.Module):
     values: jax.Array
 
-    def __call__(self, configuration):
+    def __call__(self, configuration: Any) -> Any:
         bits = (configuration > 0).astype(jnp.int32)
         index = 2 * bits[0] + bits[1]
         value = self.values[index]
         return phx.operators.LogAmplitude(jnp.log(jnp.abs(value)), value / jnp.abs(value))
 
 
-def _z2(characters):
+def _z2(characters: Any) -> Any:
     return phx.operators.FiniteSignedPermutationSymmetry(
         jnp.asarray([[0, 1], [0, 1]]),
         jnp.asarray([[1, 1], [-1, -1]]),
@@ -25,7 +27,7 @@ def _z2(characters):
     )
 
 
-def _value(amplitude):
+def _value(amplitude: Any) -> Any:
     return jnp.where(
         amplitude.nonzero,
         jnp.exp(amplitude.log_abs) * amplitude.phase,
@@ -33,7 +35,7 @@ def _value(amplitude):
     )
 
 
-def test_even_and_odd_projection_obey_sector_characters():
+def test_even_and_odd_projection_obey_sector_characters() -> None:
     model = _TableAmplitude(
         jnp.asarray([1.0 + 0.2j, 0.5 - 0.1j, -0.25 + 0.8j, 1.3 + 0.4j])
     )
@@ -50,11 +52,11 @@ def test_even_and_odd_projection_obey_sector_characters():
     assert jnp.allclose(_value(odd(configuration)), expected_odd)
 
 
-def test_symmetry_projection_preserves_finite_parameter_gradients():
+def test_symmetry_projection_preserves_finite_parameter_gradients() -> None:
     configuration = jnp.asarray([1, -1])
     symmetry = _z2([1.0, 1.0])
 
-    def objective(values):
+    def objective(values: Any) -> Any:
         projected = phx.operators.SymmetryProjectedAmplitude(
             _TableAmplitude(values), symmetry
         )(configuration)
@@ -66,7 +68,7 @@ def test_symmetry_projection_preserves_finite_parameter_gradients():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_signed_permutation_group_and_character_laws_are_validated():
+def test_signed_permutation_group_and_character_laws_are_validated() -> None:
     with pytest.raises(ValueError, match="closed"):
         phx.operators.FiniteSignedPermutationSymmetry(
             jnp.asarray([[0, 1], [1, 0]]),

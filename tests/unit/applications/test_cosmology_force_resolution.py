@@ -7,7 +7,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def test_periodic_image_force_oracle_is_symmetric_and_gates_candidates():
+def test_periodic_image_force_oracle_is_symmetric_and_gates_candidates() -> None:
     plan = cosmology.PeriodicImageForcePlan(
         (1.0, 1.0, 1.0),
         1.0,

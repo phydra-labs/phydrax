@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -30,24 +32,24 @@ from phydrax.dynamics import TimeGrid
 
 def _controlled_problem(
     *,
-    num_steps=2,
-    policy_scale=0.0,
-    terminal_cost=None,
-    problem_id="fitted:linear",
-):
+    num_steps: Any = 2,
+    policy_scale: Any = 0.0,
+    terminal_cost: Any = None,
+    problem_id: Any = "fitted:linear",
+) -> Any:
     grid = TimeGrid(
         jnp.arange(num_steps + 1, dtype="float64"), time_id=f"{problem_id}:time"
     )
 
-    def transition(context, state, action, noise, args):
+    def transition(context: Any, state: Any, action: Any, noise: Any, args: Any) -> Any:
         del context, args
         return state + action + noise
 
-    def stage_cost(context, state, action, args):
+    def stage_cost(context: Any, state: Any, action: Any, args: Any) -> Any:
         del context, args
         return state[0] + action[0]
 
-    def default_terminal(time, state, args):
+    def default_terminal(time: Any, state: Any, args: Any) -> Any:
         del time, args
         return 2.0 * state[0]
 
@@ -63,7 +65,7 @@ def _controlled_problem(
         problem_id=problem_id,
     )
 
-    def policy(context, state, args):
+    def policy(context: Any, state: Any, args: Any) -> Any:
         del context, args
         return policy_scale * state
 
@@ -71,15 +73,15 @@ def _controlled_problem(
 
 
 def _paths(
-    problem,
-    policy,
-    increments,
+    problem: Any,
+    policy: Any,
+    increments: Any,
     *,
-    role,
-    validity=None,
-    policy_id="frozen:linear",
-    realization_ids=None,
-):
+    role: Any,
+    validity: Any = None,
+    policy_id: Any = "frozen:linear",
+    realization_ids: Any = None,
+) -> Any:
     values = jnp.asarray(increments, dtype="float64")
     count = values.shape[0]
     prepared = PreparedControlledNoise(
@@ -104,19 +106,19 @@ def _paths(
 
 def _problem_and_plan(
     *,
-    train_noise=None,
-    holdout_noise=None,
-    feature_map=None,
-    num_features=1,
-    ridge=0.0,
-    training_validity=None,
-    holdout_validity=None,
-    policy_scale=0.0,
-    controlled_problem=None,
-    policy=None,
-    training_weights=None,
-    holdout_weights=None,
-):
+    train_noise: Any = None,
+    holdout_noise: Any = None,
+    feature_map: Any = None,
+    num_features: Any = 1,
+    ridge: Any = 0.0,
+    training_validity: Any = None,
+    holdout_validity: Any = None,
+    policy_scale: Any = 0.0,
+    controlled_problem: Any = None,
+    policy: Any = None,
+    training_weights: Any = None,
+    holdout_weights: Any = None,
+) -> Any:
     if controlled_problem is None or policy is None:
         controlled_problem, policy = _controlled_problem(policy_scale=policy_scale)
     steps = controlled_problem.time_grid.num_steps
@@ -156,7 +158,7 @@ def _problem_and_plan(
     return controlled_problem, policy, fitted_problem, plan
 
 
-def test_exact_linear_feature_value_recovery_and_deterministic_reduction():
+def test_exact_linear_feature_value_recovery_and_deterministic_reduction() -> None:
     _, _, problem, plan = _problem_and_plan()
 
     result = fit_frozen_policy_bellman(problem, plan)
@@ -180,7 +182,7 @@ def test_exact_linear_feature_value_recovery_and_deterministic_reduction():
     assert not result.optimality_claimed
 
 
-def test_backward_regression_uses_explicit_training_weights():
+def test_backward_regression_uses_explicit_training_weights() -> None:
     controlled, policy = _controlled_problem(num_steps=1)
     _, _, problem, plan = _problem_and_plan(
         controlled_problem=controlled,
@@ -208,7 +210,7 @@ def test_backward_regression_uses_explicit_training_weights():
     )
 
 
-def test_rank_deficiency_without_ridge_is_reported_without_pseudoinverse():
+def test_rank_deficiency_without_ridge_is_reported_without_pseudoinverse() -> None:
     feature_map = lambda time, state, args: jnp.asarray([1.0, state[0]])
     _, _, problem, plan = _problem_and_plan(
         feature_map=feature_map,
@@ -227,7 +229,7 @@ def test_rank_deficiency_without_ridge_is_reported_without_pseudoinverse():
     assert int(result.stage_status[0]) == FittedBellmanStatus.DEPENDENCY_FAILED
 
 
-def test_ridge_regularizes_solve_but_does_not_hide_original_normal_residual():
+def test_ridge_regularizes_solve_but_does_not_hide_original_normal_residual() -> None:
     _, _, problem, plan = _problem_and_plan(ridge=0.5)
 
     result = fit_frozen_policy_bellman(problem, plan)
@@ -244,7 +246,7 @@ def test_ridge_regularizes_solve_but_does_not_hide_original_normal_residual():
     assert np.all(np.asarray(result.training_weighted_rmse) > 0.0)
 
 
-def test_training_fit_and_holdout_bellman_identity_are_separate():
+def test_training_fit_and_holdout_bellman_identity_are_separate() -> None:
     train_noise = jnp.zeros((4, 2, 1))
     holdout_noise = jnp.asarray(
         [
@@ -273,7 +275,7 @@ def test_training_fit_and_holdout_bellman_identity_are_separate():
     )
 
 
-def test_invalid_paths_are_excluded_case_locally_from_both_roles():
+def test_invalid_paths_are_excluded_case_locally_from_both_roles() -> None:
     train_noise = jnp.asarray(
         [
             [[0.0], [0.0]],
@@ -299,7 +301,7 @@ def test_invalid_paths_are_excluded_case_locally_from_both_roles():
     assert bool(result.valid)
 
 
-def test_problem_rejects_reused_or_overlapping_holdout_identity():
+def test_problem_rejects_reused_or_overlapping_holdout_identity() -> None:
     controlled, policy = _controlled_problem()
     training = _paths(controlled, policy, jnp.zeros((2, 2, 1)), role="training")
 
@@ -329,8 +331,8 @@ def test_problem_rejects_reused_or_overlapping_holdout_identity():
         )
 
 
-def test_terminal_value_is_regressed_on_terminal_features():
-    def affine_terminal(time, state, args):
+def test_terminal_value_is_regressed_on_terminal_features() -> None:
+    def affine_terminal(time: Any, state: Any, args: Any) -> Any:
         del time, args
         return 3.0 + 2.0 * state[0]
 
@@ -359,7 +361,7 @@ def test_terminal_value_is_regressed_on_terminal_features():
     assert int(result.stage_status[0]) == FittedBellmanStatus.RANK_DEFICIENT
 
 
-def test_prepared_evaluation_is_filter_jittable_and_prediction_vmaps_over_cases():
+def test_prepared_evaluation_is_filter_jittable_and_prediction_vmaps_over_cases() -> None:
     _, _, problem, plan = _problem_and_plan()
     prepared = prepare_fitted_bellman(problem, plan)
 
@@ -373,7 +375,7 @@ def test_prepared_evaluation_is_filter_jittable_and_prediction_vmaps_over_cases(
     np.testing.assert_allclose(case_values, [4.0, 6.0, 6.0], atol=1e-6)
 
 
-def test_bsde_bridge_preserves_ids_and_never_conflates_action_with_z():
+def test_bsde_bridge_preserves_ids_and_never_conflates_action_with_z() -> None:
     controlled, policy = _controlled_problem(policy_scale=0.25)
     _, _, problem, plan = _problem_and_plan(
         controlled_problem=controlled,
@@ -382,15 +384,15 @@ def test_bsde_bridge_preserves_ids_and_never_conflates_action_with_z():
     )
     result = fit_frozen_policy_bellman(problem, plan)
 
-    def controlled_drift(time, state, action, args):
+    def controlled_drift(time: Any, state: Any, action: Any, args: Any) -> Any:
         del time, state, args
         return action
 
-    def controlled_diffusion(time, state, action, args):
+    def controlled_diffusion(time: Any, state: Any, action: Any, args: Any) -> Any:
         del time, state, action, args
         return jnp.ones((1, 1))
 
-    def z_predictor(time, state):
+    def z_predictor(time: Any, state: Any) -> Any:
         del time, state
         return jnp.asarray([[7.0]])
 

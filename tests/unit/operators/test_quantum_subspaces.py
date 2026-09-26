@@ -12,7 +12,9 @@ import phydrax as phx
 q = phx.operators.quantum
 
 
-def test_basis_state_subspace_embeds_restricts_and_projects_without_one_hot_storage():
+def test_basis_state_subspace_embeds_restricts_and_projects_without_one_hot_storage() -> (
+    None
+):
     layout = q.HilbertRegisterLayout(("q0", "c", "q1"), (2, 3, 2))
     subspace = q.basis_state_subspace(
         layout,
@@ -32,7 +34,7 @@ def test_basis_state_subspace_embeds_restricts_and_projects_without_one_hot_stor
     )
 
 
-def test_dense_subspace_supports_batched_states_and_mixed_projection():
+def test_dense_subspace_supports_batched_states_and_mixed_projection() -> None:
     angle = jnp.asarray(0.31)
     isometry = jnp.asarray(
         [
@@ -59,7 +61,7 @@ def test_dense_subspace_supports_batched_states_and_mixed_projection():
     )
 
 
-def test_quantum_subspaces_reject_invalid_indices_isometries_and_shapes():
+def test_quantum_subspaces_reject_invalid_indices_isometries_and_shapes() -> None:
     with pytest.raises(ValueError, match="unique"):
         q.BasisStateSubspace(4, (1, 1))
     with pytest.raises(ValueError, match="within"):

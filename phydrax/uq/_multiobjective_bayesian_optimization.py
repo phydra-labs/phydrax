@@ -380,7 +380,8 @@ def _preflight(
     if problem.domain.continuous_dimension == 0:
         categorical = problem.domain.categorical
         # Construction rejects domains with neither continuous nor categorical axes.
-        assert categorical is not None
+        if not (categorical is not None):
+            raise RuntimeError("Internal invariant failed: categorical is not None.")
         initial_pool = categorical.size
     else:
         initial_pool = max(t, plan.initial_evaluations + p)

@@ -502,7 +502,10 @@ class TersoffHamannPlan(StrictModule, NonTrainableState):
         current = cumulative - cumulative[:, zero_index : zero_index + 1]
         numerical_derivative = jnp.gradient(current, self.biases, axis=-1)
         # One differentiation axis yields one gradient array, never a list.
-        assert isinstance(numerical_derivative, Array)
+        if not (isinstance(numerical_derivative, Array)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(numerical_derivative, Array)."
+            )
         denominator = jnp.maximum(jnp.max(jnp.abs(didv)), jnp.finfo(didv.dtype).tiny)
         closure = jnp.max(jnp.abs(numerical_derivative - didv)) / denominator
         passivity = jnp.maximum(-jnp.min(didv), 0.0)

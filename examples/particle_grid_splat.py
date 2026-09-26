@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -30,7 +33,7 @@ momentum = prepared.deposit_content(state, masses[:, None] * velocity)
 velocity_grid = prepared.reconstruct(state, velocity, masses)
 
 
-def density_objective(current_position):
+def density_objective(current_position: Any) -> Any:
     current = prepared.build(current_position)
     density = prepared.deposit_content(current, masses).density
     return jnp.mean(density**2)

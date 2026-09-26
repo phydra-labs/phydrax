@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -17,7 +20,7 @@ from phydrax.enforcement import (
 from phydrax.operators.differential import grad
 
 
-def _batch(domain, xs):
+def _batch(domain: Any, xs: Any) -> Any:
     structure = SampleLayout((("x",),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -32,11 +35,11 @@ def _batch(domain, xs):
     return PointBatch(points=points, structure=structure)
 
 
-def test_mixed_constraints_steady_state():
+def test_mixed_constraints_steady_state() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2
 
     left_component = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})

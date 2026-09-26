@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,11 +12,11 @@ import pytest
 import phydrax as phx
 
 
-def _resource_limits():
+def _resource_limits() -> Any:
     return phx.interchange.ResourceLimits(10_000, 2, 100, 100, 2)
 
 
-def _astrodynamics_context():
+def _astrodynamics_context() -> Any:
     astro = phx.applications.astrodynamics
     return astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),
@@ -22,7 +25,7 @@ def _astrodynamics_context():
     )
 
 
-def _astrodynamics_provenance(context):
+def _astrodynamics_provenance(context: Any) -> Any:
     astro = phx.applications.astrodynamics
     return astro.AstrodynamicsDataProvenance(
         producer="test",
@@ -37,7 +40,9 @@ def _astrodynamics_provenance(context):
     )
 
 
-def _degree_two_order_one_value_gradient(position, prefactor, cosine, sine):
+def _degree_two_order_one_value_gradient(
+    position: Any, prefactor: Any, cosine: Any, sine: Any
+) -> Any:
     position = np.asarray(position, dtype="float64")
     radius = np.linalg.norm(position)
     x, y, z = position
@@ -51,7 +56,7 @@ def _degree_two_order_one_value_gradient(position, prefactor, cosine, sine):
     return value, gradient
 
 
-def test_astrodynamics_uses_unnormalized_condon_shortley_harmonics():
+def test_astrodynamics_uses_unnormalized_condon_shortley_harmonics() -> None:
     astro = phx.applications.astrodynamics
     context = _astrodynamics_context()
     cosine_value, sine_value = 0.35, -0.22
@@ -95,8 +100,8 @@ def test_astrodynamics_uses_unnormalized_condon_shortley_harmonics():
     ),
 )
 def test_geophysical_gravity_honors_declared_normalization(
-    tmp_path, normalization, normalization_factor
-):
+    tmp_path: Any, normalization: Any, normalization_factor: Any
+) -> None:
     cosine_value, sine_value = 0.35, -0.22
     gravitational_constant, reference_radius = 7.0, 1.4
     coefficient_file = tmp_path / f"degree_2_order_1_{normalization}.gfc"
@@ -136,7 +141,7 @@ def test_geophysical_gravity_honors_declared_normalization(
     )
 
 
-def test_geomagnetic_schmidt_harmonics_apply_secular_epoch_offsets(tmp_path):
+def test_geomagnetic_schmidt_harmonics_apply_secular_epoch_offsets(tmp_path: Any) -> None:
     epoch, reference_radius = 2025.0, 1.4
     g, h, secular_g, secular_h = 120.0, -45.0, -3.5, 4.0
     coefficient_file = tmp_path / "degree_2_order_1.cof"

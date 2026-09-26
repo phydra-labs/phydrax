@@ -193,11 +193,14 @@ class CotranslationObservationLaw:
             radius = self.forster_radius
             radius_error = self.forster_radius_standard_error
             # __init__ requires every FRET calibration field for this observable.
-            assert (
+            if not (
                 length_unit is not None
                 and radius is not None
-                and radius_error is not None
-            )
+                and (radius_error is not None)
+            ):
+                raise RuntimeError(
+                    "Internal invariant failed: length_unit is not None and radius is not None and (radius_error is not None)."
+                )
             factor = float(conversion_factor(latent_unit, length_unit))
             distance = values * factor
             distance_error = latent_errors * factor

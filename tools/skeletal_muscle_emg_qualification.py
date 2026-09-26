@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -40,7 +41,7 @@ def qualify() -> dict[str, object]:
     frequency = 2.0 * jnp.pi * jnp.fft.fftfreq(8, d=0.005)
     source = jnp.zeros((8, 8), dtype=jnp.complex128).at[1, 0].set(1.0).at[-1, 0].set(1.0)
 
-    def conductor(depth):
+    def conductor(depth: Any) -> Any:
         return PetersenRostalski2019PlanarConductorPlan(
             frequency,
             frequency,

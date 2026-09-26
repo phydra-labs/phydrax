@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -14,13 +17,13 @@ from phydrax.operators.quantum.lattice import (
 )
 
 
-def _resources(maximum_dimension=128):
+def _resources(maximum_dimension: Any = 128) -> Any:
     return SectorBasisResourcePolicy(
         maximum_dimension=maximum_dimension, maximum_table_bytes=64_000
     )
 
 
-def _assert_rank_roundtrip(basis):
+def _assert_rank_roundtrip(basis: Any) -> None:
     coordinates = [
         np.asarray(basis.coordinate(index)) for index in range(basis.dimension)
     ]
@@ -30,7 +33,7 @@ def _assert_rank_roundtrip(basis):
         assert int(basis.rank(coordinate)) == index
 
 
-def test_direct_fixed_charge_bases_rank_without_ambient_enumeration():
+def test_direct_fixed_charge_bases_rank_without_ambient_enumeration() -> None:
     fermions = FixedCardinalityFermionBasis(
         FermionModeOrder(("a", "b", "c", "d")), 2, resources=_resources()
     )
@@ -45,10 +48,11 @@ def test_direct_fixed_charge_bases_rank_without_ambient_enumeration():
     _assert_rank_roundtrip(spins)
     _assert_rank_roundtrip(bosons)
     with pytest.raises(TypeError, match="integer dtype"):
+        # ty: ignore[invalid-argument-type]
         fermions.rank((0.0, 0.0, 1.0, 1.0))
 
 
-def test_sector_construction_refuses_dimension_before_coordinate_storage():
+def test_sector_construction_refuses_dimension_before_coordinate_storage() -> None:
     with pytest.raises(ValueError, match="maximum_dimension"):
         FixedCardinalityFermionBasis(
             FermionModeOrder(tuple(f"m{index}" for index in range(12))),

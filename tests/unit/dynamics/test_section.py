@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _oscillator_evolution():
+def _oscillator_evolution() -> Any:
     layout = phx.dynamics.StateLayout((2,), component_names=("x", "velocity"))
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: jnp.asarray([state[1], -state[0]]),
@@ -24,7 +27,7 @@ def _oscillator_evolution():
     )
 
 
-def test_evolution_refined_oriented_sections_and_return_map():
+def test_evolution_refined_oriented_sections_and_return_map() -> None:
     layout, evolution = _oscillator_evolution()
     grid = phx.dynamics.TimeGrid(
         jnp.linspace(0.0, 5.0 * jnp.pi, 43), time_id="section-grid"
@@ -65,7 +68,7 @@ def test_evolution_refined_oriented_sections_and_return_map():
     )
 
 
-def test_callable_sections_preserve_case_axes_and_report_overflow():
+def test_callable_sections_preserve_case_axes_and_report_overflow() -> None:
     time = jnp.linspace(0.0, 6.0 * jnp.pi, 241)
     phases = jnp.asarray([0.0, 0.3])
     states = jnp.stack(
@@ -105,7 +108,7 @@ def test_callable_sections_preserve_case_axes_and_report_overflow():
     assert bool(jnp.all(jnp.abs(crossings.section_values) < 1e-9))
 
 
-def test_discrete_evolution_refinement_is_rejected_before_bisection():
+def test_discrete_evolution_refinement_is_rejected_before_bisection() -> None:
     layout = phx.dynamics.StateLayout((1,))
     evolution = phx.dynamics.DiscreteEvolution(
         phx.dynamics.DiscreteSystem(

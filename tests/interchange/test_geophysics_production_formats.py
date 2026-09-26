@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
 import struct
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -36,11 +38,11 @@ from phydrax.interchange import (
 from phydrax.units import DEGREE, METER, PASCAL
 
 
-def _limits(max_bytes=10_000_000):
+def _limits(max_bytes: Any = 10_000_000) -> Any:
     return ResourceLimits(max_bytes, 8, 100_000, 100_000, 100)
 
 
-def _local(registration="pixel"):
+def _local(registration: Any = "pixel") -> Any:
     return GeospatialContract.local_cartesian(
         phx.SpatialCoordinateContract(METER, reference_frame="survey"),
         vertical_datum="local",
@@ -49,7 +51,7 @@ def _local(registration="pixel"):
     )
 
 
-def _geographic():
+def _geographic() -> Any:
     return GeospatialContract(
         phx.SpatialCoordinateContract(METER, reference_frame="earth"),
         horizontal_crs="EPSG:4326",
@@ -69,7 +71,7 @@ def _geographic():
     )
 
 
-def _segy_rev2_bytes():
+def _segy_rev2_bytes() -> Any:
     text = bytearray(b" " * 3200)
     binary = bytearray(400)
     struct.pack_into(">H", binary, 16, 2000)
@@ -103,7 +105,7 @@ def _segy_rev2_bytes():
     return bytes(text + binary) + b"".join(records)
 
 
-def test_explicit_proj_pipeline_runtime_smoke_and_variable_length_segy_rev2():
+def test_explicit_proj_pipeline_runtime_smoke_and_variable_length_segy_rev2() -> None:
     pyproj = pytest.importorskip("pyproj")
     source = _geographic()
     target = GeospatialContract(
@@ -133,6 +135,7 @@ def test_explicit_proj_pipeline_runtime_smoke_and_variable_length_segy_rev2():
         expected_resource_sha256={"proj.db": proj_database_sha256},
         source_bounds=((-180, 180), (-90, 90), (-1000, 100000)),
         maximum_resource_bytes=100_000_000,
+        # ty: ignore[invalid-argument-type]
     ).execute([[0.0, 0.0, 0.0]])
     np.testing.assert_allclose(transform.coordinates[0], [6378137.0, 0.0, 0.0], atol=1e-6)
     assert not transform.transform.parameters["network_enabled"]
@@ -149,6 +152,7 @@ def test_explicit_proj_pipeline_runtime_smoke_and_variable_length_segy_rev2():
             expected_resource_sha256={"proj.db": "0" * 64},
             source_bounds=((-180, 180), (-90, 90), (-1000, 100000)),
             maximum_resource_bytes=100_000_000,
+            # ty: ignore[invalid-argument-type]
         ).execute([[0.0, 0.0, 0.0]])
 
     decoded = decode_segy_rev2_bytes(
@@ -175,7 +179,7 @@ def test_explicit_proj_pipeline_runtime_smoke_and_variable_length_segy_rev2():
     )
 
 
-def test_electrical_mt_gravity_and_geodetic_text_profiles(tmp_path):
+def test_electrical_mt_gravity_and_geodetic_text_profiles(tmp_path: Any) -> None:
     electrical = tmp_path / "survey.csv"
     electrical.write_text(
         "source_a_x,source_a_y,source_a_z,source_b_x,source_b_y,source_b_z,"
@@ -286,12 +290,15 @@ def test_electrical_mt_gravity_and_geodetic_text_profiles(tmp_path):
     np.testing.assert_allclose(positions.ecef_m, [[1.0, 2.0, 3.0]])
 
 
-def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
+def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path: Any) -> None:
     obspy = pytest.importorskip("obspy")
     rasterio = pytest.importorskip("rasterio")
     xr = pytest.importorskip("xarray")
     pymseed = pytest.importorskip("pymseed")
+    # ty: ignore[unresolved-import]
     from obspy.core.inventory import Channel, Inventory, Network, Site, Station
+
+    # ty: ignore[unresolved-import]
     from rasterio.transform import from_origin
 
     local = _local()
@@ -374,6 +381,7 @@ def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
         "unix",
         10.0,
         epoch_nominal_seconds=0.0,
+        # ty: ignore[invalid-argument-type]
         leap_seconds=LeapSecondTable([], [], 10.0, leap_resource),
     )
     trace = obspy.Trace(np.asarray([1.0, 2.0, 3.0], dtype=np.float32))
@@ -484,7 +492,12 @@ def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
     assert metadata.channels[0].sample_rate_hz == 10.0
 
     trajectory = BoreholeTrajectory(
-        "well", [0.0, 10.0], [[0, 0, 0], [0, 0, -10]], _local(registration="unknown")
+        "well",
+        # ty: ignore[invalid-argument-type]
+        [0.0, 10.0],
+        # ty: ignore[invalid-argument-type]
+        [[0, 0, 0], [0, 0, -10]],
+        _local(registration="unknown"),
     )
     las = tmp_path / "well.las"
     las.write_text(

@@ -1005,14 +1005,7 @@ class InProcessReferenceService:
     ) -> ArtifactDescriptor:
         principal = self._authenticate(token)
         self._authorize(principal, "service:artifact:write", principal.tenant_id)
-        if classification not in {
-            "scientific",
-            "cad",
-            "checkpoint",
-            "diagnostic",
-            "support",
-        }:
-            raise IntegrityError("Artifact classification is not accepted.")
+        classification = parse(classification, ArtifactClassification, "classification")
         if (
             not isinstance(content, bytes)
             or not scientific_artifact_id
@@ -2105,12 +2098,13 @@ class InProcessReferenceService:
                 or not isinstance(content_sha256, str)
                 or len(content_sha256) != 64
                 or not isinstance(classification, str)
-                or classification
-                not in {"scientific", "cad", "checkpoint", "diagnostic", "support"}
                 or not isinstance(rights_binding_id, str)
                 or len(rights_binding_id) != 64
             ):
                 raise IntegrityError("Artifact grant payload is invalid.")
+            classification = parse(
+                classification, ArtifactClassification, "classification"
+            )
             return (
                 artifact_id,
                 tenant_id,

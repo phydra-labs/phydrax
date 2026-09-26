@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -11,17 +14,17 @@ from phydrax._frozendict import frozendict
 from phydrax.operators.differential import div_K_grad, div_k_grad
 
 
-def test_div_k_grad_scalar_point():
+def test_div_k_grad_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     @geom.Function("x")
-    def k(x):
+    def k(x: Any) -> Any:
         return x[0] + 2.0 * x[1]
 
     op = div_k_grad(u, k)
@@ -31,17 +34,17 @@ def test_div_k_grad_scalar_point():
     assert jnp.allclose(out, expected)
 
 
-def test_div_k_grad_vector_point():
+def test_div_k_grad_vector_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     @geom.Function("x")
-    def k(x):
+    def k(x: Any) -> Any:
         return x[0] + 2.0 * x[1]
 
     op = div_k_grad(u, k)
@@ -51,7 +54,7 @@ def test_div_k_grad_vector_point():
     assert jnp.allclose(out, expected)
 
 
-def test_div_k_grad_coord_separable(sample_grid):
+def test_div_k_grad_coord_separable(sample_grid: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -59,12 +62,12 @@ def test_div_k_grad_coord_separable(sample_grid):
     batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         x, y = x
         return x**2 + y**2
 
     @geom.Function("x")
-    def k(x):
+    def k(x: Any) -> Any:
         x, y = x
         return x + 2.0 * y
 
@@ -76,17 +79,17 @@ def test_div_k_grad_coord_separable(sample_grid):
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_div_K_grad_scalar_point():
+def test_div_K_grad_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     @geom.Function("x")
-    def K(x):
+    def K(x: Any) -> Any:
         return jnp.array([[x[0], x[1]], [x[1], x[0]]])
 
     op = div_K_grad(u, K)
@@ -95,17 +98,17 @@ def test_div_K_grad_scalar_point():
     assert jnp.allclose(out, 8.0 * 2.0)
 
 
-def test_div_K_grad_vector_point():
+def test_div_K_grad_vector_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     @geom.Function("x")
-    def K(x):
+    def K(x: Any) -> Any:
         return jnp.array([[x[0], x[1]], [x[1], x[0]]])
 
     op = div_K_grad(u, K)
@@ -115,7 +118,7 @@ def test_div_K_grad_vector_point():
     assert jnp.allclose(out, expected)
 
 
-def test_div_K_grad_coord_separable(sample_grid):
+def test_div_K_grad_coord_separable(sample_grid: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -123,12 +126,12 @@ def test_div_K_grad_coord_separable(sample_grid):
     batch = sample_grid(component, {"x": (5, 4)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         x, y = x
         return x**2 + y**2
 
     @geom.Function("x")
-    def K(x):
+    def K(x: Any) -> Any:
         x, y = x
         row0 = jnp.stack([x, y], axis=-1)
         row1 = jnp.stack([y, x], axis=-1)
@@ -142,7 +145,7 @@ def test_div_K_grad_coord_separable(sample_grid):
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_div_k_grad_preserves_metadata():
+def test_div_k_grad_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -150,17 +153,17 @@ def test_div_k_grad_preserves_metadata():
     assert div_k_grad(u, 1.0).metadata == u.metadata
 
 
-def test_div_k_grad_ad_engine_jvp_matches_default_point():
+def test_div_k_grad_ad_engine_jvp_matches_default_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     @geom.Function("x")
-    def k(x):
+    def k(x: Any) -> Any:
         return 1.0 + x[0] - 0.5 * x[1]
 
     pts = frozendict({"x": cx.AxisArray(jnp.array([0.3, -0.7]), dims=(None,))})
@@ -169,30 +172,30 @@ def test_div_k_grad_ad_engine_jvp_matches_default_point():
     assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
 
 
-def test_div_k_grad_ad_engine_requires_ad_backend():
+def test_div_k_grad_ad_engine_requires_ad_backend() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     with pytest.raises(ValueError, match="backend='ad'"):
         div_k_grad(u, 1.0, backend="fd", ad_engine="jvp")
 
 
-def test_div_K_grad_ad_engine_jvp_matches_default_point():
+def test_div_K_grad_ad_engine_jvp_matches_default_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     @geom.Function("x")
-    def K(x):
+    def K(x: Any) -> Any:
         return jnp.array([[1.0 + x[0], x[1]], [x[1], 2.0 + x[0]]])
 
     pts = frozendict({"x": cx.AxisArray(jnp.array([0.2, -0.4]), dims=(None,))})

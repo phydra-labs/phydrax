@@ -248,8 +248,7 @@ class BoundaryStencilSet(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(stencil, LinearStencil):
             raise TypeError("stencil must be a LinearStencil.")
-        if kind not in ("periodic", "one_sided"):
-            raise ValueError("Unknown boundary stencil kind.")
+        kind = parse(kind, BoundaryClosureKind, "kind")
         interior_rows = [
             report.achieved_accuracy_order
             for report in stencil.row_reports

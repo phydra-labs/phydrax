@@ -218,7 +218,7 @@ def _precision_bundle(payload: dict[str, Any], /) -> CampaignPrecisionBundle:
     return bundle
 
 
-def _physicality(payload: dict[str, Any], precision: CampaignPrecisionBundle):
+def _physicality(payload: dict[str, Any], precision: CampaignPrecisionBundle) -> Any:
     optional = lambda name: np.nan if payload[name] is None else payload[name]
     evidence = OpenSystemPhysicalityEvidence(
         trace_residual=optional("trace_residual"),

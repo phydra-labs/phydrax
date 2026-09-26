@@ -2,18 +2,21 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _feature_map(point):
+def _feature_map(point: Any) -> Any:
     coordinate = point[0]
     return jnp.array([1.0, coordinate, coordinate**2, jnp.sin(coordinate)])
 
 
-def test_finite_feature_kernel_matches_explicit_whitened_features():
+def test_finite_feature_kernel_matches_explicit_whitened_features() -> None:
     points = jnp.linspace(-1.0, 1.0, 11)
     factor = jnp.array(
         [
@@ -38,7 +41,7 @@ def test_finite_feature_kernel_matches_explicit_whitened_features():
     assert kernel.max_derivative_order is None
 
 
-def test_exact_discrepancy_uses_weight_space_with_dense_numerical_parity():
+def test_exact_discrepancy_uses_weight_space_with_dense_numerical_parity() -> None:
     points = jnp.linspace(-1.0, 1.0, 30)
     observations = jnp.sin(2.0 * points)
     factor = jnp.array(
@@ -105,7 +108,7 @@ def test_exact_discrepancy_uses_weight_space_with_dense_numerical_parity():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_structured_factor_resolves_wrapped_finite_features():
+def test_structured_factor_resolves_wrapped_finite_features() -> None:
     points = jnp.linspace(-1.0, 1.0, 10)
     kernel = phx.kernels.FiniteFeatureKernel(
         _feature_map,
@@ -131,7 +134,7 @@ def test_structured_factor_resolves_wrapped_finite_features():
     )
 
 
-def test_automatic_feature_factor_requires_rank_below_observation_count():
+def test_automatic_feature_factor_requires_rank_below_observation_count() -> None:
     points = jnp.linspace(-1.0, 1.0, 4)
     observations = jnp.zeros_like(points)
     model = phx.uq.ExactGaussianProcessDiscrepancy(points, observations)

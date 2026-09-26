@@ -7,7 +7,7 @@ from tools.stochastic_non_brownian import (
 )
 
 
-def test_stable_levy_poisson_tail_and_characteristic_function_references_pass():
+def test_stable_levy_poisson_tail_and_characteristic_function_references_pass() -> None:
     result = run_levy_stable_reference_benchmark(jr.key(100), num_paths=8192)
 
     assert result.passed
@@ -15,7 +15,9 @@ def test_stable_levy_poisson_tail_and_characteristic_function_references_pass():
     assert result.characteristic_function_max_error < 0.035
 
 
-def test_fractional_covariance_self_similarity_and_rough_equation_references_pass():
+def test_fractional_covariance_self_similarity_and_rough_equation_references_pass() -> (
+    None
+):
     result = run_fractional_rough_reference_benchmark(jr.key(101), num_paths=1024)
 
     assert result.passed
@@ -23,7 +25,7 @@ def test_fractional_covariance_self_similarity_and_rough_equation_references_pas
     assert result.rough_linear_relative_rmse < 4e-3
 
 
-def test_volterra_delay_and_interacting_particle_references_pass():
+def test_volterra_delay_and_interacting_particle_references_pass() -> None:
     result = run_memory_particle_reference_benchmark(jr.key(102), num_paths=4096)
 
     assert result.passed

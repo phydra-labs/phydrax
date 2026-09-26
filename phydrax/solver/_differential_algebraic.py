@@ -1786,7 +1786,10 @@ def _dense_prepared_initialization_regularity(
     source = nonlinear_problem.state_space
     target = nonlinear_problem.residual_space
     # The DAE initialization root is always constructed with bound scaled spaces.
-    assert source is not None and target is not None
+    if not (source is not None and target is not None):
+        raise RuntimeError(
+            "Internal invariant failed: source is not None and target is not None."
+        )
 
     def residual(current: Array) -> Array:
         return target.flatten(
@@ -1858,7 +1861,10 @@ def _dense_stage_regularity(
     source = prepared.stage_problem.state_space
     target = prepared.stage_problem.residual_space
     # The DAE stage root is always constructed with bound scaled spaces.
-    assert source is not None and target is not None
+    if not (source is not None and target is not None):
+        raise RuntimeError(
+            "Internal invariant failed: source is not None and target is not None."
+        )
     # Probe the solved physical state/rate without recovering a rounded increment.
     centered_arguments = eqx.tree_at(
         lambda value: (value.rate_reference, value.rate_offset, value.fallback_state),

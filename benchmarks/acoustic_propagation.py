@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -56,7 +58,7 @@ def main() -> None:
     )
     cotangent = jnp.ones((acquisition.receivers.count, args.steps + 1))
 
-    def forward(speed):
+    def forward(speed: Any) -> Any:
         return plan.simulate(
             speed,
             acquisition,
@@ -65,7 +67,7 @@ def main() -> None:
             block_size=min(16, args.steps),
         ).traces.values
 
-    def evaluate(speed):
+    def evaluate(speed: Any) -> Any:
         traces, tangent = jax.jvp(forward, (speed,), (direction,))
         _, pullback = jax.vjp(forward, speed)
         adjoint = pullback(cotangent)[0]

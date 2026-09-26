@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import pytest
 
@@ -26,7 +28,7 @@ def _transformation() -> AdapterLoss:
     )
 
 
-def _report(status: AdapterStatus, *, losses=()) -> AdapterReport:
+def _report(status: AdapterStatus, *, losses: Any = ()) -> AdapterReport:
     return AdapterReport(
         status,
         "source-format",
@@ -40,7 +42,7 @@ def _report(status: AdapterStatus, *, losses=()) -> AdapterReport:
     )
 
 
-def test_report_construction_preserves_transformations_as_static_metadata():
+def test_report_construction_preserves_transformations_as_static_metadata() -> None:
     transformation = _transformation()
     report = _report(AdapterStatus.DECLARED_LOSS, losses=(transformation,))
 
@@ -58,7 +60,7 @@ def test_report_construction_preserves_transformations_as_static_metadata():
     assert restored.losses == (transformation,)
 
 
-def test_report_construction_rejects_inconsistent_loss_accounting():
+def test_report_construction_rejects_inconsistent_loss_accounting() -> None:
     transformation = _transformation()
 
     with pytest.raises(ValueError, match="lossless report"):
@@ -67,7 +69,7 @@ def test_report_construction_rejects_inconsistent_loss_accounting():
         _report(AdapterStatus.DECLARED_LOSS)
 
 
-def test_require_lossless_accepts_lossless_and_reports_declared_loss():
+def test_require_lossless_accepts_lossless_and_reports_declared_loss() -> None:
     require_lossless(_report(AdapterStatus.LOSSLESS))
 
     declared = _report(AdapterStatus.DECLARED_LOSS, losses=(_transformation(),))

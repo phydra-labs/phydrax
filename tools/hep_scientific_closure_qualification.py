@@ -7,11 +7,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import phydrax as phx
 
 
-def qualification_record():
+def qualification_record() -> Any:
     criterion = phx.qualification.ScientificMetricCriterion(
         "maximum-relative-residual",
         "at_most",

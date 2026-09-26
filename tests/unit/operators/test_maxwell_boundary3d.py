@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -41,12 +43,12 @@ _OCTAHEDRON_FACES = jnp.asarray(
 )
 
 
-def _space():
+def _space() -> Any:
     surface = OrientedTriangleSurfaceComplex3D(_OCTAHEDRON_VERTICES, _OCTAHEDRON_FACES)
     return RWGSurfaceCurrentSpace3D(surface)
 
 
-def _policy(**kwargs):
+def _policy(**kwargs: Any) -> Any:
     values = dict(
         regular_order=2,
         singular_order=2,
@@ -58,14 +60,15 @@ def _policy(**kwargs):
         max_condition_number=1.0e14,
     )
     values.update(kwargs)
+    # ty: ignore[invalid-argument-type]
     return MaxwellEFIEPolicy3D(**values)
 
 
-def _prepared():
+def _prepared() -> Any:
     return prepare_maxwell_efie_3d(_space(), 0.7, policy=_policy())
 
 
-def _torus_surface(major_count=3, minor_count=3):
+def _torus_surface(major_count: Any = 3, minor_count: Any = 3) -> Any:
     vertices = []
     for major in range(major_count):
         u = 2.0 * np.pi * major / major_count
@@ -74,7 +77,7 @@ def _torus_surface(major_count=3, minor_count=3):
             radius = 2.0 + 0.6 * np.cos(v)
             vertices.append([radius * np.cos(u), radius * np.sin(u), 0.6 * np.sin(v)])
 
-    def index(major, minor):
+    def index(major: Any, minor: Any) -> Any:
         return (major % major_count) * minor_count + (minor % minor_count)
 
     faces = []
@@ -90,7 +93,7 @@ def _torus_surface(major_count=3, minor_count=3):
     )
 
 
-def test_oriented_complex_boundary_and_rwg_divergence_identities():
+def test_oriented_complex_boundary_and_rwg_divergence_identities() -> None:
     space = _space()
     surface = space.surface
     tolerance = 50.0 * jnp.finfo(surface.vertices.dtype).eps
@@ -116,7 +119,7 @@ def test_oriented_complex_boundary_and_rwg_divergence_identities():
     )
 
 
-def test_rwg_is_edge_based_tangential_and_conforming_not_a_scalar_face_space():
+def test_rwg_is_edge_based_tangential_and_conforming_not_a_scalar_face_space() -> None:
     space = _space()
     surface = space.surface
     tolerance = 50.0 * jnp.finfo(surface.vertices.dtype).eps
@@ -134,13 +137,14 @@ def test_rwg_is_edge_based_tangential_and_conforming_not_a_scalar_face_space():
 
     with pytest.raises(TypeError, match="scalar spaces are not accepted"):
         prepare_maxwell_efie_3d(
+            # ty: ignore[invalid-argument-type]
             ArraySpace((surface.face_count,), dtype=jnp.complex128),
             0.7,
             policy=_policy(),
         )
 
 
-def test_maxwell_efie_complex_transpose_and_adjoint_are_distinct_and_exact():
+def test_maxwell_efie_complex_transpose_and_adjoint_are_distinct_and_exact() -> None:
     prepared = _prepared()
     operator = prepared.operator
     x = (
@@ -171,7 +175,7 @@ def test_maxwell_efie_complex_transpose_and_adjoint_are_distinct_and_exact():
     )
 
 
-def test_off_surface_maxwell_green_dyadic_action_and_duals_are_finite():
+def test_off_surface_maxwell_green_dyadic_action_and_duals_are_finite() -> None:
     prepared = _prepared()
     action = prepare_maxwell_electric_field_action_3d(
         prepared,
@@ -208,7 +212,7 @@ def test_off_surface_maxwell_green_dyadic_action_and_duals_are_finite():
         )
 
 
-def test_bounded_sphere_like_pec_efie_solve_is_finite():
+def test_bounded_sphere_like_pec_efie_solve_is_finite() -> None:
     prepared = _prepared()
     centers = prepared.current_space.surface.face_centroids
     incident = jnp.exp(1j * prepared.wavenumber * centers[:, 2])[:, None] * jnp.asarray(
@@ -229,7 +233,7 @@ def test_bounded_sphere_like_pec_efie_solve_is_finite():
     assert "CFIE or interior-resonance removal" in result.assembly_report.non_goals
 
 
-def test_low_frequency_orientation_and_topology_risks_fail_closed():
+def test_low_frequency_orientation_and_topology_risks_fail_closed() -> None:
     space = _space()
     with pytest.raises(ValueError, match="Low-frequency EFIE rejected"):
         prepare_maxwell_efie_3d(space, 1.0e-3, policy=_policy())

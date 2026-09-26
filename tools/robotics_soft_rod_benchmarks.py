@@ -37,7 +37,7 @@ def _synchronize(value: Any, /) -> None:
             leaf.block_until_ready()
 
 
-def _measure(operation: Callable[[], Any], /, *, repeats: int):
+def _measure(operation: Callable[[], Any], /, *, repeats: int) -> Any:
     result = operation()
     _synchronize(result)
     samples = []
@@ -67,7 +67,7 @@ def _storage_bytes(value: Any, /) -> int:
     return total
 
 
-def _prepare_case(case: dict[str, int], /):
+def _prepare_case(case: dict[str, int], /) -> Any:
     dtype = jnp.float32
     segment_count = case["segments"]
     piece_count = case["pieces"]
@@ -156,7 +156,7 @@ def _prepare_case(case: dict[str, int], /):
     )
 
 
-def _rollout(plant, case: dict[str, int], /):
+def _rollout(plant: Any, case: dict[str, int], /) -> Any:
     parameters = plant.bind_parameters()
     results = []
     for world in range(case["worlds"]):

@@ -15,7 +15,7 @@ from phydrax.optics.transport._tissue import (
 )
 
 
-def test_layered_nonscattering_slab_matches_piecewise_beer_lambert_reference():
+def test_layered_nonscattering_slab_matches_piecewise_beer_lambert_reference() -> None:
     count = 32_768
     vertices = jnp.asarray(
         [

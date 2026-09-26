@@ -23,7 +23,7 @@ class Flag(enum.IntEnum):
     ON = 1
 
 
-def test_size_accepts_only_exact_ints_at_or_above_the_minimum():
+def test_size_accepts_only_exact_ints_at_or_above_the_minimum() -> None:
     assert pt.parse(3, pt.Size[ComponentDim], "count") == 3
     for wrong_kind in (True, np.int64(3), Flag.ON, 3.0):
         with pytest.raises(TypeError):
@@ -32,7 +32,7 @@ def test_size_accepts_only_exact_ints_at_or_above_the_minimum():
         pt.parse(0, pt.Size[ComponentDim], "count")
 
 
-def test_identifier_accepts_canonical_strings():
+def test_identifier_accepts_canonical_strings() -> None:
     assert pt.parse("h2o", pt.Identifier, "name") == "h2o"
     with pytest.raises(TypeError):
         pt.parse(b"h2o", pt.Identifier, "name")
@@ -41,7 +41,7 @@ def test_identifier_accepts_canonical_strings():
             pt.parse(invalid, pt.Identifier, "name")
 
 
-def test_identifiers_are_unique_canonical_tuples_that_bind_their_dimension():
+def test_identifiers_are_unique_canonical_tuples_that_bind_their_dimension() -> None:
     scope = pt.Scope()
     names = ("h2", "o2")
 
@@ -57,7 +57,7 @@ def test_identifiers_are_unique_canonical_tuples_that_bind_their_dimension():
         pt.parse((), pt.Identifiers[ComponentDim], "names")
 
 
-def test_literal_parse_returns_the_declared_literal():
+def test_literal_parse_returns_the_declared_literal() -> None:
     parsed = pt.parse(np.str_("nodal"), Basis, "basis")
 
     assert parsed == "nodal" and type(parsed) is str
@@ -68,20 +68,20 @@ def test_literal_parse_returns_the_declared_literal():
         pt.parse(np.asarray(["nodal"]), Basis, "basis")
 
 
-def test_literal_parse_prefers_exact_types_before_equality():
+def test_literal_parse_prefers_exact_types_before_equality() -> None:
     assert type(pt.parse(True, Literal[1, True], "flag")) is bool
     parsed = pt.parse(True, Literal[1], "flag")
     assert parsed == 1 and type(parsed) is int
     assert pt.parse(Mode.DENSE, Literal["dense"] | Mode, "mode") is Mode.DENSE
 
 
-def test_enums_are_matched_by_membership_only():
+def test_enums_are_matched_by_membership_only() -> None:
     assert pt.parse(Mode.SPARSE, Mode, "mode") is Mode.SPARSE
     with pytest.raises(TypeError):
         pt.parse("sparse", Mode, "mode")
 
 
-def test_optional_and_fixed_tuple_compositions():
+def test_optional_and_fixed_tuple_compositions() -> None:
     assert pt.parse(None, pt.Identifier | None, "parent") is None
     pair = pt.parse((2, "h2"), tuple[pt.Size[ComponentDim], pt.Identifier], "pair")
     assert pair == (2, "h2")

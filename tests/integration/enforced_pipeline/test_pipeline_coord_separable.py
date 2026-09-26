@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -11,12 +14,12 @@ from phydrax.domain import Interval1d, SampleLayout
 from phydrax.operators.differential import partial_x
 
 
-def test_coord_separable_matches_dense_partial_x():
+def test_coord_separable_matches_dense_partial_x() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 2
 
     sep = component.sample(phx.domain.GridSampling({"x": 8}, design="latin_hypercube"))

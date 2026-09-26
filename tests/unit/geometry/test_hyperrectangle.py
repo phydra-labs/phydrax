@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def test_hyperrectangle_basic_measures():
+def test_hyperrectangle_basic_measures() -> None:
     geom = phx.domain.HyperRectangle(
         lower=jnp.array([-1.0, 0.0, 2.0]),
         upper=jnp.array([1.0, 3.0, 6.0]),
@@ -26,7 +29,7 @@ def test_hyperrectangle_basic_measures():
     assert np.isclose(float(geom.boundary_measure_value), 52.0)
 
 
-def test_hyperrectangle_rejects_invalid_bounds():
+def test_hyperrectangle_rejects_invalid_bounds() -> None:
     with pytest.raises(ValueError, match="matching shapes"):
         phx.domain.HyperRectangle(lower=jnp.zeros((2,)), upper=jnp.ones((3,)))
 
@@ -36,7 +39,7 @@ def test_hyperrectangle_rejects_invalid_bounds():
         )
 
 
-def test_hyperrectangle_contains_boundary_normals_and_adf():
+def test_hyperrectangle_contains_boundary_normals_and_adf() -> None:
     geom = phx.domain.HyperRectangle(
         lower=jnp.array([0.0, -1.0]), upper=jnp.array([2.0, 3.0])
     )
@@ -63,7 +66,7 @@ def test_hyperrectangle_contains_boundary_normals_and_adf():
     assert sdf[3] > 0.0
 
 
-def test_hyperrectangle_sampling_shapes_and_membership():
+def test_hyperrectangle_sampling_shapes_and_membership() -> None:
     geom = phx.domain.HyperRectangle(
         lower=jnp.array([-1.0, 0.0]), upper=jnp.array([1.0, 2.0])
     )
@@ -79,7 +82,7 @@ def test_hyperrectangle_sampling_shapes_and_membership():
     assert np.allclose(np.asarray(jnp.linalg.norm(normals, axis=-1)), 1.0)
 
 
-def test_hyperrectangle_rejects_hammersley_with_rejection_filters():
+def test_hyperrectangle_rejects_hammersley_with_rejection_filters() -> None:
     geom = phx.domain.HyperRectangle(
         lower=jnp.asarray([0.0, 0.0]),
         upper=jnp.asarray([1.0, 1.0]),
@@ -98,7 +101,7 @@ def test_hyperrectangle_rejects_hammersley_with_rejection_filters():
             )
 
 
-def test_hyperrectangle_reflects_large_adaptive_moves_under_jit():
+def test_hyperrectangle_reflects_large_adaptive_moves_under_jit() -> None:
     geom = phx.domain.HyperRectangle(
         lower=jnp.array([-1.0, 0.0]),
         upper=jnp.array([1.0, 2.0]),
@@ -113,7 +116,7 @@ def test_hyperrectangle_reflects_large_adaptive_moves_under_jit():
     assert bool(jnp.all(result.reflection_count > 0))
 
 
-def test_hyperrectangle_coord_separable_sampling():
+def test_hyperrectangle_coord_separable_sampling() -> None:
     geom = phx.domain.HyperRectangle(
         lower=jnp.array([0.0, 1.0]), upper=jnp.array([2.0, 3.0])
     )
@@ -135,15 +138,15 @@ def test_hyperrectangle_coord_separable_sampling():
     assert batch.coord_mask_by_label["x"].data.shape == (5, 7)
 
 
-def test_hyperrectangle_finite_observation_with_stacked_points():
+def test_hyperrectangle_finite_observation_with_stacked_points() -> None:
     geom = phx.domain.HyperRectangle(lower=jnp.zeros((2,)), upper=jnp.ones((2,)))
 
     @geom.Function("x")
-    def exact(x):
+    def exact(x: Any) -> Any:
         return x[0] + 2.0 * x[1]
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] + 2.0 * x[1]
 
     points = jnp.array([[0.1, 0.2], [0.4, 0.5], [0.8, 0.3]], dtype="float64")
@@ -159,7 +162,7 @@ def test_hyperrectangle_finite_observation_with_stacked_points():
     assert loss < 1e-10
 
 
-def test_hyperrectangle_domain_model_gets_vector_points():
+def test_hyperrectangle_domain_model_gets_vector_points() -> None:
     geom = phx.domain.HyperRectangle(lower=jnp.zeros((6,)), upper=jnp.ones((6,)))
     model = phx.nn.models.SeparableMLP(
         in_size=6,

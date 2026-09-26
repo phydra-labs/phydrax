@@ -1,12 +1,15 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _node_complex():
+def _node_complex() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8),),
         axis_names=("x",),
@@ -32,7 +35,7 @@ def _node_complex():
     ).prepare(topology)[0]
 
 
-def test_entity_gather_scatter_is_exact_signed_transpose_at_shared_node():
+def test_entity_gather_scatter_is_exact_signed_transpose_at_shared_node() -> None:
     complex_ = _node_complex()
     plan = phx.discretization.VariablePatchEntityExecutionPlan(complex_, 0)
     state = phx.discretization.VariablePatchEntityFieldState(
@@ -56,7 +59,9 @@ def test_entity_gather_scatter_is_exact_signed_transpose_at_shared_node():
     assert scattered[4] == 2.0
 
 
-def test_entity_execution_supports_oriented_edges_without_patch_local_duplication():
+def test_entity_execution_supports_oriented_edges_without_patch_local_duplication() -> (
+    None
+):
     complex_ = _node_complex()
     plan = phx.discretization.VariablePatchEntityExecutionPlan(complex_, 1)
     state = phx.discretization.VariablePatchEntityFieldState(

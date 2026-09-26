@@ -4,7 +4,7 @@ import pytest
 import phydrax as phx
 
 
-def test_cartesian_encoding_adjoint_and_cg_sense_recover_image():
+def test_cartesian_encoding_adjoint_and_cg_sense_recover_image() -> None:
     coils = phx.imaging.mri.CoilSensitivityField(
         np.ones((1, 4, 4), dtype=np.complex64),
         ("coil-0",),
@@ -23,7 +23,7 @@ def test_cartesian_encoding_adjoint_and_cg_sense_recover_image():
     assert bool(reconstruction.successful)
 
 
-def test_nonuniform_encoding_and_adjoint_obey_complex_inner_product():
+def test_nonuniform_encoding_and_adjoint_obey_complex_inner_product() -> None:
     coils = phx.imaging.mri.CoilSensitivityField(
         np.ones((1, 4, 4), dtype=np.complex64),
         ("coil-0",),
@@ -43,7 +43,7 @@ def test_nonuniform_encoding_and_adjoint_obey_complex_inner_product():
     assert bool(evidence.successful)
 
 
-def test_coil_prewhitening_regularization_and_timed_off_resonance():
+def test_coil_prewhitening_regularization_and_timed_off_resonance() -> None:
     covariance = phx.imaging.mri.CoilNoiseCovariance(
         np.asarray(((4.0, 0.0), (0.0, 1.0))),
         ("coil-0", "coil-1"),
@@ -103,7 +103,7 @@ def test_coil_prewhitening_regularization_and_timed_off_resonance():
     np.testing.assert_allclose(millisecond_plan.sample_times_seconds, (0.0, 0.1, 0.2))
 
 
-def test_phase_contrast_quantitative_and_bloch_models_keep_physics_explicit():
+def test_phase_contrast_quantitative_and_bloch_models_keep_physics_explicit() -> None:
     phase = phx.imaging.mri.PhaseContrastMRIPlan(2.0)
     velocity = np.asarray((0.5, -0.5))
     signal = phase.encode(np.ones(2), velocity)
@@ -127,7 +127,7 @@ def test_phase_contrast_quantitative_and_bloch_models_keep_physics_explicit():
     assert bloch.magnetization[2] > 0.0
 
 
-def test_mri_plans_refuse_invalid_identity_covariance_and_scalar_contracts():
+def test_mri_plans_refuse_invalid_identity_covariance_and_scalar_contracts() -> None:
     values = np.ones((2, 2, 2), dtype=np.complex64)
     with pytest.raises(ValueError, match="coil_ids"):
         phx.imaging.mri.CoilSensitivityField(

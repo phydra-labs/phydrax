@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,12 +15,12 @@ from phydrax.domain import Boundary, FixedStart, Interval1d, SampleLayout, TimeI
 from phydrax.operators.differential import div, dt
 
 
-def _jit_loss(term, functions):
+def _jit_loss(term: Any, functions: Any) -> Any:
     loss_fn = eqx.filter_jit(lambda k: term.loss(functions, key=k))
     return loss_fn(jr.key(0))
 
 
-def _continuous_residual(condition, num_samples):
+def _continuous_residual(condition: Any, num_samples: Any) -> Any:
     return phx.terms.ResidualPenalty(
         condition,
         phx.integration.per_step(
@@ -27,11 +30,12 @@ def _continuous_residual(condition, num_samples):
     )
 
 
-def _fixed_time_source(condition, times):
+def _fixed_time_source(condition: Any, times: Any) -> Any:
     structure = SampleLayout((("t",),)).canonicalize(condition.on.domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     batch = phx.domain.PointBatch(
+        # ty: ignore[invalid-argument-type]
         {"t": cx.AxisArray(jnp.asarray(times), dims=(axis_names[0],))},
         structure,
     )
@@ -42,25 +46,25 @@ def _fixed_time_source(condition, times):
     return phx.integration.fixed(realization)
 
 
-def _moment_term(condition, plan):
+def _moment_term(condition: Any, plan: Any) -> Any:
     return phx.terms.RandomizedMomentPenalty(
         condition,
         phx.integration.per_step(phx.integration.over(condition.on), plan),
     )
 
 
-def test_continuous_ode_constraint_zero():
+def test_continuous_ode_constraint_zero() -> None:
     time = TimeInterval(0.0, 1.0)
 
     @time.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return t**2
 
     @time.Function("t")
-    def target(t):
+    def target(t: Any) -> Any:
         return 2.0 * t
 
-    def operator(f):
+    def operator(f: Any) -> Any:
         return dt(f, var="t") - target
 
     condition = phx.conditions.Residual("u", time.component(), operator)
@@ -69,18 +73,18 @@ def test_continuous_ode_constraint_zero():
     assert loss < 1e-6
 
 
-def test_discrete_ode_constraint_zero():
+def test_discrete_ode_constraint_zero() -> None:
     time = TimeInterval(0.0, 1.0)
 
     @time.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return t**2
 
     @time.Function("t")
-    def target(t):
+    def target(t: Any) -> Any:
         return 2.0 * t
 
-    def operator(f):
+    def operator(f: Any) -> Any:
         return dt(f, var="t") - target
 
     times = jnp.linspace(0.0, 1.0, 8)
@@ -93,11 +97,11 @@ def test_discrete_ode_constraint_zero():
     assert loss < 1e-6
 
 
-def test_initial_ode_constraints_zero():
+def test_initial_ode_constraints_zero() -> None:
     time = TimeInterval(0.0, 1.0)
 
     @time.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return t**2
 
     initial = time.component({"t": FixedStart()})
@@ -126,11 +130,11 @@ def test_initial_ode_constraints_zero():
     assert _jit_loss(c2, {"u": u}) < 1e-6
 
 
-def test_discrete_time_data_constraint_zero():
+def test_discrete_time_data_constraint_zero() -> None:
     time = TimeInterval(0.0, 1.0)
 
     @time.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return t**2
 
     times = jnp.linspace(0.0, 1.0, 6)
@@ -149,29 +153,29 @@ def test_discrete_time_data_constraint_zero():
     assert loss < 1e-6
 
 
-def test_integral_constraints_1d_zero_loss():
+def test_integral_constraints_1d_zero_loss() -> None:
     geom = Interval1d(0.0, 1.0)
     interior = geom.component()
     boundary = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 1.0
 
     @geom.Function("x")
-    def v(x):
+    def v(x: Any) -> Any:
         return jnp.array([0.0])
 
     @geom.Function("x")
-    def p(x):
+    def p(x: Any) -> float:
         return 0.0
 
     @geom.Function("x")
-    def D(x):
+    def D(x: Any) -> Any:
         return jnp.array([0.0])
 
     @geom.Function("x")
-    def B(x):
+    def B(x: Any) -> Any:
         return jnp.array([0.0])
 
     functions = {"u": u, "v": v, "p": p, "D": D, "B": B}
@@ -232,14 +236,14 @@ def test_integral_constraints_1d_zero_loss():
         assert _jit_loss(_moment_term(condition, plan), functions) < 1e-6
 
 
-def test_boundary_integral_resolves_relabeled_geometry_in_product_domain():
+def test_boundary_integral_resolves_relabeled_geometry_in_product_domain() -> None:
     space = Interval1d(0.0, 1.0).relabel("space")
     time = TimeInterval(0.0, 1.0)
     domain = space @ time
     boundary = domain.component({"space": Boundary()})
 
     @domain.Function("space", "t")
-    def u(space_coordinate, time_coordinate):
+    def u(space_coordinate: Any, time_coordinate: Any) -> float:
         del space_coordinate, time_coordinate
         return 1.0
 
@@ -255,14 +259,14 @@ def test_boundary_integral_resolves_relabeled_geometry_in_product_domain():
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
 
-def test_integral_initial_constraint_zero():
+def test_integral_initial_constraint_zero() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
     initial = domain.component({"t": FixedStart()})
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> float:
         return 1.0
 
     condition = phx.conditions.Moment("u", initial, lambda f: f, target=1.0)
@@ -271,18 +275,18 @@ def test_integral_initial_constraint_zero():
     assert loss < 1e-6
 
 
-def test_poynting_flux_constraint_zero():
+def test_poynting_flux_constraint_zero() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
     )
     boundary = geom.component({"x": Boundary()})
 
     @geom.Function("x")
-    def E(x):
+    def E(x: Any) -> Any:
         return jnp.array([0.0, 0.0, 0.0])
 
     @geom.Function("x")
-    def H(x):
+    def H(x: Any) -> Any:
         return jnp.array([0.0, 0.0, 0.0])
 
     condition = phx.conditions.conservation.PoyntingFlux(

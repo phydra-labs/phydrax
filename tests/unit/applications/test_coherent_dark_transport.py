@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -29,7 +32,7 @@ from phydrax.metrix import (
 )
 
 
-def _units_and_frame():
+def _units_and_frame() -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 3, 2, 1)
     units = RelativisticUnitContract(
         scale,
@@ -73,7 +76,7 @@ def _units_and_frame():
     )
 
 
-def _plan():
+def _plan() -> Any:
     units, frame = _units_and_frame()
     species = (
         DarkSectorSpeciesPlan(
@@ -105,11 +108,13 @@ def _plan():
     )
 
 
-def _zero_hamiltonian():
+def _zero_hamiltonian() -> Any:
     return jnp.zeros((2, 2), dtype=jnp.complex128)
 
 
-def test_two_level_cayley_oscillation_preserves_psd_hermiticity_trace_and_charge():
+def test_two_level_cayley_oscillation_preserves_psd_hermiticity_trace_and_charge() -> (
+    None
+):
     plan = _plan()
     density = jnp.asarray([[[[[1.0, 0.0], [0.0, 0.0]]]]], dtype=jnp.complex128)
     state = coherent_density_matrix_state(plan, density, time=0.0)
@@ -150,7 +155,7 @@ def test_two_level_cayley_oscillation_preserves_psd_hermiticity_trace_and_charge
     assert step.state.frame_realization_id == plan.frame.realization_id()
 
 
-def test_local_kraus_dephasing_is_completely_positive_and_trace_preserving():
+def test_local_kraus_dephasing_is_completely_positive_and_trace_preserving() -> None:
     plan = _plan()
     plus = 0.5 * jnp.ones((2, 2), dtype=jnp.complex128)
     state = coherent_density_matrix_state(plan, plus[None, None, None], time=0.0)
@@ -189,7 +194,9 @@ def test_local_kraus_dephasing_is_completely_positive_and_trace_preserving():
     assert bool(step.accepted)
 
 
-def test_coherent_transaction_rolls_back_a_candidate_outside_plan_conservation_policy():
+def test_coherent_transaction_rolls_back_a_candidate_outside_plan_conservation_policy() -> (
+    None
+):
     plan = _plan()
     state = coherent_density_matrix_state(
         plan,
@@ -223,7 +230,9 @@ def test_coherent_transaction_rolls_back_a_candidate_outside_plan_conservation_p
     )
 
 
-def test_non_psd_state_and_non_trace_preserving_collision_fail_without_projection():
+def test_non_psd_state_and_non_trace_preserving_collision_fail_without_projection() -> (
+    None
+):
     plan = _plan()
     with pytest.raises(Exception, match="positive semidefinite"):
         coherent_density_matrix_state(

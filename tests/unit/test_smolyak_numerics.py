@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import itertools
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -21,7 +22,7 @@ from phydrax._numerics import (
 )
 
 
-def _brute_indices(dimension, level, anisotropy):
+def _brute_indices(dimension: Any, level: Any, anisotropy: Any) -> Any:
     budget = level - 1
     maxima = tuple(int(budget // weight) for weight in anisotropy)
     return {
@@ -32,7 +33,7 @@ def _brute_indices(dimension, level, anisotropy):
     }
 
 
-def _brute_coefficients(indices):
+def _brute_coefficients(indices: Any) -> Any:
     dimension = len(next(iter(indices)))
     coefficients = {}
     for index in indices:
@@ -56,8 +57,8 @@ def _brute_coefficients(indices):
     ],
 )
 def test_sparse_indices_and_mobius_coefficients_match_brute_reference(
-    dimension, level, anisotropy
-):
+    dimension: Any, level: Any, anisotropy: Any
+) -> None:
     expected_indices = _brute_indices(dimension, level, anisotropy)
     actual_indices = {
         dense_index(index, dimension)
@@ -72,7 +73,7 @@ def test_sparse_indices_and_mobius_coefficients_match_brute_reference(
     assert actual_coefficients == _brute_coefficients(expected_indices)
 
 
-def test_real_anisotropy_includes_threshold_boundary_and_is_axis_equivariant():
+def test_real_anisotropy_includes_threshold_boundary_and_is_axis_equivariant() -> None:
     indices = {
         dense_index(index, 2) for index in weighted_total_degree_indices(2, 2, (0.1, 0.2))
     }
@@ -90,12 +91,12 @@ def test_real_anisotropy_includes_threshold_boundary_and_is_axis_equivariant():
     "anisotropy",
     [(1.0,), (1.0, 2.0, 3.0), (0.0, 1.0), (-1.0, 1.0), (np.nan, 1.0), (np.inf, 1.0)],
 )
-def test_invalid_anisotropy_is_rejected(anisotropy):
+def test_invalid_anisotropy_is_rejected(anisotropy: Any) -> None:
     with pytest.raises(ValueError, match="anisotropy"):
         weighted_total_degree_indices(2, 3, anisotropy)
 
 
-def test_high_dimensional_low_level_construction_is_sparse():
+def test_high_dimensional_low_level_construction_is_sparse() -> None:
     indices = weighted_total_degree_indices(32, 3)
     terms = smolyak_terms(32, 3)
 
@@ -104,7 +105,7 @@ def test_high_dimensional_low_level_construction_is_sparse():
     assert max(len(index) for index in indices) == 2
 
 
-def test_clenshaw_curtis_has_one_point_base_and_structural_nested_ids():
+def test_clenshaw_curtis_has_one_point_base_and_structural_nested_ids() -> None:
     base = clenshaw_curtis_data(1)
     assert jnp.array_equal(base.nodes, jnp.asarray([0.0]))
     assert jnp.array_equal(base.weights, jnp.asarray([2.0]))
@@ -121,7 +122,7 @@ def test_clenshaw_curtis_has_one_point_base_and_structural_nested_ids():
     )
 
 
-def test_leja_sequence_is_nested_by_identity():
+def test_leja_sequence_is_nested_by_identity() -> None:
     previous = ()
     for level in range(8):
         current = smolyak_axis_data("leja", level)
@@ -129,7 +130,7 @@ def test_leja_sequence_is_nested_by_identity():
         previous = current.node_ids
 
 
-def test_gauss_hermite_data_preserves_standard_normal_moments():
+def test_gauss_hermite_data_preserves_standard_normal_moments() -> None:
     data = smolyak_axis_data("gauss-hermite", 5)
     nodes = data.nodes
     weights = data.quadrature_weights
@@ -141,13 +142,13 @@ def test_gauss_hermite_data_preserves_standard_normal_moments():
     assert np.sum(weights * nodes**4) == pytest.approx(3.0, abs=1e-13)
 
 
-def test_barycentric_derivatives_are_finite_and_exact_at_nodes():
+def test_barycentric_derivatives_are_finite_and_exact_at_nodes() -> None:
     data = smolyak_axis_data("clenshaw-curtis", 3)
     nodes = jnp.asarray(data.nodes)
     weights = jnp.asarray(data.barycentric_weights)
     values = nodes**4 - 2.0 * nodes**2 + nodes
 
-    def interpolated(x):
+    def interpolated(x: Any) -> Any:
         return barycentric_interpolate(x, nodes, weights, values)
 
     first = jax.vmap(jax.grad(interpolated))(nodes)

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _context():
+def _context() -> Any:
     astro = phx.applications.astrodynamics
     return astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),
@@ -15,7 +17,7 @@ def _context():
     )
 
 
-def test_projection_and_occultation_limits_and_gradients():
+def test_projection_and_occultation_limits_and_gradients() -> None:
     physics = phx.applications.astrophysics
     projection = physics.ObserverProjectionPlan(
         jnp.asarray([1.0, 0.0, 0.0]),
@@ -44,7 +46,7 @@ def test_projection_and_occultation_limits_and_gradients():
     assert bool(jnp.isfinite(tangent))
 
 
-def test_photon_counting_bandpass_and_poisson_composition():
+def test_photon_counting_bandpass_and_poisson_composition() -> None:
     physics = phx.applications.astrophysics
     wavelength = jnp.asarray([4.0e-7, 5.0e-7, 6.0e-7])
     provenance = physics.ObservationDataProvenance.native("synthetic-filter")
@@ -71,7 +73,7 @@ def test_photon_counting_bandpass_and_poisson_composition():
     assert bool(jnp.isfinite(log_prob))
 
 
-def test_response_ray_and_image_operators_are_composable():
+def test_response_ray_and_image_operators_are_composable() -> None:
     physics = phx.applications.astrophysics
     binned = physics.BinnedResponsePlan(jnp.eye(2), response_id="identity").evaluate(
         jnp.asarray([1.0, 2.0])

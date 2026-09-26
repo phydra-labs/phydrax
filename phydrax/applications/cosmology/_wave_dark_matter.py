@@ -510,7 +510,10 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
     def _tensor_evaluation(self, /) -> TensorSpectralDiscretization:
         evaluation = self.dealiasing.evaluation
         # Dealiasing retains this tensor grid, and prepared pairs share one family.
-        assert isinstance(evaluation, TensorSpectralDiscretization)
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
         return evaluation
 
     def _evaluation_wavefunction(self, psi: Array, /) -> tuple[Array, Array]:

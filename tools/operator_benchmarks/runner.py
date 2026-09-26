@@ -65,7 +65,7 @@ class _BenchmarkFitOperator(AbstractOperatorModel):
         self,
         model: Callable[[OperatorBatch], jax.Array],
         scenario: OperatorBenchmarkScenario,
-    ):
+    ) -> None:
         if isinstance(scenario.train_target, OperatorTargetBatch):
             raise TypeError("Named benchmark targets require a native operator model.")
         query = scenario.train_batch.require_single_query()
@@ -81,14 +81,14 @@ class _BenchmarkFitOperator(AbstractOperatorModel):
             self.out_size = trailing
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return operator_architecture_contract("DeepONet")
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         return self.model(batch)
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
@@ -170,11 +170,11 @@ class OperatorBenchmarkResult:
     final_loss_scale: float | None = None
     nonfinite_microsteps: int = 0
 
-    def to_dict(self):
+    def to_dict(self) -> Any:
         return asdict(self)
 
 
-def parameter_count(model) -> int:
+def parameter_count(model: Any) -> int:
     trainable, _, _ = partition_parameters(model)
     return sum(
         leaf.size * (2 if jnp.issubdtype(leaf.dtype, jnp.complexfloating) else 1)
@@ -195,7 +195,7 @@ def _target_batch(
 
 
 def _prediction_for_target(
-    model,
+    model: Any,
     batch: OperatorBatch,
     target: jax.Array | OperatorTargetBatch,
     /,
@@ -241,7 +241,7 @@ def _field_arrays_from_prediction(
 
 
 def _field_arrays(
-    model,
+    model: Any,
     batch: OperatorBatch,
     target: jax.Array | OperatorTargetBatch,
     /,
@@ -254,7 +254,7 @@ def _field_arrays(
 
 
 def _loss(
-    model,
+    model: Any,
     batch: OperatorBatch,
     target: jax.Array | OperatorTargetBatch,
 ) -> jax.Array:
@@ -276,7 +276,7 @@ def _loss(
 
 
 def training_step_cost(
-    model,
+    model: Any,
     scenario: OperatorBenchmarkScenario,
     /,
 ) -> CompilerEvidence:
@@ -294,8 +294,8 @@ def training_step_cost(
     parameters, model_state, fixed = partition_parameters(model)
 
     @eqx.filter_jit
-    def value_and_gradient(current_parameters):
-        def objective(candidate):
+    def value_and_gradient(current_parameters: Any) -> Any:
+        def objective(candidate: Any) -> Any:
             current_model = combine_parameters(candidate, model_state, fixed)
             return _loss(
                 current_model,
@@ -323,7 +323,7 @@ def training_step_cost(
 
 
 def _train_operator_with_trace(
-    model,
+    model: Any,
     scenario: OperatorBenchmarkScenario,
     /,
     *,
@@ -342,7 +342,7 @@ def _train_operator_with_trace(
     checkpoint_key: jax.Array | None = None,
     dtype_policy: OperatorDTypePolicy | None = None,
     loss_scale_policy: OperatorLossScalePolicy | None = None,
-):
+) -> Any:
     """Adapt an immutable benchmark scenario to the production operator fitter."""
     if int(steps) < 0:
         raise ValueError("steps must be non-negative.")
@@ -510,7 +510,7 @@ def _train_operator_with_trace(
 
 
 def train_operator(
-    model,
+    model: Any,
     scenario: OperatorBenchmarkScenario,
     /,
     *,
@@ -529,7 +529,7 @@ def train_operator(
     checkpoint_key: jax.Array | None = None,
     dtype_policy: OperatorDTypePolicy | None = None,
     loss_scale_policy: OperatorLossScalePolicy | None = None,
-):
+) -> Any:
     """Train an operator and return the stable five-element public result tuple."""
     result = _train_operator_with_trace(
         model,
@@ -578,7 +578,7 @@ def _with_source_values(
     )
 
 
-def _predict_evaluation(model, evaluation: OperatorBenchmarkEvaluation):
+def _predict_evaluation(model: Any, evaluation: OperatorBenchmarkEvaluation) -> Any:
     batch = evaluation.batch
     prediction = _prediction_for_target(model, batch, evaluation.target)
     if evaluation.rollout_steps <= 0:
@@ -649,7 +649,7 @@ def _transform_square_samples(
         )
     sample_shape = samples.sample_shape
 
-    def transform(value, current_representation):
+    def transform(value: Any, current_representation: Any) -> Any:
         if value is None:
             return None
         return jax.tree_util.tree_map(
@@ -707,7 +707,7 @@ def transform_square_operator_batch(
 
 
 def evaluate_operator_symmetry(
-    model,
+    model: Any,
     evaluation: OperatorBenchmarkEvaluation,
     symmetry: OperatorSymmetrySpec,
     /,
@@ -715,7 +715,7 @@ def evaluate_operator_symmetry(
     """Measure paired rotational/reflection defects after the physical data split."""
 
     @eqx.filter_jit
-    def predict(current_model, current_batch):
+    def predict(current_model: Any, current_batch: Any) -> Any:
         return _predict_evaluation(
             current_model,
             OperatorBenchmarkEvaluation(
@@ -804,7 +804,9 @@ def evaluate_operator_symmetry(
     )
 
 
-def _masked_maximum_absolute_error(prediction, target, query, case_shape):
+def _masked_maximum_absolute_error(
+    prediction: Any, target: Any, query: Any, case_shape: Any
+) -> Any:
     mask = query.mask_array(case_shape=case_shape)
     difference = jnp.abs(jnp.asarray(prediction) - jnp.asarray(target))
     while mask.ndim < difference.ndim:
@@ -813,7 +815,7 @@ def _masked_maximum_absolute_error(prediction, target, query, case_shape):
 
 
 def evaluate_operator(
-    model,
+    model: Any,
     evaluation: OperatorBenchmarkEvaluation,
     /,
     *,
@@ -823,10 +825,11 @@ def evaluate_operator(
         raise ValueError("repeats must be positive.")
 
     @eqx.filter_jit
-    def predict(current_model):
+    def predict(current_model: Any) -> Any:
         return _predict_evaluation(current_model, evaluation)
 
     compiled_predict, compilation = measure_lower_and_compile(
+        # ty: ignore[unresolved-attribute]
         lambda: predict.lower(model),
         lambda lowered: lowered.compile(),
     )
@@ -963,7 +966,7 @@ def evaluate_operator(
 
 
 def run_operator_benchmark(
-    model,
+    model: Any,
     scenario: OperatorBenchmarkScenario,
     /,
     *,

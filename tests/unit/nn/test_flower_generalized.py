@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _flower(*, spatial_ndim=1, key=jr.key(0), **kwargs):
+def _flower(*, spatial_ndim: Any = 1, key: Any = jr.key(0), **kwargs: Any) -> Any:
     settings = dict(
         in_channels="scalar",
         out_channels="scalar",
@@ -25,10 +28,13 @@ def _flower(*, spatial_ndim=1, key=jr.key(0), **kwargs):
         key=key,
     )
     settings.update(kwargs)
+    # ty: ignore[invalid-argument-type]
     return phx.nn.operator.architectures.Flower(**settings)
 
 
-def _axis(name, nodes, *, periodic=False, quadrature_weights=None):
+def _axis(
+    name: Any, nodes: Any, *, periodic: Any = False, quadrature_weights: Any = None
+) -> Any:
     return phx.nn.operator.OperatorAxis(
         name,
         jnp.asarray(nodes),
@@ -37,7 +43,7 @@ def _axis(name, nodes, *, periodic=False, quadrature_weights=None):
     )
 
 
-def _batch(values, axes, query, *, source_mask=None):
+def _batch(values: Any, axes: Any, query: Any, *, source_mask: Any = None) -> Any:
     return phx.nn.operator.OperatorBatch(
         inputs={
             "state": phx.nn.operator.FunctionSamples(
@@ -50,7 +56,7 @@ def _batch(values, axes, query, *, source_mask=None):
     )
 
 
-def test_flower_omitted_generalized_options_preserve_explicit_default_execution():
+def test_flower_omitted_generalized_options_preserve_explicit_default_execution() -> None:
     settings = dict(
         in_channels="scalar",
         out_channels="scalar",
@@ -63,8 +69,10 @@ def test_flower_omitted_generalized_options_preserve_explicit_default_execution(
         coordinate_embedding=False,
         key=jr.key(1),
     )
+    # ty: ignore[invalid-argument-type]
     implicit = phx.nn.operator.architectures.Flower(**settings)
     explicit = phx.nn.operator.architectures.Flower(
+        # ty: ignore[invalid-argument-type]
         **settings,
         fill_value=0.0,
         transition_mode="learned",
@@ -91,8 +99,8 @@ def test_flower_omitted_generalized_options_preserve_explicit_default_execution(
 
 @pytest.mark.parametrize("spatial_ndim", (1, 2, 3))
 def test_resolution_consistent_flower_executes_in_one_two_and_three_dimensions(
-    spatial_ndim,
-):
+    spatial_ndim: Any,
+) -> None:
     nodes = tuple(jnp.linspace(-1.0, 1.0, 4) for _ in range(spatial_ndim))
     coordinates = jnp.meshgrid(*nodes, indexing="ij")
     values = jnp.asarray(
@@ -113,7 +121,7 @@ def test_resolution_consistent_flower_executes_in_one_two_and_three_dimensions(
     assert diagnostics.level_shapes == ((4,) * spatial_ndim, (2,) * spatial_ndim)
 
 
-def test_resolution_consistent_flower_supports_nonuniform_nodes_eager_and_jit():
+def test_resolution_consistent_flower_supports_nonuniform_nodes_eager_and_jit() -> None:
     nodes = jnp.array([-1.0, -0.72, -0.1, 1.0])
     values = 0.5 + nodes + nodes**2
     model = _flower(
@@ -133,7 +141,7 @@ def test_resolution_consistent_flower_supports_nonuniform_nodes_eager_and_jit():
 
 
 @pytest.mark.parametrize("mask_mode", ("renormalize", "strict"))
-def test_flower_source_holes_are_supported_and_remain_masked(mask_mode):
+def test_flower_source_holes_are_supported_and_remain_masked(mask_mode: Any) -> None:
     nodes = jnp.linspace(-1.0, 1.0, 5)
     axis = _axis("x", nodes)
     source_mask = jnp.array([True, False, True, True, True])
@@ -168,7 +176,7 @@ def test_flower_source_holes_are_supported_and_remain_masked(mask_mode):
     changed_output = model(changed_batch)
     nan_output = eqx.filter_jit(lambda current, data: current(data))(model, nan_batch)
 
-    def squared_output(field):
+    def squared_output(field: Any) -> Any:
         data = _batch(
             field,
             (axis,),
@@ -191,8 +199,8 @@ def test_flower_source_holes_are_supported_and_remain_masked(mask_mode):
 
 @pytest.mark.parametrize("query_kind", ("tensor_grid", "points"))
 def test_interpolating_flower_accepts_arbitrary_tensor_grid_and_point_queries(
-    query_kind,
-):
+    query_kind: Any,
+) -> None:
     source_x = _axis("x", jnp.array([-1.0, -0.4, 0.25, 1.0]))
     source_y = _axis("y", jnp.array([-1.0, -0.55, 0.3, 1.0]))
     x, y = jnp.meshgrid(source_x.nodes, source_y.nodes, indexing="ij")
@@ -229,7 +237,7 @@ def test_interpolating_flower_accepts_arbitrary_tensor_grid_and_point_queries(
     assert jnp.all(jnp.isfinite(output))
 
 
-def test_conservative_flower_matches_source_and_arbitrary_query_mass():
+def test_conservative_flower_matches_source_and_arbitrary_query_mass() -> None:
     source_weights = jnp.array([0.3, 0.65, 0.7, 0.35])
     source_axis = _axis(
         "x",
@@ -261,7 +269,7 @@ def test_conservative_flower_matches_source_and_arbitrary_query_mass():
     assert jnp.allclose(query_mass, source_mass, rtol=1e-5, atol=1e-6)
 
 
-def test_probabilistic_flower_is_repeatable_and_reports_every_sampled_block():
+def test_probabilistic_flower_is_repeatable_and_reports_every_sampled_block() -> None:
     nodes = -1.0 + 2.0 * jnp.arange(4, dtype="float64") / 4.0
     values = jnp.sin(jnp.pi * nodes) + 0.2 * jnp.cos(2.0 * jnp.pi * nodes)
     model = _flower(
@@ -310,6 +318,8 @@ def test_probabilistic_flower_is_repeatable_and_reports_every_sampled_block():
         ({"boundary": ("clamp", "periodic")}, "one mode per spatial axis"),
     ),
 )
-def test_flower_rejects_invalid_generalized_configurations(overrides, message):
+def test_flower_rejects_invalid_generalized_configurations(
+    overrides: Any, message: Any
+) -> None:
     with pytest.raises(ValueError, match=message):
         _flower(**overrides)

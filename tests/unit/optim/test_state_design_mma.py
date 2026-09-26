@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _termination(steps=80):
+def _termination(steps: Any = 80) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=2.0e-5,
         relative_optimality=0.0,
@@ -16,7 +18,7 @@ def _termination(steps=80):
     )
 
 
-def _problem(*, state_dependent=False):
+def _problem(*, state_dependent: Any = False) -> Any:
     constraint = phx.optim.StateDesignConstraint(
         (
             (lambda state, design, _: state)
@@ -36,7 +38,7 @@ def _problem(*, state_dependent=False):
     )
 
 
-def test_reduced_mma_solves_design_only_constraint_with_adjoint_gradient():
+def test_reduced_mma_solves_design_only_constraint_with_adjoint_gradient() -> None:
     result = phx.optim.solve_state_design(
         _problem(),
         jnp.asarray(0.5),
@@ -54,7 +56,7 @@ def test_reduced_mma_solves_design_only_constraint_with_adjoint_gradient():
     assert isinstance(result.method_evidence, phx.optim.MMAEvidence)
 
 
-def test_reduced_mma_solves_state_dependent_constraint():
+def test_reduced_mma_solves_state_dependent_constraint() -> None:
     result = phx.optim.solve_state_design(
         _problem(state_dependent=True),
         jnp.asarray(0.5),
@@ -69,7 +71,7 @@ def test_reduced_mma_solves_state_dependent_constraint():
     assert result.diagnostics.linear_solves >= result.diagnostics.iterations
 
 
-def test_other_state_design_methods_reject_unhandled_constraints():
+def test_other_state_design_methods_reject_unhandled_constraints() -> None:
     problem = _problem()
     with pytest.raises(ValueError, match="use ReducedMMA"):
         phx.optim.solve_state_design(
@@ -89,7 +91,9 @@ def test_other_state_design_methods_reject_unhandled_constraints():
         )
 
 
-def test_state_design_constraint_requires_scalar_finite_inequality_for_reduced_mma():
+def test_state_design_constraint_requires_scalar_finite_inequality_for_reduced_mma() -> (
+    None
+):
     vector_constraint = phx.optim.StateDesignConstraint(
         lambda state, design, _: jnp.stack((design, state)),
         upper=1.0,

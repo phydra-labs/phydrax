@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -13,7 +16,7 @@ s = phx.solver
 q = phx.operators.quantum
 
 
-def _two_mode_device(*, edge_mask=None):
+def _two_mode_device(*, edge_mask: Any = None) -> Any:
     topology = phx.graph.GraphIR(
         n_node=jnp.asarray([2]),
         n_edge=jnp.asarray([1]),
@@ -43,7 +46,7 @@ def _two_mode_device(*, edge_mask=None):
     return spec, parameters
 
 
-def test_device_compiler_reuses_shared_parameters_and_matches_dense_algebra():
+def test_device_compiler_reuses_shared_parameters_and_matches_dense_algebra() -> None:
     spec, parameters = _two_mode_device()
     prepared = s.prepare_circuit_qed_device(spec, parameters)
     dense = s.materialize_local_hamiltonian(prepared.drift)
@@ -63,11 +66,11 @@ def test_device_compiler_reuses_shared_parameters_and_matches_dense_algebra():
     assert jnp.allclose(dense, expected)
 
 
-def test_device_refresh_preserves_plan_and_differentiates_shared_mode_block():
+def test_device_refresh_preserves_plan_and_differentiates_shared_mode_block() -> None:
     spec, parameters = _two_mode_device()
     prepared = s.prepare_circuit_qed_device(spec, parameters)
 
-    def objective(rate):
+    def objective(rate: Any) -> Any:
         refreshed = s.refresh_circuit_qed_device(
             prepared,
             s.CircuitQEDDeviceParameters(
@@ -98,7 +101,7 @@ def test_device_refresh_preserves_plan_and_differentiates_shared_mode_block():
     )
 
 
-def test_device_compiler_respects_inactive_edges_and_dense_resource_limits():
+def test_device_compiler_respects_inactive_edges_and_dense_resource_limits() -> None:
     spec, parameters = _two_mode_device(edge_mask=jnp.asarray([False]))
     plan = s.plan_circuit_qed_device(
         spec,
@@ -116,7 +119,7 @@ def test_device_compiler_respects_inactive_edges_and_dense_resource_limits():
         )
 
 
-def test_device_compiler_rejects_topology_parameter_and_operator_mismatches():
+def test_device_compiler_rejects_topology_parameter_and_operator_mismatches() -> None:
     spec, _ = _two_mode_device()
     plan = s.plan_circuit_qed_device(spec)
     with pytest.raises(ValueError, match="mode_parameters count"):

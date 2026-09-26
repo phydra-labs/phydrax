@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _fracture_case(*, compact=False):
+def _fracture_case(*, compact: Any = False) -> Any:
     grid_plan = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(10, periodic=True, endpoint=False)
@@ -69,7 +71,7 @@ def _fracture_case(*, compact=False):
     return compiled, arguments, mechanics
 
 
-def test_phase_field_material_degrades_tension_and_updates_history():
+def test_phase_field_material_degrades_tension_and_updates_history() -> None:
     material = phx.applications.solid_mechanics.PhaseFieldNeoHookeanMPMConstitutivePlan(2)
     parameters = phx.applications.solid_mechanics.MPMPhaseFieldParameters(
         phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(2.0, 8.0),
@@ -89,7 +91,7 @@ def test_phase_field_material_degrades_tension_and_updates_history():
     assert damaged.reference_energy_density[0] < intact.reference_energy_density[0]
 
 
-def test_phase_field_step_is_irreversible_and_transactional():
+def test_phase_field_step_is_irreversible_and_transactional() -> None:
     compiled, arguments, mechanics = _fracture_case()
     prepared = phx.solver.PreparedMPMPhaseFieldDynamics(
         compiled.dynamics,
@@ -106,7 +108,7 @@ def test_phase_field_step_is_irreversible_and_transactional():
     assert detail.evidence.fracture_energy >= 0.0
 
 
-def test_compact_phase_field_step_uses_complete_block_stencil():
+def test_compact_phase_field_step_uses_complete_block_stencil() -> None:
     compiled, arguments, mechanics = _fracture_case(compact=True)
     prepared = phx.solver.PreparedMPMPhaseFieldDynamics(
         compiled.dynamics,
@@ -122,7 +124,7 @@ def test_compact_phase_field_step_uses_complete_block_stencil():
     assert detail.accepted_state.mechanics.storage_state is not None
 
 
-def test_field_partition_and_cpic_are_distinct_topology_paths():
+def test_field_partition_and_cpic_are_distinct_topology_paths() -> None:
     partition = phx.discretization.MPMFieldPartitionFracturePlan(2)
     topology = partition.update(
         jnp.asarray((0.2, 0.99, 0.99)),

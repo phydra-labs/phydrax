@@ -1,4 +1,5 @@
 from importlib.util import find_spec
+from typing import Any
 
 import numpy as np
 import pytest
@@ -18,7 +19,7 @@ pytestmark = [
 ]
 
 
-def _cube(offset):
+def _cube(offset: Any) -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -68,7 +69,7 @@ def _cube(offset):
         (SurfaceBooleanOperation.INTERSECTION, 0.5),
     ],
 )
-def test_boolean_preserves_expected_solid_volume(operation, volume):
+def test_boolean_preserves_expected_solid_volume(operation: Any, volume: Any) -> None:
     result = ManifoldProvider().execute(_cube((0, 0, 0)), _cube((0.5, 0, 0)), operation)
     faces = np.asarray(result.mesh.blocks[0].vertices)
     points = np.asarray(result.mesh.coordinates)[faces]
@@ -80,7 +81,7 @@ def test_boolean_preserves_expected_solid_volume(operation, volume):
     assert result.boundary is not None
 
 
-def test_empty_intersection_is_not_a_successful_mesh():
+def test_empty_intersection_is_not_a_successful_mesh() -> None:
     with pytest.raises(MeshingFailure, match="empty"):
         ManifoldProvider().execute(
             _cube((0, 0, 0)), _cube((2, 0, 0)), SurfaceBooleanOperation.INTERSECTION

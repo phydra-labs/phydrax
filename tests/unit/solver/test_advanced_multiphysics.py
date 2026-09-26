@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -59,7 +61,7 @@ from phydrax.solver._radiation import GrayLinearRadiationDiffusionPlan
 from phydrax.solver._unstructured_mhd import UnstructuredConstrainedTransportPlan
 
 
-def _mhd_problem(dimension: int, count: int = 6):
+def _mhd_problem(dimension: int, count: int = 6) -> Any:
     names = tuple("xyz"[:dimension])
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -97,7 +99,7 @@ def _mhd_problem(dimension: int, count: int = 6):
     return grid, bridge, system, dynamics, full, magnetic
 
 
-def test_dimension_generic_mhd_and_accepted_integrals():
+def test_dimension_generic_mhd_and_accepted_integrals() -> None:
     for dimension in (1, 2, 3):
         _, bridge, _, dynamics, full, magnetic = _mhd_problem(dimension)
         spatial = phx.discretization.UpwindConstrainedTransportPlan(dynamics, bridge)
@@ -114,7 +116,7 @@ def test_dimension_generic_mhd_and_accepted_integrals():
         np.testing.assert_allclose(result.state.cell_state, state.cell_state, atol=1e-10)
 
 
-def test_mhd_reconstruction_and_hll_uct_constant_state():
+def test_mhd_reconstruction_and_hll_uct_constant_state() -> None:
     _, bridge, _, dynamics, full, magnetic = _mhd_problem(3)
     for method in ("plm", "weno_z", "teno", "mp5"):
         reconstruction = MHDPrimitiveReconstructionPlan(method)
@@ -124,13 +126,14 @@ def test_mhd_reconstruction_and_hll_uct_constant_state():
             reconstruction=reconstruction,
             electromotive_plan=HLLUCTElectromotivePlan(),
         )
+        # ty: ignore[invalid-argument-type]
         rate = spatial.rate(0.0, spatial.layout.reduce_full_state(full), magnetic)
         assert jnp.all(jnp.isfinite(rate.cell_rate))
         np.testing.assert_allclose(rate.cell_rate, 0.0, atol=1e-10)
         np.testing.assert_allclose(rate.magnetic_rate, 0.0, atol=1e-10)
 
 
-def test_prepared_thermochemistry_conserves_species_invariant():
+def test_prepared_thermochemistry_conserves_species_invariant() -> None:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (
@@ -172,7 +175,7 @@ def test_prepared_thermochemistry_conserves_species_invariant():
     np.testing.assert_allclose(fields.element_residual, 0.0, atol=1e-12)
 
 
-def test_mhd_boundaries_advanced_integrators_and_nonideal_update():
+def test_mhd_boundaries_advanced_integrators_and_nonideal_update() -> None:
     _, _, system, dynamics, full, magnetic = _mhd_problem(3)
     interior = full[0]
     normal = jnp.full(interior.shape[:-1], 0.2)
@@ -235,7 +238,7 @@ def test_mhd_boundaries_advanced_integrators_and_nonideal_update():
     np.testing.assert_allclose(advanced.magnetic_flux, state.magnetic_flux, atol=1e-10)
 
 
-def test_modal_basis_contract():
+def test_modal_basis_contract() -> None:
     basis = ModalForcingBasis(
         jnp.asarray([[[1.0]], [[-1.0]]]),
         weights=jnp.asarray([1.0, 0.5]),
@@ -244,7 +247,7 @@ def test_modal_basis_contract():
     np.testing.assert_allclose(evaluated, 0.0)
 
 
-def test_bounded_one_dimensional_mhd_runtime():
+def test_bounded_one_dimensional_mhd_runtime() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(6, periodic=False),),
         axis_names=("x",),
@@ -284,6 +287,7 @@ def test_bounded_one_dimensional_mhd_runtime():
         ("x",), {"x": (wall, wall)}
     )
     spatial = phx.discretization.UpwindConstrainedTransportPlan(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         bridge,
         boundary_set=boundary_set,
@@ -298,7 +302,7 @@ def test_bounded_one_dimensional_mhd_runtime():
     )
 
 
-def test_isolated_gravity_anisotropic_transport_and_imex():
+def test_isolated_gravity_anisotropic_transport_and_imex() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
         axis_names=("x",),
@@ -341,7 +345,7 @@ def test_isolated_gravity_anisotropic_transport_and_imex():
     np.testing.assert_allclose(stepped, 1.0 / 1.1, rtol=1e-6)
 
 
-def test_bounded_gravity_and_conservative_energy_coupling():
+def test_bounded_gravity_and_conservative_energy_coupling() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
         axis_names=("x",),
@@ -368,6 +372,7 @@ def test_bounded_gravity_and_conservative_energy_coupling():
         problem, discretization, method
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.2, maximum_retries=0),
@@ -401,7 +406,7 @@ def test_bounded_gravity_and_conservative_energy_coupling():
     np.testing.assert_allclose(corrected.cell_average, average, atol=1e-10)
 
 
-def test_exact_cooling_coordinate_round_trip():
+def test_exact_cooling_coordinate_round_trip() -> None:
     curve = phx.equations.TabulatedCoolingCurve(
         jnp.asarray([0.0, 1.0, 2.0]),
         jnp.asarray([-2.0, -1.0, 1.0]),
@@ -413,7 +418,7 @@ def test_exact_cooling_coordinate_round_trip():
     np.testing.assert_allclose(recovered, temperature, rtol=1e-6)
 
 
-def test_radiation_moments_and_gray_exchange():
+def test_radiation_moments_and_gray_exchange() -> None:
     system = MultigroupM1RadiationSystem(2, 2)
     state = jnp.zeros((4, system.group_count * system.group_width))
     state = state.at[:, 0].set(1.0)
@@ -437,7 +442,7 @@ def test_radiation_moments_and_gray_exchange():
     np.testing.assert_allclose(diagnostics.combined_energy_defect, 0.0, atol=1e-12)
 
 
-def test_glm_unstructured_mapped_and_distributed_cochains():
+def test_glm_unstructured_mapped_and_distributed_cochains() -> None:
     glm = GLMIdealMHDSystem(2)
     primitive = jnp.asarray([1.0, 0.0, 0.0, 0.0, 1.0, 0.2, 0.0, 0.0, 0.0])
     state = glm.primitive_to_conserved(primitive)
@@ -472,7 +477,7 @@ def test_glm_unstructured_mapped_and_distributed_cochains():
     assert ownership.owned_mask(2, 0).shape == magnetic.shape
 
 
-def test_composite_block_amr_poisson_uses_ordinary_linalg_evidence():
+def test_composite_block_amr_poisson_uses_ordinary_linalg_evidence() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
         axis_names=("x",),
@@ -546,7 +551,7 @@ def test_composite_block_amr_poisson_uses_ordinary_linalg_evidence():
     np.testing.assert_allclose(interface_left + interface_right, 0.0, rtol=0.0, atol=0.0)
 
 
-def test_reflux_curl_preserves_constraint():
+def test_reflux_curl_preserves_constraint() -> None:
     _, bridge, _, _, _, magnetic = _mhd_problem(3, count=2)
     edge_count = bridge.cochain.cell_counts[1]
     register = ElectromotiveForceRegister(
@@ -560,7 +565,7 @@ def test_reflux_curl_preserves_constraint():
     assert jnp.all(jnp.isfinite(updated))
 
 
-def test_cosmology_inference_and_closure_contracts():
+def test_cosmology_inference_and_closure_contracts() -> None:
     background = FLRWBackground(1.0, 0.3)
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(1), jnp.ones((1,)), ambient_dimension=1
@@ -593,8 +598,11 @@ def test_cosmology_inference_and_closure_contracts():
         differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
     )
     power = MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         [0.1, 1.0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 20.0],
+        # ty: ignore[invalid-argument-type]
         [[1.0e-8, 1.0e-8], [1.0e-6, 1.0e-6]],
         MatterPowerDescriptor("cold_baryon", "cold_baryon", spatial_dimension=1),
         background.scale,
@@ -652,7 +660,7 @@ def test_cosmology_inference_and_closure_contracts():
     assert not bool(closure_report.fallback_activated)
 
 
-def _mhd_closure(coefficients, scores):
+def _mhd_closure(coefficients: Any, scores: Any) -> Any:
     face = StructurePreservingFaceClosurePlan(
         lambda left, right, args: jnp.asarray(coefficients),
         lambda left, right, args: jnp.asarray(scores),
@@ -665,14 +673,14 @@ def _mhd_closure(coefficients, scores):
     )
 
 
-def test_mhd_closure_header_reasons_and_derivative_poisoning():
+def test_mhd_closure_header_reasons_and_derivative_poisoning() -> None:
     # Lane 0 is learned, lane 1 sits on the dissipation clip, lane 2 is OOD.
     closure = _mhd_closure((1.0, 0.0, 1.0), (0.0, 0.0, 2.0))
     left = jnp.ones((3, 2))
     right = 2.0 * left
     baseline_edge = jnp.zeros((2,))
 
-    def apply(right_state):
+    def apply(right_state: Any) -> Any:
         return closure.apply(left, right_state, jnp.zeros_like(left), baseline_edge)
 
     face, edge, report = apply(right)

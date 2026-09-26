@@ -10,7 +10,8 @@ import numpy as np
 import phydrax as phx
 
 
-def test_multidimensional_nonuniform_cover_has_exact_faces_and_pou_calculus():
+def test_multidimensional_nonuniform_cover_has_exact_faces_and_pou_calculus() -> None:
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle([0.0, -1.0], [1.0, 1.0])
     axes = (
         phx.domain.AxisPartition([0.0, 0.25, 1.0], overlap_fraction=0.1),
@@ -64,7 +65,7 @@ def test_multidimensional_nonuniform_cover_has_exact_faces_and_pou_calculus():
     )
 
 
-def test_periodic_axis_builds_explicit_periodic_pairing():
+def test_periodic_axis_builds_explicit_periodic_pairing() -> None:
     domain = phx.domain.TimeInterval(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(
         domain,
@@ -114,7 +115,8 @@ def test_periodic_axis_builds_explicit_periodic_pairing():
     assert wrapped.patches[-1].domain.end > 1.0
 
 
-def test_ownership_and_prepared_routes_cover_every_point_without_truncation():
+def test_ownership_and_prepared_routes_cover_every_point_without_truncation() -> None:
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle([0.0, 0.0], [1.0, 1.0])
     cover = phx.domain.cartesian_subdomain_cover(
         domain,
@@ -136,7 +138,7 @@ def test_ownership_and_prepared_routes_cover_every_point_without_truncation():
     assert len(routing.colors) == 4
 
 
-def test_adaptive_refinement_transaction_preserves_the_ambient_field():
+def test_adaptive_refinement_transaction_preserves_the_ambient_field() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     axis = phx.domain.AxisPartition([0.0, 0.5, 1.0], overlap_fraction=0.2)
     source_cover = phx.domain.cartesian_subdomain_cover(
@@ -171,7 +173,7 @@ def test_adaptive_refinement_transaction_preserves_the_ambient_field():
     assert len(transaction.commit().fields) == 3
 
 
-def test_partition_adapter_and_trainable_coarsening_preserve_topology_contracts():
+def test_partition_adapter_and_trainable_coarsening_preserve_topology_contracts() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     axis = phx.domain.AxisPartition([0.0, 0.2, 0.7, 1.0], overlap_fraction=0.1)
     cover = phx.domain.cartesian_subdomain_cover(
@@ -179,6 +181,7 @@ def test_partition_adapter_and_trainable_coarsening_preserve_topology_contracts(
         "x",
         axis_partitions=(axis,),
     )
+    # ty: ignore[invalid-argument-type]
     partition = phx.discretization.CellPartition([0, 1, 2], 3)
     trainable = phx.solver.TrainableAxisPartition(
         axis,

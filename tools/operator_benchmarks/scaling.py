@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from typing import Any
 
 import numpy as np
 
@@ -27,11 +28,11 @@ class OperatorScalingProfile:
     inference_exponent: float | None
     memory_exponent: float | None
 
-    def to_dict(self):
+    def to_dict(self) -> Any:
         return asdict(self)
 
 
-def _scaling_exponent(x, y) -> float | None:
+def _scaling_exponent(x: Any, y: Any) -> float | None:
     x_array = np.asarray(x, dtype="float64")
     y_array = np.asarray(y, dtype="float64")
     valid = (x_array > 0.0) & (y_array > 0.0)
@@ -41,7 +42,7 @@ def _scaling_exponent(x, y) -> float | None:
 
 
 def profile_resolution_scaling(
-    model,
+    model: Any,
     evaluations: tuple[OperatorBenchmarkEvaluation, ...],
     /,
     *,

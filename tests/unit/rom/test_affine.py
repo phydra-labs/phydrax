@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def _affine_model(*, basis_matrix=None):
+def _affine_model(*, basis_matrix: Any = None) -> Any:
     full = phx.linalg.ArraySpace((3,), dtype=jnp.float64, space_id="affine-full")
     basis_values = (
         jnp.asarray([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]], dtype=jnp.float64)
@@ -85,7 +87,7 @@ def _affine_model(*, basis_matrix=None):
     return problem, phx.rom.prepare_affine_linear_rom(problem, coefficients)
 
 
-def test_affine_rom_precomputes_lift_cross_terms_and_audits_physical_state():
+def test_affine_rom_precomputes_lift_cross_terms_and_audits_physical_state() -> None:
     _, model = _affine_model()
     evaluation = model.evaluate(jnp.asarray([0.5], dtype=jnp.float64), reconstruct=True)
 
@@ -108,7 +110,7 @@ def test_affine_rom_precomputes_lift_cross_terms_and_audits_physical_state():
     np.testing.assert_allclose(audit.state_error_norm, 0.0, atol=1e-12)
 
 
-def test_affine_rom_is_invariant_to_trial_and_test_coordinates():
+def test_affine_rom_is_invariant_to_trial_and_test_coordinates() -> None:
     _, canonical = _affine_model()
     _, rescaled = _affine_model(basis_matrix=[[2.0, 0.0], [0.0, 0.5], [0.0, 0.0]])
     inputs = jnp.asarray([0.25], dtype=jnp.float64)
@@ -119,7 +121,7 @@ def test_affine_rom_is_invariant_to_trial_and_test_coordinates():
     np.testing.assert_allclose(left.observations[0].value, right.observations[0].value)
 
 
-def test_affine_rom_refuses_unsupported_input_before_solve():
+def test_affine_rom_refuses_unsupported_input_before_solve() -> None:
     _, model = _affine_model()
     evaluation = model.evaluate(jnp.asarray([2.0], dtype=jnp.float64), reconstruct=True)
 
@@ -128,7 +130,7 @@ def test_affine_rom_refuses_unsupported_input_before_solve():
     assert evaluation.reconstructed_state is None
 
 
-def test_affine_rom_archive_and_certificate_are_content_bound(tmp_path):
+def test_affine_rom_archive_and_certificate_are_content_bound(tmp_path: Any) -> None:
     problem, model = _affine_model()
     path = phx.rom.write_affine_linear_rom(
         tmp_path / "affine.phx",
@@ -141,6 +143,7 @@ def test_affine_rom_archive_and_certificate_are_content_bound(tmp_path):
         analysis_plan_id="affine-test-analysis",
     )
     inputs = jnp.asarray([0.75], dtype=jnp.float64)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         restored.evaluate(inputs, reconstruct=True).reconstructed_state,
         model.evaluate(inputs, reconstruct=True).reconstructed_state,

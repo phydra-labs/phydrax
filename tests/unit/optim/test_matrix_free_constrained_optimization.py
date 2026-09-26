@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +18,7 @@ class _PartitionedDesign(eqx.Module):
     scale: float = eqx.field(static=True)
 
 
-def _termination(*, tolerance=1e-7, steps=50):
+def _termination(*, tolerance: Any = 1e-7, steps: Any = 50) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=tolerance,
         relative_optimality=0.0,
@@ -23,8 +26,8 @@ def _termination(*, tolerance=1e-7, steps=50):
     )
 
 
-def _forbid_explicit_jacobians(monkeypatch):
-    def forbidden(*args, **kwargs):
+def _forbid_explicit_jacobians(monkeypatch: Any) -> None:
+    def forbidden(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         raise AssertionError("The matrix-free method formed an explicit Jacobian.")
 
@@ -33,8 +36,8 @@ def _forbid_explicit_jacobians(monkeypatch):
 
 
 def test_primal_dual_newton_krylov_solves_mixed_constraints_without_jacobians(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     equality = phx.optim.NonlinearConstraint(
         lambda parameters, _: jnp.array([parameters[0] + parameters[1]]),
         lower=1.0,
@@ -85,7 +88,7 @@ def test_primal_dual_newton_krylov_solves_mixed_constraints_without_jacobians(
     assert result.certificate.inequality_sources == ("constraint:1:0:upper",)
 
 
-def test_primal_dual_canonical_layout_includes_parameter_bounds():
+def test_primal_dual_canonical_layout_includes_parameter_bounds() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda parameters, _: jnp.sum((parameters - 2.0) ** 2),
         bounds=phx.optim.Bounds(-jnp.inf, 1.0),
@@ -101,18 +104,23 @@ def test_primal_dual_canonical_layout_includes_parameter_bounds():
     )
 
     np.testing.assert_allclose(result.parameters, jnp.array([1.0]), atol=2e-6)
+    # ty: ignore[unresolved-attribute]
     assert result.certificate.inequality_sources == ("bound:0:upper",)
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         result.certificate.inequality_multipliers,
         jnp.array([2.0]),
         atol=2e-6,
     )
+    # ty: ignore[unresolved-attribute]
     assert result.certificate.primal_feasibility < 1e-7
+    # ty: ignore[unresolved-attribute]
     assert result.certificate.dual_feasibility < 1e-7
+    # ty: ignore[unresolved-attribute]
     assert result.certificate.complementarity < 1e-7
 
 
-def test_primal_dual_eager_and_filtered_jit_agree_with_large_step_limit():
+def test_primal_dual_eager_and_filtered_jit_agree_with_large_step_limit() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda parameters, target: jnp.sum((parameters - target) ** 2),
         bounds=phx.optim.Bounds(-jnp.inf, 1.0),
@@ -123,7 +131,7 @@ def test_primal_dual_eager_and_filtered_jit_agree_with_large_step_limit():
     )
     termination = _termination(steps=100_000)
 
-    def solve(target):
+    def solve(target: Any) -> Any:
         return phx.optim.minimize(
             problem,
             jnp.array([0.0]),
@@ -156,7 +164,7 @@ def test_primal_dual_eager_and_filtered_jit_agree_with_large_step_limit():
     )
 
 
-def test_primal_dual_filtered_jit_supports_function_operator_preconditioner():
+def test_primal_dual_filtered_jit_supports_function_operator_preconditioner() -> None:
     dtype = jnp.asarray(0.0).dtype
     kkt_space = phx.linalg.BlockSpace(
         (
@@ -207,7 +215,7 @@ def test_primal_dual_filtered_jit_supports_function_operator_preconditioner():
     assert result.diagnostics.numeric_refreshes == (result.diagnostics.linear_solves + 1)
 
 
-def test_primal_dual_final_certificate_promotes_exhausted_budget_to_success():
+def test_primal_dual_final_certificate_promotes_exhausted_budget_to_success() -> None:
     equality = phx.optim.NonlinearConstraint(
         lambda parameters, _: parameters,
         lower=1.0,
@@ -235,11 +243,13 @@ def test_primal_dual_final_certificate_promotes_exhausted_budget_to_success():
     assert result.diagnostics.iterations == 1
     assert result.diagnostics.accepted_steps == 1
     assert result.diagnostics.objective_evaluations > 1
+    # ty: ignore[unresolved-attribute]
     assert result.certificate.primal_feasibility <= 1e-7
+    # ty: ignore[unresolved-attribute]
     assert result.certificate.dual_feasibility <= 1e-7
 
 
-def test_primal_dual_handles_redundant_equalities_matrix_free():
+def test_primal_dual_handles_redundant_equalities_matrix_free() -> None:
     constraint = phx.optim.NonlinearConstraint(
         lambda parameters, _: jnp.repeat(jnp.sum(parameters)[None], 2),
         lower=1.0,
@@ -264,7 +274,7 @@ def test_primal_dual_handles_redundant_equalities_matrix_free():
     assert result.diagnostics.primal_feasibility < 1e-7
 
 
-def test_primal_dual_reports_explicit_restoration_failure():
+def test_primal_dual_reports_explicit_restoration_failure() -> None:
     impossible = phx.optim.NonlinearConstraint(
         lambda parameters, _: jnp.ones_like(parameters),
         lower=0.0,
@@ -293,14 +303,15 @@ def test_primal_dual_reports_explicit_restoration_failure():
     assert result.diagnostics.setup_refreshes == 1
     assert result.diagnostics.numeric_refreshes == 2
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         result.certificate.stationarity_residual,
         jnp.array([0.0]),
     )
 
 
 def test_reduced_newton_krylov_uses_incremental_state_and_adjoint_actions(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     problem = phx.optim.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: jnp.sum((state - 2.0) ** 2) + 0.1 * jnp.sum(design**2),
@@ -327,7 +338,7 @@ def test_reduced_newton_krylov_uses_incremental_state_and_adjoint_actions(
     assert result.diagnostics.numeric_refreshes > 0
 
 
-def test_reduced_newton_krylov_jit_supports_partitioned_nested_state_design():
+def test_reduced_newton_krylov_jit_supports_partitioned_nested_state_design() -> None:
     wrapped = _PartitionedDesign(jnp.array([0.0]), 2.0)
     initial_design, static_design = eqx.partition(
         wrapped,
@@ -335,7 +346,7 @@ def test_reduced_newton_krylov_jit_supports_partitioned_nested_state_design():
     )
     initial_state = {"field": jnp.array([0.0])}
 
-    def physical(design):
+    def physical(design: Any) -> Any:
         return eqx.combine(design, static_design)
 
     problem = phx.optim.StateDesignProblem(
@@ -351,7 +362,7 @@ def test_reduced_newton_krylov_jit_supports_partitioned_nested_state_design():
     method = phx.optim.ReducedNewtonKrylov()
     termination = _termination(tolerance=1e-7, steps=100_000)
 
-    def solve(target):
+    def solve(target: Any) -> Any:
         return phx.optim.solve_state_design(
             problem,
             initial_state,

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -9,7 +11,7 @@ import phydrax.solver._laplace_capacitance as capacitance_solver
 _TETRA_FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32)
 
 
-def _prepared_two_conductors():
+def _prepared_two_conductors() -> Any:
     base = jnp.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     )
@@ -28,7 +30,7 @@ def _prepared_two_conductors():
     )
 
 
-def _selections(prepared):
+def _selections(prepared: Any) -> Any:
     left = phx.discretization.EntitySelection(
         prepared.surface_entities,
         jnp.asarray([1, 1, 1, 1, 0, 0, 0, 0], dtype="bool"),
@@ -40,13 +42,15 @@ def _selections(prepared):
     return left, right
 
 
-def test_capacitance_solver_preserves_names_units_and_existing_potentials(monkeypatch):
+def test_capacitance_solver_preserves_names_units_and_existing_potentials(
+    monkeypatch: Any,
+) -> None:
     prepared = _prepared_two_conductors()
     left, right = _selections(prepared)
     preparation_calls = []
     prepare_linear = capacitance_solver.prepare_linear
 
-    def counted_prepare_linear(problem, policy):
+    def counted_prepare_linear(problem: Any, policy: Any) -> Any:
         preparation_calls.append((problem, policy))
         return prepare_linear(problem, policy)
 
@@ -82,7 +86,9 @@ def test_capacitance_solver_preserves_names_units_and_existing_potentials(monkey
     assert jnp.all(jnp.isfinite(values))
 
 
-def test_capacitance_plan_rejects_invalid_partitions_and_supports_mathematical_ad():
+def test_capacitance_plan_rejects_invalid_partitions_and_supports_mathematical_ad() -> (
+    None
+):
     prepared = _prepared_two_conductors()
     epoch = phx.operators.BoundaryMeshEpoch(prepared._binding.mesh)
     left, right = _selections(prepared)
@@ -118,8 +124,8 @@ def test_capacitance_plan_rejects_invalid_partitions_and_supports_mathematical_a
 
 
 def test_capacitance_fixed_epoch_coordinate_jvp_and_stable_dual_preconditioner(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     galerkin = _prepared_two_conductors()
     epoch = phx.operators.BoundaryMeshEpoch(galerkin._binding.mesh)
     left, right = _selections(galerkin)
@@ -140,7 +146,7 @@ def test_capacitance_fixed_epoch_coordinate_jvp_and_stable_dual_preconditioner(
     assert jnp.allclose(derivative.capacitance_tangent, 0.0)
     solve = capacitance_solver.solve
 
-    def failed_tangent_solve(*args, **kwargs):
+    def failed_tangent_solve(*args: Any, **kwargs: Any) -> Any:
         solved = solve(*args, **kwargs)
         return eqx.tree_at(
             lambda value: value.status,

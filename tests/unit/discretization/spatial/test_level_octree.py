@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
 from phydrax.discretization.spatial import MortonAddressPlan, SparseLevelOctreePlan
 
 
-def _points():
+def _points() -> Any:
     return jnp.asarray(
         [
             [0.0625, 0.0625],

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -35,7 +36,7 @@ from phydrax.optim._state_design_linearization import (
 sm = phx.applications.solid_mechanics
 
 
-def _linear_policy():
+def _linear_policy() -> Any:
     return phx.linalg.LinearSolvePolicy(
         phx.linalg.GMRES(),
         tolerance=phx.linalg.TolerancePolicy(
@@ -46,8 +47,8 @@ def _linear_policy():
     )
 
 
-def _fe_solver():
-    def execute(problem, design, initial, args):
+def _fe_solver() -> Any:
+    def execute(problem: Any, design: Any, initial: Any, args: Any) -> Any:
         zero = jax.tree.map(jnp.zeros_like, initial)
         offset, action = jax.linearize(
             lambda state: problem.residual(state, design, args), zero
@@ -77,7 +78,7 @@ def _fe_solver():
     return sm.FiniteElementStateSolver(execute, solver_id="native-triangle-fe-gmres")
 
 
-def _mesh(segments):
+def _mesh(segments: Any) -> Any:
     if segments < 2:
         raise ValueError("segments must be at least two.")
     coordinates = jnp.asarray(
@@ -105,8 +106,14 @@ def _mesh(segments):
     ).prepare()
 
     def elasticity(
-        values, gradients, points, weights, test_basis, test_gradients, context
-    ):
+        values: Any,
+        gradients: Any,
+        points: Any,
+        weights: Any,
+        test_basis: Any,
+        test_gradients: Any,
+        context: Any,
+    ) -> Any:
         del values, points, test_basis
         gradient = gradients[0]
         strain = 0.5 * (gradient + jnp.swapaxes(gradient, -1, -2))
@@ -130,7 +137,7 @@ def _mesh(segments):
     )
     load = jnp.zeros((2 * segments, 2)).at[-1, 1].set(-0.01)
 
-    def residual(state, modulus, geometry):
+    def residual(state: Any, modulus: Any, geometry: Any) -> Any:
         runtime = discretization.prepare_runtime(
             geometry, numeric_version="learned-active-geometry"
         )
@@ -141,7 +148,7 @@ def _mesh(segments):
     return coordinates, cells, load, residual
 
 
-def _acceptance():
+def _acceptance() -> Any:
     return phx.optim.StateAcceptancePolicy(
         state_relative_tolerance=1.0e-7,
         state_absolute_tolerance=1.0e-10,
@@ -150,7 +157,7 @@ def _acceptance():
     )
 
 
-def _reference_solve(problem, density, initial, args):
+def _reference_solve(problem: Any, density: Any, initial: Any, args: Any) -> Any:
     point = prepare_state_design_linearization(
         problem, density, initial, args=args, linear_policy=_linear_policy()
     )
@@ -158,13 +165,14 @@ def _reference_solve(problem, density, initial, args):
     return sm.FiniteElementReanalysisCandidate(
         point.state,
         response.adjoint,
+        # ty: ignore[unresolved-attribute]
         state_status=point.state_result.status,
         adjoint_status=response.linear_result.status,
         solver_id="independent-native-reference-fe",
     )
 
 
-def build_density_case(segments=3):
+def build_density_case(segments: Any = 3) -> Any:
     coordinates, cells, load, residual = _mesh(segments)
     centers = jnp.mean(coordinates[cells], axis=1)
     count = cells.shape[0]
@@ -194,7 +202,7 @@ def build_density_case(segments=3):
     )
     basis = jnp.stack((jnp.ones((count,)), centers[:, 0] / segments - 0.5), axis=-1)
 
-    def decode(latent):
+    def decode(latent: Any) -> Any:
         return jax.nn.sigmoid(phx.ein.contract("ci,i->c", basis, latent))
 
     learned = prepare_learned_topology_design(
@@ -207,7 +215,7 @@ def build_density_case(segments=3):
     )
 
     # Invert this same-mesh finite-beta projection exactly, not by clipping.
-    def transfer(physical):
+    def transfer(physical: Any) -> Any:
         beta = topology.density_transform.beta
         eta = prepared.plan.projection.eta
         lower = jnp.tanh(beta * eta)
@@ -221,7 +229,7 @@ def build_density_case(segments=3):
     return learned, (jnp.zeros_like(load),), plan, mask, fixed
 
 
-def build_shape_case(segments=3):
+def build_shape_case(segments: Any = 3) -> Any:
     coordinates, cells, load, residual = _mesh(segments)
     geometry = phx.geometry.design
     schema = geometry.ParameterSchema(
@@ -239,12 +247,12 @@ def build_shape_case(segments=3):
     x = coordinates[:, 0] / segments
     basis = jnp.stack((x, x * (1.0 - x)), axis=-1)
 
-    def decode(latent):
+    def decode(latent: Any) -> Any:
         height = 1.0 + 0.25 * jnp.tanh(phx.ein.contract("ni,i->n", basis, latent))
         points = coordinates.at[:, 1].set(coordinates[:, 1] * height)
         return geometry.DesignState(schema, (points,))
 
-    def signed_area(design):
+    def signed_area(design: Any) -> Any:
         triangle = design.values[0][cells]
         a, b = triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0]
         return 0.5 * (a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0])
@@ -279,7 +287,7 @@ def build_shape_case(segments=3):
     return learned, jnp.zeros_like(load)
 
 
-def run(segments=3, steps=100):
+def run(segments: Any = 3, steps: Any = 100) -> Any:
     started = time.perf_counter()
     termination = phx.optim.OptimizationTermination(
         maximum_steps=steps,
@@ -423,7 +431,7 @@ def run(segments=3, steps=100):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--segments", type=int, default=3)
     parser.add_argument("--steps", type=int, default=100)

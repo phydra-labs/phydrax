@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -11,7 +13,7 @@ from phydrax.optim._ipopt import (
 )
 
 
-def _structured_program(*, exact_hessian=False):
+def _structured_program(*, exact_hessian: Any = False) -> Any:
     objective = lambda value, args: 0.5 * jnp.vdot(value, value)
     constraints = lambda value, args: jnp.asarray(
         (value[0] + value[1], value[0] - value[1])
@@ -57,7 +59,7 @@ def _structured_program(*, exact_hessian=False):
     return program, point
 
 
-def test_ipopt_status_mapping_is_explicit():
+def test_ipopt_status_mapping_is_explicit() -> None:
     assert _mapped_status(0) == phx.optim.OptimizationStatus.SUCCESS
     assert _mapped_status(1) == phx.optim.OptimizationStatus.SUCCESS
     assert _mapped_status(2) == phx.optim.OptimizationStatus.INFEASIBLE
@@ -74,7 +76,7 @@ def test_ipopt_status_mapping_is_explicit():
     assert _mapped_status(-199) == phx.optim.OptimizationStatus.BACKEND_FAILED
 
 
-def test_ipopt_sparse_structures_are_canonical_and_duplicate_free():
+def test_ipopt_sparse_structures_are_canonical_and_duplicate_free() -> None:
     rows, cols, positions = _canonical_structure(
         jnp.asarray((1, 0, 1)),
         jnp.asarray((1, 1, 0)),
@@ -102,13 +104,14 @@ def test_ipopt_sparse_structures_are_canonical_and_duplicate_free():
     assert positions.tolist() == [0, 2, 3]
 
 
-def test_structured_callbacks_count_exact_sparse_work():
+def test_structured_callbacks_count_exact_sparse_work() -> None:
     program, point = _structured_program(exact_hessian=True)
     callbacks = _StructuredIpoptCallbacks(program, None)
     assert callbacks.objective(point) == pytest.approx(0.3125)
     assert jnp.allclose(callbacks.gradient(point), point)
     assert jnp.allclose(callbacks.constraints(point), jnp.asarray((1.0, 0.5)))
     assert callbacks.jacobian(point).shape == (program.jacobian_plan.nnz,)
+    # ty: ignore[invalid-argument-type]
     hessian = callbacks.hessian(point, jnp.zeros(2), 1.0)
     assert jnp.allclose(hessian, jnp.ones(2))
     assert callbacks.intermediate(0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
@@ -123,7 +126,7 @@ def test_structured_callbacks_count_exact_sparse_work():
     assert counts.device_to_host == 5
 
 
-def test_structured_ipopt_options_cannot_override_owned_semantics():
+def test_structured_ipopt_options_cannot_override_owned_semantics() -> None:
     program, _ = _structured_program()
     termination = phx.optim.OptimizationTermination()
     method = phx.optim.IpoptMinimize(options={"print_level": 0})
@@ -144,7 +147,7 @@ def test_structured_ipopt_options_cannot_override_owned_semantics():
         )._structured_options(exact_program, termination)
 
 
-def test_structured_warm_start_tracks_source_and_rejects_invalid_duals():
+def test_structured_warm_start_tracks_source_and_rejects_invalid_duals() -> None:
     program, point = _structured_program()
     warm = program.warm_start(
         point,

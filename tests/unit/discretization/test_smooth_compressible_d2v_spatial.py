@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -26,7 +29,7 @@ from phydrax.equations._materials import IdealGasMaterial
 from phydrax.equations._transport_closures import ConstantTransport
 
 
-def _method():
+def _method() -> Any:
     quadrature = d2v17_quadrature()
     return SmoothCompressibleD2VKineticMethod(
         quadrature,
@@ -35,7 +38,7 @@ def _method():
     )
 
 
-def _runtime():
+def _runtime() -> Any:
     method = _method()
     energy_plan = PositiveEnergyEquilibriumPlan(method.quadrature)
     transport = D2V17PeriodicTransportPlan(
@@ -47,7 +50,7 @@ def _runtime():
     return PreparedSmoothCompressibleD2V17SpatialDynamics(method, energy_plan, transport)
 
 
-def _uniform_state(runtime):
+def _uniform_state(runtime: Any) -> Any:
     conserved = jnp.asarray((1.0, 0.03, -0.02, 1.251))
     density = conserved[0]
     momentum = conserved[1:3]
@@ -72,7 +75,7 @@ def _uniform_state(runtime):
     )
 
 
-def test_d2v17_periodic_pull_routes_every_integer_velocity():
+def test_d2v17_periodic_pull_routes_every_integer_velocity() -> None:
     quadrature = d2v17_quadrature()
     transport = D2V17PeriodicTransportPlan(quadrature, (5, 6), (0.01, 0.01), 0.01)
     populations = jnp.arange(5 * 6 * 17, dtype=jnp.float64).reshape((5, 6, 17))
@@ -87,7 +90,7 @@ def test_d2v17_periodic_pull_routes_every_integer_velocity():
     assert transport.maximum_reach == (2, 2)
 
 
-def test_periodic_spatial_oracle_step_preserves_uniform_state_and_content():
+def test_periodic_spatial_oracle_step_preserves_uniform_state_and_content() -> None:
     runtime = _runtime()
     state = _uniform_state(runtime)
 
@@ -113,7 +116,7 @@ def test_periodic_spatial_oracle_step_preserves_uniform_state_and_content():
     )
 
 
-def test_periodic_spatial_failure_rolls_back_both_population_fields():
+def test_periodic_spatial_failure_rolls_back_both_population_fields() -> None:
     runtime = _runtime()
     state = _uniform_state(runtime)
     invalid_particles = state.particle_populations.at[2, 3, 0].set(-1.0)
@@ -137,7 +140,7 @@ def test_periodic_spatial_failure_rolls_back_both_population_fields():
     )
 
 
-def test_periodic_spatial_refuses_wrong_step_and_non_d2v17_quadrature():
+def test_periodic_spatial_refuses_wrong_step_and_non_d2v17_quadrature() -> None:
     runtime = _runtime()
     state = _uniform_state(runtime)
 

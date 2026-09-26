@@ -49,7 +49,7 @@ def _campaign(
     )
 
 
-def test_related_wild_type_and_mutation_cannot_cross_roles():
+def test_related_wild_type_and_mutation_cannot_cross_roles() -> None:
     wild_type = _case("wild-type", "family-background", "preparation-wt")
     mutation = _case(
         "mutation-a7v",
@@ -62,7 +62,7 @@ def test_related_wild_type_and_mutation_cannot_cross_roles():
         _campaign((wild_type, mutation), (wild_type.case_id,), (mutation.case_id,))
 
 
-def test_technical_replicates_from_one_preparation_cannot_cross_roles():
+def test_technical_replicates_from_one_preparation_cannot_cross_roles() -> None:
     first = _case("replicate-1", "unit-1", "shared-preparation")
     second = _case("replicate-2", "unit-2", "shared-preparation")
 
@@ -70,7 +70,7 @@ def test_technical_replicates_from_one_preparation_cannot_cross_roles():
         _campaign((first, second), (first.case_id,), (second.case_id,))
 
 
-def test_acquisitions_from_one_batch_cannot_cross_roles():
+def test_acquisitions_from_one_batch_cannot_cross_roles() -> None:
     first = _case(
         "acquisition-1",
         "unit-1",
@@ -88,7 +88,7 @@ def test_acquisitions_from_one_batch_cannot_cross_roles():
         _campaign((first, second), (first.case_id,), (second.case_id,))
 
 
-def test_indirect_source_ancestry_is_closed_within_one_role():
+def test_indirect_source_ancestry_is_closed_within_one_role() -> None:
     source = _case("source", "unit-source", "preparation-source")
     repaired = _case(
         "repaired", "unit-repaired", "preparation-repaired", parent_case_ids=("source",)
@@ -105,7 +105,7 @@ def test_indirect_source_ancestry_is_closed_within_one_role():
         )
 
 
-def test_locked_observation_cannot_supply_preprocessing():
+def test_locked_observation_cannot_supply_preprocessing() -> None:
     calibration = _case("calibration", "unit-calibration", "preparation-calibration")
     locked = _case("locked", "unit-locked", "preparation-locked")
 
@@ -118,7 +118,7 @@ def test_locked_observation_cannot_supply_preprocessing():
         )
 
 
-def test_campaign_identity_is_order_independent_and_content_verified():
+def test_campaign_identity_is_order_independent_and_content_verified() -> None:
     calibration = _case("calibration", "unit-calibration", "preparation-calibration")
     locked = _case("locked", "unit-locked", "preparation-locked")
     first = _campaign(
@@ -155,7 +155,7 @@ def test_campaign_identity_is_order_independent_and_content_verified():
         ScientificCampaign.from_record(corrupted)
 
 
-def test_distinct_preparations_may_share_a_construct_by_campaign_design():
+def test_distinct_preparations_may_share_a_construct_by_campaign_design() -> None:
     calibration = _case("calibration", "unit-calibration", "preparation-calibration")
     locked = _case("locked", "unit-locked", "preparation-locked")
 
@@ -169,7 +169,7 @@ def test_distinct_preparations_may_share_a_construct_by_campaign_design():
     assert {case.construct_id for case in campaign.cases} == {"construct-shared"}
 
 
-def test_duplicate_role_declarations_are_rejected():
+def test_duplicate_role_declarations_are_rejected() -> None:
     calibration = _case("calibration", "unit-calibration", "preparation-calibration")
     locked = _case("locked", "unit-locked", "preparation-locked")
 

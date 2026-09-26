@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import zipfile
+from typing import Any
 
 import numpy as np
 import pytest
@@ -52,7 +53,9 @@ _USE = {
 }
 
 
-def _manifest(name, content, *, lineage=("independent-test-source",)):
+def _manifest(
+    name: Any, content: Any, *, lineage: Any = ("independent-test-source",)
+) -> Any:
     return ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -70,7 +73,7 @@ def _manifest(name, content, *, lineage=("independent-test-source",)):
     )
 
 
-def _source(*, leaking_family=False):
+def _source(*, leaking_family: Any = False) -> Any:
     raw = StrandDisplacementSourceMember(
         "raw-workbook", "raw.xlsx", _manifest("raw.xlsx", b"raw")
     )
@@ -121,7 +124,7 @@ def _source(*, leaking_family=False):
     )
 
 
-def _csv_bytes(source, *, duplicate_well=False):
+def _csv_bytes(source: Any, *, duplicate_well: Any = False) -> Any:
     source_ids = sorted(
         (
             source.raw_workbook.manifest.manifest_id,
@@ -166,7 +169,7 @@ def _csv_bytes(source, *, duplicate_well=False):
     return stream.getvalue().encode()
 
 
-def _admit(tmp_path, source, content):
+def _admit(tmp_path: Any, source: Any, content: Any) -> Any:
     path = tmp_path / "traces.csv"
     path.write_bytes(content)
     raw_ids = (
@@ -179,7 +182,9 @@ def _admit(tmp_path, source, content):
     )
 
 
-def test_prepared_csv_preserves_order_units_saturation_and_provenance(tmp_path):
+def test_prepared_csv_preserves_order_units_saturation_and_provenance(
+    tmp_path: Any,
+) -> None:
     source = _source()
     admission = _admit(tmp_path, source, _csv_bytes(source))
     first, second = admission.traces
@@ -200,7 +205,9 @@ def test_prepared_csv_preserves_order_units_saturation_and_provenance(tmp_path):
         prepare_strand_displacement_cohort((admission,))
 
 
-def test_prepared_csv_refuses_duplicate_wells_and_family_role_leakage(tmp_path):
+def test_prepared_csv_refuses_duplicate_wells_and_family_role_leakage(
+    tmp_path: Any,
+) -> None:
     source = _source()
     with pytest.raises(ValueError, match="duplicate physical well"):
         _admit(tmp_path, source, _csv_bytes(source, duplicate_well=True))
@@ -211,7 +218,7 @@ def test_prepared_csv_refuses_duplicate_wells_and_family_role_leakage(tmp_path):
         prepare_strand_displacement_cohort((admission,))
 
 
-def test_prepared_csv_refuses_schema_or_digest_disagreement(tmp_path):
+def test_prepared_csv_refuses_schema_or_digest_disagreement(tmp_path: Any) -> None:
     source = _source()
     content = _csv_bytes(source)
     malformed = content.replace(b"time_seconds", b"time_minutes", 1)
@@ -238,7 +245,7 @@ _XLSX_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships
 _XLSX_PACKAGE_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
-def _xlsx_cell(coordinate, value):
+def _xlsx_cell(coordinate: Any, value: Any) -> Any:
     if value is None:
         return f'<c r="{coordinate}"/>'
     if isinstance(value, str):
@@ -246,7 +253,7 @@ def _xlsx_cell(coordinate, value):
     return f'<c r="{coordinate}"><v>{value}</v></c>'
 
 
-def _xlsx_bytes(sheet_name, rows):
+def _xlsx_bytes(sheet_name: Any, rows: Any) -> Any:
     body = "".join(
         f'<row r="{index}">'
         + "".join(_xlsx_cell(f"{column}{index}", value) for column, value in row.items())
@@ -272,7 +279,7 @@ def _xlsx_bytes(sheet_name, rows):
     return stream.getvalue()
 
 
-def test_raw_workbook_rows_with_empty_sample_cells_are_not_samples():
+def test_raw_workbook_rows_with_empty_sample_cells_are_not_samples() -> None:
     source = _source()
     plate = _xlsx_bytes(
         "Sheet1",

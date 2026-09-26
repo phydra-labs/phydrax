@@ -7,7 +7,7 @@ import io
 import runpy
 
 
-def test_growth_amr_superquadric_wall_and_monolithic_workflows_compose():
+def test_growth_amr_superquadric_wall_and_monolithic_workflows_compose() -> None:
     paths = (
         "examples/growing_reactive_particle_pool.py",
         "examples/adaptive_catalyst_pellet.py",

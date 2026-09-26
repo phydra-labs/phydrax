@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +15,7 @@ jax.config.update("jax_enable_x64", True)
 _COUPLING = jnp.asarray([[0.6, -0.3], [0.2, 0.5]])
 
 
-def _termination(*, maximum_steps=200):
+def _termination(*, maximum_steps: Any = 200) -> Any:
     return nl.NonlinearTermination(
         absolute_residual=1e-13,
         relative_residual=0.0,
@@ -23,7 +25,7 @@ def _termination(*, maximum_steps=200):
     )
 
 
-def _policy():
+def _policy() -> Any:
     return nl.ImplicitRootDerivativePolicy(
         tangent_linear_policy=la.LinearSolvePolicy(
             la.GMRES(),
@@ -32,7 +34,7 @@ def _policy():
     )
 
 
-def _contraction(state, theta):
+def _contraction(state: Any, theta: Any) -> Any:
     return 0.5 * jnp.tanh(_COUPLING @ state) + jnp.asarray([theta, theta**2])
 
 
@@ -43,10 +45,10 @@ def _contraction(state, theta):
         nl.FixedPointIteration(acceleration=nl.AndersonAcceleration(history=2)),
     ],
 )
-def test_fixed_point_derivatives_match_central_differences(method):
+def test_fixed_point_derivatives_match_central_differences(method: Any) -> None:
     problem = nl.FixedPointProblem(_contraction, problem_id="tanh-contraction")
 
-    def fixed_point(theta):
+    def fixed_point(theta: Any) -> Any:
         return nl.implicit_fixed_point_result(
             problem,
             jnp.zeros(2),
@@ -77,11 +79,11 @@ def test_fixed_point_derivatives_match_central_differences(method):
     assert jnp.allclose(gradient, weights @ difference, rtol=1e-7, atol=1e-9)
 
 
-def test_fixed_point_derivative_refuses_unit_mapping_slope():
+def test_fixed_point_derivative_refuses_unit_mapping_slope() -> None:
     # g(x) = x - (x - 1)^3 + theta has dg/dx = 1 at the fixed point x = 1.
     problem = nl.FixedPointProblem(lambda state, theta: state - (state - 1) ** 3 + theta)
 
-    def fixed_point(theta):
+    def fixed_point(theta: Any) -> Any:
         return nl.implicit_fixed_point_result(
             problem,
             jnp.ones(1),
@@ -100,10 +102,10 @@ def test_fixed_point_derivative_refuses_unit_mapping_slope():
         reverse(theta)
 
 
-def test_failed_fixed_point_iteration_is_reported_and_not_differentiated():
+def test_failed_fixed_point_iteration_is_reported_and_not_differentiated() -> None:
     problem = nl.FixedPointProblem(_contraction)
 
-    def fixed_point(theta):
+    def fixed_point(theta: Any) -> Any:
         return nl.implicit_fixed_point_result(
             problem,
             jnp.zeros(2),
@@ -122,11 +124,12 @@ def test_failed_fixed_point_iteration_is_reported_and_not_differentiated():
 class _NetworkMapping(eqx.Module):
     network: eqx.Module
 
-    def __call__(self, state, theta):
+    def __call__(self, state: Any, theta: Any) -> Any:
+        # ty: ignore[call-non-callable]
         return 0.1 * self.network(state, key=jax.random.key(3)) + theta
 
 
-def _network(activation):
+def _network(activation: Any) -> Any:
     return phx.nn.models.MLP(
         in_size=2,
         out_size=2,
@@ -137,7 +140,7 @@ def _network(activation):
     )
 
 
-def _network_fixed_point(mapping):
+def _network_fixed_point(mapping: Any) -> Any:
     return nl.implicit_fixed_point_result(
         nl.FixedPointProblem(mapping),
         jnp.zeros(2),
@@ -147,7 +150,7 @@ def _network_fixed_point(mapping):
     )
 
 
-def test_fixed_point_refuses_mapping_components_without_classical_c1_regularity():
+def test_fixed_point_refuses_mapping_components_without_classical_c1_regularity() -> None:
     with pytest.raises(ValueError, match="implicit-requires-c1"):
         _network_fixed_point(_NetworkMapping(_network(jax.nn.relu)))
 
@@ -156,12 +159,13 @@ def test_fixed_point_refuses_mapping_components_without_classical_c1_regularity(
     assert result.component_evidence == ("mapping.network:deterministic",)
 
 
-def test_fixed_point_requires_fixed_point_iteration_and_tangent_policy():
+def test_fixed_point_requires_fixed_point_iteration_and_tangent_policy() -> None:
     problem = nl.FixedPointProblem(_contraction)
     with pytest.raises(TypeError, match="FixedPointIteration"):
         nl.implicit_fixed_point_result(
             problem,
             jnp.zeros(2),
+            # ty: ignore[invalid-argument-type]
             method=nl.NewtonKrylov(),
             derivative_policy=_policy(),
             args=0.3,

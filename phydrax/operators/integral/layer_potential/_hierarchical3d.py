@@ -19,6 +19,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....linalg import ArraySpace, FunctionLinearOperator, OperatorProperties
+from ....typing import parse
 from ._fast_provider import (
     BEMExecutionEnvelope,
     BEMLocalBlock3D,
@@ -78,8 +79,7 @@ class ScalarFastPolicy3D(StrictModule, NonTrainableState):
         if any(value <= 0 for value in integers):
             raise ValueError("Fast-provider resource bounds must be positive.")
         formulation_ = str(formulation)
-        if formulation_ not in ("weak", "strong"):
-            raise ValueError("formulation must be 'weak' or 'strong'.")
+        formulation_ = parse(formulation_, BoundaryGalerkinFormulation, "formulation_")
         self.tolerance = tolerance_
         self.leaf_size = integers[0]
         self.admissibility = eta

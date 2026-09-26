@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -12,7 +15,7 @@ from phydrax.applications.skeletal_muscle.fibers import (
 )
 
 
-def _territory():
+def _territory() -> Any:
     return MotorUnitTerritoryPlan(
         ("unit-0", "unit-1"),
         ("fiber-0", "fiber-1", "fiber-2"),
@@ -25,7 +28,7 @@ def _territory():
     )
 
 
-def test_sparse_territory_counts_coverage_and_endplate_routing():
+def test_sparse_territory_counts_coverage_and_endplate_routing() -> None:
     plan = _territory()
     stimulus = plan.bind_events(
         jnp.asarray(((1.0, jnp.inf), (1.05, jnp.inf))),
@@ -45,7 +48,9 @@ def test_sparse_territory_counts_coverage_and_endplate_routing():
     assert stimulus.event_times_ms.shape == (2, 2)
 
 
-def test_bound_events_are_accepted_by_fiber_bundle_without_dense_territory_tensor():
+def test_bound_events_are_accepted_by_fiber_bundle_without_dense_territory_tensor() -> (
+    None
+):
     stimulus = _territory().bind_events(
         jnp.asarray(((0.0,), (0.0,))),
         jnp.asarray(((True,), (False,))),
@@ -64,7 +69,7 @@ def test_bound_events_are_accepted_by_fiber_bundle_without_dense_territory_tenso
     assert plan.stimulus.current(0.25)[0, 1] == 0.0
 
 
-def test_invalid_territory_and_active_event_data_fail_at_host_boundary():
+def test_invalid_territory_and_active_event_data_fail_at_host_boundary() -> None:
     with pytest.raises(ValueError, match="out-of-range unit"):
         MotorUnitTerritoryPlan(
             ("unit-0",),

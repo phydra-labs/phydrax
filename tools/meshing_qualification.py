@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -26,7 +27,7 @@ def _planar_region(name: str, x0: float, x1: float) -> phx.geometry.PlanarMeshRe
     )
 
 
-def _planar_partition(destination: Path):
+def _planar_partition(destination: Path) -> Any:
     contract = _contract()
     embedding = phx.geometry.PlanarEmbedding(
         (0.0, 0.0, 0.0),
@@ -56,8 +57,8 @@ def _planar_partition(destination: Path):
 
 
 def _persist_partition_operand(
-    shape, path: Path, contract: phx.SpatialCoordinateContract
-):
+    shape: Any, path: Path, contract: phx.SpatialCoordinateContract
+) -> Any:
     return phx.geometry.persist_occt_shape(
         shape,
         path,
@@ -65,7 +66,7 @@ def _persist_partition_operand(
     )
 
 
-def _three_dimensional_partition(destination: Path):
+def _three_dimensional_partition(destination: Path) -> Any:
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
 
@@ -92,7 +93,7 @@ def _three_dimensional_partition(destination: Path):
     return phx.geometry.partition_brep(plan, destination=destination / "composite.brep")
 
 
-def _region_controls(provider, partition, model=None):
+def _region_controls(provider: Any, partition: Any, model: Any = None) -> Any:
     source = partition.model if model is None else model
     return tuple(
         phx.meshing.RegionControl(
@@ -105,7 +106,7 @@ def _region_controls(provider, partition, model=None):
     )
 
 
-def _patch_controls(provider, partition, model=None):
+def _patch_controls(provider: Any, partition: Any, model: Any = None) -> Any:
     source = partition.model if model is None else model
     return tuple(
         phx.meshing.PatchControl(
@@ -118,13 +119,13 @@ def _patch_controls(provider, partition, model=None):
 
 
 def _semantic_gmsh_specification(
-    provider,
-    partition,
-    model=None,
+    provider: Any,
+    partition: Any,
+    model: Any = None,
     /,
     *,
     scoped_size: bool,
-):
+) -> Any:
     source = partition.model if model is None else model
     whole = provider.whole_scope(source, 3)
     controls = (
@@ -160,7 +161,7 @@ def _semantic_gmsh_specification(
     return specification, controls
 
 
-def _require_semantic_gmsh_result(result, partition) -> None:
+def _require_semantic_gmsh_result(result: Any, partition: Any) -> None:
     if not result.audit.passed or not result.compliance.passed:
         raise RuntimeError("Semantic Gmsh result failed audit or compliance.")
     zones = {
@@ -269,6 +270,7 @@ def qualify_gmsh() -> dict[str, object]:
 
 
 def _layout_bytes() -> bytes:
+    # ty: ignore[unresolved-import]
     import gdstk
 
     with TemporaryDirectory(prefix="phydrax-layout-fixture-") as temporary:
@@ -280,7 +282,7 @@ def _layout_bytes() -> bytes:
         return path.read_bytes()
 
 
-def _decode_layout():
+def _decode_layout() -> Any:
     contract = _contract()
     limits = phx.interchange.ResourceLimits(
         max_bytes=1_000_000,
@@ -300,7 +302,7 @@ def _decode_layout():
     )
 
 
-def _hybrid_face_indices(source, axis: int, coordinate: float):
+def _hybrid_face_indices(source: Any, axis: int, coordinate: float) -> Any:
     points = np.asarray(source.mesh_vertices)
     triangles = points[np.asarray(source.mesh_faces)]
     face_ids = np.asarray(source.triangle_face_ids)
@@ -316,7 +318,7 @@ def _hybrid_face_indices(source, axis: int, coordinate: float):
     )
 
 
-def _hybrid_gmsh_result(destination: Path, *, schedule=None):
+def _hybrid_gmsh_result(destination: Path, *, schedule: Any = None) -> Any:
     from OCP.BOPAlgo import BOPAlgo_Splitter
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
@@ -395,7 +397,9 @@ def _hybrid_gmsh_result(destination: Path, *, schedule=None):
     return provider.plan(source, specification).execute(), control
 
 
-def _mesh_scope(mesh: phx.discretization.CellMesh, dimension: int, ids: np.ndarray):
+def _mesh_scope(
+    mesh: phx.discretization.CellMesh, dimension: int, ids: np.ndarray
+) -> Any:
     entities = mesh.entity_set(dimension)
     return phx.meshing.MeshingScope(
         mesh.mesh_id,
@@ -410,7 +414,7 @@ def _mesh_scope(mesh: phx.discretization.CellMesh, dimension: int, ids: np.ndarr
 def qualify_manifold() -> dict[str, object]:
     import manifold3d
 
-    def cube(offset):
+    def cube(offset: Any) -> Any:
         arrays = manifold3d.Manifold.cube().translate(offset).to_mesh64()
         return phx.geometry.SurfaceModel.from_triangles(
             arrays.vert_properties[:, :3],

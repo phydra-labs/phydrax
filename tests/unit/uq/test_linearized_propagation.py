@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -11,14 +14,14 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _linear_problem():
+def _linear_problem() -> Any:
     matrix = jnp.asarray([[1.0, -2.0, 0.5], [0.25, 1.5, -1.0]])
     covariance = jnp.asarray([[1.5, 0.2, -0.1], [0.2, 0.8, 0.3], [-0.1, 0.3, 1.2]])
     center = jnp.asarray([0.4, -0.2, 0.7])
     return matrix, covariance, center
 
 
-def test_all_covariance_representations_recover_the_same_affine_pushforward():
+def test_all_covariance_representations_recover_the_same_affine_pushforward() -> None:
     matrix, covariance, center = _linear_problem()
     expected = matrix @ covariance @ matrix.T
     cholesky = jnp.linalg.cholesky(covariance)
@@ -46,7 +49,7 @@ def test_all_covariance_representations_recover_the_same_affine_pushforward():
             assert jnp.allclose(result.exact_variance(batch_size=1), jnp.diag(expected))
 
 
-def test_diagonal_covariance_preserves_nested_pytrees_and_coordax_dimensions():
+def test_diagonal_covariance_preserves_nested_pytrees_and_coordax_dimensions() -> None:
     center = {
         "forcing": jnp.asarray([0.5, -1.0]),
         "parameter": jnp.asarray(2.0),
@@ -56,7 +59,7 @@ def test_diagonal_covariance_preserves_nested_pytrees_and_coordax_dimensions():
         "parameter": jnp.asarray(0.3),
     }
 
-    def forward(value):
+    def forward(value: Any) -> Any:
         data = jnp.asarray(
             [
                 value["forcing"][0] + value["parameter"],
@@ -105,7 +108,7 @@ def test_diagonal_covariance_preserves_nested_pytrees_and_coordax_dimensions():
     assert jnp.allclose(left, right)
 
 
-def test_complex_linear_propagation_uses_the_hermitian_adjoint():
+def test_complex_linear_propagation_uses_the_hermitian_adjoint() -> None:
     multiplier = jnp.asarray(1.0 + 2.0j)
     center = jnp.asarray([1.0 - 0.5j, -0.2 + 0.3j])
     result = phx.uq.propagate_linearized(
@@ -131,7 +134,7 @@ def test_complex_linear_propagation_uses_the_hermitian_adjoint():
         )
 
 
-def test_hutchinson_diagonal_is_keyed_and_reports_sampling_error():
+def test_hutchinson_diagonal_is_keyed_and_reports_sampling_error() -> None:
     covariance = jnp.asarray(
         [
             [2.0, 0.4, -0.2, 0.1],
@@ -170,7 +173,7 @@ def test_hutchinson_diagonal_is_keyed_and_reports_sampling_error():
     assert jnp.all(estimate.standard_error > 0.0)
 
 
-def test_large_matrix_free_operator_path_rejects_dense_shortcuts():
+def test_large_matrix_free_operator_path_rejects_dense_shortcuts() -> None:
     dimension = 20_000
     center = jnp.linspace(-1.0, 1.0, dimension)
     result = phx.uq.propagate_linearized(
@@ -196,12 +199,12 @@ def test_large_matrix_free_operator_path_rejects_dense_shortcuts():
         lambda: phx.uq.FactorCovariance(jnp.ones((0, 2))),
     ],
 )
-def test_covariance_representations_reject_invalid_declarations(factory):
+def test_covariance_representations_reject_invalid_declarations(factory: Any) -> None:
     with pytest.raises((TypeError, ValueError)):
         factory()
 
 
-def test_covariance_representations_can_be_declared_under_jit():
+def test_covariance_representations_can_be_declared_under_jit() -> None:
     diagonal, dense, factor = jax.jit(
         lambda variance, matrix, factors: (
             phx.uq.DiagonalCovariance(variance),
@@ -215,7 +218,7 @@ def test_covariance_representations_can_be_declared_under_jit():
     assert jnp.array_equal(factor.factors, jnp.eye(2))
 
 
-def test_linearized_propagation_rejects_shape_and_materialization_mismatches():
+def test_linearized_propagation_rejects_shape_and_materialization_mismatches() -> None:
     with pytest.raises(ValueError, match="shape must match"):
         phx.uq.propagate_linearized(
             lambda value: value,

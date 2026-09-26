@@ -285,7 +285,9 @@ def run_case(build_directory: Path, destination: Path, case: str, timeout: float
         if (destination / name).read_bytes() != content:
             raise ValueError(f"Reference input changed during execution: {name}")
     parameters = inputs["parameters.prm"].decode()
+    # ty: ignore[not-subscriptable]
     dt = float(re.search(r"set Time step size\s*=\s*(\S+)", parameters)[1])
+    # ty: ignore[not-subscriptable]
     end = float(re.search(r"set End time\s*=\s*(\S+)", parameters)[1])
     expected_times = [i * dt for i in range(math.ceil(end / dt))]
     outputs = destination / "outputs"

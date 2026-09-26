@@ -1,4 +1,5 @@
 import io
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -16,7 +17,7 @@ from phydrax.applications.incompressible_flow._production import (
 )
 
 
-def _periodic(*, count=4, viscosity=0.05, forcing=None):
+def _periodic(*, count: Any = 4, viscosity: Any = 0.05, forcing: Any = None) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(count, periodic=True),
@@ -46,7 +47,7 @@ def _periodic(*, count=4, viscosity=0.05, forcing=None):
     return discretization, operators, momentum, dynamics, zero
 
 
-def _channel(*, count=6, viscosity=0.1):
+def _channel(*, count: Any = 6, viscosity: Any = 0.1) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(count, periodic=True),
@@ -69,14 +70,14 @@ def _channel(*, count=6, viscosity=0.1):
     return discretization, operators, dynamics
 
 
-def _all_dynamic_leaves_equal(left, right):
+def _all_dynamic_leaves_equal(left: Any, right: Any) -> Any:
     return all(
         bool(jnp.array_equal(a, b))
         for a, b in zip(jax.tree.leaves(left), jax.tree.leaves(right), strict=True)
     )
 
 
-def test_ssprk_exact_discrete_poiseuille_bulk_target():
+def test_ssprk_exact_discrete_poiseuille_bulk_target() -> None:
     discretization, _, dynamics = _channel()
     viscosity = 0.1
     acceleration = 0.2
@@ -107,7 +108,7 @@ def test_ssprk_exact_discrete_poiseuille_bulk_target():
     assert result.diagnostics.resources.stage_map_evaluations == 3
 
 
-def test_prescribed_gradient_matches_compiler_forcing():
+def test_prescribed_gradient_matches_compiler_forcing() -> None:
     discretization, operators, momentum, dynamics, initial = _periodic()
     gradient = jnp.asarray((-0.3, 0.0))
     forcing = MACConstantPressureGradientForcing(operators, gradient, density=1.0)
@@ -136,11 +137,12 @@ def test_prescribed_gradient_matches_compiler_forcing():
     np.testing.assert_allclose(result.diagnostics.control, gradient, atol=0.0)
 
 
-def test_multi_axis_response_and_frozen_density_mass_flux():
+def test_multi_axis_response_and_frozen_density_mass_flux() -> None:
     discretization, _, _, dynamics, initial = _periodic()
     method = phx.solver.SSPRK33FixedStepMethod(dynamics)
     bulk = MACFlowControlPlan(
         method,
+        # ty: ignore[invalid-argument-type]
         MACFlowControlTarget.bulk_velocity((0.03, -0.02), axes=(0, 1)),
         target_absolute_tolerance=1.0e-10,
         response_tolerance=1.0e-10,
@@ -162,7 +164,10 @@ def test_multi_axis_response_and_frozen_density_mass_flux():
     mass = MACFlowControlPlan(
         method,
         MACFlowControlTarget.frozen_density_mass_flux(
-            ((0.04,), density), axes=(0,), density_id="frozen-rho-two"
+            # ty: ignore[invalid-argument-type]
+            ((0.04,), density),
+            axes=(0,),
+            density_id="frozen-rho-two",
         ),
         target_absolute_tolerance=1.0e-10,
         response_tolerance=1.0e-10,
@@ -178,11 +183,13 @@ def test_multi_axis_response_and_frozen_density_mass_flux():
     assert mass.plan.target.kind == "frozen_density_mass_flux"
     with pytest.raises(ValueError, match="finite and positive"):
         MACFlowControlTarget.frozen_density_mass_flux(
-            ((0.04,), density.at[0, 0].set(0.0)), axes=(0,)
+            # ty: ignore[invalid-argument-type]
+            ((0.04,), density.at[0, 0].set(0.0)),
+            axes=(0,),
         )
 
 
-def test_singular_wall_normal_response_fails_and_rolls_back_for_retry():
+def test_singular_wall_normal_response_fails_and_rolls_back_for_retry() -> None:
     discretization, _, dynamics = _channel(count=4)
     initial = dynamics.project_state(
         tuple(jnp.zeros(layout.shape) for layout in discretization.face_layouts)
@@ -204,7 +211,7 @@ def test_singular_wall_normal_response_fails_and_rolls_back_for_retry():
     assert _all_dynamic_leaves_equal(retried.state, state)
 
 
-def test_imex_euler_constant_density_bulk_control_executes_full_stage_map():
+def test_imex_euler_constant_density_bulk_control_executes_full_stage_map() -> None:
     _, _, _, dynamics, initial = _periodic()
     prepared = MACFlowControlPlan(
         phx.solver.MACIMEXEulerMethod(
@@ -225,7 +232,7 @@ def test_imex_euler_constant_density_bulk_control_executes_full_stage_map():
     )
 
 
-def test_sbdf2_startup_restart_preserves_complete_control_history():
+def test_sbdf2_startup_restart_preserves_complete_control_history() -> None:
     _, _, _, dynamics, initial = _periodic()
     prepared = MACFlowControlPlan(
         phx.solver.MACSBDF2Method(
@@ -253,7 +260,7 @@ def test_sbdf2_startup_restart_preserves_complete_control_history():
     assert _all_dynamic_leaves_equal(uninterrupted.state, restarted.state)
 
 
-def test_prescribed_gradient_schedule_is_evaluated_at_ssprk_stages():
+def test_prescribed_gradient_schedule_is_evaluated_at_ssprk_stages() -> None:
     _, _, _, dynamics, initial = _periodic()
     target = MACFlowControlTarget.prescribed_pressure_gradient(
         lambda time: jnp.asarray((-time,)),
@@ -273,7 +280,7 @@ def test_prescribed_gradient_schedule_is_evaluated_at_ssprk_stages():
     np.testing.assert_allclose(result.diagnostics.observed_flux, (0.005,), atol=1.0e-10)
 
 
-def test_target_schedule_control_and_prepared_identities_change():
+def test_target_schedule_control_and_prepared_identities_change() -> None:
     _, _, _, dynamics, initial = _periodic()
     method = phx.solver.MACIMEXEulerMethod(
         dynamics, fixed_step_size=0.01, solve_method="transform"

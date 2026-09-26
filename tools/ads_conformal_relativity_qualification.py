@@ -26,7 +26,9 @@ def run_qualification() -> dict[str, object]:
     zero = nr.evaluate_conformal_einstein_zero_quantities(system, state, derivatives)
 
     gauge_plan = nr.GeneralizedWaveGaugePlan(
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.0, 0.0, 0.0),
+        # ty: ignore[invalid-argument-type]
         (0.0, 1.0, 0.0, 0.0),
         transition_time=1.0,
         transition_time_width=0.2,

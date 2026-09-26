@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -25,7 +27,7 @@ from phydrax.metrix import QuaternionPoseStateGeometry
 _POSE = QuaternionPoseStateGeometry(convention="body", tolerance=1.0e-9)
 
 
-def _rod(segment_count: int = 6):
+def _rod(segment_count: int = 6) -> Any:
     dtype = jnp.float64
     nodes = jnp.linspace(0.0, 1.0, segment_count + 1, dtype=dtype)
     positions = jnp.stack((jnp.zeros_like(nodes), jnp.zeros_like(nodes), nodes), axis=-1)
@@ -58,7 +60,7 @@ def _rod(segment_count: int = 6):
     )
 
 
-def _reduction(basis: RodStrainBasisPlan, *, rod=None):
+def _reduction(basis: RodStrainBasisPlan, *, rod: Any = None) -> Any:
     prepared_rod = _rod() if rod is None else rod
     return prepare_reduced_rod(
         prepared_rod,
@@ -71,7 +73,7 @@ def _reduction(basis: RodStrainBasisPlan, *, rod=None):
     )
 
 
-def _pcs_reduction(*, breakpoints=(0.0, 1.0)):
+def _pcs_reduction(*, breakpoints: Any = (0.0, 1.0)) -> Any:
     basis = RodStrainBasisPlan.piecewise_constant(
         jnp.asarray(breakpoints, dtype=jnp.float64),
         dimension=3,
@@ -80,7 +82,7 @@ def _pcs_reduction(*, breakpoints=(0.0, 1.0)):
     return _reduction(basis)
 
 
-def _gvs_reduction():
+def _gvs_reduction() -> Any:
     basis = RodStrainBasisPlan.shifted_legendre(
         (0, 3),
         dimension=3,
@@ -91,7 +93,14 @@ def _gvs_reduction():
     return _reduction(basis)
 
 
-def _prepared(reduction, queries, *, refinement=1, tolerance=1.0e-6, method="auto"):
+def _prepared(
+    reduction: Any,
+    queries: Any,
+    *,
+    refinement: Any = 1,
+    tolerance: Any = 1.0e-6,
+    method: Any = "auto",
+) -> Any:
     return prepare_rod_reconstruction(
         reduction,
         RodReconstructionPlan(
@@ -103,13 +112,13 @@ def _prepared(reduction, queries, *, refinement=1, tolerance=1.0e-6, method="aut
     )
 
 
-def _rotate(quaternion, vector):
+def _rotate(quaternion: Any, vector: Any) -> Any:
     imaginary = quaternion[1:]
     doubled_cross = 2.0 * jnp.cross(imaginary, vector)
     return vector + quaternion[0] * doubled_cross + jnp.cross(imaginary, doubled_cross)
 
 
-def test_constant_material_strain_is_the_exact_se3_piece_exponential():
+def test_constant_material_strain_is_the_exact_se3_piece_exponential() -> None:
     reduction = _pcs_reduction()
     reconstruction = _prepared(reduction, (0.0, 0.37, 1.0))
     coefficients = jnp.asarray((0.08, -0.04, 0.12, 0.17, -0.11, 0.29), dtype=jnp.float64)
@@ -132,7 +141,7 @@ def test_constant_material_strain_is_the_exact_se3_piece_exponential():
     assert evaluation.native_discrepancy.maximum_bend_twist_error < 2.0e-10
 
 
-def test_variable_gvs_cf4_reconstruction_converges_under_fixed_refinement():
+def test_variable_gvs_cf4_reconstruction_converges_under_fixed_refinement() -> None:
     reduction = _gvs_reduction()
     queries = (0.0, 0.17, 0.43, 0.79, 1.0)
     state = ReducedRodState(
@@ -154,16 +163,18 @@ def test_variable_gvs_cf4_reconstruction_converges_under_fixed_refinement():
     assert comparison.evidence.valid
     assert comparison.evidence.observed_order_supported
     assert (
+        # ty: ignore[unresolved-attribute]
         comparison.medium_fine.maximum_scaled_se3_log
         < comparison.coarse_medium.maximum_scaled_se3_log
     )
     assert comparison.observed_order.scaled_se3_log > 3.5
+    # ty: ignore[unresolved-attribute]
     assert comparison.medium_fine.maximum_scaled_frame_jvp < (
         comparison.coarse_medium.maximum_scaled_frame_jvp
     )
 
 
-def test_half_open_routes_are_deterministic_and_close_only_the_final_endpoint():
+def test_half_open_routes_are_deterministic_and_close_only_the_final_endpoint() -> None:
     reduction = _pcs_reduction(breakpoints=(0.0, 0.4, 1.0))
     queries = (1.0, 0.4, 0.0, 0.399, 0.73)
     first = _prepared(reduction, queries)
@@ -186,7 +197,9 @@ def test_half_open_routes_are_deterministic_and_close_only_the_final_endpoint():
     assert jnp.array_equal(evaluation.arc_lengths, jnp.asarray(queries))
 
 
-def test_body_world_origin_and_frame_velocities_obey_moment_arm_identity_and_duality():
+def test_body_world_origin_and_frame_velocities_obey_moment_arm_identity_and_duality() -> (
+    None
+):
     reduction = _gvs_reduction()
     reconstruction = _prepared(
         reduction, (0.11, 0.37, 0.82, 1.0), refinement=3, tolerance=1.0
@@ -236,7 +249,7 @@ def test_body_world_origin_and_frame_velocities_obey_moment_arm_identity_and_dua
     )
 
 
-def test_domain_chart_quadrature_and_comparison_mismatches_reject():
+def test_domain_chart_quadrature_and_comparison_mismatches_reject() -> None:
     pcs_reduction = _pcs_reduction()
     with pytest.raises(ValueError, match="rod domain"):
         _prepared(pcs_reduction, (0.0, 1.01))
@@ -282,7 +295,7 @@ def test_domain_chart_quadrature_and_comparison_mismatches_reject():
         compare_reduced_rod_discretizations(first, other_queries)
 
 
-def test_two_level_comparison_marks_observed_order_unsupported():
+def test_two_level_comparison_marks_observed_order_unsupported() -> None:
     reduction = _gvs_reduction()
     state = ReducedRodState(
         jnp.asarray((0.09, 0.26, -0.19, 0.14, -0.08), dtype=jnp.float64),

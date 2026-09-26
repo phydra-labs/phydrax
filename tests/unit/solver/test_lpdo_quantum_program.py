@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -8,13 +10,13 @@ Q = phx.operators.quantum
 tn = phx.tensor_network
 
 
-def _product_lpdo(local_states):
+def _product_lpdo(local_states: Any) -> Any:
     return tn.LocallyPurifiedDensity(
         tuple(value[None, :, None, None] for value in local_states)
     )
 
 
-def test_lpdo_program_matches_dense_kraus_execution_and_preserves_psd():
+def test_lpdo_program_matches_dense_kraus_execution_and_preserves_psd() -> None:
     layout = Q.HilbertRegisterLayout(("q0", "q1"), (2, 2))
     gamma = jnp.asarray(0.2)
     kraus = jnp.stack(
@@ -59,7 +61,7 @@ def test_lpdo_program_matches_dense_kraus_execution_and_preserves_psd():
     assert jnp.allclose(result.final_state.raw_trace(), 1.0, atol=1e-9)
 
 
-def test_lpdo_program_executes_one_site_identity_kraus_route():
+def test_lpdo_program_executes_one_site_identity_kraus_route() -> None:
     layout = Q.HilbertRegisterLayout(("q0", "q1"), (2, 2))
     channel = jnp.eye(2, dtype=jnp.complex128)[None, ...]
     program = Q.QuantumProgram(

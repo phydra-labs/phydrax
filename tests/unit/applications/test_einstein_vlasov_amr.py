@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -37,7 +40,7 @@ from phydrax.lifecycle._repository import (
 from phydrax.metrix import ADMGridGeometry, StressEnergyProjection
 
 
-def _geometry(shape, token, topology):
+def _geometry(shape: Any, token: Any, topology: Any) -> Any:
     identity = jnp.broadcast_to(jnp.eye(3), shape + (3, 3))
     return ADMGridGeometry(
         jnp.ones(shape),
@@ -57,7 +60,7 @@ def _geometry(shape, token, topology):
     )
 
 
-def _projection(geometry):
+def _projection(geometry: Any) -> Any:
     shape = geometry.leading_shape
     momentum = jnp.broadcast_to(jnp.asarray((0.2, -0.1, 0.05)), shape + (3,))
     stress = jnp.broadcast_to(jnp.diag(jnp.asarray((0.3, 0.2, 0.1))), shape + (3, 3))
@@ -78,7 +81,7 @@ def _projection(geometry):
     )
 
 
-def _distribution():
+def _distribution() -> Any:
     base = TensorGridPlan(
         tuple(UniformCellAxisSpec(4, periodic=True) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -97,7 +100,7 @@ def _distribution():
     )
 
 
-def _particles():
+def _particles() -> Any:
     ids = jnp.asarray((8, 2, 6, 4), dtype=jnp.int64)
     active = jnp.ones((4,), dtype="bool")
     return RelativisticParticleState(
@@ -119,7 +122,7 @@ def _particles():
     )
 
 
-def _repository(tmp_path):
+def _repository(tmp_path: Any) -> Any:
     profile = HPCFilesystemProfile(
         "posix.einstein-vlasov",
         "local-posix",
@@ -139,7 +142,7 @@ def _repository(tmp_path):
     )
 
 
-def test_amr_stress_transfer_preserves_all_adm_source_integrals():
+def test_amr_stress_transfer_preserves_all_adm_source_integrals() -> None:
     coarse_geometry = _geometry((2, 2, 2), 1, "coarse")
     fine_geometry = _geometry((4, 4, 4), 2, "fine")
     coarse = _projection(coarse_geometry)
@@ -177,7 +180,7 @@ def test_amr_stress_transfer_preserves_all_adm_source_integrals():
     )
 
 
-def test_owner_computes_routes_are_stable_and_capacity_fail_closed():
+def test_owner_computes_routes_are_stable_and_capacity_fail_closed() -> None:
     distribution = _distribution()
     particles = _particles()
     migration = EinsteinVlasovParticleMigrationPlan(distribution, 4)
@@ -212,7 +215,9 @@ def test_owner_computes_routes_are_stable_and_capacity_fail_closed():
     assert not bool(overflow.route.capacity_valid)
 
 
-def test_checkpoint_restart_preserves_particles_routes_and_allows_resharding(tmp_path):
+def test_checkpoint_restart_preserves_particles_routes_and_allows_resharding(
+    tmp_path: Any,
+) -> None:
     distribution = _distribution()
     particles = _particles()
     migration = EinsteinVlasovParticleMigrationPlan(distribution, 4)

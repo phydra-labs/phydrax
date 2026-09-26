@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,26 +17,26 @@ class _DiagonalInverseOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, inverse_diagonal):
+    def __init__(self, inverse_diagonal: Any) -> None:
         self.inverse_diagonal = jnp.asarray(inverse_diagonal, dtype=jnp.float32)
         self.in_size = "scalar"
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("FNO")
 
-    def __call_operator_batch__(self, batch, /, *, key=None):
+    def __call_operator_batch__(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         residual = batch.input("residual").values
         assert residual is not None
         return self.inverse_diagonal * residual
 
-    def __call__(self, batch, /, *, key=None):
+    def __call__(self, batch: Any, /, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _field_space(name, support_id, vector_space):
+def _field_space(name: Any, support_id: Any, vector_space: Any) -> Any:
     return phx.discretization.DiscreteFieldSpace(
         name,
         support_id,
@@ -44,7 +47,7 @@ def _field_space(name, support_id, vector_space):
     )
 
 
-def test_transferred_operator_correction_solves_and_certifies_original_system():
+def test_transferred_operator_correction_solves_and_certifies_original_system() -> None:
     task = phx.nn.operator.OperatorTask(
         "transferred-linear-correction",
         fields=(

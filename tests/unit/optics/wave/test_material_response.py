@@ -29,7 +29,7 @@ def _positive_mask(count: int) -> jax.Array:
     return jnp.fft.fftfreq(count) > 0.0
 
 
-def test_zero_strength_raman_is_exactly_inactive():
+def test_zero_strength_raman_is_exactly_inactive() -> None:
     time_space = _time_space()
     field = jnp.full(time_space.shape, 1.7 + 0.0j)
     plan = DelayedRamanResponsePlan(
@@ -57,7 +57,7 @@ def test_zero_strength_raman_is_exactly_inactive():
     assert evaluation.successful
 
 
-def test_undamped_raman_constant_drive_matches_exact_oscillator_limit():
+def test_undamped_raman_constant_drive_matches_exact_oscillator_limit() -> None:
     time_space = _time_space(256, 1.5)
     amplitude = 1.3
     omega = 4.0
@@ -97,7 +97,7 @@ def test_undamped_raman_constant_drive_matches_exact_oscillator_limit():
     assert evaluation.ledger.raman_oscillator_energy_density > 0.0
 
 
-def test_constant_multiphoton_rate_has_exact_bounded_neutral_depletion():
+def test_constant_multiphoton_rate_has_exact_bounded_neutral_depletion() -> None:
     time_space = _time_space(160, 2.0)
     amplitude = 2.0
     coefficient = 0.3
@@ -143,7 +143,7 @@ def test_constant_multiphoton_rate_has_exact_bounded_neutral_depletion():
     assert evaluation.successful
 
 
-def test_drude_zero_density_and_collisionless_limits_are_exact():
+def test_drude_zero_density_and_collisionless_limits_are_exact() -> None:
     time_space = _time_space(128, 1.0)
     field = jnp.full(time_space.shape, 2.0)
     collisionless = DrudePlasmaResponsePlan(
@@ -172,7 +172,7 @@ def test_drude_zero_density_and_collisionless_limits_are_exact():
     assert plasma.finite
 
 
-def test_ionizing_drude_reports_endpoint_and_complete_work_channels():
+def test_ionizing_drude_reports_endpoint_and_complete_work_channels() -> None:
     time_space = _time_space(192, 1.2)
     field = jnp.full(time_space.shape, 1.4 + 0.0j)
     ionization = MultiphotonIonizationRatePlan(

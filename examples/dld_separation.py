@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +16,7 @@ import phydrax as phx
 _FLOW_ID = "synthetic-dld-demonstration-flow"
 
 
-def _velocity(time, position, args):
+def _velocity(time: Any, position: Any, args: Any) -> Any:
     del time, args
     return jnp.broadcast_to(jnp.asarray((1.0, 0.0)), position.shape)
 
@@ -122,6 +123,7 @@ def main() -> None:
                 "recovery": result.metrics.recovery.tolist(),
                 "throughput_proxy": float(result.metrics.throughput_proxy),
                 "hydraulic_resistance": float(result.metrics.hydraulic_resistance),
+                # ty: ignore[unresolved-attribute]
                 "critical_diameter": float(result.screening.critical_diameter),
             },
             indent=2,

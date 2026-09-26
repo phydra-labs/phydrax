@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -29,7 +32,7 @@ from phydrax.solver._kfac_problem import (
 )
 
 
-def _zero_model(model):
+def _zero_model(model: Any) -> Any:
     replacements = tuple(
         (jnp.zeros_like(layer.weight), jnp.zeros_like(layer.bias))
         for layer in model.layers
@@ -40,7 +43,9 @@ def _zero_model(model):
     return model
 
 
-def _residual_term(domain, fields, operator, *, samples, density=None):
+def _residual_term(
+    domain: Any, fields: Any, operator: Any, *, samples: Any, density: Any = None
+) -> Any:
     condition = phx.conditions.Residual(fields, domain.component(), operator)
     return phx.terms.ResidualPenalty(
         condition,
@@ -52,7 +57,7 @@ def _residual_term(domain, fields, operator, *, samples, density=None):
     )
 
 
-def _prepare_residual(solver, params, non_trainable, *, key):
+def _prepare_residual(solver: Any, params: Any, non_trainable: Any, *, key: Any) -> Any:
     prepared = solver.objective.prepare_training(
         range(len(solver.terms)),
         scale=1.0,
@@ -69,7 +74,7 @@ def _prepare_residual(solver, params, non_trainable, *, key):
     )
 
 
-def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
+def test_type_two_residual_curvature_is_nonzero_at_zero_residual() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = _zero_model(
         phx.nn.models.MLP(
@@ -99,7 +104,7 @@ def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
     assert jnp.sum(jnp.square(jacobians[0])) > 0.0
 
 
-def test_frozen_loss_uses_nonnegative_quadratic_coefficients():
+def test_frozen_loss_uses_nonnegative_quadratic_coefficients() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -110,7 +115,7 @@ def test_frozen_loss_uses_nonnegative_quadratic_coefficients():
     )
 
     @domain.Function("x")
-    def zero_density(x):
+    def zero_density(x: Any) -> Any:
         return jnp.zeros_like(x[0])
 
     term = _residual_term(
@@ -146,7 +151,7 @@ def test_frozen_loss_uses_nonnegative_quadratic_coefficients():
     assert jnp.allclose(residual, 0.0)
 
 
-def test_hard_enforced_ansatz_has_finite_residual_curvature():
+def test_hard_enforced_ansatz_has_finite_residual_curvature() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -175,6 +180,7 @@ def test_hard_enforced_ansatz_has_finite_residual_curvature():
     params, non_trainable = partition_functional_parameters(solver.functions)
     validate_derivative_coverage(
         solver.terms,
+        # ty: ignore[unresolved-attribute]
         solver.enforcement.apply(solver.functions),
     )
     residual_map = _prepare_residual(solver, params, non_trainable, key=jr.key(7))
@@ -185,7 +191,9 @@ def test_hard_enforced_ansatz_has_finite_residual_curvature():
 
 
 @pytest.mark.parametrize("approximation", ("expand", "reduce"))
-def test_streamed_block_observations_match_dense_jacobian_oracle(approximation):
+def test_streamed_block_observations_match_dense_jacobian_oracle(
+    approximation: Any,
+) -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -251,7 +259,7 @@ def test_streamed_block_observations_match_dense_jacobian_oracle(approximation):
         assert jnp.allclose(streamed, dense, rtol=1e-9, atol=1e-10)
 
 
-def test_kfac_derivative_coverage_rejects_orders_above_two():
+def test_kfac_derivative_coverage_rejects_orders_above_two() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(1.0)
     term = _residual_term(

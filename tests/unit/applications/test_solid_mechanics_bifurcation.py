@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -31,7 +33,7 @@ sm = phx.applications.solid_mechanics
 ct = phx.continuation
 
 
-def _self_adjoint_properties(*, positive_definite=False):
+def _self_adjoint_properties(*, positive_definite: Any = False) -> Any:
     evidence = {"self_adjoint": "verified"}
     if positive_definite:
         evidence.update(
@@ -43,11 +45,12 @@ def _self_adjoint_properties(*, positive_definite=False):
     return phx.linalg.OperatorProperties(
         self_adjoint=True,
         positive_definite=positive_definite,
+        # ty: ignore[invalid-argument-type]
         evidence=evidence,
     )
 
 
-def _static_context():
+def _static_context() -> Any:
     dtype = jnp.float32
     space = phx.linalg.ArraySpace((), dtype=dtype, space_id="physical-displacement")
     root = phx.nonlinear.NonlinearSystemProblem(
@@ -91,7 +94,7 @@ def _static_context():
     return equilibrium, stability, problem, geometry
 
 
-def _certificate(kind, geometry, *, certificate_id=None):
+def _certificate(kind: Any, geometry: Any, *, certificate_id: Any = None) -> Any:
     state = geometry.public_state_space.zeros()
     mode = jnp.ones_like(state)
     return BifurcationCertificate(
@@ -108,7 +111,7 @@ def _certificate(kind, geometry, *, certificate_id=None):
     )
 
 
-def _primary_graph(problem, geometry):
+def _primary_graph(problem: Any, geometry: Any) -> Any:
     state = jnp.asarray(0.0, dtype=jnp.float32)
     point = ct.BranchPoint(
         state=state,
@@ -145,7 +148,7 @@ def _primary_graph(problem, geometry):
     return MechanicsBranchGraph((primary,))
 
 
-def test_detector_preserves_fold_pitchfork_and_transcritical_semantics():
+def test_detector_preserves_fold_pitchfork_and_transcritical_semantics() -> None:
     equilibrium, stability, _, geometry = _static_context()
     detector = MechanicsBifurcationDetector(equilibrium)
 
@@ -185,7 +188,7 @@ def test_detector_preserves_fold_pitchfork_and_transcritical_semantics():
     assert pitchfork.physical_mode is not None
 
 
-def test_hopf_requires_dynamic_evidence_and_refuses_static_claims():
+def test_hopf_requires_dynamic_evidence_and_refuses_static_claims() -> None:
     dtype = jnp.float32
     space = phx.linalg.ArraySpace((2,), dtype=dtype, space_id="physical-dynamics")
     root = phx.nonlinear.NonlinearSystemProblem(
@@ -254,7 +257,7 @@ def test_hopf_requires_dynamic_evidence_and_refuses_static_claims():
     assert record.dynamic_stability is dynamic
 
 
-def test_corrected_switching_builds_lineage_and_checks_symmetry_duplicates():
+def test_corrected_switching_builds_lineage_and_checks_symmetry_duplicates() -> None:
     equilibrium, stability, problem, geometry = _static_context()
     detector = MechanicsBifurcationDetector(equilibrium)
     record = detector.detect(
@@ -320,7 +323,7 @@ def test_corrected_switching_builds_lineage_and_checks_symmetry_duplicates():
     assert len(quotient.symmetry_rejected_branch_ids) == 1
 
 
-def test_imperfection_family_and_zero_limit_study_preserve_provenance():
+def test_imperfection_family_and_zero_limit_study_preserve_provenance() -> None:
     family = ImperfectionFamily(
         jnp.asarray((0.0, 1.0, -1.0), dtype=jnp.float32),
         units="m",
@@ -345,7 +348,7 @@ def test_imperfection_family_and_zero_limit_study_preserve_provenance():
     assert study.family.discretization_id == "mesh-level-2"
 
 
-def test_explicit_selection_policies_can_disagree_and_refuse_potential_claims():
+def test_explicit_selection_policies_can_disagree_and_refuse_potential_claims() -> None:
     _, _, problem, geometry = _static_context()
     graph = _primary_graph(problem, geometry)
     primary = graph.branches[0]

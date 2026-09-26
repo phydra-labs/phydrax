@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import importlib.metadata
@@ -57,8 +59,8 @@ def benchmark(muscles: int, iterations: int, device_kind: str) -> dict[str, obje
     projection = adapter.prepare_muscle_projection()
     excitation = jnp.linspace(0.05, 0.95, muscles)
 
-    def rollout(initial):
-        def step(state, _):
+    def rollout(initial: Any) -> Any:
+        def step(state: Any, _: Any) -> Any:
             control = projection.scatter_control(
                 adapter.control(state),
                 excitation,

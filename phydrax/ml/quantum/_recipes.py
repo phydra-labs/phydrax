@@ -32,6 +32,7 @@ from ..._training_kernel import (
 )
 from ..._training_objective import _ObjectiveContribution
 from ..._tree_math import tree_allfinite, tree_inner, tree_norm
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -135,8 +136,7 @@ class CircuitFeatureTransformRecipe(AbstractRecipe):
         names = tuple(str(name) for name in output_names)
         if names and len(names) != model.out_size:
             raise ValueError("output_names must match the circuit observable count.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.model = model
         self.output_names = names
         self.weight_policy = weight_policy
@@ -260,8 +260,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
         )
         if not all(isfinite(label) for label in labels) or labels[0] == labels[1]:
             raise ValueError("class_labels must be distinct finite scalars.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         if not all(isfinite(value) for value in values):
             raise ValueError("Classifier numerical controls must be finite.")
         if values[0] <= 0.0 or values[1] < 0.0 or values[2] < 0.0:

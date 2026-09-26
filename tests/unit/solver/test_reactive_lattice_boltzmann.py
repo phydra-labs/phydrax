@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -19,7 +22,9 @@ from phydrax.solver import (
 
 
 class _NoopReaction:
-    def step(self, species_amount, sensible_energy, step_size, args, /):
+    def step(
+        self, species_amount: Any, sensible_energy: Any, step_size: Any, args: Any, /
+    ) -> Any:
         del step_size, args
         return ReactiveLocalStepResult(
             species_amount,
@@ -33,7 +38,9 @@ class _NoopReaction:
 
 
 class _FailingReaction:
-    def step(self, species_amount, sensible_energy, step_size, args, /):
+    def step(
+        self, species_amount: Any, sensible_energy: Any, step_size: Any, args: Any, /
+    ) -> Any:
         del step_size, args
         return ReactiveLocalStepResult(
             2.0 * species_amount,
@@ -46,7 +53,7 @@ class _FailingReaction:
         )
 
 
-def _state():
+def _state() -> Any:
     thermal_populations = jnp.full((2, 2, 9), 2.0 / 9.0)
     species_populations = jnp.stack(
         (
@@ -94,12 +101,12 @@ def _state():
     )
 
 
-def _identity_transport(thermal, species, args):
+def _identity_transport(thermal: Any, species: Any, args: Any) -> Any:
     del args
     return thermal, species, jnp.asarray(True)
 
 
-def test_reactive_strang_schedule_preserves_noop_state():
+def test_reactive_strang_schedule_preserves_noop_state() -> None:
     state = _state()
     result = ReactiveSpeciesCouplingSchedulePlan(reaction_substeps=2).advance(
         state,
@@ -120,7 +127,7 @@ def test_reactive_strang_schedule_preserves_noop_state():
     )
 
 
-def test_reactive_failure_rolls_back_all_coupled_fields_atomically():
+def test_reactive_failure_rolls_back_all_coupled_fields_atomically() -> None:
     state = _state()
     result = ReactiveSpeciesCouplingSchedulePlan().advance(
         state,

@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A",),
         (phx.equations.ChemicalPhaseKind.SOLID,),
@@ -68,7 +71,7 @@ def _problem():
     return compiled, state, boundary
 
 
-def test_reference_and_structured_conversion_backends_agree_and_replay_balance():
+def test_reference_and_structured_conversion_backends_agree_and_replay_balance() -> None:
     compiled, state, boundary = _problem()
     reference = phx.solver.advance_particle_conversion(
         compiled.dynamics,
@@ -114,7 +117,7 @@ def test_reference_and_structured_conversion_backends_agree_and_replay_balance()
     )
 
 
-def test_conversion_validity_certificate_masks_branchwise_derivatives_at_events():
+def test_conversion_validity_certificate_masks_branchwise_derivatives_at_events() -> None:
     compiled, state, boundary = _problem()
     evaluation = compiled.dynamics.evaluate(state, (boundary,))
     policy = phx.solver.ParticleConversionSensitivityPolicy(
@@ -165,7 +168,7 @@ def test_conversion_validity_certificate_masks_branchwise_derivatives_at_events(
     assert jnp.isnan(exhausted_result.sensitivity)
 
 
-def test_generic_hybrid_event_localizes_transverse_phase_exhaustion():
+def test_generic_hybrid_event_localizes_transverse_phase_exhaustion() -> None:
     guard = phx.solver.HybridGuardPlan(
         lambda time, state, args: state[0],
         guard_id="phase-exhaustion-guard",

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -16,7 +18,7 @@ from _runtime import capture_environment, logical_array_bytes, measure_repeated
 import phydrax as phx
 
 
-def _triangle():
+def _triangle() -> Any:
     return phx.discretization.polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
 
 

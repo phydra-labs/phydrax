@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -31,7 +34,9 @@ from phydrax.optics.geometric import (
 )
 
 
-def _camera(*, distortion=None, pose=None, refractive_stack=None):
+def _camera(
+    *, distortion: Any = None, pose: Any = None, refractive_stack: Any = None
+) -> Any:
     return CameraModel(
         CameraIntrinsics(
             (100.0, 200.0),
@@ -44,7 +49,7 @@ def _camera(*, distortion=None, pose=None, refractive_stack=None):
     )
 
 
-def test_zero_distortion_reduces_to_pinhole_and_rays_round_trip():
+def test_zero_distortion_reduces_to_pinhole_and_rays_round_trip() -> None:
     camera = _camera(distortion=BrownConradyDistortion())
     point = jnp.asarray((1.0, 2.0, 10.0))
 
@@ -62,7 +67,7 @@ def test_zero_distortion_reduces_to_pinhole_and_rays_round_trip():
     assert int(ray.iterations) == 0
 
 
-def test_projection_uses_camera_to_world_pose_and_rejects_negative_depth():
+def test_projection_uses_camera_to_world_pose_and_rejects_negative_depth() -> None:
     pose = CameraPose(RigidFrame(np.eye(3), np.asarray((1.0, 2.0, 3.0))))
     camera = _camera(pose=pose)
 
@@ -75,7 +80,7 @@ def test_projection_uses_camera_to_world_pose_and_rejects_negative_depth():
     assert int(behind.status) == int(ProjectionStatus.BEHIND_CAMERA)
 
 
-def test_brown_conrady_projection_unprojection_is_consistent():
+def test_brown_conrady_projection_unprojection_is_consistent() -> None:
     camera = _camera(
         distortion=BrownConradyDistortion(
             radial=(0.08, -0.01, 0.002),
@@ -91,10 +96,13 @@ def test_brown_conrady_projection_unprojection_is_consistent():
     assert int(ray.status) == int(RayStatus.SUCCESS)
 
 
-def test_refraction_reports_total_internal_reflection_and_parallel_failure():
+def test_refraction_reports_total_internal_reflection_and_parallel_failure() -> None:
     stack = PlanarRefractiveStack(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         [1.5, 1.0],
     )
     angle = np.deg2rad(60.0)
@@ -115,10 +123,13 @@ def test_refraction_reports_total_internal_reflection_and_parallel_failure():
     assert int(parallel.status) == int(SequentialOpticsStatus.PARALLEL)
 
 
-def test_refractive_projection_reports_nonconvergence_without_a_fallback():
+def test_refractive_projection_reports_nonconvergence_without_a_fallback() -> None:
     stack = PlanarRefractiveStack(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.33],
     )
     camera = _camera(refractive_stack=stack)
@@ -133,10 +144,13 @@ def test_refractive_projection_reports_nonconvergence_without_a_fallback():
     assert int(result.status) == int(ProjectionStatus.REFRACTION_NONCONVERGENCE)
 
 
-def test_refractive_camera_round_trip_and_explicit_status_mapping():
+def test_refractive_camera_round_trip_and_explicit_status_mapping() -> None:
     stack = PlanarRefractiveStack(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.33],
     )
     camera = _camera(refractive_stack=stack)
@@ -155,8 +169,11 @@ def test_refractive_camera_round_trip_and_explicit_status_mapping():
 
     tir_camera = _camera(
         refractive_stack=PlanarRefractiveStack(
+            # ty: ignore[invalid-argument-type]
             [[0.0, 0.0, 1.0]],
+            # ty: ignore[invalid-argument-type]
             [[0.0, 0.0, 1.0]],
+            # ty: ignore[invalid-argument-type]
             [2.0, 1.0],
         )
     )
@@ -166,8 +183,11 @@ def test_refractive_camera_round_trip_and_explicit_status_mapping():
 
     parallel_camera = _camera(
         refractive_stack=PlanarRefractiveStack(
+            # ty: ignore[invalid-argument-type]
             [[1.0, 0.0, 0.0]],
+            # ty: ignore[invalid-argument-type]
             [[1.0, 0.0, 0.0]],
+            # ty: ignore[invalid-argument-type]
             [1.0, 1.2],
         )
     )
@@ -176,7 +196,7 @@ def test_refractive_camera_round_trip_and_explicit_status_mapping():
     assert int(parallel.status) == int(RayStatus.PARALLEL_INTERFACE)
 
 
-def test_all_ray_triangulation_and_parallel_ray_degeneracy():
+def test_all_ray_triangulation_and_parallel_ray_degeneracy() -> None:
     point = jnp.asarray((0.25, -0.5, 3.0))
     origins = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     directions = point[None, :] - origins
@@ -202,7 +222,7 @@ def test_all_ray_triangulation_and_parallel_ray_degeneracy():
     assert bool(jnp.all(jnp.isnan(degenerate.point)))
 
 
-def test_calibration_reports_unobservable_free_focal_lengths():
+def test_calibration_reports_unobservable_free_focal_lengths() -> None:
     camera = _camera()
     rig = CameraRig((camera,))
     points = jnp.asarray(
@@ -229,10 +249,13 @@ def test_calibration_reports_unobservable_free_focal_lengths():
     assert result.optimization is None
 
 
-def test_calibration_updates_preserve_the_refractive_stack():
+def test_calibration_updates_preserve_the_refractive_stack() -> None:
     stack = PlanarRefractiveStack(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.5]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
     )
     camera = _camera(refractive_stack=stack)
@@ -271,7 +294,7 @@ def test_calibration_updates_preserve_the_refractive_stack():
     np.testing.assert_array_equal(retained.interface_active, stack.interface_active)
 
 
-def test_reference_camera_gauge_requires_fixed_reference_pose():
+def test_reference_camera_gauge_requires_fixed_reference_pose() -> None:
     free = np.zeros((2, 16), dtype="bool")
     free[:, 0] = True
     free[0, 10] = True

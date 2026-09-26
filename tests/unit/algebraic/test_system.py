@@ -13,7 +13,7 @@ from phydrax.algebraic import (
 )
 
 
-def test_coo_factory_canonicalizes_support_and_coefficients_together():
+def test_coo_factory_canonicalizes_support_and_coefficients_together() -> None:
     first = SparsePolynomialSystem.from_coo(
         ("x", "y"),
         ("f", "g"),
@@ -40,7 +40,7 @@ def test_coo_factory_canonicalizes_support_and_coefficients_together():
     np.testing.assert_allclose(first.evaluate(points), second.evaluate(points))
 
 
-def test_support_rejects_duplicate_coo_terms():
+def test_support_rejects_duplicate_coo_terms() -> None:
     with pytest.raises(ValueError, match="duplicate"):
         SparsePolynomialSupport(
             ("x",),
@@ -50,7 +50,7 @@ def test_support_rejects_duplicate_coo_terms():
         )
 
 
-def test_batched_complex_evaluation_and_zero_safe_analytic_jacobian():
+def test_batched_complex_evaluation_and_zero_safe_analytic_jacobian() -> None:
     system = SparsePolynomialSystem.from_coo(
         ("x", "y"),
         ("f", "g"),
@@ -86,7 +86,7 @@ def test_batched_complex_evaluation_and_zero_safe_analytic_jacobian():
     assert bool(jnp.all(jnp.isfinite(system.jacobian(points))))
 
 
-def test_scaling_round_trip_preserves_fixed_zero_coefficient_slots():
+def test_scaling_round_trip_preserves_fixed_zero_coefficient_slots() -> None:
     system = SparsePolynomialSystem.from_coo(
         ("x", "y"),
         ("f", "g"),

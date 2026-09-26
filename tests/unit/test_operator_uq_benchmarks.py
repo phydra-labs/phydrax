@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
+from typing import Any
 
 import jax.numpy as jnp
 import polars as pl
@@ -19,7 +21,7 @@ from tools.operator_benchmarks import (
 )
 
 
-def _split(scenario):
+def _split(scenario: Any) -> Any:
     return split_operator_scenario(
         scenario,
         seed=17,
@@ -28,7 +30,9 @@ def _split(scenario):
     )
 
 
-def test_operator_uq_suite_runs_grid_and_point_cloud_and_serializes(tmp_path):
+def test_operator_uq_suite_runs_grid_and_point_cloud_and_serializes(
+    tmp_path: Any,
+) -> None:
     periodic = _split(
         periodic_burgers_scenario(
             train_resolution=6,
@@ -86,7 +90,7 @@ def test_operator_uq_suite_runs_grid_and_point_cloud_and_serializes(tmp_path):
     assert table.height == sum(len(result.evaluations) for result in suite.results)
 
 
-def test_operator_uq_projection_laplace_preserves_operator_geometry():
+def test_operator_uq_projection_laplace_preserves_operator_geometry() -> None:
     scenario = _split(
         periodic_burgers_scenario(
             train_resolution=6,

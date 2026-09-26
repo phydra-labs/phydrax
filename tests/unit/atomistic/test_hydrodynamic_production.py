@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -5,22 +7,28 @@ import numpy as np
 import phydrax as phx
 
 
-def _system(*, periodic=False):
+def _system(*, periodic: Any = False) -> Any:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 10.0) if periodic else None
     return phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         [0, 0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         phx.atomistic.AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
+        # ty: ignore[invalid-argument-type]
         element_mask=[False, False],
         cell=cell,
     ).prepare()
 
 
-def _dynamics():
+def _dynamics() -> Any:
     system = _system()
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.1], [1.0], 2.5)]
     ).prepare(system)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
@@ -34,11 +42,14 @@ def _dynamics():
     ).prepare()
 
 
-def test_free_space_rpy_and_generic_brownian_runtime():
+def test_free_space_rpy_and_generic_brownian_runtime() -> None:
     system = _system()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
     mobility = phx.atomistic.FreeSpaceRPYMobilityPlan(
-        1.0, 1.0, maximum_particles=2
+        1.0,
+        1.0,
+        maximum_particles=2,
+        # ty: ignore[invalid-argument-type]
     ).prepare(system, [0, 1])
     matrix = phx.atomistic.materialize_mobility(mobility, positions, maximum_dofs=6)
     np.testing.assert_allclose(matrix, matrix.T, atol=1.0e-12)
@@ -60,7 +71,7 @@ def test_free_space_rpy_and_generic_brownian_runtime():
     np.testing.assert_allclose(step.accepted_state.positions, positions)
 
 
-def test_direct_and_positive_split_periodic_mobility_are_spd():
+def test_direct_and_positive_split_periodic_mobility_are_spd() -> None:
     system = _system(periodic=True)
     positions = jnp.asarray([[1.0, 1.0, 1.0], [4.0, 1.0, 1.0]])
     direct = phx.atomistic.DirectPeriodicRPYMobilityPlan(
@@ -69,6 +80,7 @@ def test_direct_and_positive_split_periodic_mobility_are_spd():
         2,
         maximum_particles=2,
         convergence_tolerance=1.0,
+        # ty: ignore[invalid-argument-type]
     ).prepare(system, [0, 1])
     evidence = direct.evaluate(positions)
     assert evidence.successful
@@ -80,6 +92,7 @@ def test_direct_and_positive_split_periodic_mobility_are_spd():
         1,
         maximum_particles=2,
         convergence_tolerance=1.0,
+        # ty: ignore[invalid-argument-type]
     ).prepare(system, [0, 1])
     split_evidence = split.evaluate(positions)
     assert split_evidence.successful
@@ -90,7 +103,7 @@ def test_direct_and_positive_split_periodic_mobility_are_spd():
     )
 
 
-def test_confined_fib_adapter_composes_marker_transfer_and_fluid_inverse():
+def test_confined_fib_adapter_composes_marker_transfer_and_fluid_inverse() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(8) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -99,28 +112,41 @@ def test_confined_fib_adapter_composes_marker_transfer_and_fluid_inverse():
     operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
     marker_position = jnp.asarray([[0.5, 0.5, 0.5]])
     markers = phx.discretization.LagrangianMarkerSetPlan(
-        [0], marker_position, [1.0]
+        # ty: ignore[invalid-argument-type]
+        [0],
+        marker_position,
+        # ty: ignore[invalid-argument-type]
+        [1.0],
     ).prepare()
     transfer = phx.discretization.MACMarkerTransferPlan(operators, markers).prepare()
     inverse = phx.linalg.IdentityLinearOperator(operators.velocity_space)
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0],
+        # ty: ignore[invalid-argument-type]
         [0],
+        # ty: ignore[invalid-argument-type]
         [1.0],
         phx.atomistic.AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0],
+        # ty: ignore[invalid-argument-type]
         element_mask=[False],
     ).prepare()
     mobility = phx.atomistic.ConfinedFIBMobilityPlan(
-        transfer, inverse, maximum_particles=1
+        transfer,
+        inverse,
+        maximum_particles=1,
+        # ty: ignore[invalid-argument-type]
     ).prepare(system, [0])
     evidence = mobility.evaluate(marker_position, maximum_dofs=3)
     assert evidence.successful
 
 
-def test_hydrodynamic_stress_and_lubrication_ledgers():
+def test_hydrodynamic_stress_and_lubrication_ledgers() -> None:
     stress = phx.atomistic.hydrodynamic_stress(
         phx.atomistic.HydrodynamicStressPlan(2.0, 10.0, 1.0),
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.5, 0.0], [0.5, 0.0, 0.0], [0.0, 0.0, 0.0]],
         2,
     )
@@ -138,7 +164,10 @@ def test_hydrodynamic_stress_and_lubrication_ledgers():
     positions = jnp.asarray([[0.0, 0.0, 0.0], [2.2, 0.0, 0.0]])
     forces = jnp.asarray([[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]])
     mobility = phx.atomistic.FreeSpaceRPYMobilityPlan(
-        1.0, 1.0, maximum_particles=2
+        1.0,
+        1.0,
+        maximum_particles=2,
+        # ty: ignore[invalid-argument-type]
     ).prepare(system, [0, 1])
     result = phx.atomistic.hard_sphere_lubrication_correction(
         phx.atomistic.HardSphereLubricationPlan(1.0, 1.0, 1.0, 0.01, maximum_dofs=6),

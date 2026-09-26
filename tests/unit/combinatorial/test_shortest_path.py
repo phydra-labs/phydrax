@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _relation(source, target, vertices, *, valid=None):
+def _relation(source: Any, target: Any, vertices: Any, *, valid: Any = None) -> Any:
     return phx.sparse.EdgeRelation(
         jnp.asarray(source, dtype=jnp.int32),
         jnp.asarray(target, dtype=jnp.int32),
@@ -20,7 +23,7 @@ def _relation(source, target, vertices, *, valid=None):
     )
 
 
-def test_dag_shortest_path_supports_signed_edges_and_certifies_dual():
+def test_dag_shortest_path_supports_signed_edges_and_certifies_dual() -> None:
     relation = _relation([0, 0, 1, 2, 1], [1, 2, 2, 3, 3], 4)
     space = phx.combinatorial.ShortestPathSpace(relation, 0, 3)
     result = phx.combinatorial.solve_combinatorial(
@@ -44,7 +47,7 @@ def test_dag_shortest_path_supports_signed_edges_and_certifies_dual():
     assert result.certificate.optimality_proven
 
 
-def test_dag_path_batches_ties_masks_and_unreachable_status():
+def test_dag_path_batches_ties_masks_and_unreachable_status() -> None:
     relation = _relation(
         [0, 0, 1, 2, 0],
         [1, 2, 3, 3, 3],
@@ -105,7 +108,7 @@ def test_dag_path_batches_ties_masks_and_unreachable_status():
     np.testing.assert_array_equal(nonfinite.features, jnp.zeros((5,)))
 
 
-def test_dag_shortest_path_handles_identity_path_and_rejects_cycles():
+def test_dag_shortest_path_handles_identity_path_and_rejects_cycles() -> None:
     empty = _relation([], [], 1)
     identity_space = phx.combinatorial.ShortestPathSpace(empty, 0, 0)
     identity = phx.combinatorial.solve_combinatorial(
@@ -136,7 +139,7 @@ def test_dag_shortest_path_handles_identity_path_and_rejects_cycles():
         )
 
 
-def test_path_audit_rejects_disconnected_decision():
+def test_path_audit_rejects_disconnected_decision() -> None:
     relation = _relation([0, 1], [1, 2], 3)
     space = phx.combinatorial.ShortestPathSpace(relation, 0, 2)
     invalid = phx.combinatorial.PathDecision(

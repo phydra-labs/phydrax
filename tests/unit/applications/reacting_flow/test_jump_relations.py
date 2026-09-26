@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -11,7 +14,7 @@ import phydrax as phx
 R = phx.equations.UNIVERSAL_GAS_CONSTANT
 
 
-def _calorically_perfect_model():
+def _calorically_perfect_model() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (phx.equations.ChemicalPhaseKind.GAS,) * 2,
@@ -35,7 +38,7 @@ def _calorically_perfect_model():
     )
 
 
-def test_equilibrium_shock_closes_rankine_hugoniot_and_perfect_gas_limit():
+def test_equilibrium_shock_closes_rankine_hugoniot_and_perfect_gas_limit() -> None:
     equilibrium = phx.solver.ChemicalEquilibriumPlan(
         _calorically_perfect_model(), phx.solver.ChemicalEquilibriumEnsemble.TP
     )

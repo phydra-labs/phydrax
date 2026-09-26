@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _reference(shape=(4, 4, 3)):
+def _reference(shape: Any = (4, 4, 3)) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(shape[0], periodic=True),
@@ -22,7 +25,7 @@ def _reference(shape=(4, 4, 3)):
     ).prepare()
 
 
-def _hydrodynamics(*, surface_tension=0.0, wave=None):
+def _hydrodynamics(*, surface_tension: Any = 0.0, wave: Any = None) -> Any:
     reference = _reference()
     surface = phx.applications.hydrodynamics.GraphSurfaceALEPlan(
         reference,
@@ -41,7 +44,7 @@ def _hydrodynamics(*, surface_tension=0.0, wave=None):
     return hydro, state
 
 
-def test_pressure_reference_is_invariant_to_common_offset():
+def test_pressure_reference_is_invariant_to_common_offset() -> None:
     reference = _reference()
     surface = phx.applications.hydrodynamics.GraphSurfaceALEPlan(
         reference, jnp.full((4, 4), -1.0)
@@ -84,7 +87,7 @@ def test_pressure_reference_is_invariant_to_common_offset():
     )
 
 
-def test_variational_capillarity_flat_and_finite_difference():
+def test_variational_capillarity_flat_and_finite_difference() -> None:
     hydro, _ = _hydrodynamics(surface_tension=0.072)
     eta = jnp.zeros((4, 4))
     flat = hydro.capillarity.evaluate(eta, hydro.plan.density)
@@ -102,7 +105,7 @@ def test_variational_capillarity_flat_and_finite_difference():
     assert flat.timestep_limit > 0.0
 
 
-def test_incident_wave_provider_is_phase_coherent_and_restartable():
+def test_incident_wave_provider_is_phase_coherent_and_restartable() -> None:
     component = phx.equations.WaveComponent(0.02, 2.0, 0.3, 0.7)
     provider = phx.equations.IncidentWavePlan((component,), 2.0, ramp_time=1.0)
     coordinates = jnp.asarray(((0.5, 0.25, -0.5),))
@@ -117,7 +120,7 @@ def test_incident_wave_provider_is_phase_coherent_and_restartable():
     np.testing.assert_allclose(first.pressure_head, second.pressure_head)
 
 
-def test_wave_forcing_and_active_absorption_are_finite():
+def test_wave_forcing_and_active_absorption_are_finite() -> None:
     provider = phx.equations.IncidentWavePlan(
         (phx.equations.WaveComponent(0.01, 1.5),), 1.0
     )
@@ -151,7 +154,7 @@ def test_wave_forcing_and_active_absorption_are_finite():
     assert jnp.all(jnp.isfinite(result.eta_rate_source))
 
 
-def test_vertical_rezone_preserves_scalar_content_and_shoreline_handoff():
+def test_vertical_rezone_preserves_scalar_content_and_shoreline_handoff() -> None:
     hydro, state = _hydrodynamics()
     continuation = (
         phx.applications.hydrodynamics.FreeSurfaceALEContinuationState.initialize(state)
@@ -178,7 +181,7 @@ def test_vertical_rezone_preserves_scalar_content_and_shoreline_handoff():
     assert strict.state is continuation
 
 
-def test_capillary_wave_step_closes_and_updates_controller():
+def test_capillary_wave_step_closes_and_updates_controller() -> None:
     provider = phx.equations.IncidentWavePlan(
         (phx.equations.WaveComponent(1.0e-4, 1.0),), 1.0
     )

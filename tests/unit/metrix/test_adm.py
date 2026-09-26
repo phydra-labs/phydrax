@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,18 +12,18 @@ import pytest
 import phydrax as phx
 
 
-def _chart():
+def _chart() -> Any:
     return phx.metrix.CoordinateChart("adm", ("t", "x", "y", "z"))
 
 
-def _reference_fields():
-    def lapse(q):
+def _reference_fields() -> Any:
+    def lapse(q: Any) -> Any:
         return 1.4 + 0.1 * q[0]
 
-    def shift(q):
+    def shift(q: Any) -> Any:
         return jnp.array([0.1 * q[0], -0.2, 0.05], dtype=q.dtype)
 
-    def spatial_metric(q):
+    def spatial_metric(q: Any) -> Any:
         return jnp.array(
             [
                 [1.2 + 0.05 * q[0], 0.1, 0.0],
@@ -34,7 +37,9 @@ def _reference_fields():
 
 
 @pytest.mark.parametrize("convention", ("mostly_plus", "mostly_minus"))
-def test_adm_decomposition_round_trips_reference_fields_in_batches(convention):
+def test_adm_decomposition_round_trips_reference_fields_in_batches(
+    convention: Any,
+) -> None:
     chart = _chart()
     lapse, shift, spatial_metric = _reference_fields()
     metric = phx.metrix.adm_metric(
@@ -71,7 +76,7 @@ def test_adm_decomposition_round_trips_reference_fields_in_batches(convention):
     assert report.maximum_reconstruction_residual < 1e-12
 
 
-def test_adm_parameterization_enforces_lapse_and_spatial_positivity_under_jit():
+def test_adm_parameterization_enforces_lapse_and_spatial_positivity_under_jit() -> None:
     chart = _chart()
     parameterization = phx.metrix.ADMParameterization(
         lambda q: jnp.asarray(-100.0, dtype=q.dtype),
@@ -105,11 +110,11 @@ def test_adm_parameterization_enforces_lapse_and_spatial_positivity_under_jit():
     assert jnp.all(jnp.isfinite(matrices))
 
 
-def test_parameterized_adm_metric_is_differentiable_in_every_raw_field():
+def test_parameterized_adm_metric_is_differentiable_in_every_raw_field() -> None:
     chart = _chart()
     point = jnp.array([0.2, -0.1, 0.3, 0.4])
 
-    def objective(raw):
+    def objective(raw: Any) -> Any:
         parameterization = phx.metrix.ADMParameterization(
             lambda q: raw[0] + 0.1 * q[0],
             lambda q: raw[1:4] + 0.0 * q[1:],
@@ -137,7 +142,7 @@ def test_parameterized_adm_metric_is_differentiable_in_every_raw_field():
     )
 
 
-def test_adm_validation_reports_invalid_fields_without_repairing_them():
+def test_adm_validation_reports_invalid_fields_without_repairing_them() -> None:
     decomposition = phx.metrix.ADMDecomposition(
         jnp.asarray(-1.0),
         jnp.zeros((3,)),
@@ -156,13 +161,13 @@ def test_adm_validation_reports_invalid_fields_without_repairing_them():
         )
 
 
-def test_adm_parameterization_rejects_invalid_static_and_field_contracts():
+def test_adm_parameterization_rejects_invalid_static_and_field_contracts() -> None:
     chart = _chart()
 
-    def valid_shift(q):
+    def valid_shift(q: Any) -> Any:
         return jnp.zeros((3,), dtype=q.dtype)
 
-    def valid_factor(q):
+    def valid_factor(q: Any) -> Any:
         return jnp.zeros((3, 3), dtype=q.dtype)
 
     with pytest.raises(ValueError, match="minimum_lapse"):

@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -16,7 +19,15 @@ EPS0 = sc.VACUUM_PERMITTIVITY_SI
 REFERENCE = "synthetic common electronic datum"
 
 
-def _bands(name, ec, ev, nc, nv, *, temperature_range=(200.0, 500.0)):
+def _bands(
+    name: Any,
+    ec: Any,
+    ev: Any,
+    nc: Any,
+    nv: Any,
+    *,
+    temperature_range: Any = (200.0, 500.0),
+) -> Any:
     return sc.BandThermodynamics(
         name,
         conduction_band_edge=ec * Q,
@@ -30,7 +41,7 @@ def _bands(name, ec, ev, nc, nv, *, temperature_range=(200.0, 500.0)):
     )
 
 
-def _capacity(temperature_range=(200.0, 500.0)):
+def _capacity(temperature_range: Any = (200.0, 500.0)) -> Any:
     return sc.ConstantLatticeHeatCapacity(
         1.6e6,
         reference_temperature=300.0,
@@ -39,7 +50,9 @@ def _capacity(temperature_range=(200.0, 500.0)):
     )
 
 
-def _material(name, bands, *, permittivity=11.7, carrier_energy=False):
+def _material(
+    name: Any, bands: Any, *, permittivity: Any = 11.7, carrier_energy: Any = False
+) -> Any:
     options = {}
     if carrier_energy:
         options = dict(
@@ -81,25 +94,30 @@ def _material(name, bands, *, permittivity=11.7, carrier_energy=False):
         lattice_heat_capacity=_capacity(bands.temperature_range),
         lattice_thermal_conductivity=90.0,
         provenance="Synthetic material for conservation regressions",
+        # ty: ignore[invalid-argument-type]
         **options,
     )
 
 
-def _contacts(support):
+def _contacts(support: Any) -> Any:
     return (
         sc.OhmicContact("left", support.boundary_patch("left", side="lower")),
         sc.OhmicContact("right", support.boundary_patch("right", side="upper")),
     )
 
 
-def test_aligned_heterojunction_equilibrium_preserves_density_and_displacement_jumps():
+def test_aligned_heterojunction_equilibrium_preserves_density_and_displacement_jumps() -> (
+    None
+):
     left = _material("left", _bands("left-bands", 0.56, -0.56, 2.8e25, 1.04e25))
     right = _material(
         "right", _bands("right-bands", 0.72, -0.38, 1.7e25, 8e24), permittivity=9.5
     )
     support = sc.TransportSupport.interval(np.linspace(0.0, 1e-6, 8), area=1e-12)
     zones = (
+        # ty: ignore[invalid-argument-type]
         MeshZone("left-zone", MeshZoneRole.MATERIAL, support.node_scope([0, 1, 2, 3])),
+        # ty: ignore[invalid-argument-type]
         MeshZone("right-zone", MeshZoneRole.MATERIAL, support.node_scope([4, 5, 6, 7])),
     )
     interface = sc.MaterialInterface(
@@ -136,12 +154,16 @@ def test_aligned_heterojunction_equilibrium_preserves_density_and_displacement_j
     assert float(point.evidence.charge_balance_relative_error) < 1e-10
 
 
-def test_thermionic_interface_adds_only_algebraic_traces_and_balances_at_equilibrium():
+def test_thermionic_interface_adds_only_algebraic_traces_and_balances_at_equilibrium() -> (
+    None
+):
     left = _material("left", _bands("left-bands", 0.56, -0.56, 2.8e25, 1.04e25))
     right = _material("right", _bands("right-bands", 0.72, -0.38, 1.7e25, 8e24))
     support = sc.TransportSupport.interval(np.linspace(0.0, 1e-6, 8), area=1e-12)
     zones = (
+        # ty: ignore[invalid-argument-type]
         MeshZone("left-zone", MeshZoneRole.MATERIAL, support.node_scope(range(4))),
+        # ty: ignore[invalid-argument-type]
         MeshZone("right-zone", MeshZoneRole.MATERIAL, support.node_scope(range(4, 8))),
     )
     emission = sc.ThermionicInterface(
@@ -176,7 +198,9 @@ def test_thermionic_interface_adds_only_algebraic_traces_and_balances_at_equilib
     np.testing.assert_array_equal(device.edge_fluxes(point.coordinates)[1][3], 0.0)
 
 
-def test_carrier_and_lattice_energy_storage_round_trip_uses_extensive_inventories():
+def test_carrier_and_lattice_energy_storage_round_trip_uses_extensive_inventories() -> (
+    None
+):
     bands = _bands("energy-bands", 0.56, -0.56, 2.8e25, 1.04e25)
     material = _material("energy-material", bands, carrier_energy=True)
     support = sc.TransportSupport.interval(np.linspace(0.0, 1e-6, 7), area=1e-12)
@@ -218,20 +242,21 @@ def test_carrier_and_lattice_energy_storage_round_trip_uses_extensive_inventorie
     assert float(equilibrium.evidence.energy_balance_relative_error) < 1e-10
 
 
-def test_declared_quasi_fermi_high_field_law_reduces_only_nonequilibrium_flux():
+def test_declared_quasi_fermi_high_field_law_reduces_only_nonequilibrium_flux() -> None:
     saturation = sc.LocalVelocitySaturation(
         1e5,
         2.0,
         reference_temperature=300.0,
         temperature_exponent=0.0,
         maximum_force=1e10,
+        # ty: ignore[invalid-argument-type]
         temperature_range=(250.0, 400.0),
         driving_force=sc.HighFieldDrivingForce.QUASI_FERMI_GRADIENT,
         orientation="synthetic longitudinal edge",
         provenance="Synthetic local velocity-saturation regression",
     )
 
-    def prepare(electron_saturation):
+    def prepare(electron_saturation: Any) -> Any:
         material = sc.SemiconductorMaterial(
             "high-field-material",
             permittivity=11.7 * EPS0,
@@ -266,7 +291,7 @@ def test_declared_quasi_fermi_high_field_law_reduces_only_nonequilibrium_flux():
     assert np.all(np.abs(np.asarray(saturated_flux)) < np.abs(np.asarray(reference_flux)))
 
 
-def test_equilibrium_incomplete_ionization_is_rejected_by_dynamic_analyzes():
+def test_equilibrium_incomplete_ionization_is_rejected_by_dynamic_analyzes() -> None:
     bands = _bands(
         "freezeout-bands", 0.56, -0.56, 2.8e25, 1.04e25, temperature_range=(50.0, 500.0)
     )
@@ -302,4 +327,5 @@ def test_equilibrium_incomplete_ionization_is_rejected_by_dynamic_analyzes():
     assert np.all(np.asarray(donors) < 1e21)
     np.testing.assert_array_equal(acceptors, 0.0)
     with pytest.raises(ValueError, match="explicit dynamic impurity populations"):
+        # ty: ignore[invalid-argument-type]
         sc.semiconductor_small_signal(device, point, [0.0])

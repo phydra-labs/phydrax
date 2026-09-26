@@ -19,7 +19,7 @@ import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._coordinate import CoordinateSpec
 from ._dataset import DatasetDomain
 from ._domain import JointFactor
@@ -197,14 +197,7 @@ class IrregularTrajectoryDatasetDomain(JointFactor):
         times_arr = _as_times(times, lengths_arr, n)
 
         measure_str = str(measure)
-        if measure_str not in (
-            "case_time_probability",
-            "time_integral_average",
-            "time_integral_sum",
-        ):
-            raise ValueError(
-                "measure must be one of 'case_time_probability', 'time_integral_average', or 'time_integral_sum'."
-            )
+        measure_str = parse(measure_str, TrajectoryMeasure, "measure_str")
         if measure_str == "case_time_probability":
             measure_value: TrajectoryMeasure = "case_time_probability"
         elif measure_str == "time_integral_average":
@@ -213,10 +206,7 @@ class IrregularTrajectoryDatasetDomain(JointFactor):
             measure_value = "time_integral_sum"
 
         sampling_str = str(sampling)
-        if sampling_str not in ("case_time_uniform", "observation_uniform"):
-            raise ValueError(
-                "sampling must be either 'case_time_uniform' or 'observation_uniform'."
-            )
+        sampling_str = parse(sampling_str, TrajectorySampling, "sampling_str")
         if sampling_str == "case_time_uniform":
             sampling_value: TrajectorySampling = "case_time_uniform"
         else:

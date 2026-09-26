@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _compiled(count=4):
+def _compiled(count: Any = 4) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(2)
@@ -29,7 +32,7 @@ def _compiled(count=4):
     return compiled, compiled.project_state(velocity)
 
 
-def test_adaptive_rollout_replay_and_terminal_derivatives_are_certified():
+def test_adaptive_rollout_replay_and_terminal_derivatives_are_certified() -> None:
     compiled, state = _compiled()
     method = phx.solver.SSPRK33FixedStepMethod(compiled)
     controller = phx.solver.MACCompositeStepController(compiled, safety_factor=0.8)
@@ -65,7 +68,7 @@ def test_adaptive_rollout_replay_and_terminal_derivatives_are_certified():
     assert jnp.all(jnp.isfinite(vjp.initial_state_cotangent))
 
 
-def test_adaptive_continuation_stops_at_remaining_grid_capacity():
+def test_adaptive_continuation_stops_at_remaining_grid_capacity() -> None:
     compiled, state = _compiled()
     plan = phx.solver.MACAdaptiveRolloutPlan(
         compiled,
@@ -88,7 +91,7 @@ def test_adaptive_continuation_stops_at_remaining_grid_capacity():
     )
 
 
-def test_segmented_shadowing_returns_explicit_certification_status():
+def test_segmented_shadowing_returns_explicit_certification_status() -> None:
     compiled, state = _compiled()
     method = phx.solver.SSPRK33FixedStepMethod(compiled)
     controller = phx.solver.MACCompositeStepController(compiled)

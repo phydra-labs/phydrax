@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def _surface():
+def _surface() -> Any:
     vertices = np.asarray(
         (
             (-1.0, -1.0, 2.0),
@@ -38,7 +40,7 @@ def _surface():
     return model.prepare(), vertices
 
 
-def test_surface_image_refits_dynamic_geometry_and_interpolates_vertex_fields():
+def test_surface_image_refits_dynamic_geometry_and_interpolates_vertex_fields() -> None:
     realization, vertices = _surface()
     support = phx.imaging.ImagePlaneSupport((3, 3), detector_frame_id="camera")
     camera = phx.imaging.camera.CameraModel(
@@ -88,7 +90,7 @@ def test_surface_image_refits_dynamic_geometry_and_interpolates_vertex_fields():
     np.testing.assert_allclose(jnp.sum(field_gradient), 1.0)
 
 
-def test_lidar_surface_prediction_reuses_exact_dynamic_visibility():
+def test_lidar_surface_prediction_reuses_exact_dynamic_visibility() -> None:
     realization, vertices = _surface()
     contract = phx.SpatialCoordinateContract(
         phx.units.METER,
@@ -125,7 +127,7 @@ def test_lidar_surface_prediction_reuses_exact_dynamic_visibility():
     np.testing.assert_allclose(moved.prediction.values, (3.0,))
 
 
-def test_rendering_rejects_coordinate_mismatch_and_unstable_routes():
+def test_rendering_rejects_coordinate_mismatch_and_unstable_routes() -> None:
     realization, _ = _surface()
     support = phx.imaging.ImagePlaneSupport((3, 3), detector_frame_id="camera")
     camera = phx.imaging.camera.CameraModel(

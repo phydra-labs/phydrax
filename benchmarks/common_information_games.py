@@ -36,7 +36,7 @@ def _game(
     common_state_count: int,
     private_type_counts: tuple[int, ...],
     action_counts: tuple[int, ...],
-):
+) -> Any:
     player_count = len(private_type_counts)
     player_ids = tuple(f"player-{player}" for player in range(player_count))
     joint_types = tuple(product(*(range(count) for count in private_type_counts)))
@@ -122,7 +122,7 @@ def _game(
     )
 
 
-def _selector():
+def _selector() -> Any:
     return phx.control.games.CommonInformationEquilibriumSelector(
         lambda equilibria: int(equilibria.equilibrium_indices[0]),
         selector_id="benchmark-lexicographic-first",
@@ -148,7 +148,7 @@ def _compiler_record() -> dict[str, Any]:
     }
 
 
-def _bayes_evidence(result) -> dict[str, Any]:
+def _bayes_evidence(result: Any) -> dict[str, Any]:
     support = result.bayes_support
     normalizers = result.bayes_normalizers
     posterior_mass = jnp.sum(result.bayes_posteriors, axis=-1)
@@ -173,7 +173,7 @@ def _bayes_evidence(result) -> dict[str, Any]:
     }
 
 
-def _branch_evidence(result) -> dict[str, Any]:
+def _branch_evidence(result: Any) -> dict[str, Any]:
     return {
         "branch_id": result.branch_id,
         "selector_id": result.selector_id,
@@ -308,7 +308,7 @@ def _case(
     }
 
 
-def _specifications():
+def _specifications() -> Any:
     return (
         ("baseline", 2, 2, (2, 2), (2, 2), 16),
         ("common-states-8", 2, 8, (2, 2), (2, 2), 16),

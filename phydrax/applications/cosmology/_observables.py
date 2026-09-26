@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics import gauss_legendre_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._background import FLRWBackground
 from ._distances import FLRWDistancePlan
 from ._products import LagrangianGrowthHistory, MatterField, MatterPowerTable
@@ -110,12 +111,7 @@ class LinearDensityTracer(StrictModule):
             jnp.any(~jnp.isfinite(bias_)),
             "Density-tracer bias must be finite.",
         )
-        if power_field not in (
-            "cold_baryon",
-            "total_matter",
-            "massive_neutrino_total",
-        ):
-            raise ValueError("Unknown density-tracer power field.")
+        power_field = parse(power_field, MatterField, "power_field")
         self.distribution = distribution
         self.bias = bias_
         self.power_field = power_field

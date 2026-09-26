@@ -385,7 +385,8 @@ class GeodesicRadialKernel(StrictModule):
         else:
             stiefel_log = self.stiefel_log
             # Construction rejects the Stiefel space without a log provider.
-            assert stiefel_log is not None
+            if not (stiefel_log is not None):
+                raise RuntimeError("Internal invariant failed: stiefel_log is not None.")
             tangent, residual = stiefel_log(first, second)
             tangent = jnp.asarray(tangent)
             residual = jnp.asarray(residual)

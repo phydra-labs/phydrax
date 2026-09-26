@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _runtime(rate=0.1):
+def _runtime(rate: Any = 0.1) -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (phx.equations.ChemicalPhaseKind.GAS,) * 2,
@@ -90,7 +93,7 @@ def _runtime(rate=0.1):
     return plan, state
 
 
-def test_closed_uniform_low_mach_reaction_conserves_mass_enthalpy_and_eos():
+def test_closed_uniform_low_mach_reaction_conserves_mass_enthalpy_and_eos() -> None:
     plan, state = _runtime()
     result = plan.advance(state, 0.01)
 
@@ -110,7 +113,7 @@ def test_closed_uniform_low_mach_reaction_conserves_mass_enthalpy_and_eos():
     assert jnp.max(jnp.abs(result.projection.divergence_defect)) < 1.0e-7
 
 
-def test_failed_low_mach_source_rolls_back_every_state_leaf():
+def test_failed_low_mach_source_rolls_back_every_state_leaf() -> None:
     plan, state = _runtime()
     source = jnp.zeros_like(state.species_density).at[..., 0].set(-1.0e8)
     result = plan.advance(state, 0.1, external_species_rate=source)

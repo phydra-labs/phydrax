@@ -9,6 +9,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -30,7 +31,7 @@ class CommercialParticleBenchmark:
     finite: bool
 
     @property
-    def passed(self):
+    def passed(self) -> Any:
         return (
             self.maturity == "experimental"
             and self.native_data_plane_successful
@@ -45,9 +46,10 @@ class CommercialParticleBenchmark:
         )
 
 
-def run_commercial_particle_benchmark():
+def run_commercial_particle_benchmark() -> Any:
     count = 6
     spacing = 1.0 / count
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     first_particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.ones((count,)), ambient_dimension=1, name="first"
@@ -101,7 +103,11 @@ def run_commercial_particle_benchmark():
         phx.discretization.IISPHMethodPlan(1.0, maximum_iterations=2, tolerance=1.0),
     )
     iisph_result = iisph.step_detailed(
-        0.0, iisph.initialize_state(position, velocity), 0.001
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        iisph.initialize_state(position, velocity),
+        # ty: ignore[invalid-argument-type]
+        0.001,
     )
     oracle = phx.discretization.assemble_iisph_operator(iisph, position, 0.001)
     dfsph = phx.discretization.PreparedDFSPH(
@@ -118,7 +124,11 @@ def run_commercial_particle_benchmark():
         ),
     )
     dfsph_result = dfsph.step_detailed(
-        0.0, dfsph.initialize_state(position, velocity), 0.001
+        # ty: ignore[invalid-argument-type]
+        0.0,
+        dfsph.initialize_state(position, velocity),
+        # ty: ignore[invalid-argument-type]
+        0.001,
     )
     decomposition = phx.discretization.ParticleDomainDecompositionPlan(2, 0.15, box)
     halo = phx.discretization.prepare_particle_halos(
@@ -159,7 +169,7 @@ def run_commercial_particle_benchmark():
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Qualify commercial particle-hardening infrastructure."
     )

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,11 +8,11 @@ import pytest
 import phydrax as phx
 
 
-def _path():
+def _path() -> Any:
     return jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]])
 
 
-def test_path_signature_stream_aligns_identity_and_prefixes():
+def test_path_signature_stream_aligns_identity_and_prefixes() -> None:
     path = _path()
     terminal = phx.stochastic.path_signature(path, 3)
     stream = phx.stochastic.path_signature(path, 3, stream=True)
@@ -26,7 +28,7 @@ def test_path_signature_stream_aligns_identity_and_prefixes():
         )
 
 
-def test_piecewise_signature_supports_empty_and_streaming_segments():
+def test_piecewise_signature_supports_empty_and_streaming_segments() -> None:
     increments = jnp.asarray([[1.0, 0.0], [0.0, 1.0]])
     streamed = phx.stochastic.piecewise_linear_signature(
         increments,
@@ -42,7 +44,7 @@ def test_piecewise_signature_supports_empty_and_streaming_segments():
     assert jnp.allclose(empty[1], jnp.zeros((2, 2)))
 
 
-def test_signature_features_flatten_degree_order_and_scalar():
+def test_signature_features_flatten_degree_order_and_scalar() -> None:
     path = _path()
     signature = phx.stochastic.path_signature(path, 2)
     features = phx.stochastic.SignatureFeatures(2, 2, include_scalar=True)
@@ -57,7 +59,7 @@ def test_signature_features_flatten_degree_order_and_scalar():
     assert features.feature_id.startswith("SignatureFeatures[")
 
 
-def test_signature_feature_modules_support_batches_streaming_jit_and_gradients():
+def test_signature_feature_modules_support_batches_streaming_jit_and_gradients() -> None:
     paths = jnp.stack((_path(), 2.0 * _path()))
     terminal = phx.stochastic.SignatureFeatures(2, 3)
     streaming = phx.stochastic.SignatureFeatures(2, 3, stream=True)
@@ -72,7 +74,7 @@ def test_signature_feature_modules_support_batches_streaming_jit_and_gradients()
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_log_signature_features_use_standard_bracket_coordinates():
+def test_log_signature_features_use_standard_bracket_coordinates() -> None:
     path = _path()
     basis = phx.stochastic.PrimitiveBasis(2, 3)
     expected = basis.tensor_to_primitive(
@@ -88,7 +90,7 @@ def test_log_signature_features_use_standard_bracket_coordinates():
     assert jnp.allclose(streaming[-1], expected)
 
 
-def test_time_augmentation_broadcasts_and_canonicalizes_ragged_suffixes():
+def test_time_augmentation_broadcasts_and_canonicalizes_ragged_suffixes() -> None:
     times = jnp.asarray([[0.0, 0.5, jnp.nan], [0.0, 0.4, 1.0]])
     values = jnp.asarray(
         [
@@ -108,7 +110,7 @@ def test_time_augmentation_broadcasts_and_canonicalizes_ragged_suffixes():
     assert jnp.all(jnp.isfinite(joint))
 
 
-def test_repeat_last_padding_preserves_valid_prefix_and_rejects_internal_nan():
+def test_repeat_last_padding_preserves_valid_prefix_and_rejects_internal_nan() -> None:
     padded = jnp.asarray([[[0.0], [1.0], [jnp.nan], [jnp.nan]]])
     actual = phx.stochastic.repeat_last_path_padding(padded, jnp.asarray([2]))
 
@@ -121,7 +123,7 @@ def test_repeat_last_padding_preserves_valid_prefix_and_rejects_internal_nan():
         jax.block_until_ready(invalid)
 
 
-def test_time_augmentation_rejects_invalid_valid_schedule():
+def test_time_augmentation_rejects_invalid_valid_schedule() -> None:
     with pytest.raises(eqx.EquinoxRuntimeError, match="strictly increasing"):
         actual = phx.stochastic.time_augment_path(
             jnp.asarray([0.0, 0.5, 0.4]),
@@ -130,14 +132,14 @@ def test_time_augmentation_rejects_invalid_valid_schedule():
         jax.block_until_ready(actual)
 
 
-def test_signature_features_validate_declared_dimension():
+def test_signature_features_validate_declared_dimension() -> None:
     with pytest.raises(ValueError, match="num_knots, 3"):
         phx.stochastic.SignatureFeatures(3, 2)(_path())
     with pytest.raises(ValueError, match="nonempty path axes"):
         phx.stochastic.path_signature(jnp.empty((0, 2)), 2)
 
 
-def test_signature_recurrent_cell_matches_dense_prefixes_and_padding():
+def test_signature_recurrent_cell_matches_dense_prefixes_and_padding() -> None:
     paths = jnp.asarray(
         [
             [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [2.0, 1.0]],
@@ -165,7 +167,7 @@ def test_signature_recurrent_cell_matches_dense_prefixes_and_padding():
     assert jnp.allclose(result.outputs[1, 2:], 0.0)
 
 
-def test_signature_recurrent_cell_resets_to_a_new_path_basepoint():
+def test_signature_recurrent_cell_resets_to_a_new_path_basepoint() -> None:
     points = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [10.0, -2.0], [10.0, 1.0]])
     reset = jnp.asarray([False, False, True, False])
     cell = phx.stochastic.SignatureRecurrentCell(2, 2, include_scalar=True)
@@ -185,7 +187,7 @@ def test_signature_recurrent_cell_resets_to_a_new_path_basepoint():
     assert jnp.allclose(result.outputs[3], dense(points[2:4]))
 
 
-def test_signature_recurrent_cell_streaming_carry_matches_one_pass():
+def test_signature_recurrent_cell_streaming_carry_matches_one_pass() -> None:
     paths = jnp.asarray(
         [
             [[0.0, 0.0], [0.5, 0.0], [1.0, 1.0], [1.5, 0.5], [2.0, 1.0]],
@@ -214,12 +216,12 @@ def test_signature_recurrent_cell_streaming_carry_matches_one_pass():
     assert jnp.allclose(second.final_output, full.final_output)
 
 
-def test_signature_recurrent_cell_jit_gradients_and_case_axes():
+def test_signature_recurrent_cell_jit_gradients_and_case_axes() -> None:
     points = jnp.arange(48.0).reshape((2, 3, 4, 2)) / 10.0
     valid = jnp.ones((2, 3, 4), dtype="bool")
     cell = phx.stochastic.SignatureRecurrentCell(2, 2, include_scalar=True)
 
-    def terminal(values):
+    def terminal(values: Any) -> Any:
         result = phx.nn.layers.run_recurrent(
             cell,
             phx.nn.layers.RecurrentBatch(values, valid),

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -29,7 +32,7 @@ def _wigner_valid(plan: WignerTransformPlan) -> jax.Array:
     )
 
 
-def test_wigner_plan_locks_raw_haar_and_spherical_normalization():
+def test_wigner_plan_locks_raw_haar_and_spherical_normalization() -> None:
     plan = WignerTransformPlan(4, 2)
     coefficients = plan.analysis(jnp.ones(plan.sample_shape))
     center_n = plan.directional_bandlimit - 1
@@ -70,7 +73,7 @@ def test_wigner_plan_locks_raw_haar_and_spherical_normalization():
     assert jnp.allclose(actual[center_n + 1 :], 0.0, rtol=0.0, atol=1e-11)
 
 
-def test_wigner_plan_roundtrips_masks_inactive_capacity_and_real_conjugacy():
+def test_wigner_plan_roundtrips_masks_inactive_capacity_and_real_conjugacy() -> None:
     plan = WignerTransformPlan(5, 3)
     valid = _wigner_valid(plan)
     coefficients = (
@@ -98,7 +101,7 @@ def test_wigner_plan_roundtrips_masks_inactive_capacity_and_real_conjugacy():
     )
 
 
-def test_recursive_and_precomputed_wigner_plans_share_semantics():
+def test_recursive_and_precomputed_wigner_plans_share_semantics() -> None:
     recursive = WignerTransformPlan(3, 2, execution="recursive")
     precomputed = WignerTransformPlan(3, 2, execution="precomputed")
     valid = _wigner_valid(recursive)
@@ -123,7 +126,7 @@ def test_recursive_and_precomputed_wigner_plans_share_semantics():
 
 
 @pytest.mark.parametrize("sampling", ("mw", "mwss", "dh", "gl"))
-def test_wigner_laguerre_roundtrips_all_exact_samplings(sampling):
+def test_wigner_laguerre_roundtrips_all_exact_samplings(sampling: Any) -> None:
     radial = RadialLaguerrePlan(3, tau=0.7)
     wigner = WignerTransformPlan(3, 2, sampling=sampling)
     plan = WignerLaguerrePlan(radial, wigner)
@@ -141,7 +144,7 @@ def test_wigner_laguerre_roundtrips_all_exact_samplings(sampling):
     assert jnp.allclose(actual, coefficients, rtol=1e-10, atol=1e-10)
 
 
-def test_wigner_laguerre_handles_batch_channels_jit_and_gradients():
+def test_wigner_laguerre_handles_batch_channels_jit_and_gradients() -> None:
     radial = RadialLaguerrePlan(3)
     wigner = WignerTransformPlan(3, 2)
     plan = WignerLaguerrePlan(radial, wigner)
@@ -166,7 +169,7 @@ def test_wigner_laguerre_handles_batch_channels_jit_and_gradients():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_wigner_plans_reject_invalid_configuration_shapes_and_resources():
+def test_wigner_plans_reject_invalid_configuration_shapes_and_resources() -> None:
     with pytest.raises(ValueError, match="1 <= N <= L"):
         WignerTransformPlan(4, 5)
     with pytest.raises(ValueError, match="lower_bandlimit"):

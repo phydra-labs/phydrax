@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _problem(initial=1.0, horizon=4):
+def _problem(initial: Any = 1.0, horizon: Any = 4) -> Any:
     return phx.control.LinearQuadraticControlProblem(
         jnp.ones((horizon, 1, 1)),
         jnp.ones((horizon, 1, 1)),
@@ -23,7 +26,7 @@ def _problem(initial=1.0, horizon=4):
     )
 
 
-def test_prepared_control_refresh_preserves_layout_and_increments_version():
+def test_prepared_control_refresh_preserves_layout_and_increments_version() -> None:
     initial = phx.control.prepare_linear_quadratic_control(_problem())
     refreshed = phx.control.refresh_linear_quadratic_control(
         initial,
@@ -38,7 +41,7 @@ def test_prepared_control_refresh_preserves_layout_and_increments_version():
     assert result.successful
 
 
-def test_mpc_shifted_warm_starts_preserve_realized_solution():
+def test_mpc_shifted_warm_starts_preserve_realized_solution() -> None:
     problem = _problem()
     cold = phx.control.solve_receding_horizon_mpc(
         problem,
@@ -64,7 +67,7 @@ def test_mpc_shifted_warm_starts_preserve_realized_solution():
     )
 
 
-def test_external_mpc_warm_start_requires_policy_and_matching_solution():
+def test_external_mpc_warm_start_requires_policy_and_matching_solution() -> None:
     problem = _problem()
     seed = phx.control.solve_linear_quadratic_control(problem)
     controller = phx.control.RecedingHorizonMPC(

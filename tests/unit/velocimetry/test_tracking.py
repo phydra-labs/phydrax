@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -36,7 +38,13 @@ from phydrax.velocimetry.tracking import (
 )
 
 
-def _detections(positions, *, valid=None, intensities=None, name="detections"):
+def _detections(
+    positions: Any,
+    *,
+    valid: Any = None,
+    intensities: Any = None,
+    name: Any = "detections",
+) -> Any:
     positions = jnp.asarray(positions, dtype="float64")
     capacity = positions.shape[0]
     valid = jnp.ones((capacity,), dtype="bool") if valid is None else jnp.asarray(valid)
@@ -58,7 +66,7 @@ def _detections(positions, *, valid=None, intensities=None, name="detections"):
     )
 
 
-def _reconstruction(positions, valid, name):
+def _reconstruction(positions: Any, valid: Any, name: Any) -> Any:
     positions = jnp.asarray(positions, dtype="float64")
     valid = jnp.asarray(valid, dtype="bool")
     capacity = positions.shape[0]
@@ -78,14 +86,14 @@ def _reconstruction(positions, valid, name):
     )
 
 
-def _camera_rays(origins, points):
+def _camera_rays(origins: Any, points: Any) -> Any:
     origins = jnp.asarray(origins, dtype="float64")
     points = jnp.asarray(points, dtype="float64")
     directions = points - origins
     return directions / jnp.sqrt(jnp.sum(directions * directions, axis=-1, keepdims=True))
 
 
-def _stereo_rig():
+def _stereo_rig() -> Any:
     intrinsics = CameraIntrinsics((20.0, 20.0), (16.0, 16.0), image_shape=(33, 33))
     left = CameraModel(
         intrinsics,
@@ -98,13 +106,13 @@ def _stereo_rig():
     return CameraRig((left, right))
 
 
-def _gaussian_image(position_rc, *, amplitude=10.0):
+def _gaussian_image(position_rc: Any, *, amplitude: Any = 10.0) -> Any:
     row, column = jnp.meshgrid(jnp.arange(33.0), jnp.arange(33.0), indexing="ij")
     delta = jnp.stack((row - position_rc[0], column - position_rc[1]), axis=-1)
     return amplitude * jnp.exp(-0.5 * jnp.sum(delta * delta, axis=-1) / 0.7**2)
 
 
-def test_detector_reports_border_crowding_and_capacity_overflow():
+def test_detector_reports_border_crowding_and_capacity_overflow() -> None:
     row, column = jnp.meshgrid(jnp.arange(17.0), jnp.arange(17.0), indexing="ij")
     image = jnp.zeros((17, 17))
     for center, amplitude in (
@@ -143,7 +151,7 @@ def test_detector_reports_border_crowding_and_capacity_overflow():
     assert jnp.any(result.status[result.valid] == 2)
 
 
-def test_two_view_hungarian_uses_unique_resources_and_explicit_dummies():
+def test_two_view_hungarian_uses_unique_resources_and_explicit_dummies() -> None:
     world_a = jnp.asarray([[-0.4, 0.0, 4.0], [0.5, 0.2, 5.0], [0.0, 0.0, 1.0]])
     world_b = jnp.asarray([[0.5, 0.2, 5.0], [-0.4, 0.0, 4.0], [1.5, 0.0, 3.0]])
     origin_a = jnp.broadcast_to(jnp.asarray((-0.5, 0.0, 0.0)), world_a.shape)
@@ -169,7 +177,7 @@ def test_two_view_hungarian_uses_unique_resources_and_explicit_dummies():
     assert result.evidence.optimality_proven
 
 
-def test_public_detection_association_reconstruction_workflow_is_physical():
+def test_public_detection_association_reconstruction_workflow_is_physical() -> None:
     rig = _stereo_rig()
     point = jnp.asarray([[0.1, -0.1, 5.0]])
     projected = tuple(project_points(camera, point).pixels[0] for camera in rig.cameras)
@@ -214,7 +222,7 @@ def test_public_detection_association_reconstruction_workflow_is_physical():
     assert reconstruction.status[1] == int(ReconstructionStatus.NOT_SELECTED)
 
 
-def test_streaming_tracks_keep_ids_through_crossing_and_one_miss():
+def test_streaming_tracks_keep_ids_through_crossing_and_one_miss() -> None:
     reconstructions = (
         _reconstruction(((-1.0, 0.0, 0.0), (1.0, 0.0, 0.0)), (1, 1), "r0"),
         _reconstruction(((-0.3, 0.0, 0.0), (0.3, 0.0, 0.0)), (1, 1), "r1"),
@@ -234,7 +242,7 @@ def test_streaming_tracks_keep_ids_through_crossing_and_one_miss():
     assert jnp.all(result.overflow_count == 0)
 
 
-def test_birth_death_capacity_monotone_time_and_trajectory_reset_semantics():
+def test_birth_death_capacity_monotone_time_and_trajectory_reset_semantics() -> None:
     plan = TrackLinkPlan(1, maximum_missed=0, mahalanobis_gate=4.0)
     state = initialize_tracks(plan)
     covariance = jnp.broadcast_to(0.01 * jnp.eye(3), (2, 3, 3))
@@ -275,7 +283,7 @@ def test_birth_death_capacity_monotone_time_and_trajectory_reset_semantics():
     assert trajectory.source_id == result.result_id
 
 
-def test_frozen_association_smoothing_preserves_capacity_and_gaps():
+def test_frozen_association_smoothing_preserves_capacity_and_gaps() -> None:
     observations = (
         _reconstruction(((0.1, 0.0, 0.0),), (1,), "s0"),
         _reconstruction(((0.9, 0.0, 0.0),), (1,), "s1"),
@@ -301,7 +309,7 @@ def test_frozen_association_smoothing_preserves_capacity_and_gaps():
     assert trajectory.reset_mask[:, 1].all()
 
 
-def test_offline_min_cost_flow_refinement_links_without_resource_reuse():
+def test_offline_min_cost_flow_refinement_links_without_resource_reuse() -> None:
     reconstructions = (
         _reconstruction(((0.0, 0.0, 0.0), (3.0, 0.0, 0.0)), (1, 1), "f0"),
         _reconstruction(((0.2, 0.0, 0.0), (2.8, 0.0, 0.0)), (1, 1), "f1"),

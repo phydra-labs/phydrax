@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,7 +24,7 @@ from phydrax.discretization.finite_volume._geometry_protocol import (
 from phydrax.discretization.finite_volume._physical_boundaries import SlipWallBoundary
 
 
-def _quadrilateral_strip():
+def _quadrilateral_strip() -> Any:
     vertices = np.asarray(
         (
             (0.0, 0.0),
@@ -39,7 +42,9 @@ def _quadrilateral_strip():
     ).prepare()
 
 
-def _embedded(discretization, level_set, field_id, *, body_tag=7):
+def _embedded(
+    discretization: Any, level_set: Any, field_id: Any, *, body_tag: Any = 7
+) -> Any:
     return phx.discretization.EmbeddedBoundaryPlan(
         discretization,
         level_set,
@@ -49,14 +54,14 @@ def _embedded(discretization, level_set, field_id, *, body_tag=7):
 
 
 def _lower(
-    discretization,
-    metrics,
+    discretization: Any,
+    metrics: Any,
     *,
-    time=0.0,
-    geometry_version=4,
-    evidence_version=9,
-    topology_epoch_id="epoch:stationary-eb",
-):
+    time: Any = 0.0,
+    geometry_version: Any = 4,
+    evidence_version: Any = 9,
+    topology_epoch_id: Any = "epoch:stationary-eb",
+) -> Any:
     return lower_embedded_stage_metrics(
         discretization,
         metrics,
@@ -68,7 +73,7 @@ def _lower(
     )
 
 
-def _owner_oriented_closure(stage):
+def _owner_oriented_closure(stage: Any) -> Any:
     closure = np.zeros_like(np.asarray(stage.cell_centers))
     for block in stage.face_blocks:
         area = np.asarray(block.area_vectors)
@@ -80,7 +85,7 @@ def _owner_oriented_closure(stage):
     return closure
 
 
-def test_embedded_stage_compacts_open_physical_and_cut_blocks_with_closure():
+def test_embedded_stage_compacts_open_physical_and_cut_blocks_with_closure() -> None:
     discretization = _quadrilateral_strip()
     metrics = _embedded(
         discretization,
@@ -132,7 +137,7 @@ def test_embedded_stage_compacts_open_physical_and_cut_blocks_with_closure():
     assert stage.evidence.evidence_version == 9
 
 
-def test_embedded_body_policies_are_complete_typed_and_deterministically_routed():
+def test_embedded_body_policies_are_complete_typed_and_deterministically_routed() -> None:
     discretization = _quadrilateral_strip()
     metrics = _embedded(
         discretization,
@@ -141,6 +146,7 @@ def test_embedded_body_policies_are_complete_typed_and_deterministically_routed(
     )
     wall = SlipWallBoundary()
     first = UnstructuredEmbeddedBoundarySet({7: wall})
+    # ty: ignore[invalid-argument-type]
     second = UnstructuredEmbeddedBoundarySet({np.int32(7): SlipWallBoundary()})
     stage = lower_embedded_stage_metrics(
         discretization,
@@ -181,7 +187,7 @@ def test_embedded_body_policies_are_complete_typed_and_deterministically_routed(
         )
 
 
-def test_embedded_stage_realizes_clipped_fluid_centroids_in_float32_evidence():
+def test_embedded_stage_realizes_clipped_fluid_centroids_in_float32_evidence() -> None:
     with jax.enable_x64(False):
         discretization = _quadrilateral_strip()
         metrics = _embedded(
@@ -223,10 +229,12 @@ def test_embedded_stage_realizes_clipped_fluid_centroids_in_float32_evidence():
     )
 
 
-def test_embedded_metrics_identity_binds_realized_fluid_centroid_payload(monkeypatch):
+def test_embedded_metrics_identity_binds_realized_fluid_centroid_payload(
+    monkeypatch: Any,
+) -> None:
     discretization = _quadrilateral_strip()
 
-    def level_set(points, args):
+    def level_set(points: Any, args: Any) -> Any:
         del args
         return points[:, 0] - 0.75
 
@@ -237,7 +245,7 @@ def test_embedded_metrics_identity_binds_realized_fluid_centroid_payload(monkeyp
     )
     polygon_measure_centroid = embedded_boundary_module._polygon_measure_centroid
 
-    def shifted_polygon_measure_centroid(vertices):
+    def shifted_polygon_measure_centroid(vertices: Any) -> Any:
         measure, centroid = polygon_measure_centroid(vertices)
         if measure > 0.0:
             centroid = centroid + np.asarray((0.0, 1.0 / 32.0))
@@ -273,7 +281,7 @@ def test_embedded_metrics_identity_binds_realized_fluid_centroid_payload(monkeyp
     assert shifted.metrics_id != baseline.metrics_id
 
 
-def test_full_fluid_embedded_stage_preserves_static_physical_geometry():
+def test_full_fluid_embedded_stage_preserves_static_physical_geometry() -> None:
     discretization = _quadrilateral_strip()
     metrics = _embedded(
         discretization,
@@ -337,7 +345,7 @@ def test_full_fluid_embedded_stage_preserves_static_physical_geometry():
         )
 
 
-def test_full_solid_embedded_stage_has_no_face_blocks_or_routed_physics():
+def test_full_solid_embedded_stage_has_no_face_blocks_or_routed_physics() -> None:
     discretization = _quadrilateral_strip()
     metrics = _embedded(
         discretization,
@@ -368,7 +376,7 @@ def test_full_solid_embedded_stage_has_no_face_blocks_or_routed_physics():
     assert sum(block.layout.face_count for block in stage.face_blocks) == 0
 
 
-def test_embedded_stage_routes_and_ids_are_stable_across_dynamic_versions():
+def test_embedded_stage_routes_and_ids_are_stable_across_dynamic_versions() -> None:
     discretization = _quadrilateral_strip()
     metrics = _embedded(
         discretization,
@@ -424,7 +432,7 @@ def test_embedded_stage_routes_and_ids_are_stable_across_dynamic_versions():
         )
 
 
-def test_mixed_solid_blocks_contain_only_remapped_positive_measure_routes():
+def test_mixed_solid_blocks_contain_only_remapped_positive_measure_routes() -> None:
     discretization = _quadrilateral_strip()
     metrics = _embedded(
         discretization,
@@ -471,7 +479,7 @@ def test_mixed_solid_blocks_contain_only_remapped_positive_measure_routes():
     )
 
 
-def test_partial_physical_face_quadrature_integrates_over_actual_open_segment():
+def test_partial_physical_face_quadrature_integrates_over_actual_open_segment() -> None:
     discretization = _quadrilateral_strip()
     metrics = _embedded(
         discretization,
@@ -524,7 +532,7 @@ def test_partial_physical_face_quadrature_integrates_over_actual_open_segment():
     )
 
 
-def test_cut_stage_area_vectors_preserve_metric_outward_normals():
+def test_cut_stage_area_vectors_preserve_metric_outward_normals() -> None:
     discretization = _quadrilateral_strip()
     metrics = _embedded(
         discretization,
@@ -551,7 +559,7 @@ def test_cut_stage_area_vectors_preserve_metric_outward_normals():
     )
 
 
-def test_embedded_stage_policy_routes_remain_jax_leaves_under_jit():
+def test_embedded_stage_policy_routes_remain_jax_leaves_under_jit() -> None:
     discretization = _quadrilateral_strip()
     metrics = _embedded(
         discretization,

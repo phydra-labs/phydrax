@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_path_discretization_uniform_grid_and_validation():
+def test_path_discretization_uniform_grid_and_validation() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(-1.0, 2.0, 6, role="path")
 
     assert slicing.num_nodes == 7
@@ -21,12 +24,13 @@ def test_path_discretization_uniform_grid_and_validation():
     with pytest.raises(ValueError, match="intervals"):
         phx.discretization.TemporalMesh.uniform(0.0, 1.0, 0, role="path")
     with pytest.raises(TypeError, match="integer"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.TemporalMesh.uniform(0.0, 1.0, 2.5, role="path")
     with pytest.raises(ValueError, match="bounds"):
         phx.discretization.TemporalMesh.uniform(1.0, 1.0, 4, role="path")
 
 
-def test_brownian_bridge_exact_endpoints_and_covariance():
+def test_brownian_bridge_exact_endpoints_and_covariance() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 2, role="path")
     x0 = jnp.array([-0.2])
     x1 = jnp.array([0.4])
@@ -47,7 +51,7 @@ def test_brownian_bridge_exact_endpoints_and_covariance():
     assert jnp.allclose(jnp.var(midpoint_fluctuation), 0.25, atol=1e-2, rtol=0.0)
 
 
-def test_discrete_euclidean_action_matches_midpoint_formula():
+def test_discrete_euclidean_action_matches_midpoint_formula() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 2, role="path")
     paths = jnp.array([[[0.0], [1.0], [0.0]]])
     potential = lambda q, t: q[0] ** 2
@@ -70,7 +74,7 @@ def test_discrete_euclidean_action_matches_midpoint_formula():
     assert jnp.allclose(action, jnp.array([4.25]))
 
 
-def test_euclidean_action_rejects_complex_potential():
+def test_euclidean_action_rejects_complex_potential() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 2, role="path")
     paths = jnp.zeros((3, 3, 1))
 
@@ -82,7 +86,7 @@ def test_euclidean_action_rejects_complex_potential():
         )
 
 
-def test_euclidean_estimate_is_seeded_and_reports_diagnostics():
+def test_euclidean_estimate_is_seeded_and_reports_diagnostics() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 16, role="path")
     potential = lambda q, t: 0.5 * q[0] ** 2
 
@@ -128,7 +132,7 @@ def test_euclidean_estimate_is_seeded_and_reports_diagnostics():
     assert jnp.isfinite(estimate_a.log_mean_weight)
 
 
-def test_euclidean_log_weight_reduction_stays_stable_at_large_scale():
+def test_euclidean_log_weight_reduction_stays_stable_at_large_scale() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 4, role="path")
     estimate = phx.operators.euclidean_kernel(
         lambda q, t: -500.0,
@@ -146,11 +150,11 @@ def test_euclidean_log_weight_reduction_stays_stable_at_large_scale():
     assert jnp.allclose(estimate.effective_sample_size, 64.0)
 
 
-def test_euclidean_kernel_supports_jit_vmap_and_parameter_gradients():
+def test_euclidean_kernel_supports_jit_vmap_and_parameter_gradients() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 0.5, 8, role="path")
     x0 = jnp.array([0.0])
 
-    def kernel(endpoint, stiffness):
+    def kernel(endpoint: Any, stiffness: Any) -> Any:
         return phx.operators.euclidean_kernel(
             lambda q, t: 0.5 * stiffness * q[0] ** 2,
             x0,
@@ -181,7 +185,7 @@ def test_euclidean_kernel_supports_jit_vmap_and_parameter_gradients():
     assert jnp.allclose(gradient, finite_difference, atol=1e-7, rtol=1e-5)
 
 
-def test_diffusion_from_zero_noise_matches_euler_drift():
+def test_diffusion_from_zero_noise_matches_euler_drift() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 4, role="path")
     noise = jnp.zeros((2, 4, 1))
     paths = phx.operators.diffusion_paths_from_noise(
@@ -197,7 +201,7 @@ def test_diffusion_from_zero_noise_matches_euler_drift():
     assert jnp.allclose(paths[..., 0], jnp.broadcast_to(expected, (2, 5)))
 
 
-def test_first_exit_uses_discrete_crossing_and_survival_sentinel():
+def test_first_exit_uses_discrete_crossing_and_survival_sentinel() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 2, role="path")
     paths = jnp.array(
         [

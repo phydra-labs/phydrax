@@ -14,7 +14,7 @@ from phydrax.dynamics import TimeGrid
 from phydrax.stochastic._jump import JUMP_MAX_EVENTS, JumpProcess, PoissonClockRealization
 
 
-def test_controlled_jump_capacity_exhaustion_invalidates_truncated_path():
+def test_controlled_jump_capacity_exhaustion_invalidates_truncated_path() -> None:
     process = JumpProcess(
         lambda time, state, controlled_args: jnp.asarray([1.0e12]),
         lambda state, channel, mark, controlled_args: state + 1.0,
@@ -49,7 +49,9 @@ def test_controlled_jump_capacity_exhaustion_invalidates_truncated_path():
     assert int(result.status) == JUMP_MAX_EVENTS
     assert not bool(result.valid)
     assert int(result.events.counts) == 1
+    # ty: ignore[not-subscriptable]
     assert result.events.pre_states[0, 0] == 0.0
+    # ty: ignore[not-subscriptable]
     assert result.events.post_states[0, 0] == 1.0
     assert result.same_time_order == (
         "event-time-then-channel-then-channel-event-index;boundary-events-before-next-control"

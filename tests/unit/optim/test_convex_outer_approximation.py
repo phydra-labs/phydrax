@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_ecp_matches_binary_enumeration_for_convex_objective():
+def test_ecp_matches_binary_enumeration_for_convex_objective() -> None:
     program = phx.optim.ConvexMixedIntegerNonlinearProgram(
         lambda value, args: (value[0] - args) ** 2,
         lambda value, args: jnp.empty((0,)),
@@ -32,7 +32,7 @@ def test_ecp_matches_binary_enumeration_for_convex_objective():
     assert result.work.cuts_accepted >= 2
 
 
-def test_ecp_convex_constraint_excludes_nonlinear_infeasible_binary():
+def test_ecp_convex_constraint_excludes_nonlinear_infeasible_binary() -> None:
     program = phx.optim.ConvexMixedIntegerNonlinearProgram(
         lambda value, args: (value[0] - 1.0) ** 2,
         lambda value, args: jnp.asarray([value[0] ** 2]),
@@ -54,10 +54,11 @@ def test_ecp_convex_constraint_excludes_nonlinear_infeasible_binary():
 
     assert result.successful
     assert result.primal[0] == pytest.approx(0.0, abs=1e-7)
+    # ty: ignore[unresolved-attribute]
     assert result.certificate.candidate_audit.constraint_violation <= 1e-7
 
 
-def test_convex_minlp_rejects_curvature_orientation_mismatch():
+def test_convex_minlp_rejects_curvature_orientation_mismatch() -> None:
     with pytest.raises(ValueError, match="orientation"):
         phx.optim.ConvexMixedIntegerNonlinearProgram(
             lambda value, args: value[0] ** 2,
@@ -77,7 +78,7 @@ def test_convex_minlp_rejects_curvature_orientation_mismatch():
         )
 
 
-def test_ecp_round_limit_never_reports_success():
+def test_ecp_round_limit_never_reports_success() -> None:
     program = phx.optim.ConvexMixedIntegerNonlinearProgram(
         lambda value, args: (value[0] - 0.7) ** 2,
         lambda value, args: jnp.empty((0,)),

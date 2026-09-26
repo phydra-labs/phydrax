@@ -602,7 +602,8 @@ class PreparedMACBoundaryPlan(StrictModule, NonTrainableState):
                 datum = jnp.zeros(self.side_shapes[position], dtype=value.dtype)
             else:
                 # Inhomogeneous gradients validated their stage data above.
-                assert stage_ is not None
+                if not (stage_ is not None):
+                    raise RuntimeError("Internal invariant failed: stage_ is not None.")
                 if boundary.kind == "pressure-outlet":
                     datum = stage_.values[position]
                 else:

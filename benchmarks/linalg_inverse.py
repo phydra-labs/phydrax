@@ -32,13 +32,13 @@ la = phx.linalg
 
 def _timed_case(
     name: str,
-    function,
+    function: Any,
     argument: jax.Array,
     /,
     *,
     warmup: int,
     repeats: int,
-    residual,
+    residual: Any,
 ) -> dict[str, Any]:
     compiled, compilation = measure_lower_and_compile(
         lambda: function.lower(argument),

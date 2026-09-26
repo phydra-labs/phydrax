@@ -113,7 +113,10 @@ class OperatorDataset:
         if index.ndim != 1:
             raise ValueError("Dataset indices must be one-dimensional.")
         assert self.provenance is not None
-        assert self.case_log_weights is not None and self.case_mask is not None
+        if not (self.case_log_weights is not None and self.case_mask is not None):
+            raise RuntimeError(
+                "Internal invariant failed: self.case_log_weights is not None and self.case_mask is not None."
+            )
         return OperatorDataset(
             slice_operator_batch(self.batch, index, axis=0),
             self.targets.take(index, axis=0),

@@ -21,7 +21,7 @@ from phydrax.solver._scalar_screen_junction3d import (
 )
 
 
-def test_scalar_and_maxwell_mortar_loads_are_exact_transposes():
+def test_scalar_and_maxwell_mortar_loads_are_exact_transposes() -> None:
     mass = np.asarray([[2.0, 0.2], [0.1, 1.5]])
     scalar = prepare_scalar_mortar_interface_trace_3d(
         mass, mass, coverage_fraction=1.0, orientation_margin=1.0, geometric_residual=0.0
@@ -46,20 +46,32 @@ def test_scalar_and_maxwell_mortar_loads_are_exact_transposes():
     assert bool(coupled_result.successful)
 
 
-def test_curved_edge_and_p_adaptation_preserve_constant_transfer():
+def test_curved_edge_and_p_adaptation_preserve_constant_transfer() -> None:
     edge = CurvedVirtualElementEdge(
-        "circle", [[1.0, 0.0], [0.0, 1.0]], [[0.0, 1.0], [-1.0, 0.0]], [0.5, 0.5]
+        "circle",
+        # ty: ignore[invalid-argument-type]
+        [[1.0, 0.0], [0.0, 1.0]],
+        # ty: ignore[invalid-argument-type]
+        [[0.0, 1.0], [-1.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
+        [0.5, 0.5],
     )
     assert edge.minimum_jacobian > 0.0
+    # ty: ignore[invalid-argument-type]
     epoch = VirtualElementEpoch([3, 7], [1, 2])
     result = adapt_virtual_element_p(
-        epoch, [1.0, 0.1], jnp.eye(2), VirtualElementAdaptivityPolicy(maximum_degree=4)
+        epoch,
+        # ty: ignore[invalid-argument-type]
+        [1.0, 0.1],
+        jnp.eye(2),
+        VirtualElementAdaptivityPolicy(maximum_degree=4),
     )
     assert result.conservation_defect == 0.0
     assert result.target.generation == 1
 
 
-def test_screen_junction_saddle_and_conforming_displacement_jump():
+def test_screen_junction_saddle_and_conforming_displacement_jump() -> None:
+    # ty: ignore[invalid-argument-type]
     condition = ScalarScreenJunctionCondition3D("tip", "continuity", [[1.0, -1.0]])
     prepared = prepare_scalar_screen_junction_solve_3d(jnp.eye(2), (condition,))
     result = prepared.solve(jnp.asarray([1.0, 1.0]))

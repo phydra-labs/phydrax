@@ -5,13 +5,14 @@
 """Claim-bound MPM execution with durable checkpoint and output."""
 
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def run(directory="commercial_mpm_run"):
+def run(directory: Any = "commercial_mpm_run") -> Any:
     target = Path(directory)
     target.mkdir(parents=True, exist_ok=True)
     claim = phx.discretization.MPMClaimTuple(

@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 
 from phydrax.atomistic import AtomisticUnitSystem
@@ -14,7 +16,16 @@ from phydrax.discretization import PeriodicCell
 from phydrax.sparse import EdgeRelation
 
 
-def _ifc(relation, translations, values, positions, cell, units, *, rotation=True):
+def _ifc(
+    relation: Any,
+    translations: Any,
+    values: Any,
+    positions: Any,
+    cell: Any,
+    units: Any,
+    *,
+    rotation: Any = True,
+) -> Any:
     return normalize_second_order_force_constants(
         relation,
         translations,
@@ -34,9 +45,10 @@ def _ifc(relation, translations, values, positions, cell, units, *, rotation=Tru
     )
 
 
-def test_monatomic_nearest_neighbor_dispersion_uses_canonical_family():
+def test_monatomic_nearest_neighbor_dispersion_uses_canonical_family() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(np.eye(3))
+    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0, 0, 0], [0, 0, 0], source_size=1, target_size=1)
     values = np.asarray([-np.eye(3), 2.0 * np.eye(3), -np.eye(3)])
     ifc = _ifc(
@@ -48,8 +60,10 @@ def test_monatomic_nearest_neighbor_dispersion_uses_canonical_family():
         units,
     )
     result = (
+        # ty: ignore[invalid-argument-type]
         HarmonicPhononPlan(ifc, [1.0], units)
         .prepare()
+        # ty: ignore[invalid-argument-type]
         .evaluate([[0.0, 0.0, 0.0], [0.25, 0.0, 0.0]])
     )
 
@@ -58,9 +72,10 @@ def test_monatomic_nearest_neighbor_dispersion_uses_canonical_family():
     np.testing.assert_allclose(result.angular_frequencies[1], np.sqrt(2.0), atol=1.0e-12)
 
 
-def test_directional_3d_loto_splits_only_longitudinal_optical_mode():
+def test_directional_3d_loto_splits_only_longitudinal_optical_mode() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(2.0 * np.eye(3))
+    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0, 0, 1, 1], [0, 1, 0, 1], source_size=2, target_size=2)
     identity = np.eye(3)
     values = np.asarray([identity, -identity, -identity, identity])
@@ -73,17 +88,22 @@ def test_directional_3d_loto_splits_only_longitudinal_optical_mode():
         units,
         rotation=False,
     )
+    # ty: ignore[invalid-argument-type]
     prepared = HarmonicPhononPlan(ifc, [1.0, 1.0], units).prepare()
+    # ty: ignore[invalid-argument-type]
     nonpolar = prepared.evaluate([[0.0, 0.0, 0.0]])
     polar = NonanalyticPhononCorrection(
+        # ty: ignore[invalid-argument-type]
         [np.eye(3), -np.eye(3)],
         2.0 * np.eye(3),
         units,
         cell_id=cell.cell_id,
     )
     corrected = prepared.evaluate(
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0]],
         nonanalytic=polar,
+        # ty: ignore[invalid-argument-type]
         gamma_directions=[[1.0, 0.0, 0.0]],
     )
 

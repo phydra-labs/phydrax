@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from types import SimpleNamespace
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -17,7 +19,7 @@ from phydrax.applications.compact_objects._inverse import FixedBranchModelEvalua
 from phydrax.observation import CholeskyCovarianceAction, CoordinateLayout
 
 
-def _ray_evaluator(parameters):
+def _ray_evaluator(parameters: Any) -> Any:
     prediction = jnp.asarray(
         [parameters[0] ** 2 + 0.5 * parameters[1], jnp.sin(parameters[1])]
     )
@@ -37,7 +39,7 @@ def _ray_evaluator(parameters):
     )
 
 
-def test_fixed_branch_ray_likelihood_and_sensitivity_are_evidenced():
+def test_fixed_branch_ray_likelihood_and_sensitivity_are_evidenced() -> None:
     adapter = fixed_branch_ray_inverse_adapter(
         _ray_evaluator,
         jnp.asarray([0, 0, 1, 1]),
@@ -72,7 +74,7 @@ def test_fixed_branch_ray_likelihood_and_sensitivity_are_evidenced():
     assert float(sensitivity.vjp_pairing_residual) < 1.0e-6
 
 
-def test_ray_events_are_forward_evidence_but_not_gradient_evidence():
+def test_ray_events_are_forward_evidence_but_not_gradient_evidence() -> None:
     status = SimpleNamespace(
         finite=jnp.asarray(True),
         converged=jnp.asarray(True),
@@ -101,7 +103,7 @@ def test_ray_events_are_forward_evidence_but_not_gradient_evidence():
     assert not bool(evaluation.sensitivity_eligible)
 
 
-def test_posterior_binding_preserves_chain_draw_axes_and_realization_identity():
+def test_posterior_binding_preserves_chain_draw_axes_and_realization_identity() -> None:
     binding = GRPosteriorRealizationBinding(
         "posterior:nuts-42",
         "inference:ray-1",
@@ -132,8 +134,8 @@ def test_posterior_binding_preserves_chain_draw_axes_and_realization_identity():
         binding.bind_prediction({"intensity": prediction["intensity"].reshape(6, 4)})
 
 
-def test_ray_inference_rejects_a_switched_branch_in_normal_evaluation():
-    def switched(parameters):
+def test_ray_inference_rejects_a_switched_branch_in_normal_evaluation() -> None:
+    def switched(parameters: Any) -> Any:
         result = _ray_evaluator(parameters)
         return FixedBranchModelEvaluation(
             result.values,

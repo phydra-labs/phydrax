@@ -12,7 +12,7 @@ def _make_data(offset: float) -> vx.Data:
     )
 
 
-def test_data_to_graph_ir():
+def test_data_to_graph_ir() -> None:
     data = _make_data(0.0)
     graph = data.to_graph_ir()
     assert graph.num_nodes == 2
@@ -20,7 +20,7 @@ def test_data_to_graph_ir():
     assert graph.nodes.shape == (2, 1)
 
 
-def test_batch_from_data_list_and_back():
+def test_batch_from_data_list_and_back() -> None:
     d1 = _make_data(0.0)
     d2 = _make_data(10.0)
 
@@ -39,7 +39,7 @@ def test_batch_from_data_list_and_back():
     assert recovered[1].edge_index.shape == (2, 2)
 
 
-def test_batch_preserves_complete_graph_labels():
+def test_batch_preserves_complete_graph_labels() -> None:
     first = _make_data(0.0)
     second = _make_data(10.0)
     first = vx.Data(
@@ -57,7 +57,10 @@ def test_batch_preserves_complete_graph_labels():
 
     batch = vx.Batch.from_data_list((first, second))
 
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(batch.y, jnp.asarray([[1.0, 2.0], [3.0, 4.0]]))
     recovered = batch.to_data_list()
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(recovered[0].y, first.y)
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(recovered[1].y, second.y)

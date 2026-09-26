@@ -1769,7 +1769,10 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             return DualSpace(self.state_space)
         state_space = self.state_space
         # Mixed forms always build product spaces.
-        assert isinstance(state_space, BlockSpace)
+        if not (isinstance(state_space, BlockSpace)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(state_space, BlockSpace)."
+            )
         return BlockSpace(
             tuple(DualSpace(space) for space in state_space.spaces),
             names=self.form.field_names,
@@ -1783,7 +1786,12 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         full_space = self.full_space
         state_space = self.state_space
         # Mixed forms always build product spaces.
-        assert isinstance(full_space, BlockSpace) and isinstance(state_space, BlockSpace)
+        if not (
+            isinstance(full_space, BlockSpace) and isinstance(state_space, BlockSpace)
+        ):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(full_space, BlockSpace) and isinstance(state_space, BlockSpace)."
+            )
         blocks = []
         for row, (full_block, reduced_block, constraint) in enumerate(
             zip(
@@ -1854,7 +1862,10 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             raise ValueError("Mixed finite-element lifts must be field-block tuples.")
         full_space = self.full_space
         # Mixed forms always build product spaces.
-        assert isinstance(full_space, BlockSpace)
+        if not (isinstance(full_space, BlockSpace)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(full_space, BlockSpace)."
+            )
         expanded = []
         for value, lift, constraint, full_block in zip(
             values,

@@ -7,7 +7,7 @@ from phydrax.qualification import (
 )
 
 
-def main():
+def main() -> None:
     errors = validate_source_coverage(builtin_source_absorption_ledger())
     if errors:
         raise SystemExit("\n".join(errors))

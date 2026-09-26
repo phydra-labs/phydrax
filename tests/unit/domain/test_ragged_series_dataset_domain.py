@@ -33,7 +33,7 @@ def _domain() -> RaggedSeriesDatasetDomain:
     )
 
 
-def test_ragged_series_dataset_points_from_indices_carries_payload_and_mask():
+def test_ragged_series_dataset_points_from_indices_carries_payload_and_mask() -> None:
     domain = _domain()
     indices = jnp.asarray([1, 0], dtype=jnp.int32)
     batch = domain.points_from_indices(
@@ -67,7 +67,7 @@ def test_ragged_series_dataset_points_from_indices_carries_payload_and_mask():
     assert jnp.allclose(jnp.asarray(batch[RAGGED_SERIES_INDEX_KEY].data), indices)
 
 
-def test_ragged_series_dataset_packed_storage_matches_valid_rows():
+def test_ragged_series_dataset_packed_storage_matches_valid_rows() -> None:
     domain = _domain()
 
     assert jnp.allclose(domain.offsets, jnp.asarray([0, 2, 5, 6], dtype=jnp.int32))
@@ -88,7 +88,7 @@ def test_ragged_series_dataset_packed_storage_matches_valid_rows():
     )
 
 
-def test_ragged_series_dataset_samples_from_component():
+def test_ragged_series_dataset_samples_from_component() -> None:
     domain = _domain()
     batch = domain.component().sample(
         phx.domain.PointSampling(5, layout=SampleLayout((("data",),))), key=jr.key(0)
@@ -100,7 +100,7 @@ def test_ragged_series_dataset_samples_from_component():
     assert batch["data"]["mask"].data.shape == (5, domain.max_length)
 
 
-def test_ragged_series_dataset_points_uniform_samples_fixed_width_valid_views():
+def test_ragged_series_dataset_points_uniform_samples_fixed_width_valid_views() -> None:
     domain = _domain()
     batch = domain.sampled_points_from_indices(
         jnp.asarray([0, 1, 2], dtype=jnp.int32),
@@ -130,7 +130,7 @@ def test_ragged_series_dataset_points_uniform_samples_fixed_width_valid_views():
     )
 
 
-def test_ragged_series_dataset_window_prefix_and_suffix_sampling():
+def test_ragged_series_dataset_window_prefix_and_suffix_sampling() -> None:
     domain = _domain()
     indices = jnp.asarray([1, 2], dtype=jnp.int32)
     window = domain.sampled_points_from_indices(
@@ -166,7 +166,7 @@ def test_ragged_series_dataset_window_prefix_and_suffix_sampling():
     assert jnp.allclose(prefix["data"]["mask"].data[1], jnp.asarray([True, False]))
 
 
-def test_ragged_series_sampled_views_do_not_allocate_global_max_length():
+def test_ragged_series_sampled_views_do_not_allocate_global_max_length() -> None:
     static = jnp.zeros((2, 1))
     series = jnp.zeros((2, 10_000, 3))
     series = series.at[0, :2, :].set(1.0)
@@ -194,7 +194,7 @@ def test_ragged_series_sampled_views_do_not_allocate_global_max_length():
     assert full["data"]["series"].data.shape == (2, 10_000, 3)
 
 
-def test_ragged_series_dataset_from_sequences_builds_equivalent_domain():
+def test_ragged_series_dataset_from_sequences_builds_equivalent_domain() -> None:
     static = jnp.asarray([[1.0], [2.0]])
     seq = (
         jnp.asarray([[1.0, 2.0], [3.0, 4.0]]),
@@ -212,7 +212,7 @@ def test_ragged_series_dataset_from_sequences_builds_equivalent_domain():
     assert not bool(batch["data"]["mask"].data[1, 1])
 
 
-def test_ragged_series_dataset_equivalence_includes_lengths_and_grid():
+def test_ragged_series_dataset_equivalence_includes_lengths_and_grid() -> None:
     domain = _domain()
     same = _domain()
     different_lengths = RaggedSeriesDatasetDomain(
@@ -235,7 +235,7 @@ def test_ragged_series_dataset_equivalence_includes_lengths_and_grid():
     assert not domain.same_support(different_dt)
 
 
-def test_ragged_series_dataset_validates_shapes_and_lengths():
+def test_ragged_series_dataset_validates_shapes_and_lengths() -> None:
     series = jnp.zeros((3, 4, 2))
     static = jnp.zeros((2, 1))
 

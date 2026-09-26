@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _plans():
+def _plans() -> Any:
     velocities = 1.0e6 * jnp.asarray(((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)))
     fermi = phx.applications.superconductivity.FermiSurfacePlan(
         velocities,
@@ -40,7 +43,7 @@ def _plans():
     return trajectories, matsubara, equilibrium, gap
 
 
-def test_uniform_riccati_solution_normalizes_and_closes_gap_equation():
+def test_uniform_riccati_solution_normalizes_and_closes_gap_equation() -> None:
     trajectories, matsubara, equilibrium, gap = _plans()
     gap_field = gap * jnp.ones((4, 3), dtype=jnp.complex128)
     propagator = trajectories.evaluate(matsubara, gap_field)
@@ -53,7 +56,7 @@ def test_uniform_riccati_solution_normalizes_and_closes_gap_equation():
     np.testing.assert_allclose(result.current_density, 0.0, atol=1.0e-12)
 
 
-def test_retarded_spectroscopy_is_separate_causal_real_axis_profile():
+def test_retarded_spectroscopy_is_separate_causal_real_axis_profile() -> None:
     _, _, equilibrium_plan, gap = _plans()
     equilibrium = equilibrium_plan.solve(jnp.asarray((gap + 0.0j,)))
     spectroscopy = phx.applications.superconductivity.RetardedSpectroscopyPlan(

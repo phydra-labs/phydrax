@@ -4,7 +4,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_shared_voigt_profile_preserves_line_area():
+def test_shared_voigt_profile_preserves_line_area() -> None:
     profile = phx.chemistry.SpectralProfilePlan(
         phx.chemistry.SpectralLineShape.VOIGT,
         -20.0,
@@ -13,15 +13,20 @@ def test_shared_voigt_profile_preserves_line_area():
         fwhm=0.4,
         lorentzian_fwhm=0.2,
         area_tolerance=5.0e-3,
+        # ty: ignore[invalid-argument-type]
     ).evaluate([0.0], [2.0])
 
     assert bool(profile.successful)
     np.testing.assert_allclose(profile.integrated_intensity, 2.0, rtol=5.0e-3)
 
 
-def test_duschinsky_quadrature_and_herzberg_teller_emission_close_identical_modes():
+def test_duschinsky_quadrature_and_herzberg_teller_emission_close_identical_modes() -> (
+    None
+):
     duschinsky = phx.chemistry.DuschinskyResult(
+        # ty: ignore[invalid-argument-type]
         [[1.0]],
+        # ty: ignore[invalid-argument-type]
         [0.0],
         0.0,
         0.0,
@@ -30,32 +35,45 @@ def test_duschinsky_quadrature_and_herzberg_teller_emission_close_identical_mode
         "final",
     )
     result = phx.chemistry.DuschinskyFranckCondonPlan(
+        # ty: ignore[invalid-argument-type]
         [1.0],
+        # ty: ignore[invalid-argument-type]
         [1.0],
         duschinsky,
         1.0,
         quadrature_order=8,
     ).evaluate(
+        # ty: ignore[invalid-argument-type]
         [[0], [1], [2]],
+        # ty: ignore[invalid-argument-type]
         condon_dipole=[1.0, 0.0, 0.0],
+        # ty: ignore[invalid-argument-type]
         herzberg_teller_derivatives=[[0.0, 0.0, 0.0]],
         zero_zero_energy_hartree=2.0,
     )
 
     assert bool(result.successful)
     np.testing.assert_allclose(result.factors, [1.0, 0.0, 0.0], atol=2.0e-13)
+    # ty: ignore[not-subscriptable]
     assert float(result.emission_rates[0]) > 0.0
+    # ty: ignore[not-subscriptable]
     np.testing.assert_allclose(result.emission_rates[1:], 0.0, atol=1.0e-10)
 
 
-def test_dynamic_resonance_raman_returns_finite_complex_response():
+def test_dynamic_resonance_raman_returns_finite_complex_response() -> None:
     result = phx.chemistry.ResonanceRamanPlan(
+        # ty: ignore[invalid-argument-type]
         [0.4, 0.7],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0, 0.0], [0.0, 0.8, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [[[0.1, 0.0, 0.0]], [[0.0, 0.05, 0.0]]],
+        # ty: ignore[invalid-argument-type]
         [[0.02], [-0.01]],
+        # ty: ignore[invalid-argument-type]
         [0.05],
         0.35,
+        # ty: ignore[invalid-argument-type]
         [0.01, 0.02],
     ).evaluate()
 
@@ -65,7 +83,7 @@ def test_dynamic_resonance_raman_returns_finite_complex_response():
     np.testing.assert_allclose(result.relative_intensities, [1.0], atol=1.0e-14)
 
 
-def test_quartic_force_field_gvpt2_vci_rotor_and_ensemble_are_self_consistent():
+def test_quartic_force_field_gvpt2_vci_rotor_and_ensemble_are_self_consistent() -> None:
     energy = lambda coordinate: (
         0.5 * coordinate[0] ** 2
         + 0.06 * coordinate[0] ** 3 / 6.0
@@ -74,11 +92,14 @@ def test_quartic_force_field_gvpt2_vci_rotor_and_ensemble_are_self_consistent():
     force_field = phx.chemistry.AnharmonicForceFieldPlan(energy, 1).evaluate()
     perturbation = phx.chemistry.VibrationalPerturbationPlan(
         phx.chemistry.VibrationalPerturbationKind.GVPT2,
+        # ty: ignore[invalid-argument-type]
         [1.0],
         force_field,
         maximum_quanta=5,
+        # ty: ignore[invalid-argument-type]
     ).evaluate([[0], [1]])
     configuration = phx.chemistry.VibrationalConfigurationPlan(
+        # ty: ignore[invalid-argument-type]
         [1.0],
         force_field,
         maximum_quanta=5,
@@ -92,9 +113,11 @@ def test_quartic_force_field_gvpt2_vci_rotor_and_ensemble_are_self_consistent():
         root_count=5,
     ).evaluate()
     ensemble = phx.chemistry.ConformationalEnsemblePlan(
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0],
         temperature=1.0,
         boltzmann_constant=1.0,
+        # ty: ignore[invalid-argument-type]
     ).evaluate([[1.0, 0.0], [0.0, 1.0]])
 
     assert bool(force_field.successful)

@@ -406,7 +406,10 @@ class MaxwellSmoluchowskiContinuumWallPlan(AbstractConservationBoundary):
         else:
             # Materials carry exactly one of wall temperature or heat flux.
             outward_heat_flux = self.material.outward_heat_flux
-            assert outward_heat_flux is not None
+            if not (outward_heat_flux is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: outward_heat_flux is not None."
+                )
             outward_heat = outward_heat_flux.astype(value.dtype)
             inward_temperature_derivative = -outward_heat / transport.thermal_conductivity
             gas_temperature_trace = temperature - distance * inward_temperature_derivative

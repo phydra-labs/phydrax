@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_weighted_moments_and_block_uncertainty_are_physical():
+def test_weighted_moments_and_block_uncertainty_are_physical() -> None:
     species = phx.discretization.dsmc.DSMCSpeciesPlan(
         ("A",),
         jnp.asarray((2.0,)),

@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_primary_compiler_accepts_prepared_hp_epoch_and_native_constraint():
+def test_primary_compiler_accepts_prepared_hp_epoch_and_native_constraint() -> None:
     mesh = phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         (
@@ -41,7 +41,7 @@ def test_primary_compiler_accepts_prepared_hp_epoch_and_native_constraint():
     assert jnp.allclose(residual, 0.0)
 
 
-def test_multi_field_hp_epoch_and_physical_mass_projection_are_native():
+def test_multi_field_hp_epoch_and_physical_mass_projection_are_native() -> None:
     mesh = phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         (
@@ -63,8 +63,11 @@ def test_multi_field_hp_epoch_and_physical_mass_projection_are_native():
             "q": ("L2", (2,), (1, 0)),
         },
     )
+    # ty: ignore[unresolved-attribute]
     assert tuple(space.name for space in epoch.discretization.field_spaces) == ("u", "q")
+    # ty: ignore[unresolved-attribute]
     assert epoch.discretization.elements[1][0].conformity == "L2"
+    # ty: ignore[unresolved-attribute]
     assert epoch.discretization.elements[1][0].reference_nodes.shape[0] == 12
 
     source_basis = jnp.asarray(((1.0, 0.0), (0.5, 0.5), (0.0, 1.0)))

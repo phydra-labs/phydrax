@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +12,7 @@ from phydrax.applications.compressible_flow import (
 )
 
 
-def _base_system():
+def _base_system() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("air",),
         (phx.equations.ChemicalPhaseKind.GAS,),
@@ -39,7 +41,7 @@ def _base_system():
     )
 
 
-def test_sa_negative_closure_has_positive_and_recovery_branches():
+def test_sa_negative_closure_has_positive_and_recovery_branches() -> None:
     plan = phx.equations.SpalartAllmarasNegativePlan()
     gradient = jnp.asarray(((0.0, 2.0), (0.0, 0.0)))
     working_gradient = jnp.asarray((0.01, -0.02))
@@ -55,11 +57,11 @@ def test_sa_negative_closure_has_positive_and_recovery_branches():
     assert negative.diffusion_coefficient > 0.0
 
 
-def test_sa_system_roundtrip_diffusion_and_source_ledger():
+def test_sa_system_roundtrip_diffusion_and_source_ledger() -> None:
     base = _base_system()
     system = phx.equations.SpalartAllmarasCompressibleSystem(base)
 
-    def state_at(y):
+    def state_at(y: Any) -> Any:
         primitive = jnp.asarray((1.0, y, 0.0, 500.0, 2.0e-4))
         return system.primitive_to_conserved(primitive)
 
@@ -84,7 +86,7 @@ def test_sa_system_roundtrip_diffusion_and_source_ledger():
     assert system.maximum_diffusivity(state, arguments) > 0.0
 
 
-def test_sa_wall_sets_zero_face_working_variable_and_flat_distance_is_exact():
+def test_sa_wall_sets_zero_face_working_variable_and_flat_distance_is_exact() -> None:
     base = _base_system()
     system = phx.equations.SpalartAllmarasCompressibleSystem(base)
     wall = SpalartAllmarasWallBoundary(
@@ -113,7 +115,7 @@ def test_sa_wall_sets_zero_face_working_variable_and_flat_distance_is_exact():
     np.testing.assert_allclose(distance.distance, centers[..., 1], atol=0.0)
 
 
-def test_sa_manufactured_plan_returns_complete_finite_rate():
+def test_sa_manufactured_plan_returns_complete_finite_rate() -> None:
     system = phx.equations.SpalartAllmarasCompressibleSystem(_base_system())
     plan = SpalartAllmarasManufacturedPlan(
         system,

@@ -1514,7 +1514,10 @@ class PreparedNodalDGConservationDynamics(StrictModule):
     def state_space(self) -> la.ArraySpace:
         space = self.compiled_finite_element_problem.state_space
         # The single unconstrained nodal DG field keeps its FE ArraySpace.
-        assert isinstance(space, la.ArraySpace)
+        if not (isinstance(space, la.ArraySpace)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(space, la.ArraySpace)."
+            )
         return space
 
     def _state(self, state: ArrayLike, /) -> Array:
@@ -1663,7 +1666,8 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         for route in self.mortar_routes:
             mortar = route.mortar
             # Mortar routes carry a mortar plan by construction.
-            assert mortar is not None
+            if not (mortar is not None):
+                raise RuntimeError("Internal invariant failed: mortar is not None.")
             plus = mortar.interpolate_left(state[route.owner_dofs])
             minus = mortar.interpolate_right(state[route.neighbor_dofs])
             common = 0.5 * (plus + minus) + beta * (plus - minus)
@@ -1773,7 +1777,8 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         for route in self.hybrid_boundary_routes:
             boundary = route.boundary
             # Boundary routes carry a conservation boundary by construction.
-            assert boundary is not None
+            if not (boundary is not None):
+                raise RuntimeError("Internal invariant failed: boundary is not None.")
             if isinstance(boundary, PrescribedNormalFluxBoundary):
                 raise ValueError(
                     "Viscous DG requires boundary state and gradient traces."
@@ -1895,7 +1900,8 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         for route in self.mortar_routes:
             mortar = route.mortar
             # Mortar routes carry a mortar plan by construction.
-            assert mortar is not None
+            if not (mortar is not None):
+                raise RuntimeError("Internal invariant failed: mortar is not None.")
             plus = mortar.interpolate_left(state[route.owner_dofs])
             minus = mortar.interpolate_right(state[route.neighbor_dofs])
             plus_gradient = mortar.interpolate_left(gradient[route.owner_dofs])
@@ -1966,7 +1972,8 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         for route in self.hybrid_boundary_routes:
             boundary = route.boundary
             # Boundary routes carry a conservation boundary by construction.
-            assert boundary is not None
+            if not (boundary is not None):
+                raise RuntimeError("Internal invariant failed: boundary is not None.")
             plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
@@ -2282,7 +2289,8 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         for route in self.mortar_routes:
             mortar = route.mortar
             # Mortar routes carry a mortar plan by construction.
-            assert mortar is not None
+            if not (mortar is not None):
+                raise RuntimeError("Internal invariant failed: mortar is not None.")
             plus = mortar.interpolate_left(value[route.owner_dofs])
             minus = mortar.interpolate_right(value[route.neighbor_dofs])
             result = self.method.interface_flux.normal_face_flux(
@@ -2378,7 +2386,8 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         for route in self.hybrid_boundary_routes:
             boundary = route.boundary
             # Boundary routes carry a conservation boundary by construction.
-            assert boundary is not None
+            if not (boundary is not None):
+                raise RuntimeError("Internal invariant failed: boundary is not None.")
             plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,

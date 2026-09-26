@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -11,20 +12,20 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _block(value) -> None:
+def _block(value: Any) -> None:
     for leaf in jax.tree.leaves(value):
         if isinstance(leaf, jax.Array):
             leaf.block_until_ready()
 
 
-def _measure(function, *arguments):
+def _measure(function: Any, *arguments: Any) -> Any:
     started = time.perf_counter()
     value = function(*arguments)
     _block(value)
     return value, time.perf_counter() - started
 
 
-def _inputs(source_count: int, target_count: int):
+def _inputs(source_count: int, target_count: int) -> Any:
     key = jax.random.key(4180 + source_count + target_count)
     sources = 0.05 + 0.9 * jax.random.uniform(key, (source_count, 3))
     targets = 0.05 + 0.9 * jax.random.uniform(
@@ -34,7 +35,9 @@ def _inputs(source_count: int, target_count: int):
     return sources, targets, strengths
 
 
-def _direct(kind: str, sources, strengths, targets, parameter: float):
+def _direct(
+    kind: str, sources: Any, strengths: Any, targets: Any, parameter: float
+) -> Any:
     radius = jnp.linalg.norm(targets[:, None, :] - sources[None, :, :], axis=-1)
     if kind == "laplace":
         factor = 1.0
@@ -45,7 +48,7 @@ def _direct(kind: str, sources, strengths, targets, parameter: float):
     return jnp.sum(factor * strengths[None, :] / (4.0 * jnp.pi * radius), axis=1)
 
 
-def _plan_type(kind: str):
+def _plan_type(kind: str) -> Any:
     if kind == "laplace":
         return phx.operators.LaplaceMultipolePlan3D, {}
     if kind == "helmholtz":
@@ -53,7 +56,9 @@ def _plan_type(kind: str):
     return phx.operators.ModifiedHelmholtzMultipolePlan3D, {"decay": 0.7}
 
 
-def _case(kind: str, execution: str, source_count: int, target_count: int, order: int):
+def _case(
+    kind: str, execution: str, source_count: int, target_count: int, order: int
+) -> Any:
     sources, targets, strengths = _inputs(source_count, target_count)
     plan_type, keyword = _plan_type(kind)
     policy = {

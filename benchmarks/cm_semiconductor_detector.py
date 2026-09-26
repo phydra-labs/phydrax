@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -44,7 +46,7 @@ jax.config.update("jax_enable_x64", True)
 _EPSILON = 11.7 * 8.8541878128e-12
 
 
-def _case(node_intervals: int, trajectory_samples: int):
+def _case(node_intervals: int, trajectory_samples: int) -> Any:
     grid = TensorGridPlan(
         (UniformCellAxisSpec(node_intervals, periodic=False),),
         axis_names=("x",),

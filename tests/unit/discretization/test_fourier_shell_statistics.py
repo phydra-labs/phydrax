@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_single_cosine_has_analytic_power_and_full_mode_count():
+def test_single_cosine_has_analytic_power_and_full_mode_count() -> None:
     count = 8
     x = (jnp.arange(count) + 0.5) / count
     field = jnp.cos(2.0 * jnp.pi * x)
@@ -29,7 +31,7 @@ def test_single_cosine_has_analytic_power_and_full_mode_count():
     )
 
 
-def test_rfft_parseval_cross_power_and_phase_discrepancy():
+def test_rfft_parseval_cross_power_and_phase_discrepancy() -> None:
     shape = (8, 6)
     x, y = jnp.meshgrid(
         (jnp.arange(shape[0]) + 0.5) / shape[0],
@@ -64,10 +66,11 @@ def test_rfft_parseval_cross_power_and_phase_discrepancy():
     )
 
 
-def test_dc_nyquist_final_edge_and_empty_shell_policies():
+def test_dc_nyquist_final_edge_and_empty_shell_policies() -> None:
     plan = phx.discretization.PeriodicFourierShellPlan(
         (4,),
         (1.0,),
+        # ty: ignore[invalid-argument-type]
         [0.0, 1.0, 2.0 * np.pi, 4.0 * np.pi],
         final_edge_policy="include",
     )
@@ -77,20 +80,25 @@ def test_dc_nyquist_final_edge_and_empty_shell_policies():
     excluded = phx.discretization.PeriodicFourierShellPlan(
         (4,),
         (1.0,),
+        # ty: ignore[invalid-argument-type]
         [0.0, 2.0 * np.pi, 4.0 * np.pi],
         nyquist_policy="exclude",
     )
     assert excluded.excluded_mode_count == 2
 
 
-def test_shell_plan_rejects_invalid_shapes_and_supports_gradients():
+def test_shell_plan_rejects_invalid_shapes_and_supports_gradients() -> None:
     with pytest.raises(ValueError, match="invalid"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.PeriodicFourierShellPlan((8,), (1.0,), [0.0, 1.0, 1.0])
     plan = phx.discretization.PeriodicFourierShellPlan(
-        (8,), (1.0,), [0.0, np.pi, 3.0 * np.pi, 8.0 * np.pi]
+        (8,),
+        (1.0,),
+        # ty: ignore[invalid-argument-type]
+        [0.0, np.pi, 3.0 * np.pi, 8.0 * np.pi],
     )
 
-    def objective(amplitude):
+    def objective(amplitude: Any) -> Any:
         field = amplitude * jnp.cos(2.0 * jnp.pi * (jnp.arange(8) + 0.5) / 8.0)
         return plan.auto_power(plan.transform(field)).shell_values[1]
 

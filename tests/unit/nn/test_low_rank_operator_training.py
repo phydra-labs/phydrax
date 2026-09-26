@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -18,7 +21,7 @@ _FLOAT64_POLICY = phx.nn.operator.training.OperatorDTypePolicy(
 )
 
 
-def _dataset(cases=4, resolution=6):
+def _dataset(cases: Any = 4, resolution: Any = 6) -> Any:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, resolution),
@@ -34,7 +37,7 @@ def _dataset(cases=4, resolution=6):
     )
 
 
-def _adapted_operator(seed=0, *, resolution=6):
+def _adapted_operator(seed: Any = 0, *, resolution: Any = 6) -> Any:
     latent = 4
     branch = phx.nn.models.MLP(
         in_size=resolution,
@@ -70,7 +73,7 @@ def _adapted_operator(seed=0, *, resolution=6):
     return adapted, phx.nn.parameters.low_rank_parameter_subspace(adapted)
 
 
-def test_fit_operator_updates_only_low_rank_factor_subspace():
+def test_fit_operator_updates_only_low_rank_factor_subspace() -> None:
     model, subspace = _adapted_operator()
     initial_factors = tuple(jax.tree.leaves(subspace.initial))
     result = phx.nn.operator.training.fit_operator(
@@ -94,7 +97,7 @@ def test_fit_operator_updates_only_low_rank_factor_subspace():
     assert jnp.isfinite(result.final_loss)
 
 
-def test_fit_operator_requires_explicit_low_rank_subspace():
+def test_fit_operator_requires_explicit_low_rank_subspace() -> None:
     model, _ = _adapted_operator()
     with pytest.raises(ValueError, match="requires an explicit"):
         phx.nn.operator.training.fit_operator(
@@ -105,7 +108,7 @@ def test_fit_operator_requires_explicit_low_rank_subspace():
         )
 
 
-def test_low_rank_operator_resume_matches_uninterrupted(tmp_path):
+def test_low_rank_operator_resume_matches_uninterrupted(tmp_path: Any) -> None:
     model, subspace = _adapted_operator(seed=2)
     dataset = _dataset()
     common = {
@@ -120,6 +123,7 @@ def test_low_rank_operator_resume_matches_uninterrupted(tmp_path):
         model,
         dataset,
         steps=2,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     checkpoint = tmp_path / "low-rank-fit"
@@ -128,6 +132,7 @@ def test_low_rank_operator_resume_matches_uninterrupted(tmp_path):
         dataset,
         steps=1,
         checkpoint_path=checkpoint,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
     resumed = phx.nn.operator.training.fit_operator(
@@ -136,6 +141,7 @@ def test_low_rank_operator_resume_matches_uninterrupted(tmp_path):
         steps=2,
         checkpoint_path=checkpoint,
         resume=True,
+        # ty: ignore[invalid-argument-type]
         **common,
     )
 

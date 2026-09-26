@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import statistics
@@ -20,7 +22,7 @@ _EXPONENTS = [3.42525091, 0.62391373, 0.16885540]
 _COEFFICIENTS = [0.15432897, 0.53532814, 0.44463454]
 
 
-def _h2():
+def _h2() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(
         [1, 1],
@@ -51,7 +53,7 @@ def _h2():
     return structure, plan, positions_bohr
 
 
-def _periodic():
+def _periodic() -> Any:
     cell = phx.discretization.PeriodicCell(
         5.0 * np.eye(3), periodic_axes=(True, True, True)
     )
@@ -83,7 +85,7 @@ def _periodic():
     )
 
 
-def benchmark(repeats: int):
+def benchmark(repeats: int) -> Any:
     structure, rhf, positions_bohr = _h2()
     rhf_samples = []
     state = None
@@ -210,7 +212,7 @@ def benchmark(repeats: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument(

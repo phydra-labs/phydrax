@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -21,14 +24,14 @@ from phydrax.discretization.particle._rigid_parameters import (
 )
 
 
-def _inertia_from_covariance(masses, covariance):
+def _inertia_from_covariance(masses: Any, covariance: Any) -> Any:
     identity = jnp.eye(3, dtype=covariance.dtype)
     return masses[:, None, None] * (
         jnp.trace(covariance, axis1=-2, axis2=-1)[:, None, None] * identity - covariance
     )
 
 
-def _body_origin_inertia(masses, offsets, inertia_com):
+def _body_origin_inertia(masses: Any, offsets: Any, inertia_com: Any) -> Any:
     identity = jnp.eye(3, dtype=inertia_com.dtype)
     outer = offsets[:, :, None] * offsets[:, None, :]
     return inertia_com + masses[:, None, None] * (
@@ -36,7 +39,7 @@ def _body_origin_inertia(masses, offsets, inertia_com):
     )
 
 
-def _prepared_source():
+def _prepared_source() -> Any:
     masses = jnp.asarray([2.0, 3.5])
     offsets = jnp.asarray([[0.2, -0.1, 0.3], [-0.15, 0.25, 0.05]])
     factors = jnp.asarray(
@@ -65,7 +68,7 @@ def _prepared_source():
     return rigid_plan.prepare(particles), offsets, inertia_com
 
 
-def test_prepared_inverse_round_trip_exposes_reconstruction_evidence():
+def test_prepared_inverse_round_trip_exposes_reconstruction_evidence() -> None:
     source, offsets, expected_inertia_com = _prepared_source()
     parameterization = RigidInertialParameterization(source)
 
@@ -117,7 +120,7 @@ def test_prepared_inverse_round_trip_exposes_reconstruction_evidence():
     assert repeated_evaluation.evaluation_id == evaluation.evaluation_id
 
 
-def test_all_decoded_inertias_are_spd_and_obey_strict_triangle_inequalities():
+def test_all_decoded_inertias_are_spd_and_obey_strict_triangle_inequalities() -> None:
     source, _, _ = _prepared_source()
     parameterization = RigidInertialParameterization(source)
     coordinates = parameterization.coordinates(
@@ -154,7 +157,7 @@ def test_all_decoded_inertias_are_spd_and_obey_strict_triangle_inequalities():
     assert np.all(np.asarray(evaluation.minimum_triangle_margin) > 0.0)
 
 
-def test_body_origin_evidence_uses_shifted_inertia_and_binds_realization():
+def test_body_origin_evidence_uses_shifted_inertia_and_binds_realization() -> None:
     source, _, _ = _prepared_source()
     parameterization = RigidInertialParameterization(source)
     shifted_offsets = jnp.asarray(
@@ -221,7 +224,7 @@ def test_body_origin_evidence_uses_shifted_inertia_and_binds_realization():
     assert shifted_realization.evaluation.evaluation_id == shifted.evaluation_id
 
 
-def test_invalid_coordinates_and_nonphysical_direct_parameters_reject():
+def test_invalid_coordinates_and_nonphysical_direct_parameters_reject() -> None:
     source, _, _ = _prepared_source()
     parameterization = RigidInertialParameterization(source)
     with pytest.raises(ValueError, match="shape \\(N,3\\)"):
@@ -261,7 +264,7 @@ def test_invalid_coordinates_and_nonphysical_direct_parameters_reject():
         RigidInertialParameterization(planar_bodies)
 
 
-def test_realization_returns_fresh_plans_and_preserves_prepared_owner():
+def test_realization_returns_fresh_plans_and_preserves_prepared_owner() -> None:
     source, offsets, _ = _prepared_source()
     parameterization = RigidInertialParameterization(source)
     coordinates = parameterization.inverse(offsets)
@@ -309,7 +312,7 @@ def test_realization_returns_fresh_plans_and_preserves_prepared_owner():
     np.testing.assert_array_equal(source.inertia_body, original_inertia)
 
 
-def test_reference_rebase_preserves_spatial_kinetic_energy_and_attached_points():
+def test_reference_rebase_preserves_spatial_kinetic_energy_and_attached_points() -> None:
     source, offsets, _ = _prepared_source()
     parameterization = RigidInertialParameterization(source)
     coordinates = parameterization.inverse(offsets)
@@ -399,7 +402,7 @@ def test_reference_rebase_preserves_spatial_kinetic_energy_and_attached_points()
         )
 
 
-def test_extreme_finite_coordinates_have_positive_floor_and_finite_evidence():
+def test_extreme_finite_coordinates_have_positive_floor_and_finite_evidence() -> None:
     source, _, _ = _prepared_source()
     parameterization = RigidInertialParameterization(source)
     dtype = np.asarray(source.mass_properties.masses).dtype
@@ -433,7 +436,7 @@ def test_extreme_finite_coordinates_have_positive_floor_and_finite_evidence():
         assert np.all(np.isfinite(np.asarray(value)))
 
 
-def test_coordinate_constructor_requires_explicit_nonempty_binding():
+def test_coordinate_constructor_requires_explicit_nonempty_binding() -> None:
     with pytest.raises(ValueError, match="parameterization_id"):
         RigidInertialCoordinates(
             jnp.asarray([0.0]),

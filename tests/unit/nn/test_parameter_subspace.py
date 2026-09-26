@@ -5,7 +5,7 @@ import pytest
 from phydrax.nn.parameters import ParameterSubspace
 
 
-def test_parameter_subspace_selects_and_reconstructs_exact_leaves():
+def test_parameter_subspace_selects_and_reconstructs_exact_leaves() -> None:
     tree = {
         "encoder": {"weight": jnp.ones((2, 2)), "label": "fixed"},
         "readout": {"weight": jnp.ones((1, 2)), "bias": jnp.zeros((1,))},
@@ -20,7 +20,7 @@ def test_parameter_subspace_selects_and_reconstructs_exact_leaves():
     assert eqx.tree_equal(reconstructed, tree)
 
 
-def test_parameter_subspace_selects_disjoint_subtrees():
+def test_parameter_subspace_selects_disjoint_subtrees() -> None:
     tree = {
         "branches": (
             {"body": jnp.ones((3, 2)), "head": jnp.ones((1, 3))},

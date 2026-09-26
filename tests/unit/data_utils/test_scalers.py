@@ -2,6 +2,9 @@
 #  Copyright 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -15,7 +18,7 @@ from phydrax.data_utils.scalers import (
 )
 
 
-def test_affine_scaler_defaults_and_roundtrip():
+def test_affine_scaler_defaults_and_roundtrip() -> None:
     scaler = AffineScaler()
     assert jnp.array_equal(scaler.reference_value, jnp.asarray(0.0))
     assert jnp.array_equal(scaler.scale_value, jnp.asarray(1.0))
@@ -44,12 +47,12 @@ def test_affine_scaler_defaults_and_roundtrip():
         {"beta": -jnp.inf},
     ),
 )
-def test_affine_scaler_rejects_nonfinite_or_noninvertible_parameters(kwargs):
+def test_affine_scaler_rejects_nonfinite_or_noninvertible_parameters(kwargs: Any) -> None:
     with pytest.raises(ValueError):
         AffineScaler(**kwargs)
 
 
-def test_minmax_scaler_default_custom_and_axis_scaling():
+def test_minmax_scaler_default_custom_and_axis_scaling() -> None:
     x = jnp.asarray([1.0, 2.0, 3.0, 4.0, 5.0])
 
     default_scaler = MinMaxScaler(x)
@@ -74,7 +77,7 @@ def test_minmax_scaler_default_custom_and_axis_scaling():
     )
 
 
-def test_minmax_scaler_constant_input_and_degenerate_target_range():
+def test_minmax_scaler_constant_input_and_degenerate_target_range() -> None:
     x = jnp.asarray([3.0, 3.0, 3.0])
     scaler = MinMaxScaler(x)
     assert jnp.allclose(scaler.transform(x), jnp.zeros_like(x))
@@ -83,7 +86,7 @@ def test_minmax_scaler_constant_input_and_degenerate_target_range():
         MinMaxScaler(x, min=1.0, max=1.0)
 
 
-def test_maxabs_scaler_scaling_axis_and_zero_input():
+def test_maxabs_scaler_scaling_axis_and_zero_input() -> None:
     x = jnp.asarray([-4.0, -2.0, 0.0, 2.0, 4.0])
     scaler = MaxAbsScaler(x)
     transformed = scaler.transform(x)
@@ -102,7 +105,7 @@ def test_maxabs_scaler_scaling_axis_and_zero_input():
     assert jnp.all(jnp.isfinite(zero_scaler.transform(zeros)))
 
 
-def test_std_scaler_uses_requested_axis():
+def test_std_scaler_uses_requested_axis() -> None:
     x = jnp.asarray([1.0, 2.0, 3.0, 4.0, 5.0])
     scaler = StdScaler(x)
     transformed = scaler.transform(x)
@@ -121,7 +124,7 @@ def test_std_scaler_uses_requested_axis():
     assert jnp.allclose(constant_scaler.transform(constant), jnp.zeros_like(constant))
 
 
-def test_norm_scaler_scaling_axis_and_zero_input():
+def test_norm_scaler_scaling_axis_and_zero_input() -> None:
     x = jnp.asarray([3.0, 4.0])
     scaler = NormScaler(x)
     transformed = scaler.transform(x)
@@ -143,11 +146,11 @@ def test_norm_scaler_scaling_axis_and_zero_input():
     assert jnp.all(jnp.isfinite(zero_transformed))
 
 
-def test_scaler_transform_fn_composes_input_and_output_scaling():
+def test_scaler_transform_fn_composes_input_and_output_scaling() -> None:
     input_scaler = AffineScaler(scale_value=2.0)
     output_scaler = AffineScaler(scale_value=10.0)
 
-    def fn(x):
+    def fn(x: Any) -> Any:
         return x + 1.0
 
     transformed_fn = scaler_transform_fn(

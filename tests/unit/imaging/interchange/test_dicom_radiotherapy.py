@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 import numpy as np
 import pytest
@@ -40,7 +41,7 @@ _LIMITS = ResourceLimits(
 )
 
 
-def _input(payload: bytes, name: str):
+def _input(payload: bytes, name: str) -> Any:
     return (
         bounded_resource_from_bytes(payload, limits=_LIMITS),
         ReferenceArtifactManifest(
@@ -61,7 +62,7 @@ def _input(payload: bytes, name: str):
     )
 
 
-def _deidentification():
+def _deidentification() -> Any:
     return DeidentificationEvidence(
         "synthetic-dicom-deid",
         "synthetic-subject",

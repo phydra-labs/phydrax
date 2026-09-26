@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -8,8 +10,8 @@ import phydrax as phx
 
 
 def test_phase_marginalization_matches_explicit_periodic_quadrature_and_reconstructs(
-    wave_problem,
-):
+    wave_problem: Any,
+) -> None:
     gw, _, _, _, injected, likelihood = wave_problem()
     phase = gw.PhaseMarginalizationPlan(reconstruction_nodes=128)
     plan = gw.GravitationalWaveMarginalizationPlan(likelihood, phase=phase)
@@ -42,8 +44,8 @@ def test_phase_marginalization_matches_explicit_periodic_quadrature_and_reconstr
 
 
 def test_distance_and_time_marginalization_match_declared_discrete_measure(
-    wave_problem,
-):
+    wave_problem: Any,
+) -> None:
     gw, _, _, _, injected, likelihood = wave_problem()
     distance = gw.DistanceMarginalizationPlan(
         0.8,
@@ -82,7 +84,9 @@ def test_distance_and_time_marginalization_match_declared_discrete_measure(
     assert bool(result.valid)
 
 
-def test_calibration_marginalization_matches_declared_response_ensemble(wave_problem):
+def test_calibration_marginalization_matches_declared_response_ensemble(
+    wave_problem: Any,
+) -> None:
     gw, provenance, _, _, injected, likelihood = wave_problem()
     responses = jnp.stack(
         (
@@ -129,7 +133,9 @@ def test_calibration_marginalization_matches_declared_response_ensemble(wave_pro
     np.testing.assert_allclose(plan.log_probability(injected), manual, atol=1e-12)
 
 
-def test_relative_binning_is_exact_at_fiducial_and_qualified_nearby(wave_problem):
+def test_relative_binning_is_exact_at_fiducial_and_qualified_nearby(
+    wave_problem: Any,
+) -> None:
     gw, _, _, _, injected, likelihood = wave_problem(sample_count=128)
     nearby = {**injected, "center_frequency": jnp.asarray(10.05)}
     qualified = gw.prepare_relative_binning_likelihood(
@@ -150,7 +156,7 @@ def test_relative_binning_is_exact_at_fiducial_and_qualified_nearby(wave_problem
     assert qualified.qualification.maximum_absolute_error <= 0.5
 
 
-def test_multiband_stride_one_is_an_exact_prepared_route(wave_problem):
+def test_multiband_stride_one_is_an_exact_prepared_route(wave_problem: Any) -> None:
     gw, _, _, _, injected, likelihood = wave_problem()
     active_frequency = likelihood.network.frequency[
         jnp.any(likelihood.network.active, axis=0)
@@ -172,7 +178,7 @@ def test_multiband_stride_one_is_an_exact_prepared_route(wave_problem):
     assert qualified.qualification.passed
 
 
-def test_full_rank_roq_preserves_exact_likelihood(wave_problem):
+def test_full_rank_roq_preserves_exact_likelihood(wave_problem: Any) -> None:
     gw, _, _, _, injected, likelihood = wave_problem(sample_count=32)
     size = likelihood.network.frequency.size
     basis = jnp.eye(size, dtype=likelihood.network.frequency.dtype)
@@ -213,10 +219,10 @@ def test_full_rank_roq_preserves_exact_likelihood(wave_problem):
     assert qualified.qualification.passed
 
 
-def test_parameter_plan_identity_includes_prior_values():
+def test_parameter_plan_identity_includes_prior_values() -> None:
     gw = phx.applications.astrophysics.gravitational_waves
 
-    def plan(high):
+    def plan(high: Any) -> Any:
         return gw.GravitationalWaveParameterPlan(
             {"amplitude": jnp.asarray(0.5)},
             {"amplitude": phx.uq.Uniform(0.1, high)},

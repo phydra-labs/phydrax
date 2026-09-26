@@ -54,7 +54,7 @@ class _Contract(AbstractContract):
 
     def __init__(
         self, contract_id: str, cashflows: CashflowBatch, settlement: SettlementTerms
-    ):
+    ) -> None:
         self.contract_id = contract_id
         self.cashflows = cashflows
         self.settlement = settlement

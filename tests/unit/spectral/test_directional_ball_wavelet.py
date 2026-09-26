@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -25,7 +28,7 @@ def _plan(
     radial_bandlimit: int = 4,
     directional_bandlimit: int = 2,
     reality: bool = False,
-    **wavelet_options,
+    **wavelet_options: Any,
 ) -> DirectionalBallWaveletPlan:
     radial = RadialLaguerrePlan(radial_bandlimit, tau=0.8)
     angular = SphericalHarmonicPlan(bandlimit, reality=reality)
@@ -53,7 +56,7 @@ def _complex_field(plan: DirectionalBallWaveletPlan) -> jax.Array:
     return plan.fourier_laguerre.synthesis(modes)
 
 
-def test_wavelet_filters_are_directional_admissible_and_hybrid():
+def test_wavelet_filters_are_directional_admissible_and_hybrid() -> None:
     plan = _plan()
     angular_energy = jnp.sum(plan.angular_windows**2, axis=0)
     radial_energy = jnp.sum(plan.radial_windows**2, axis=0)
@@ -74,7 +77,7 @@ def test_wavelet_filters_are_directional_admissible_and_hybrid():
     assert plan.admissibility_defect <= 1e-12
 
 
-def test_multiresolution_detail_modes_match_full_coefficient_filtering():
+def test_multiresolution_detail_modes_match_full_coefficient_filtering() -> None:
     plan = _plan()
     values = _complex_field(plan)
     full_modes = plan.fourier_laguerre.analysis(values)
@@ -112,7 +115,7 @@ def test_multiresolution_detail_modes_match_full_coefficient_filtering():
         assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-10)
 
 
-def test_directional_ball_wavelet_roundtrips_complex_real_and_non_dyadic_fields():
+def test_directional_ball_wavelet_roundtrips_complex_real_and_non_dyadic_fields() -> None:
     complex_plan = _plan()
     complex_values = _complex_field(complex_plan)
     complex_coefficients = complex_plan.analysis(complex_values)
@@ -150,7 +153,7 @@ def test_directional_ball_wavelet_roundtrips_complex_real_and_non_dyadic_fields(
     )
 
 
-def test_wavelet_coefficients_validate_every_ragged_leaf_and_transform_identity():
+def test_wavelet_coefficients_validate_every_ragged_leaf_and_transform_identity() -> None:
     plan = _plan()
     values = _complex_field(plan)
     coefficients = plan.analysis(values)
@@ -221,7 +224,7 @@ def test_wavelet_coefficients_validate_every_ragged_leaf_and_transform_identity(
         foreign_plan.synthesis(coefficients)
 
 
-def test_wavelet_handles_batch_channels_jit_gradients_and_resource_admission():
+def test_wavelet_handles_batch_channels_jit_gradients_and_resource_admission() -> None:
     plan = _plan(bandlimit=3, radial_bandlimit=3)
     first = _complex_field(plan)
     values = jnp.stack(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _population(capacity=4, dimension=3):
+def _population(capacity: Any = 4, dimension: Any = 3) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(capacity), jnp.ones((capacity,)), ambient_dimension=dimension
     ).prepare()
@@ -17,7 +20,7 @@ def _population(capacity=4, dimension=3):
     return particles, plan, plan.initialize()
 
 
-def _population_state(capacity, dimension, active, masses):
+def _population_state(capacity: Any, dimension: Any, active: Any, masses: Any) -> Any:
     support = phx.discretization.ParticleSetPlan(
         jnp.arange(capacity),
         jnp.ones((capacity,)),
@@ -29,7 +32,7 @@ def _population_state(capacity, dimension, active, masses):
     )
 
 
-def test_boundary_and_ionization_failures_roll_back_every_accepted_state():
+def test_boundary_and_ionization_failures_roll_back_every_accepted_state() -> None:
     boundary_population_plan, boundary_population = _population_state(
         2,
         1,
@@ -195,7 +198,7 @@ def test_boundary_and_ionization_failures_roll_back_every_accepted_state():
     )
 
 
-def test_dynamic_charge_requires_compensating_charge():
+def test_dynamic_charge_requires_compensating_charge() -> None:
     _, _, population = _population()
     ion = phx.discretization.pic.PICChargeModelPlan(
         1.0,
@@ -223,7 +226,7 @@ def test_dynamic_charge_requires_compensating_charge():
     assert accepted.accepted_state.charge_number[0] == 1
 
 
-def test_coulomb_and_background_collisions_report_correct_ledgers():
+def test_coulomb_and_background_collisions_report_correct_ledgers() -> None:
     _, _, population = _population()
     velocity = jnp.asarray(
         [[0.2, 0.0, 0.0], [-0.2, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, -0.1, 0.0]]
@@ -259,7 +262,7 @@ def test_coulomb_and_background_collisions_report_correct_ledgers():
     )
 
 
-def test_reduced_maxwell_and_current_projection_preserve_constraints():
+def test_reduced_maxwell_and_current_projection_preserve_constraints() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
         axis_names=("x",),
@@ -291,7 +294,7 @@ def test_reduced_maxwell_and_current_projection_preserve_constraints():
     assert result.maximum_continuity_defect < 1e-9
 
 
-def test_reduced_cic_nonperiodic_boundaries_conserve_macrocharge():
+def test_reduced_cic_nonperiodic_boundaries_conserve_macrocharge() -> None:
     cases = (
         (
             (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
@@ -333,7 +336,7 @@ def test_reduced_cic_nonperiodic_boundaries_conserve_macrocharge():
         )
 
 
-def test_simplicial_locator_and_whitney_current_are_conservative():
+def test_simplicial_locator_and_whitney_current_are_conservative() -> None:
     mesh = phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         (phx.discretization.CellBlock("tri", "triangle", jnp.asarray(((0, 1, 2),))),),
@@ -421,7 +424,7 @@ def test_simplicial_locator_and_whitney_current_are_conservative():
     )
 
 
-def test_simplicial_locator_and_dependent_ids_track_deformed_coordinates():
+def test_simplicial_locator_and_dependent_ids_track_deformed_coordinates() -> None:
     mesh = phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         (phx.discretization.CellBlock("tri", "triangle", jnp.asarray(((0, 1, 2),))),),
@@ -467,7 +470,7 @@ def test_simplicial_locator_and_dependent_ids_track_deformed_coordinates():
     assert electrostatic_plan.plan_id != deformed_electrostatic_plan.plan_id
 
 
-def test_reduced_maxwell_cpml_memory_resets_and_rolls_back_atomically():
+def test_reduced_maxwell_cpml_memory_resets_and_rolls_back_atomically() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(32, periodic=False),),
         axis_names=("x",),
@@ -501,7 +504,9 @@ def test_reduced_maxwell_cpml_memory_resets_and_rolls_back_atomically():
     )
     assert not rejected.successful
     for restored, saved in zip(
+        # ty: ignore[unresolved-attribute]
         rolled_back.pml_memory.electric_memory + rolled_back.pml_memory.magnetic_memory,
+        # ty: ignore[unresolved-attribute]
         checkpoint.pml_memory.electric_memory + checkpoint.pml_memory.magnetic_memory,
         strict=True,
     ):
@@ -514,6 +519,7 @@ def test_reduced_maxwell_cpml_memory_resets_and_rolls_back_atomically():
         np.testing.assert_array_equal(restored, saved)
 
     reset = plan.reset_pml(checkpoint)
+    # ty: ignore[unresolved-attribute]
     for value in reset.pml_memory.electric_memory + reset.pml_memory.magnetic_memory:
         np.testing.assert_array_equal(value, jnp.zeros_like(value))
     for reset_value, saved in zip(
@@ -524,7 +530,7 @@ def test_reduced_maxwell_cpml_memory_resets_and_rolls_back_atomically():
         np.testing.assert_array_equal(reset_value, saved)
 
 
-def test_curved_quadratic_simplices_round_trip_through_fe_cell_map():
+def test_curved_quadratic_simplices_round_trip_through_fe_cell_map() -> None:
     cases = (
         (
             "triangle",
@@ -629,7 +635,7 @@ def test_curved_quadratic_simplices_round_trip_through_fe_cell_map():
         )
 
 
-def test_ale_flip_epoch_is_prepared_and_failed_steps_restore_checkpoint():
+def test_ale_flip_epoch_is_prepared_and_failed_steps_restore_checkpoint() -> None:
     mesh = phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         (

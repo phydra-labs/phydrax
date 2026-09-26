@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -36,7 +38,7 @@ def _vertex_index(i: int, j: int, k: int, /, *, size: int) -> int:
     return i + size * (j + size * k)
 
 
-def _affine_lv_slab(subdivisions: int = 2):
+def _affine_lv_slab(subdivisions: int = 2) -> Any:
     size = subdivisions + 1
     axis = np.linspace(0.0, 1.0, size)
     coordinates = np.asarray(
@@ -74,6 +76,7 @@ def _affine_lv_slab(subdivisions: int = 2):
         np.asarray(tetrahedra, dtype=np.int32),
         vertex_global_ids=np.arange(coordinates.shape[0], dtype=np.int64) + 1000,
     )
+    # ty: ignore[unresolved-attribute]
     faces = np.asarray(mesh.connectivity.faces)
     face_points = coordinates[faces]
     role_faces = {
@@ -108,7 +111,7 @@ def _affine_lv_slab(subdivisions: int = 2):
     return mesh, CardiacBoundaryRoles(mesh, role_faces, profile=profile)
 
 
-def _harmonic_fields():
+def _harmonic_fields() -> Any:
     mesh, roles = _affine_lv_slab()
     plan = HarmonicCoordinatePlan(
         mesh,
@@ -122,7 +125,7 @@ def _harmonic_fields():
     return mesh, roles, plan, candidate.commit()
 
 
-def test_boundary_profiles_are_extensible_and_validate_closure_contracts():
+def test_boundary_profiles_are_extensible_and_validate_closure_contracts() -> None:
     mesh, roles = _affine_lv_slab()
     assert bool(roles.evidence.successful)
     assert int(roles.evidence.unassigned_face_count) == 0
@@ -155,7 +158,7 @@ def test_boundary_profiles_are_extensible_and_validate_closure_contracts():
         CardiacBoundaryRoles(mesh, overlapping, profile=roles.profile)
 
 
-def test_chamber_profiles_and_coordinate_recipes_keep_explicit_semantics():
+def test_chamber_profiles_and_coordinate_recipes_keep_explicit_semantics() -> None:
     lv_profile = left_ventricular_boundary_profile(
         endocardium="endo",
         epicardium="epi",
@@ -238,7 +241,7 @@ def test_chamber_profiles_and_coordinate_recipes_keep_explicit_semantics():
         atrial_coordinate_specs(right_endocardium="la-endocardium")
 
 
-def test_affine_p1_harmonic_coordinates_reproduce_linear_fields_and_gradients():
+def test_affine_p1_harmonic_coordinates_reproduce_linear_fields_and_gradients() -> None:
     mesh, _, plan, fields = _harmonic_fields()
     coordinates = np.asarray(mesh.coordinates)
     cells = np.asarray(mesh.blocks[0].vertices)
@@ -264,7 +267,7 @@ def test_affine_p1_harmonic_coordinates_reproduce_linear_fields_and_gradients():
     assert plan.plan_id == HarmonicCoordinatePlan(mesh, plan.roles, plan.specs).plan_id
 
 
-def test_exact_helix_rule_material_frame_and_line_tensor_sign_invariance():
+def test_exact_helix_rule_material_frame_and_line_tensor_sign_invariance() -> None:
     _, _, _, fields = _harmonic_fields()
     plan = VentricularMicrostructurePlan(
         "transmural",
@@ -320,7 +323,7 @@ def test_exact_helix_rule_material_frame_and_line_tensor_sign_invariance():
     )
 
 
-def test_microstructure_degeneracy_is_fail_closed_without_epsilon_repair():
+def test_microstructure_degeneracy_is_fail_closed_without_epsilon_repair() -> None:
     _, _, _, fields = _harmonic_fields()
     degenerate_gradients = np.asarray(fields.cell_gradients).copy()
     degenerate_gradients[fields.coordinate_index("longitudinal")] = degenerate_gradients[
@@ -349,7 +352,7 @@ def test_microstructure_degeneracy_is_fail_closed_without_epsilon_repair():
     assert np.all(np.isnan(np.asarray(candidate.material_frame.fiber)))
 
 
-def _tetrahedral_cavity():
+def _tetrahedral_cavity() -> Any:
     vertices = jnp.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -357,7 +360,7 @@ def _tetrahedral_cavity():
     return vertices, scrambled_faces
 
 
-def test_closed_chamber_orientation_volume_derivative_and_translation_evidence():
+def test_closed_chamber_orientation_volume_derivative_and_translation_evidence() -> None:
     vertices, triangles = _tetrahedral_cavity()
     surface = ChamberSurfacePlan("manufactured-lv-cavity", vertices, triangles).prepare()
     result = surface.evaluate().commit()
@@ -381,7 +384,7 @@ def test_closed_chamber_orientation_volume_derivative_and_translation_evidence()
     assert not bool(reflected_candidate.evidence.positive_orientation)
 
 
-def test_chamber_surface_ids_are_canonical_and_open_surfaces_are_rejected():
+def test_chamber_surface_ids_are_canonical_and_open_surfaces_are_rejected() -> None:
     vertices, triangles = _tetrahedral_cavity()
     first = ChamberSurfacePlan("lv", vertices, triangles)
     second = ChamberSurfacePlan("lv", vertices, triangles[::-1, ::-1])

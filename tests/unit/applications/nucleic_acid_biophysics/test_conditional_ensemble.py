@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -56,7 +57,7 @@ def _source(payload: bytes, name: str) -> ReferenceArtifactManifest:
     )
 
 
-def _parsed(rows, source_id="source"):
+def _parsed(rows: Any, source_id: Any = "source") -> Any:
     return "\n".join(
         "\t".join(
             (
@@ -75,7 +76,15 @@ def _parsed(rows, source_id="source"):
     ).encode()
 
 
-def _record(tmp_path, construct, *, ordinal, condition, preparation, rows):
+def _record(
+    tmp_path: Any,
+    construct: Any,
+    *,
+    ordinal: Any,
+    condition: Any,
+    preparation: Any,
+    rows: Any,
+) -> Any:
     payload = _parsed(rows, f"source-{ordinal}")
     path = tmp_path / f"source-{ordinal}.mut"
     path.write_bytes(payload)
@@ -97,7 +106,7 @@ def _record(tmp_path, construct, *, ordinal, condition, preparation, rows):
     )
 
 
-def _admission(tmp_path):
+def _admission(tmp_path: Any) -> Any:
     construct = NucleicAcidConstruct(("r",), ("AAAA",), ("RNA",), (False,))
     rows = (
         ("INCLUDED", "1111", "1101", "0100"),
@@ -140,7 +149,9 @@ def _admission(tmp_path):
     return construct, import_dance_map_files(records, requested_use={})
 
 
-def test_dance_map_admission_retains_coverage_missingness_and_exclusions(tmp_path):
+def test_dance_map_admission_retains_coverage_missingness_and_exclusions(
+    tmp_path: Any,
+) -> None:
     construct = NucleicAcidConstruct(("r",), ("AAAA",), ("RNA",), (False,))
     record = _record(
         tmp_path,
@@ -168,7 +179,7 @@ def test_dance_map_admission_retains_coverage_missingness_and_exclusions(tmp_pat
         import_dance_map_files((record,), requested_use={})
 
 
-def test_dance_map_admission_rejects_relabeled_duplicate_payload(tmp_path):
+def test_dance_map_admission_rejects_relabeled_duplicate_payload(tmp_path: Any) -> None:
     construct = NucleicAcidConstruct(("r",), ("AAAA",), ("RNA",), (False,))
     rows = (("INCLUDED", "1111", "1111", "0001"),)
     first = _record(
@@ -201,7 +212,7 @@ def test_dance_map_admission_rejects_relabeled_duplicate_payload(tmp_path):
         import_dance_map_files((first, duplicate), requested_use={})
 
 
-def test_campaign_refuses_preparation_construct_leakage(tmp_path):
+def test_campaign_refuses_preparation_construct_leakage(tmp_path: Any) -> None:
     construct = NucleicAcidConstruct(("r",), ("AAAA",), ("RNA",), (False,))
     rows = (("INCLUDED", "1111", "1111", "0001"),)
     first = _record(
@@ -231,7 +242,7 @@ def test_campaign_refuses_preparation_construct_leakage(tmp_path):
         )
 
 
-def test_mapping_ladder_is_condition_and_provenance_aware(tmp_path):
+def test_mapping_ladder_is_condition_and_provenance_aware(tmp_path: Any) -> None:
     _, admission = _admission(tmp_path)
     batch = admission.batch
     ladder = prepare_conditional_mapping_ladder(
@@ -261,7 +272,7 @@ def test_mapping_ladder_is_condition_and_provenance_aware(tmp_path):
     np.testing.assert_allclose(problem.log_likelihood(jnp.zeros(2)), expected)
 
 
-def _ensemble(tmp_path):
+def _ensemble(tmp_path: Any) -> Any:
     construct, admission = _admission(tmp_path)
     batch = admission.batch
     keys = construct.nucleotide_keys
@@ -306,7 +317,9 @@ def _ensemble(tmp_path):
     return batch, model, parameters
 
 
-def test_finite_ensemble_exposes_equivalence_and_permutation_safe_summary(tmp_path):
+def test_finite_ensemble_exposes_equivalence_and_permutation_safe_summary(
+    tmp_path: Any,
+) -> None:
     batch, model, parameters = _ensemble(tmp_path)
     policy = EnsembleDiagnosticPolicy(1e-10, 1e-6, 1e-8, 0.5)
     diagnostics = model.diagnostics(parameters, policy)
@@ -363,7 +376,7 @@ def test_finite_ensemble_exposes_equivalence_and_permutation_safe_summary(tmp_pa
     )
 
 
-def _workflow_fixture(tmp_path, *, epistemic_uncertainty=True):
+def _workflow_fixture(tmp_path: Any, *, epistemic_uncertainty: Any = True) -> Any:
     batch, model, parameters = _ensemble(tmp_path)
     criteria = {
         "locked": EnsemblePredictiveScoreCriterion("locked-prediction", -1e9),
@@ -443,6 +456,7 @@ def _workflow_fixture(tmp_path, *, epistemic_uncertainty=True):
         evaluations.append(
             ModelLadderEvaluation(
                 model_id,
+                # ty: ignore[invalid-argument-type]
                 level,
                 group_profile_log_scores(
                     batch,
@@ -492,7 +506,7 @@ def _workflow_fixture(tmp_path, *, epistemic_uncertainty=True):
     )
 
 
-def _support_comparison(workflow, evaluations, scores):
+def _support_comparison(workflow: Any, evaluations: Any, scores: Any) -> Any:
     finite = evaluations[3]
     return compare_ensemble_supports(
         ("support-a", "support-b"),
@@ -503,11 +517,12 @@ def _support_comparison(workflow, evaluations, scores):
         derivation_ids=(finite.derivation_id, "alternative-derivation"),
         score_ids=(finite.model_selection.score_id, "alternative-score"),
         equivalence_tolerance=0.01,
+        # ty: ignore[invalid-argument-type]
         support_valid=[True, True],
     )
 
 
-def _evidence_metadata():
+def _evidence_metadata() -> Any:
     return {
         "build_id": "build",
         "environment_id": "environment",
@@ -522,7 +537,7 @@ def _evidence_metadata():
     }
 
 
-def test_grouped_workflow_keeps_equivalent_supports_inconclusive(tmp_path):
+def test_grouped_workflow_keeps_equivalent_supports_inconclusive(tmp_path: Any) -> None:
     workflow, evaluations, diagnostics, locked, criteria, _, _ = _workflow_fixture(
         tmp_path
     )
@@ -552,7 +567,9 @@ def test_grouped_workflow_keeps_equivalent_supports_inconclusive(tmp_path):
         )
 
 
-def test_predictive_stages_require_frozen_threshold_model_score_and_advantage(tmp_path):
+def test_predictive_stages_require_frozen_threshold_model_score_and_advantage(
+    tmp_path: Any,
+) -> None:
     workflow, evaluations, diagnostics, locked, criteria, model, finite_fit = (
         _workflow_fixture(tmp_path)
     )
@@ -601,6 +618,7 @@ def test_predictive_stages_require_frozen_threshold_model_score_and_advantage(tm
             model,
             finite_fit,
             workflow.campaign,
+            # ty: ignore[too-many-positional-arguments]
             np.ones((2, 1)),
         )
 
@@ -638,7 +656,9 @@ def test_predictive_stages_require_frozen_threshold_model_score_and_advantage(tm
         )
 
 
-def test_invalid_uncertain_or_locked_diagnostic_failure_cannot_pass(tmp_path):
+def test_invalid_uncertain_or_locked_diagnostic_failure_cannot_pass(
+    tmp_path: Any,
+) -> None:
     workflow, evaluations, diagnostics, locked, criteria, _, _ = _workflow_fixture(
         tmp_path
     )
@@ -715,7 +735,9 @@ def test_invalid_uncertain_or_locked_diagnostic_failure_cannot_pass(tmp_path):
     assert violating_evidence.outcome == "failed"
 
 
-def test_workflow_rejects_locked_derivation_and_unrelated_support_winner(tmp_path):
+def test_workflow_rejects_locked_derivation_and_unrelated_support_winner(
+    tmp_path: Any,
+) -> None:
     workflow, evaluations, diagnostics, locked, _, _, _ = _workflow_fixture(tmp_path)
     finite = evaluations[3]
     leaked_finite = ModelLadderEvaluation(
@@ -750,7 +772,7 @@ def test_workflow_rejects_locked_derivation_and_unrelated_support_winner(tmp_pat
         )
 
 
-def test_synthetic_batch_cannot_mint_source_admission(tmp_path):
+def test_synthetic_batch_cannot_mint_source_admission(tmp_path: Any) -> None:
     workflow, evaluations, diagnostics, locked, _, _, _ = _workflow_fixture(tmp_path)
     assessment = workflow.assess(
         evaluations,
@@ -766,7 +788,9 @@ def test_synthetic_batch_cannot_mint_source_admission(tmp_path):
     assert evidence.outcome == "inconclusive"
 
 
-def test_claim_rejects_campaign_criteria_and_support_scope_mismatch(tmp_path):
+def test_claim_rejects_campaign_criteria_and_support_scope_mismatch(
+    tmp_path: Any,
+) -> None:
     workflow, evaluations, diagnostics, locked, criteria, _, _ = _workflow_fixture(
         tmp_path
     )

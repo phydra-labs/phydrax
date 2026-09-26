@@ -7,6 +7,7 @@ import json
 import re
 import sys
 from types import SimpleNamespace
+from typing import Any
 
 import jax
 import numpy as np
@@ -42,11 +43,13 @@ _POLAR_HEADER = b"""
 _ROW = b" 2.000 0.2180 0.00580 0.00082 -0.0013 0.5240 0.7480\n"
 
 
-def test_missing_viscous_pacc_point_is_missing_physics_not_zero_or_nan():
+def test_missing_viscous_pacc_point_is_missing_physics_not_zero_or_nan() -> None:
     point = XFOILOperatingPoint(2, 1e6)
     assert _parse_polar(_POLAR_HEADER, point) is None
     accepted = _parse_polar(_POLAR_HEADER + _ROW, point)
+    # ty: ignore[unresolved-attribute]
     assert accepted.lift == pytest.approx(0.218)
+    # ty: ignore[unresolved-attribute]
     assert accepted.drag == pytest.approx(0.0058)
     # A neighboring polar's row cannot be reused for an unconverged angle.
     with pytest.raises(ValueError, match="different angle"):
@@ -63,10 +66,11 @@ def test_missing_viscous_pacc_point_is_missing_physics_not_zero_or_nan():
         )
     )
     extended_result = _parse_polar(extended, point)
+    # ty: ignore[unresolved-attribute]
     assert extended_result.drag == pytest.approx(0.0058)
 
 
-def test_polar_conditions_and_nonfinite_values_fail_closed():
+def test_polar_conditions_and_nonfinite_values_fail_closed() -> None:
     point = XFOILOperatingPoint(2, 1e6)
     with pytest.raises(ValueError, match="conditions"):
         _parse_polar((_POLAR_HEADER + _ROW).replace(b"Re = 1.000", b"Re = 2.000"), point)
@@ -76,19 +80,20 @@ def test_polar_conditions_and_nonfinite_values_fail_closed():
         _parse_polar(_POLAR_HEADER + _ROW + _ROW, point)
 
 
-def test_exact_requested_geometry_cannot_inject_engine_commands():
+def test_exact_requested_geometry_cannot_inject_engine_commands() -> None:
     points = naca0012_coordinates()
     original = _geometry_bytes(points)
     moved = list(points)
     moved[20] = (moved[20][0], moved[20][1] + 0.001)
     assert original != _geometry_bytes(moved)
     with pytest.raises((TypeError, ValueError)):
+        # ty: ignore[invalid-argument-type]
         _geometry_bytes([("0\nQUIT\n", 0)] * 20)
     with pytest.raises(ValueError, match="finite"):
         _geometry_bytes([(1.0, float("nan")), *points[1:]])
 
 
-def test_prepared_case_identity_tracks_design_mesh_and_convergence_policy():
+def test_prepared_case_identity_tracks_design_mesh_and_convergence_policy() -> None:
     files, options, design = naca0012_dafoam_case(16, 16)
     _, base = _request(files, options, design, GEOMETRY_SOURCE, True, 8 * 1024**2)
     _, changed = _request(
@@ -127,10 +132,10 @@ def test_prepared_case_identity_tracks_design_mesh_and_convergence_policy():
         )
 
 
-def test_generated_public_geometry_mesh_has_closed_positive_volume_cells():
+def test_generated_public_geometry_mesh_has_closed_positive_volume_cells() -> None:
     files, _, _ = naca0012_dafoam_case(16, 16)
 
-    def rows(name):
+    def rows(name: Any) -> Any:
         text = files["constant/polyMesh/" + name].decode()
         body = text[text.index("}") + 1 :].strip()
         return body.splitlines()[2:-1]
@@ -139,6 +144,7 @@ def test_generated_public_geometry_mesh_has_closed_positive_volume_cells():
         [[float(v) for v in row.strip("()").split()] for row in rows("points")]
     )
     faces = [
+        # ty: ignore[not-subscriptable]
         tuple(int(value) for value in re.search(r"\((.*)\)", row)[1].split())
         for row in rows("faces")
     ]
@@ -166,14 +172,16 @@ def test_generated_public_geometry_mesh_has_closed_positive_volume_cells():
     assert np.all(counts == 6)
 
 
-def test_aerodynamic_launches_refuse_argument_free_jax_tracing():
+def test_aerodynamic_launches_refuse_argument_free_jax_tracing() -> None:
     @jax.jit
-    def xfoil_trace():
+    def xfoil_trace() -> int:
+        # ty: ignore[invalid-argument-type]
         run_xfoil_point(None, (), None)
         return 1
 
     @jax.jit
-    def dafoam_trace():
+    def dafoam_trace() -> int:
+        # ty: ignore[invalid-argument-type]
         run_dafoam(None, case_files={}, options={}, design={}, geometry_source="declared")
         return 1
 
@@ -194,7 +202,7 @@ _SENSITIVITIES = {
 }
 
 
-def _fake_runtime(tmp_path):
+def _fake_runtime(tmp_path: Any) -> Any:
     package = tmp_path / "dafoam"
     (package / "mphys").mkdir(parents=True)
     files = (package / "pyDAFoam.py", package / "mphys" / "mphys_dafoam.py")
@@ -208,8 +216,10 @@ def _fake_runtime(tmp_path):
     )
 
 
-def _fake_worker(runtime, *, accept):
-    def run_energy_command(executable, argv, *, inputs, **options):
+def _fake_worker(runtime: Any, *, accept: Any) -> Any:
+    def run_energy_command(
+        executable: Any, argv: Any, *, inputs: Any, **options: Any
+    ) -> Any:
         request = json.loads(inputs["aerodynamic-request.json"])
         design = {
             name: np.asarray(values).reshape(request["design_shapes"][name])
@@ -269,7 +279,7 @@ def _fake_worker(runtime, *, accept):
     return run_energy_command
 
 
-def _dafoam_action(tmp_path, options=None):
+def _dafoam_action(tmp_path: Any, options: Any = None) -> Any:
     files, base_options, _ = naca0012_dafoam_case(16, 16)
     base_options = {
         **base_options,
@@ -289,7 +299,9 @@ def _dafoam_action(tmp_path, options=None):
     return runtime, action
 
 
-def test_dafoam_staged_adjoint_contracts_shape_preserving_totals(tmp_path, monkeypatch):
+def test_dafoam_staged_adjoint_contracts_shape_preserving_totals(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     runtime, action = _dafoam_action(tmp_path)
     monkeypatch.setattr(dafoam, "run_energy_command", _fake_worker(runtime, accept=True))
     assert [spec.name for spec in action.input_schema] == ["patchV", "shape"]
@@ -323,7 +335,9 @@ def test_dafoam_staged_adjoint_contracts_shape_preserving_totals(tmp_path, monke
         action.apply_adjoint(other.stage_primal(patch, shape), *weights)
 
 
-def test_dafoam_failed_primal_stages_evidence_without_an_adjoint(tmp_path, monkeypatch):
+def test_dafoam_failed_primal_stages_evidence_without_an_adjoint(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     runtime, action = _dafoam_action(tmp_path)
     monkeypatch.setattr(dafoam, "run_energy_command", _fake_worker(runtime, accept=False))
     stage = action.stage_primal(np.asarray([10.0, 2.0]), np.zeros((2, 3)))
@@ -334,7 +348,7 @@ def test_dafoam_failed_primal_stages_evidence_without_an_adjoint(tmp_path, monke
         action.apply_adjoint(stage, 1.0, 1.0)
 
 
-def test_dafoam_design_kinds_are_closed():
+def test_dafoam_design_kinds_are_closed() -> None:
     files, options, design = naca0012_dafoam_case(16, 16)
     unsupported = {
         **options,

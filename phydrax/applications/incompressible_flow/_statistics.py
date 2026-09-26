@@ -258,7 +258,8 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             backscatter_id = None
         else:
             # Exactly one of the LES actions is present in this branch.
-            assert dynamic_les is not None
+            if not (dynamic_les is not None):
+                raise RuntimeError("Internal invariant failed: dynamic_les is not None.")
             dynamic_model = dynamic_les.dynamic_model
             filter_id = dynamic_les.grid_filter.plan.resolved_filter.filter_id
             model_id = dynamic_model.model_id
@@ -596,7 +597,10 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             successful_les = jnp.asarray(True)
         else:
             # Every LES branch above resolves a step restriction.
-            assert step_restriction is not None
+            if not (step_restriction is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: step_restriction is not None."
+                )
             sgs_modeled_dissipation = selected_algebraic.modeled_dissipation
             sgs_identity_defect = selected_algebraic.energy_identity_defect
             sgs_projection_defect = selected_algebraic.projection_energy_defect

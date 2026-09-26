@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +17,7 @@ import phydrax.backends.petsc as pet
 la = phx.linalg
 
 
-def _available(capabilities):
+def _available(capabilities: Any) -> Any:
     return phx.backends.BackendAvailability(
         capabilities=capabilities,
         available=True,
@@ -24,7 +26,7 @@ def _available(capabilities):
     )
 
 
-def _operator(matrix, *, operator_id="petsc-amat", space=None):
+def _operator(matrix: Any, *, operator_id: Any = "petsc-amat", space: Any = None) -> Any:
     size = matrix.shape[0]
     if space is None:
         space = la.ArraySpace((size,), dtype=matrix.dtype)
@@ -44,7 +46,13 @@ def _operator(matrix, *, operator_id="petsc-amat", space=None):
     )
 
 
-def _problem(matrix, *, operator_id="petsc-amat", problem_id="petsc-system", space=None):
+def _problem(
+    matrix: Any,
+    *,
+    operator_id: Any = "petsc-amat",
+    problem_id: Any = "petsc-system",
+    space: Any = None,
+) -> Any:
     return la.LinearSystem(
         _operator(matrix, operator_id=operator_id, space=space),
         problem_id=problem_id,
@@ -52,35 +60,36 @@ def _problem(matrix, *, operator_id="petsc-amat", problem_id="petsc-system", spa
 
 
 class _FakeVec:
-    def __init__(self, array=None):
+    def __init__(self, array: Any = None) -> None:
         self.array = None if array is None else np.asarray(array)
 
-    def createWithArray(self, array, comm=None):
+    def createWithArray(self, array: Any, comm: Any = None) -> Any:
         del comm
         return _FakeVec(np.asarray(array))
 
-    def createSeq(self, size, comm=None):
+    def createSeq(self, size: Any, comm: Any = None) -> Any:
         del comm
         return _FakeVec(np.zeros(size))
 
-    def duplicate(self):
+    def duplicate(self) -> Any:
         return _FakeVec(np.zeros_like(self.array))
 
-    def set(self, value):
+    def set(self, value: Any) -> None:
+        # ty: ignore[unresolved-attribute]
         self.array.fill(value)
 
-    def getArray(self, readonly=False):
+    def getArray(self, readonly: Any = False) -> Any:
         del readonly
         return self.array
 
 
 class _FakeMat:
-    def __init__(self, provider):
+    def __init__(self, provider: Any) -> None:
         self.provider = provider
         self.dense = None
         self.shape = None
 
-    def createAIJ(self, *, size, csr, comm=None):
+    def createAIJ(self, *, size: Any, csr: Any, comm: Any = None) -> Any:
         del comm
         matrix = _FakeMat(self.provider)
         matrix.shape = tuple(size)
@@ -88,7 +97,7 @@ class _FakeMat:
         self.provider.matrices.append(matrix)
         return matrix
 
-    def createDense(self, *, size, comm=None):
+    def createDense(self, *, size: Any, comm: Any = None) -> Any:
         del comm
         matrix = _FakeMat(self.provider)
         matrix.shape = tuple(size)
@@ -97,40 +106,44 @@ class _FakeMat:
         self.provider.matrices.append(matrix)
         return matrix
 
-    def _set_csr(self, indptr, indices, values):
+    def _set_csr(self, indptr: Any, indices: Any, values: Any) -> None:
+        # ty: ignore[no-matching-overload]
         self.dense = np.zeros(self.shape, dtype=np.asarray(values).dtype)
+        # ty: ignore[not-subscriptable]
         for row in range(self.shape[0]):
             begin, end = int(indptr[row]), int(indptr[row + 1])
             self.dense[row, np.asarray(indices[begin:end], dtype="int64")] = values[
                 begin:end
             ]
 
-    def assemble(self):
+    def assemble(self) -> None:
         pass
 
-    def setUp(self):
+    def setUp(self) -> None:
         pass
 
-    def zeroEntries(self):
+    def zeroEntries(self) -> None:
+        # ty: ignore[unresolved-attribute]
         self.dense.fill(0)
 
-    def setValuesCSR(self, indptr, indices, values):
+    def setValuesCSR(self, indptr: Any, indices: Any, values: Any) -> None:
         self._set_csr(indptr, indices, values)
 
-    def setValues(self, rows, columns, values):
+    def setValues(self, rows: Any, columns: Any, values: Any) -> None:
+        # ty: ignore[invalid-assignment]
         self.dense[np.ix_(np.asarray(rows), np.asarray(columns))] = values
 
 
 class _FakePC:
-    def __init__(self):
+    def __init__(self) -> None:
         self.pc_type = None
 
-    def setType(self, value):
+    def setType(self, value: Any) -> None:
         self.pc_type = value
 
 
 class _FakeKSP:
-    def __init__(self, provider):
+    def __init__(self, provider: Any) -> None:
         self.provider = provider
         self.pc = _FakePC()
         self.reason = 2
@@ -141,88 +154,89 @@ class _FakeKSP:
         self.amat = None
         self.pmat = None
 
-    def create(self, comm=None):
+    def create(self, comm: Any = None) -> Any:
         del comm
         self.provider.ksp = self
         return self
 
-    def setOperators(self, amat, pmat):
+    def setOperators(self, amat: Any, pmat: Any) -> None:
         self.amat, self.pmat = amat, pmat
 
-    def setType(self, value):
+    def setType(self, value: Any) -> None:
         self.ksp_type = value
 
-    def getPC(self):
+    def getPC(self) -> Any:
         return self.pc
 
-    def setReusePreconditioner(self, value):
+    def setReusePreconditioner(self, value: Any) -> None:
         self.reuse = bool(value)
 
-    def setTolerances(self, **values):
+    def setTolerances(self, **values: Any) -> None:
         self.tolerances = values
 
-    def setInitialGuessNonzero(self, value):
+    def setInitialGuessNonzero(self, value: Any) -> None:
         self.initial_nonzero = value
 
-    def setOptionsPrefix(self, prefix):
+    def setOptionsPrefix(self, prefix: Any) -> None:
         self.prefix = prefix
 
-    def setFromOptions(self):
+    def setFromOptions(self) -> None:
         pass
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.setup_count += 1
         if self.setup_count == 1 or not self.reuse:
             self.preconditioner_setups += 1
 
-    def solve(self, rhs, value):
+    def solve(self, rhs: Any, value: Any) -> None:
+        # ty: ignore[unresolved-attribute]
         value.array[:] = np.linalg.solve(self.amat.dense, rhs.array)
 
-    def getIterationNumber(self):
+    def getIterationNumber(self) -> Any:
         return self.iterations
 
-    def getConvergedReason(self):
+    def getConvergedReason(self) -> Any:
         return self.reason
 
 
 class _FakeSNES:
-    def __init__(self, provider):
+    def __init__(self, provider: Any) -> None:
         self.provider = provider
         self.ksp = _FakeKSP(provider)
         self.used_matrix_free = False
 
-    def create(self, comm=None):
+    def create(self, comm: Any = None) -> Any:
         del comm
         self.provider.snes = self
         return self
 
-    def setFunction(self, callback, residual):
+    def setFunction(self, callback: Any, residual: Any) -> None:
         self.function = callback
         self.residual = residual
 
-    def setUseMF(self, value):
+    def setUseMF(self, value: Any) -> None:
         self.used_matrix_free = bool(value)
 
-    def setJacobian(self, callback, *, J, P):
+    def setJacobian(self, callback: Any, *, J: Any, P: Any) -> None:
         self.jacobian_callback = callback
         self.jacobian = (J, P)
 
-    def setType(self, value):
+    def setType(self, value: Any) -> None:
         self.snes_type = value
 
-    def setTolerances(self, **values):
+    def setTolerances(self, **values: Any) -> None:
         self.tolerances = values
 
-    def getKSP(self):
+    def getKSP(self) -> Any:
         return self.ksp
 
-    def setOptionsPrefix(self, prefix):
+    def setOptionsPrefix(self, prefix: Any) -> None:
         self.prefix = prefix
 
-    def setFromOptions(self):
+    def setFromOptions(self) -> None:
         pass
 
-    def setUp(self):
+    def setUp(self) -> None:
         pass
 
 
@@ -235,7 +249,7 @@ class _FakePETSc:
     IntType = np.int32
     COMM_SELF = object()
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.matrices = []
         self.dense_creations = 0
         self.ksp = None
@@ -248,7 +262,7 @@ class _FakePETSc:
         self.Options = lambda: self.options
 
 
-def _install_fake(monkeypatch):
+def _install_fake(monkeypatch: Any) -> Any:
     provider = _FakePETSc()
     monkeypatch.setattr(
         pet.PETScBackend,
@@ -259,7 +273,7 @@ def _install_fake(monkeypatch):
     return provider
 
 
-def test_dependency_absence_is_lazy_and_precise(monkeypatch):
+def test_dependency_absence_is_lazy_and_precise(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         "phydrax.backends._availability.importlib.util.find_spec",
         lambda name: None,
@@ -273,7 +287,9 @@ def test_dependency_absence_is_lazy_and_precise(monkeypatch):
         availability.require("linear-system")
 
 
-def test_ksp_preserves_pytree_multi_rhs_and_uses_reason_plus_true_residual(monkeypatch):
+def test_ksp_preserves_pytree_multi_rhs_and_uses_reason_plus_true_residual(
+    monkeypatch: Any,
+) -> None:
     provider = _install_fake(monkeypatch)
     matrix = jnp.asarray(
         [[4.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 3.0]],
@@ -319,12 +335,14 @@ def test_ksp_preserves_pytree_multi_rhs_and_uses_reason_plus_true_residual(monke
     assert jnp.all(failed.diagnostics.relative_residual < 1e-12)
 
 
-def test_ksp_rejects_noncanonical_sources_without_dense_materialization(monkeypatch):
+def test_ksp_rejects_noncanonical_sources_without_dense_materialization(
+    monkeypatch: Any,
+) -> None:
     matrix = jnp.eye(3, dtype=jnp.float64)
     dense = la.LinearSystem(la.DenseLinearOperator(matrix))
     called = False
 
-    def forbidden(*args, **kwargs):
+    def forbidden(*args: Any, **kwargs: Any) -> None:
         nonlocal called
         called = True
         raise AssertionError("dense materialization must not be called")
@@ -335,7 +353,9 @@ def test_ksp_rejects_noncanonical_sources_without_dense_materialization(monkeypa
     assert not called
 
 
-def test_ksp_refresh_preserves_distinct_amat_pmat_and_explicit_pc_reuse(monkeypatch):
+def test_ksp_refresh_preserves_distinct_amat_pmat_and_explicit_pc_reuse(
+    monkeypatch: Any,
+) -> None:
     provider = _install_fake(monkeypatch)
     matrix = jnp.asarray([[4.0, -1.0], [-1.0, 3.0]], dtype=jnp.float64)
     surrogate = jnp.asarray([[4.0, 0.0], [0.0, 3.0]], dtype=jnp.float64)
@@ -378,7 +398,9 @@ def test_ksp_refresh_preserves_distinct_amat_pmat_and_explicit_pc_reuse(monkeypa
         )
 
 
-def test_explicit_reuse_policy_preserves_numeric_pc_across_refresh(monkeypatch):
+def test_explicit_reuse_policy_preserves_numeric_pc_across_refresh(
+    monkeypatch: Any,
+) -> None:
     provider = _install_fake(monkeypatch)
     matrix = jnp.asarray([[3.0, -1.0], [-1.0, 2.0]], dtype=jnp.float64)
     policy = pet.PETScKSPPolicy(pc_type="jacobi", reuse_preconditioner=True)
@@ -392,7 +414,9 @@ def test_explicit_reuse_policy_preserves_numeric_pc_across_refresh(monkeypatch):
     assert provider.ksp.preconditioner_setups == 1
 
 
-def test_matrix_free_snes_never_builds_or_autodifferentiates_dense_jacobian(monkeypatch):
+def test_matrix_free_snes_never_builds_or_autodifferentiates_dense_jacobian(
+    monkeypatch: Any,
+) -> None:
     provider = _install_fake(monkeypatch)
     problem = phx.nonlinear.NonlinearSystemProblem(
         lambda state, args: {
@@ -423,7 +447,7 @@ def test_matrix_free_snes_never_builds_or_autodifferentiates_dense_jacobian(monk
     assert prepared.plan.plan_id == plan.plan_id
 
 
-def test_dense_autodiff_snes_is_explicit_and_resource_guarded():
+def test_dense_autodiff_snes_is_explicit_and_resource_guarded() -> None:
     problem = phx.nonlinear.NonlinearSystemProblem(
         lambda state, args: state - args,
         problem_id="petsc-dense-autodiff",

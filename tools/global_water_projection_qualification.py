@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,7 +19,7 @@ from phydrax.applications.geophysics import HybridPressureCoordinate
 from phydrax.discretization import SphericalSpectralPlan
 
 
-def _reconstruct_water_phases(model, water):
+def _reconstruct_water_phases(model: Any, water: Any) -> Any:
     coefficients = jnp.stack(water, axis=-1)
     flattened = coefficients.reshape(coefficients.shape[:2] + (-1,))
     return model.reconstruct(flattened).reshape(
@@ -26,7 +27,7 @@ def _reconstruct_water_phases(model, water):
     )
 
 
-def main():
+def main() -> None:
     space = SphericalSpectralPlan(4, sampling="gl").prepare(radius=6.371e6)
     thermodynamics = MoistThermodynamicPlan()
     model = GlobalPrimitiveEquationPlan(
@@ -87,6 +88,7 @@ def main():
     total_before = sum(candidate.water)
     total_after = sum(limited.water)
     total_field_error = jnp.max(
+        # ty: ignore[invalid-argument-type]
         jnp.abs(model.reconstruct(total_after) - model.reconstruct(total_before))
     )
     total_scale = jnp.maximum(jnp.max(jnp.abs(model.reconstruct(total_before))), 1.0)

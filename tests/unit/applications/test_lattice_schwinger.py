@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _model(**kwargs):
+def _model(**kwargs: Any) -> Any:
     parameters = {
         "lattice_spacing": 0.4,
         "mass": 0.3,
@@ -21,7 +24,7 @@ def _model(**kwargs):
     return phx.applications.lattice_field.SchwingerChainModel(4, **parameters)
 
 
-def test_schwinger_charge_and_flux_share_one_encoding():
+def test_schwinger_charge_and_flux_share_one_encoding() -> None:
     model = _model(external_flux=jnp.asarray([0.1, -0.2, 0.05]))
     staggered_vacuum = jnp.asarray([1, 0, 1, 0], dtype=jnp.int32)
     observables = phx.applications.lattice_field.schwinger_observables(
@@ -43,7 +46,7 @@ def test_schwinger_charge_and_flux_share_one_encoding():
     )
 
 
-def test_schwinger_local_and_mpo_hamiltonians_agree():
+def test_schwinger_local_and_mpo_hamiltonians_agree() -> None:
     model = _model(external_flux=jnp.asarray([0.1, -0.2, 0.05]))
     local = phx.applications.lattice_field.schwinger_local_hamiltonian(model)
     mpo = phx.applications.lattice_field.schwinger_mpo(model)
@@ -57,7 +60,7 @@ def test_schwinger_local_and_mpo_hamiltonians_agree():
     assert jnp.allclose(local_dense, mpo_dense, atol=1e-10)
 
 
-def test_schwinger_zero_coupling_and_background_flux_are_explicit():
+def test_schwinger_zero_coupling_and_background_flux_are_explicit() -> None:
     model = _model(
         gauge_coupling=0.0,
         left_boundary_flux=-0.3,
@@ -73,7 +76,7 @@ def test_schwinger_zero_coupling_and_background_flux_are_explicit():
     assert jnp.all(jnp.isfinite(dense))
 
 
-def test_schwinger_model_is_jittable_and_resource_guarded():
+def test_schwinger_model_is_jittable_and_resource_guarded() -> None:
     model = _model()
     occupations = jnp.asarray([1, 0, 1, 0], dtype=jnp.int32)
     flux = jax.jit(
@@ -94,7 +97,7 @@ def test_schwinger_model_is_jittable_and_resource_guarded():
         )
 
 
-def test_schwinger_background_schedules_match_direct_hamiltonians():
+def test_schwinger_background_schedules_match_direct_hamiltonians() -> None:
     model = _model(external_flux=jnp.asarray([0.05, -0.1, 0.02]))
     time_grid = jnp.asarray([0.0, 0.4, 1.0])
     backgrounds = jnp.asarray(

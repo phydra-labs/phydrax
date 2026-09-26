@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_linear_gcode_and_process_graph():
+def test_linear_gcode_and_process_graph() -> None:
     program = phx.manufacturing.parse_linear_gcode("G1 X10 F600\nG4 P1000\nG1 Y10")
     assert len(program.events) == 3
     graph = phx.manufacturing.ManufacturingProcessGraph.create(
@@ -15,7 +15,7 @@ def test_linear_gcode_and_process_graph():
     assert len(graph.stages) == 2
 
 
-def test_goldak_and_activation_are_executable():
+def test_goldak_and_activation_are_executable() -> None:
     source = phx.manufacturing.GoldakDoubleEllipsoidSource(
         1000.0, 0.8, 0.01, 0.02, 0.005, 0.004
     )
@@ -26,7 +26,7 @@ def test_goldak_and_activation_are_executable():
     assert jnp.all(state.active)
 
 
-def test_runtime_and_process_transfer_close_mass_and_energy_balances():
+def test_runtime_and_process_transfer_close_mass_and_energy_balances() -> None:
     event = phx.manufacturing.ToolpathEvent(
         "deposit",
         "deposit",

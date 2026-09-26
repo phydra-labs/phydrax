@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import hashlib
 import json
 import os
@@ -37,11 +39,11 @@ from phydrax.backends.homotopy_continuation import (
 from phydrax.backends.macaulay2 import Macaulay2Environment, Macaulay2Provider
 
 
-def _digest(path):
+def _digest(path: Any) -> Any:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def _homotopy_provider():
+def _homotopy_provider() -> Any:
     executable_path = Path(os.environ["PHYDRAX_JULIA_EXECUTABLE"]).resolve(strict=True)
     project = Path(os.environ["PHYDRAX_HC_PROJECT"]).resolve(strict=True)
     executable = PinnedExecutable(
@@ -64,7 +66,7 @@ def _homotopy_provider():
     return HomotopyContinuationProvider(executable, environment)
 
 
-def _symbolic_provider():
+def _symbolic_provider() -> Any:
     executable_path = Path(os.environ["PHYDRAX_MACAULAY2_EXECUTABLE"]).resolve(
         strict=True
     )
@@ -80,7 +82,7 @@ def _symbolic_provider():
     return Macaulay2Provider(Macaulay2Environment(executable))
 
 
-def _system():
+def _system() -> Any:
     return SparsePolynomialSystem.from_coo(
         ("x",),
         ("x-squared-minus-one",),
@@ -90,7 +92,7 @@ def _system():
     )
 
 
-def main():
+def main() -> None:
     system = _system()
     homotopy = _homotopy_provider()
     start = time.perf_counter()

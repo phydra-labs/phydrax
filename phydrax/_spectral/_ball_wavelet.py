@@ -21,6 +21,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ein import contract
+from ..typing import parse
 from ._fourier_laguerre import FourierLaguerrePlan
 from ._laguerre import RadialLaguerrePlan
 from ._spherical import SphericalExecution
@@ -268,8 +269,9 @@ class DirectionalBallWaveletPlan(StrictModule, NonTrainableState):
             or selected_radial_dilation <= 1.0
         ):
             raise ValueError("wavelet dilation factors must be finite and exceed one.")
-        if selected_execution not in ("recursive", "precomputed"):
-            raise ValueError("wigner_execution must be 'recursive' or 'precomputed'.")
+        selected_execution = parse(
+            selected_execution, SphericalExecution, "selected_execution"
+        )
         if selected_scale_limit <= 0:
             raise ValueError("max_scale_pairs must be positive.")
         if selected_precompute_limit <= 0 or selected_runtime_limit <= 0:

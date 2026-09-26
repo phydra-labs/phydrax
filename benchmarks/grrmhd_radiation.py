@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -26,7 +28,7 @@ import phydrax as phx
 from phydrax.units import KILOGRAM
 
 
-def _compiler_record(compiled) -> dict[str, object]:
+def _compiler_record(compiled: Any) -> dict[str, object]:
     evidence = compiler_evidence(
         compiled.cost_analysis(),
         compiled.memory_analysis(),
@@ -38,7 +40,7 @@ def _compiler_record(compiled) -> dict[str, object]:
     return record
 
 
-def _measure(function, arguments, warmup, repeats):
+def _measure(function: Any, arguments: Any, warmup: Any, repeats: Any) -> Any:
     compiled, compilation = measure_lower_and_compile(
         lambda: jax.jit(function).lower(*arguments),
         lambda lowered: lowered.compile(),
@@ -53,7 +55,7 @@ def _measure(function, arguments, warmup, repeats):
     }
 
 
-def _setup(cell_count: int):
+def _setup(cell_count: int) -> Any:
     scale = phx.RelativityScaleContract.geometric(KILOGRAM)
     convention = phx.metrix.RelativityConvention.canonical()
     eos = phx.equations.GammaLawEOS(scale, 4.0 / 3.0, minimum_density=1.0e-12)
@@ -122,7 +124,7 @@ def run(cell_count: int, warmup: int, repeats: int) -> dict[str, object]:
     setup, setup_seconds = measure_synchronized(lambda: _setup(cell_count))
     material, radiation, source, geometry, material_state, radiation_state = setup
 
-    def source_kernel(material_values, radiation_values):
+    def source_kernel(material_values: Any, radiation_values: Any) -> Any:
         result = source.advance(
             material_values,
             radiation_values,

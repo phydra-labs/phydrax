@@ -209,7 +209,8 @@ class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
             ):
                 raise ValueError("Cannot append a frame with different stable IDs.")
             # A nonempty stream loaded its unit system in ``__init__``.
-            assert self.units is not None
+            if not (self.units is not None):
+                raise RuntimeError("Internal invariant failed: self.units is not None.")
             if frame.units.unit_system_id != self.units.unit_system_id:
                 raise ValueError(
                     "Cannot append a frame with incompatible complete units."

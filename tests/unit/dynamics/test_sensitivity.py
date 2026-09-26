@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_evolution_sensitivity_certificate_checks_jvp_and_transpose_duality():
+def test_evolution_sensitivity_certificate_checks_jvp_and_transpose_duality() -> None:
     matrix = jnp.asarray([[1.2, -0.3], [0.4, 0.8]])
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: matrix @ state + args,

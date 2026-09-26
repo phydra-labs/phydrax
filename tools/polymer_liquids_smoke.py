@@ -13,7 +13,9 @@ def main() -> int:
         pl.PRISMClosurePlan(pl.PRISMClosureKind.HNC), maximum_iterations=16
     ).prepare(
         transform,
+        # ty: ignore[invalid-argument-type]
         pl.SiteMixturePlan(("A",), [0.1]),
+        # ty: ignore[invalid-argument-type]
         pl.SequenceFormFactorPlan("gaussian-chain", [0], 1.0, site_count=1),
         pl.SitePairPotentialPlan(
             transform.radii, jnp.zeros((1, 1, 16)), source_id="ideal-smoke"

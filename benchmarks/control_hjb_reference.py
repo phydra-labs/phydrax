@@ -24,17 +24,17 @@ from benchmarks._runtime import (
 from phydrax._fingerprint import array_tree_fingerprint
 
 
-def _zero_drift(time, state, action, args):
+def _zero_drift(time: Any, state: Any, action: Any, args: Any) -> float:
     del time, state, action, args
     return 0.0
 
 
-def _constant_diffusion(time, state, action, args):
+def _constant_diffusion(time: Any, state: Any, action: Any, args: Any) -> Any:
     del time, state, action
     return args["sigma"]
 
 
-def _quadratic_action_cost(time, state, action, args):
+def _quadratic_action_cost(time: Any, state: Any, action: Any, args: Any) -> Any:
     del time, state, args
     return action * action
 
@@ -44,7 +44,7 @@ def _problem(
     time_points: int,
     action_count: int,
     /,
-):
+) -> Any:
     if action_count < 1 or action_count % 2 == 0:
         raise ValueError("action_count must be a positive odd integer")
     terminal_time = 0.2
@@ -77,7 +77,7 @@ def _problem(
     return problem, terminal_time, sigma
 
 
-def _certificates(result, terminal_time: float, sigma: float) -> dict[str, Any]:
+def _certificates(result: Any, terminal_time: float, sigma: float) -> dict[str, Any]:
     coarse = result.result
     coarse_expected = (
         coarse.spatial_grid.points[None, :] ** 2
@@ -214,7 +214,7 @@ def _case(
     }
 
 
-def _specifications():
+def _specifications() -> Any:
     return (
         ("baseline", 17, 17, 5),
         ("grid-9", 9, 17, 5),

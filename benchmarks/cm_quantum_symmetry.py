@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -41,7 +43,7 @@ from phydrax.operators.quantum.lattice import (
 )
 
 
-def _ring(site_count: int):
+def _ring(site_count: int) -> Any:
     spaces = tuple(LocalSpacePlan.spin(f"s{index}", 1) for index in range(site_count))
     raising = np.asarray(((0.0, 0.0), (1.0, 0.0)))
     lowering = raising.T
@@ -91,7 +93,7 @@ def _ring(site_count: int):
     return prepared, basis, translation
 
 
-def benchmark_case(site_count: int, repeats: int):
+def benchmark_case(site_count: int, repeats: int) -> Any:
     (prepared, direct, translation), model_seconds = measure_host(
         lambda: _ring(site_count)
     )

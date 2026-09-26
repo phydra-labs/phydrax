@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,19 +12,19 @@ class _ConditionalGaussianScore(eqx.Module):
     process: phx.stochastic.AbstractGaussianDiffusion
     clean_state: jnp.ndarray
 
-    def __call__(self, state, time):
+    def __call__(self, state: Any, time: Any) -> Any:
         mean = self.process.transition_mean_scale(0.0, time) * self.clean_state
         scale = self.process.transition_scale(0.0, time)
         return -(state - mean) / scale**2
 
 
 class _ZeroScore(eqx.Module):
-    def __call__(self, state, time):
+    def __call__(self, state: Any, time: Any) -> Any:
         del time
         return jnp.zeros_like(state)
 
 
-def _score_function(model, process):
+def _score_function(model: Any, process: Any) -> Any:
     state = phx.domain.HyperRectangle(
         jnp.full(process.state_shape, -100.0),
         jnp.full(process.state_shape, 100.0),
@@ -32,7 +34,7 @@ def _score_function(model, process):
     return domain.Function("x", "t")(model)
 
 
-def _data(clean, *, mask=None, independent=True):
+def _data(clean: Any, *, mask: Any = None, independent: Any = True) -> Any:
     count = clean.shape[0]
     return phx.integration.weighted(
         clean,
@@ -53,7 +55,7 @@ def _data(clean, *, mask=None, independent=True):
         ),
     ],
 )
-def test_exact_conditional_score_has_zero_denoising_objective(process):
+def test_exact_conditional_score_has_zero_denoising_objective(process: Any) -> None:
     clean_state = jnp.asarray([0.4, -0.7])
     clean = jnp.broadcast_to(clean_state, (64, 2))
     score = _score_function(_ConditionalGaussianScore(process, clean_state), process)
@@ -76,7 +78,7 @@ def test_exact_conditional_score_has_zero_denoising_objective(process):
     assert jnp.isfinite(diagnostics.objective_standard_error)
 
 
-def test_denoising_weighting_changes_only_declared_node_weights():
+def test_denoising_weighting_changes_only_declared_node_weights() -> None:
     process = phx.stochastic.VariancePreservingDiffusion(1)
     clean = jnp.zeros((32, 1))
     score = _score_function(_ZeroScore(), process)
@@ -98,7 +100,7 @@ def test_denoising_weighting_changes_only_declared_node_weights():
     assert not jnp.allclose(jnp.asarray(objectives), objectives[0])
 
 
-def test_denoising_masks_invalid_samples_and_rejects_empty_mass():
+def test_denoising_masks_invalid_samples_and_rejects_empty_mass() -> None:
     process = phx.stochastic.VariancePreservingDiffusion(1)
     clean = jnp.asarray([[0.0], [jnp.nan], [1.0]])
     score = _score_function(_ZeroScore(), process)
@@ -124,11 +126,11 @@ def test_denoising_masks_invalid_samples_and_rejects_empty_mass():
         empty.loss({"score": score}, key=jr.key(6))
 
 
-def test_resampled_denoising_provider_runs_once_per_materialized_batch():
+def test_resampled_denoising_provider_runs_once_per_materialized_batch() -> None:
     process = phx.stochastic.VariancePreservingDiffusion(1)
     calls = []
 
-    def provider(key):
+    def provider(key: Any) -> Any:
         calls.append(key)
         return _data(jnp.zeros((8, 1)))
 
@@ -146,7 +148,7 @@ def test_resampled_denoising_provider_runs_once_per_materialized_batch():
     assert len(calls) == 1
 
 
-def test_denoising_rejects_zero_noise_endpoint_and_wrong_score_shape():
+def test_denoising_rejects_zero_noise_endpoint_and_wrong_score_shape() -> None:
     process = phx.stochastic.VariancePreservingDiffusion(1)
     with pytest.raises(ValueError, match="strictly positive"):
         phx.terms.DenoisingScoreMatchingTerm(

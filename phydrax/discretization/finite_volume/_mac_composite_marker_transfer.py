@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._lagrangian_marker import LagrangianMarkerDiscretization
 from ._incompressible import FaceVelocity
 from ._mac_marker_transfer import MACMarkerAccumulation
@@ -101,8 +102,7 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
             for value in level
         ):
             raise ValueError("Composite face measures must be positive and finite.")
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown marker accumulation policy.")
+        accumulation = parse(accumulation, MACMarkerAccumulation, "accumulation")
         limit = float(condition_limit)
         if not np.isfinite(limit) or limit <= 1.0:
             raise ValueError("condition_limit must be finite and greater than one.")

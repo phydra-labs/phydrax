@@ -4,14 +4,18 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_periodic_nvt_segmented_workflow_is_replayable_end_to_end():
+def test_periodic_nvt_segmented_workflow_is_replayable_end_to_end() -> None:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     cell = phx.discretization.PeriodicCell(4.0 * jnp.eye(3))
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [0, 1, 2],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0],
         cell=cell,
     ).prepare()
@@ -20,6 +24,7 @@ def test_periodic_nvt_segmented_workflow_is_replayable_end_to_end():
         base, 1.4, 0.2
     ).prepare(system.particles)
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.2], [0.8], 1.4, switch_distance=1.2)]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(

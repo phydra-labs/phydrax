@@ -20,6 +20,7 @@ import json
 import math
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -57,7 +58,9 @@ def _foam(name: str, body: str, cls: str = "dictionary") -> bytes:
     ).encode("ascii")
 
 
-def _mesh_files(surface, radial_cells=48, radius=20.0, span=0.1):
+def _mesh_files(
+    surface: Any, radial_cells: Any = 48, radius: Any = 20.0, span: Any = 0.1
+) -> Any:
     """Explicit outward-oriented, one-cell-span annular hexahedral OpenFOAM mesh."""
     surface = np.asarray(surface, dtype="float64")
     n = len(surface)
@@ -75,7 +78,7 @@ def _mesh_files(surface, radial_cells=48, radius=20.0, span=0.1):
     xyz[1, ..., 2] = span
     points = xyz.reshape(-1, 3)
 
-    def node(z, r, i):
+    def node(z: Any, r: Any, i: Any) -> Any:
         return (z * (radial_cells + 1) + r) * n + i % n
 
     faces = {}
@@ -140,6 +143,7 @@ def _mesh_files(surface, radial_cells=48, radius=20.0, span=0.1):
             "vectorField",
             ["(" + " ".join(f"{v:.17g}" for v in p) + ")" for p in points],
         ),
+        # ty: ignore[invalid-argument-type]
         "faces": ("faceList", ["4(" + " ".join(map(str, f[0])) + ")" for f in ordered]),
         "owner": ("labelList", [str(f[1]) for f in ordered]),
         "neighbour": ("labelList", [str(f[2]) for f in internal]),
@@ -153,7 +157,7 @@ def _mesh_files(surface, radial_cells=48, radius=20.0, span=0.1):
     }
 
 
-def naca0012_dafoam_case(half_panels: int = 64, radial_cells: int = 48):
+def naca0012_dafoam_case(half_panels: int = 64, radial_cells: int = 48) -> Any:
     """Generated steady incompressible SA case, U=10 m/s, chord=1 m, Re=1e6."""
     if not 16 <= radial_cells <= 256:
         raise ValueError("radial_cells must lie in [16, 256].")
@@ -263,7 +267,7 @@ def naca0012_dafoam_case(half_panels: int = 64, radial_cells: int = 48):
     return files, options, {"patchV": [10.0, 2.0]}
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="engine", required=True)
     xfoil = sub.add_parser("xfoil")

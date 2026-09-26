@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 import zipfile
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -18,7 +20,7 @@ from phydrax.uq._checkpoint import (
 )
 
 
-def _problem(observation=0.5):
+def _problem(observation: Any = 0.5) -> Any:
     return phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             {"offset": jnp.zeros(2), "scale": jnp.asarray(0.0)},
@@ -35,7 +37,7 @@ def _problem(observation=0.5):
     )
 
 
-def test_checkpoint_archive_is_atomic_current_and_pickle_free(tmp_path):
+def test_checkpoint_archive_is_atomic_current_and_pickle_free(tmp_path: Any) -> None:
     problem = _problem()
     compatibility = checkpoint_compatibility(
         problem,
@@ -78,7 +80,9 @@ def test_checkpoint_archive_is_atomic_current_and_pickle_free(tmp_path):
     assert not tuple(destination.parent.glob(f".{destination.name}.*.tmp"))
 
 
-def test_checkpoint_rejects_incompatible_problem_settings_and_corruption(tmp_path):
+def test_checkpoint_rejects_incompatible_problem_settings_and_corruption(
+    tmp_path: Any,
+) -> None:
     problem = _problem()
     compatibility = checkpoint_compatibility(
         problem,

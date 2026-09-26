@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import pytest
 
 from phydrax.qualification import (
@@ -11,7 +14,7 @@ from phydrax.qualification import (
 )
 
 
-def _passing(profile):
+def _passing(profile: Any) -> Any:
     return CoreQualificationObservation(
         profile,
         {gate: True for gate in profile.required_gates},
@@ -25,6 +28,7 @@ def test_core_portfolio_covers_each_exact_family_once() -> None:
 
     assert len(profiles) == 10
     assert record["passed"] is True
+    # ty: ignore[invalid-argument-type]
     assert len(record["observations"]) == len(profiles)
     assert record["portfolio_id"]
 

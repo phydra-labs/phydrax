@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_stormer_verlet_bounds_long_horizon_harmonic_energy_error():
+def test_stormer_verlet_bounds_long_horizon_harmonic_energy_error() -> None:
     vector_field = phx.solver.SeparableHamiltonianVectorField(
         lambda time, configuration, args: configuration,
         lambda time, momentum, args: momentum,
@@ -16,6 +16,7 @@ def test_stormer_verlet_bounds_long_horizon_harmonic_energy_error():
     )
     times = jnp.linspace(0.0, 100.0, 1001)
     solution = dfx.diffeqsolve(
+        # ty: ignore[invalid-argument-type]
         dfx.ODETerm(vector_field),
         phx.solver.StormerVerlet(1),
         t0=0.0,
@@ -29,4 +30,5 @@ def test_stormer_verlet_bounds_long_horizon_harmonic_energy_error():
     energies = 0.5 * jnp.sum(solution.ys**2, axis=-1)
 
     assert jnp.max(jnp.abs(energies - energies[0])) < 1.3e-3
+    # ty: ignore[invalid-argument-type]
     assert phx.solver.StormerVerlet(1).order(None) == 2

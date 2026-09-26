@@ -30,6 +30,7 @@ def _measure(
         warmup=1,
         repeats=repeats,
     )
+    # ty: ignore[invalid-argument-type]
     return estimate, 1_000.0 * float(distribution.mean_seconds)
 
 
@@ -71,6 +72,7 @@ def _measure_compiled(
         warmup=1,
         repeats=repeats,
     )
+    # ty: ignore[invalid-argument-type]
     return estimate, 1_000.0 * float(distribution.mean_seconds)
 
 
@@ -126,6 +128,7 @@ def _interoperability_benchmarks(
         )
         weighted_target = phx.integration.weighted(
             weighted_samples,
+            # ty: ignore[invalid-argument-type]
             weighted_log_weights,
             sample_axes="particle",
             independent=True,
@@ -153,6 +156,7 @@ def _interoperability_benchmarks(
         num_times = 16
         num_space = 16
         times = jnp.linspace(0.0, 1.0, num_times)
+        # ty: ignore[invalid-argument-type]
         axis = phx.discretization.FourierAxisSpec(num_space).materialize(0.0, 1.0)
         spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
         phase = jnp.linspace(0.0, 2.0 * jnp.pi, budget, endpoint=False)

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,11 +13,11 @@ import pytest
 import phydrax as phx
 
 
-def _density_from_state(time, state):
+def _density_from_state(time: Any, state: Any) -> Any:
     return phx.operators.density_from_factor(time.Function()(state[:, None]))
 
 
-def test_purity_and_entropy_distinguish_pure_and_mixed_states():
+def test_purity_and_entropy_distinguish_pure_and_mixed_states() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     pure = _density_from_state(time, jnp.asarray([1.0, 0.0], dtype="complex128"))
     mixed = time.Function()(0.5 * jnp.eye(2, dtype="complex128"))
@@ -29,7 +32,7 @@ def test_purity_and_entropy_distinguish_pure_and_mixed_states():
     )
 
 
-def test_bell_state_has_one_bit_of_entanglement_entropy():
+def test_bell_state_has_one_bit_of_entanglement_entropy() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     zero = time.Function()(jnp.asarray([1.0, 0.0], dtype="complex128"))
     one = time.Function()(jnp.asarray([0.0, 1.0], dtype="complex128"))
@@ -46,11 +49,11 @@ def test_bell_state_has_one_bit_of_entanglement_entropy():
     assert jnp.allclose(phx.operators.von_neumann_entropy(reduced).func(), 1.0)
 
 
-def test_state_fidelity_preserves_domain_dependencies_and_known_values():
+def test_state_fidelity_preserves_domain_dependencies_and_known_values() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
 
     @time.Function("t")
-    def state(t):
+    def state(t: Any) -> Any:
         return jnp.asarray([jnp.cos(t), jnp.sin(t)], dtype="complex128")
 
     zero = time.Function()(jnp.asarray([1.0, 0.0], dtype="complex128"))
@@ -63,7 +66,7 @@ def test_state_fidelity_preserves_domain_dependencies_and_known_values():
     assert jnp.allclose(phx.operators.state_fidelity(zero, one).func(), 0.0)
 
 
-def test_density_fidelity_matches_pure_and_commuting_state_formulas():
+def test_density_fidelity_matches_pure_and_commuting_state_formulas() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     zero = jnp.asarray([1.0, 0.0], dtype="complex128")
     plus = jnp.asarray([1.0, 1.0], dtype="complex128") / jnp.sqrt(2.0)
@@ -84,7 +87,7 @@ def test_density_fidelity_matches_pure_and_commuting_state_formulas():
     assert jnp.allclose(phx.operators.density_fidelity(left, right).func(), expected)
 
 
-def test_trace_distance_matches_orthogonal_and_commuting_state_formulas():
+def test_trace_distance_matches_orthogonal_and_commuting_state_formulas() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     zero = _density_from_state(time, jnp.asarray([1.0, 0.0], dtype="complex128"))
     one = _density_from_state(time, jnp.asarray([0.0, 1.0], dtype="complex128"))
@@ -99,12 +102,12 @@ def test_trace_distance_matches_orthogonal_and_commuting_state_formulas():
     assert jnp.allclose(phx.operators.trace_distance(left, right).func(), abs(p - q))
 
 
-def test_information_measures_are_jittable_and_parameter_differentiable():
+def test_information_measures_are_jittable_and_parameter_differentiable() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     q = 0.8
     target = time.Function()(jnp.diag(jnp.asarray([q, 1.0 - q])))
 
-    def measures(p):
+    def measures(p: Any) -> Any:
         density = time.Function()(jnp.diag(jnp.asarray([p, 1.0 - p])))
         return (
             phx.operators.purity(density).func(),
@@ -112,7 +115,7 @@ def test_information_measures_are_jittable_and_parameter_differentiable():
             phx.operators.density_fidelity(density, target).func(),
         )
 
-    def expected_fidelity(p):
+    def expected_fidelity(p: Any) -> Any:
         return (jnp.sqrt(p * q) + jnp.sqrt((1.0 - p) * (1.0 - q))) ** 2
 
     p = 0.37
@@ -133,7 +136,7 @@ def test_information_measures_are_jittable_and_parameter_differentiable():
     )
 
 
-def test_information_operators_reject_invalid_values():
+def test_information_operators_reject_invalid_values() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     vector = time.Function()(jnp.ones((2,)))
     matrix = time.Function()(0.5 * jnp.eye(2))

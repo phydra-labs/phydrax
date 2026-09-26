@@ -114,12 +114,17 @@ class ScientificMetricCriterion:
         # __post_init__ guarantees the bounds required by each direction.
         lower, upper = self.lower, self.upper
         if self.direction == "at_most":
-            assert upper is not None
+            if not (upper is not None):
+                raise RuntimeError("Internal invariant failed: upper is not None.")
             return value <= upper
         if self.direction == "at_least":
-            assert lower is not None
+            if not (lower is not None):
+                raise RuntimeError("Internal invariant failed: lower is not None.")
             return value >= lower
-        assert lower is not None and upper is not None
+        if not (lower is not None and upper is not None):
+            raise RuntimeError(
+                "Internal invariant failed: lower is not None and upper is not None."
+            )
         return lower <= value <= upper
 
     def _content_record(self) -> dict[str, object]:

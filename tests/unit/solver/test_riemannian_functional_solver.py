@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -10,7 +13,7 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 import phydrax as phx
 
 
-def _geometric_solver():
+def _geometric_solver() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     target_direction = (0.0, 1.0, 0.0)
     direction = domain.Parameter(
@@ -32,7 +35,7 @@ def _geometric_solver():
     )
 
 
-def _optimizer(solver, *, momentum=False, adaptive=False):
+def _optimizer(solver: Any, *, momentum: Any = False, adaptive: Any = False) -> Any:
     parameters = solver.trainable_functions()
     direction_path = next(
         path
@@ -60,7 +63,7 @@ def _optimizer(solver, *, momentum=False, adaptive=False):
     return phx.optim.riemannian_sgd(geometry, learning_rate=0.12)
 
 
-def _values(solver):
+def _values(solver: Any) -> Any:
     leaves = tuple(
         jnp.asarray(leaf) for leaf in jax.tree.leaves(solver.trainable_functions())
     )
@@ -70,7 +73,9 @@ def _values(solver):
 
 
 @pytest.mark.parametrize("jit", [False, True])
-def test_functional_solver_trains_mixed_manifold_and_euclidean_parameters(jit):
+def test_functional_solver_trains_mixed_manifold_and_euclidean_parameters(
+    jit: Any,
+) -> None:
     solver = _geometric_solver()
     initial_loss = solver.loss()
     trained = solver.solve(
@@ -95,7 +100,7 @@ def test_functional_solver_trains_mixed_manifold_and_euclidean_parameters(jit):
     )
 
 
-def test_functional_solver_accepts_transported_momentum():
+def test_functional_solver_accepts_transported_momentum() -> None:
     solver = _geometric_solver()
     trained = solver.solve(
         num_iter=45,
@@ -112,7 +117,9 @@ def test_functional_solver_accepts_transported_momentum():
     assert trained.training_diagnostics["optimizer/riemannian/momentum_norm"] > 0.0
 
 
-def test_functional_solver_accepts_intrinsic_adaptive_moments(phydrax_events):
+def test_functional_solver_accepts_intrinsic_adaptive_moments(
+    phydrax_events: Any,
+) -> None:
     solver = _geometric_solver()
     initial_loss = solver.loss()
     trained = solver.solve(
@@ -141,7 +148,9 @@ def test_functional_solver_accepts_intrinsic_adaptive_moments(phydrax_events):
 
 
 @pytest.mark.parametrize("optimizer_name", ("conjugate_gradient", "lbfgs"))
-def test_functional_solver_supports_frozen_objective_line_search(optimizer_name):
+def test_functional_solver_supports_frozen_objective_line_search(
+    optimizer_name: Any,
+) -> None:
     solver = _geometric_solver()
     geometry = _optimizer(solver).parameter_geometry
     if optimizer_name == "conjugate_gradient":
@@ -169,7 +178,9 @@ def test_functional_solver_supports_frozen_objective_line_search(optimizer_name)
     assert diagnostics["optimizer/riemannian/pair_accepted"].dtype == jnp.bool_
 
 
-def test_riemannian_solver_logging_and_tensorboard_diagnostics(tmp_path, phydrax_events):
+def test_riemannian_solver_logging_and_tensorboard_diagnostics(
+    tmp_path: Any, phydrax_events: Any
+) -> None:
     solver = _geometric_solver()
     tensorboard_dir = tmp_path / "tensorboard"
     solver.solve(
@@ -203,7 +214,7 @@ def test_riemannian_solver_logging_and_tensorboard_diagnostics(tmp_path, phydrax
     assert "optimizer/riemannian/adaptive_denominator_maximum" in scalar_tags
 
 
-def test_riemannian_solver_rejects_ambient_evaluation_parameters():
+def test_riemannian_solver_rejects_ambient_evaluation_parameters() -> None:
     solver = _geometric_solver()
     with pytest.raises(ValueError, match="unsupported for Riemannian"):
         solver.solve(
@@ -214,7 +225,7 @@ def test_riemannian_solver_rejects_ambient_evaluation_parameters():
         )
 
 
-def test_riemannian_solver_rejects_geometry_bound_to_another_tree():
+def test_riemannian_solver_rejects_geometry_bound_to_another_tree() -> None:
     solver = _geometric_solver()
     parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
     geometry = phx.optim.ParameterGeometry.from_leaf_paths(
@@ -232,6 +243,6 @@ def test_riemannian_solver_rejects_geometry_bound_to_another_tree():
         )
 
 
-def test_zero_iteration_geometric_solve_returns_original_solver():
+def test_zero_iteration_geometric_solve_returns_original_solver() -> None:
     solver = _geometric_solver()
     assert solver.solve(num_iter=0, optim=_optimizer(solver)) is solver

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import coordax as cx
 import equinox as eqx
@@ -29,9 +30,10 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _target(states, probabilities, provenance):
+def _target(states: Any, probabilities: Any, provenance: Any) -> Any:
     return phx.integration.discrete(
         states,
+        # ty: ignore[invalid-argument-type]
         cx.Field(probabilities, dims=("state",)),
         axes="state",
         normalized=True,
@@ -39,12 +41,12 @@ def _target(states, probabilities, provenance):
     )
 
 
-def _kernel(matrix):
-    def sample(key, state, _t0, _t1, _context):
+def _kernel(matrix: Any) -> Any:
+    def sample(key: Any, state: Any, _t0: Any, _t1: Any, _context: Any) -> Any:
         probability = matrix[jnp.asarray(state, dtype=jnp.int32)]
         return jr.categorical(key, jnp.log(probability)).astype("float64")
 
-    def log_prob(next_state, state, _t0, _t1, _context):
+    def log_prob(next_state: Any, state: Any, _t0: Any, _t1: Any, _context: Any) -> Any:
         probability = matrix[
             jnp.asarray(state, dtype=jnp.int32),
             jnp.asarray(next_state, dtype=jnp.int32),
@@ -60,7 +62,7 @@ def _kernel(matrix):
     )
 
 
-def _problem(num_states, num_steps):
+def _problem(num_states: Any, num_steps: Any) -> Any:
     states = jnp.arange(num_states, dtype="float64")
     indices = jnp.arange(num_states)
     distance = jnp.abs(indices[:, None] - indices[None, :])
@@ -79,13 +81,14 @@ def _problem(num_states, num_steps):
     )
 
 
-def _timed(operation, ready, repeats):
+def _timed(operation: Any, ready: Any, repeats: Any) -> Any:
     result, distribution = measure_repeated(
         operation,
         warmup=1,
         repeats=repeats,
         synchronizer=lambda value: jax.block_until_ready(ready(value)),
     )
+    # ty: ignore[invalid-argument-type]
     return result, 1_000.0 * float(distribution.mean_seconds)
 
 

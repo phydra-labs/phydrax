@@ -522,7 +522,10 @@ def plan_member_network(
     precision_ = NonlinearPrecisionPolicy() if precision is None else precision
     if derivative_policy is None and uses_linear_setup:
         # uses_linear_setup is only set for the default NewtonKrylov method.
-        assert isinstance(method, NewtonKrylov)
+        if not (isinstance(method, NewtonKrylov)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(method, NewtonKrylov)."
+            )
         derivative_linear_policy = eqx.tree_at(
             lambda selected: selected.preconditioning,
             method.linear_policy,

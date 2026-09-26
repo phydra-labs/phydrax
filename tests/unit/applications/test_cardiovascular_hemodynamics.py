@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -43,7 +46,7 @@ from phydrax.discretization import (
 )
 
 
-def _discretization(shape=(6, 4, 4), *, cell_size=1.0):
+def _discretization(shape: Any = (6, 4, 4), *, cell_size: Any = 1.0) -> Any:
     grid = TensorGridPlan(
         tuple(UniformCellAxisSpec(count) for count in shape),
         axis_names=("x", "y", "z")[: len(shape)],
@@ -59,7 +62,7 @@ def _discretization(shape=(6, 4, 4), *, cell_size=1.0):
     return LatticeBoltzmannPlan(grid, lattice).prepare()
 
 
-def _prepared_workflow(*, limits=None, lumen_mask=None):
+def _prepared_workflow(*, limits: Any = None, lumen_mask: Any = None) -> Any:
     discretization = _discretization()
     scaling = HemodynamicsScaling(
         1.0,
@@ -93,7 +96,7 @@ def _prepared_workflow(*, limits=None, lumen_mask=None):
     return plan.prepare()
 
 
-def test_static_lumen_mask_compiles_stationary_halfway_wall_links():
+def test_static_lumen_mask_compiles_stationary_halfway_wall_links() -> None:
     mask = np.ones((6, 4, 4), dtype="bool")
     mask[:, 0, :] = False
     prepared = _prepared_workflow(lumen_mask=mask)
@@ -104,7 +107,7 @@ def test_static_lumen_mask_compiles_stationary_halfway_wall_links():
     assert prepared.scope.wall_motion_supported is False
 
 
-def test_hemodynamics_scaling_roundtrips_every_coupled_quantity():
+def test_hemodynamics_scaling_roundtrips_every_coupled_quantity() -> None:
     scaling = HemodynamicsScaling(
         0.25,
         0.01,
@@ -154,7 +157,7 @@ def test_hemodynamics_scaling_roundtrips_every_coupled_quantity():
     assert len(scaling.quantity_spec_ids) == 10
 
 
-def test_scaling_and_rheology_refuse_outside_validity_envelopes():
+def test_scaling_and_rheology_refuse_outside_validity_envelopes() -> None:
     with pytest.raises(ValueError, match="Mach limit"):
         HemodynamicsScaling(
             1.0,
@@ -199,7 +202,7 @@ def test_scaling_and_rheology_refuse_outside_validity_envelopes():
         )
 
 
-def test_carreau_yasuda_newtonian_limit_and_shear_thinning():
+def test_carreau_yasuda_newtonian_limit_and_shear_thinning() -> None:
     constant = CarreauYasudaRheology(0.004, 0.004, 100.0, 0.4, 2.0)
     newtonian = NewtonianRheology(0.004)
     shear = jnp.asarray((0.0, 1.0e-3, 0.1, 1.0))
@@ -217,7 +220,7 @@ def test_carreau_yasuda_newtonian_limit_and_shear_thinning():
     assert values[0] == pytest.approx(thinning.maximum_dynamic_viscosity_kpa_ms)
 
 
-def test_terminal_measurements_close_outlet_volume_and_power_balances():
+def test_terminal_measurements_close_outlet_volume_and_power_balances() -> None:
     prepared = _prepared_workflow()
     shape = prepared.discretization.grid.shape
     velocity = jnp.zeros(shape + (3,)).at[..., 0].set(0.01)
@@ -263,7 +266,7 @@ def test_terminal_measurements_close_outlet_volume_and_power_balances():
     np.testing.assert_array_equal(mismatched.pressure_balanced, (False, True))
 
 
-def test_poiseuille_and_womersley_references_recover_expected_limits():
+def test_poiseuille_and_womersley_references_recover_expected_limits() -> None:
     pipe = PoiseuillePipeReference(1.5, 20.0, 0.8, 0.004)
     radius = np.linspace(0.0, 1.5, 4001)
     velocity = np.asarray(pipe.axial_velocity(radius))
@@ -285,7 +288,7 @@ def test_poiseuille_and_womersley_references_recover_expected_limits():
     assert womersley.womersley_number < 0.02
 
 
-def test_lbm_mac_comparison_keeps_routes_distinct_and_auditable():
+def test_lbm_mac_comparison_keeps_routes_distinct_and_auditable() -> None:
     coordinate = jnp.linspace(0.0, 1.0, 128)
     profile = 1.0 - coordinate**2
     mac_velocity = jnp.stack(
@@ -310,7 +313,7 @@ def test_lbm_mac_comparison_keeps_routes_distinct_and_auditable():
     assert float(evidence.pressure_relative_l2) == pytest.approx(0.002, rel=1.0e-5)
 
 
-def test_fixed_wall_d3q19_candidate_commit_checkpoint_and_fail_closed_state():
+def test_fixed_wall_d3q19_candidate_commit_checkpoint_and_fail_closed_state() -> None:
     prepared = _prepared_workflow(
         limits=HemodynamicsValidityLimits(
             maximum_relative_mass_balance_defect=1.0e-5,
@@ -352,8 +355,8 @@ def test_fixed_wall_d3q19_candidate_commit_checkpoint_and_fail_closed_state():
     ),
 )
 def test_invalid_port_iterates_return_rejected_candidate_before_native_boundary(
-    pressure, flow
-):
+    pressure: Any, flow: Any
+) -> None:
     prepared = _prepared_workflow()
     state = prepared.initialize_state()
 
@@ -367,7 +370,7 @@ def test_invalid_port_iterates_return_rejected_candidate_before_native_boundary(
     assert int(committed.step_index) == int(state.step_index)
 
 
-def test_pressure_controlled_inflow_is_rejected_during_planning():
+def test_pressure_controlled_inflow_is_rejected_during_planning() -> None:
     discretization = _discretization()
     scaling = HemodynamicsScaling(
         1.0,
@@ -392,7 +395,7 @@ def test_pressure_controlled_inflow_is_rejected_during_planning():
         )
 
 
-def test_fixed_wall_plan_refuses_non_d3q19_lattice():
+def test_fixed_wall_plan_refuses_non_d3q19_lattice() -> None:
     discretization = _discretization((6, 4))
     scaling = HemodynamicsScaling(
         1.0,

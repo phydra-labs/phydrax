@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _layout():
+def _layout() -> Any:
     return phx.dynamics.InputLayout(
         (1,),
         roles="control",
@@ -14,7 +16,7 @@ def _layout():
     )
 
 
-def _system():
+def _system() -> Any:
     return phx.dynamics.DifferentialAlgebraicSystem(
         lambda time, state, state_rate, control, args: jnp.asarray(
             (
@@ -29,7 +31,7 @@ def _system():
     )
 
 
-def test_held_input_policy_has_explicit_node_convention_and_derivatives():
+def test_held_input_policy_has_explicit_node_convention_and_derivatives() -> None:
     times = jnp.asarray((0.0, 1.0, 2.0))
     values = jnp.asarray(((3.0,), (5.0,)))
     left = phx.dynamics.HeldInputPolicy(
@@ -62,7 +64,7 @@ def test_held_input_policy_has_explicit_node_convention_and_derivatives():
         left(2.1, jnp.zeros(2))
 
 
-def test_dae_problem_requires_exact_input_policy_layout():
+def test_dae_problem_requires_exact_input_policy_layout() -> None:
     system = _system()
     with pytest.raises(ValueError, match="requires input_policy"):
         phx.solver.DifferentialAlgebraicProblem(
@@ -104,7 +106,7 @@ def test_dae_problem_requires_exact_input_policy_layout():
         )
 
 
-def test_controlled_dae_initialization_and_stages_use_held_policy():
+def test_controlled_dae_initialization_and_stages_use_held_policy() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray((0.0, 0.5, 1.0)),
         time_id="controlled-dae-grid",
@@ -136,7 +138,7 @@ def test_controlled_dae_initialization_and_stages_use_held_policy():
     assert solution.continuation.input_policy_id == policy.policy_id
 
 
-def _direct_result():
+def _direct_result() -> Any:
     problem = phx.control.TrajectoryOptimizationProblem(
         _system(),
         initial_state=jnp.zeros(2),
@@ -180,7 +182,7 @@ def _direct_result():
     )
 
 
-def test_direct_collocation_replay_is_independent_typed_evidence():
+def test_direct_collocation_replay_is_independent_typed_evidence() -> None:
     result = _direct_result()
     evidence = phx.control.replay_direct_collocation(
         result,

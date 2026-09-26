@@ -20,7 +20,13 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
     )
 
     refractive = phx.optics.geometric.StructuredRefractiveIndexField(
-        np.ones((8, 8, 8)), (0, 0, 0), (1, 1, 1), contract, field_id="benchmark-index"
+        np.ones((8, 8, 8)),
+        # ty: ignore[invalid-argument-type]
+        (0, 0, 0),
+        # ty: ignore[invalid-argument-type]
+        (1, 1, 1),
+        contract,
+        field_id="benchmark-index",
     )
     graded = phx.optics.geometric.GradedIndexRayPlan(
         refractive, 0.02, 16 if smoke else 64
@@ -43,7 +49,9 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
     ct = phx.imaging.tomography.VoxelXRayTransformPlan(
         projection,
         (8, 1, 1),
+        # ty: ignore[invalid-argument-type]
         (0, 0, 0),
+        # ty: ignore[invalid-argument-type]
         (0.25, 1, 1),
         contract,
     )
@@ -150,6 +158,7 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
         "wave_phase_screen": phase_times.to_milliseconds_dict(),
         "lidar_atmosphere": lidar_times.to_milliseconds_dict(),
         "statuses": statuses,
+        # ty: ignore[unresolved-attribute]
         "lidar_status": int(lidar_result.evidence.status),
         "successful": successful,
     }

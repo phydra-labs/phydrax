@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -27,11 +29,11 @@ from phydrax.circuit import (
 from phydrax.dynamics import CallableInputPolicy
 
 
-def _reference():
+def _reference() -> Any:
     return ElectricalWaveReference(50.0)
 
 
-def _parallel_rlc_with_current_source():
+def _parallel_rlc_with_current_source() -> Any:
     source = CircuitElement(
         IndependentCurrentSourceLaw(1.0, input_key="drive"),
         element_id="source",
@@ -49,7 +51,7 @@ def _parallel_rlc_with_current_source():
     )
 
 
-def _drive_policy(prepared, drive, policy_id):
+def _drive_policy(prepared: Any, drive: Any, policy_id: Any) -> Any:
     layout = prepared.system.input_layout
     assert layout is not None
     return CallableInputPolicy(
@@ -59,7 +61,7 @@ def _drive_policy(prepared, drive, policy_id):
     )
 
 
-def test_mna_rlc_phasor_ledger_and_corrupted_contribution():
+def test_mna_rlc_phasor_ledger_and_corrupted_contribution() -> None:
     circuit = NodalCircuit(
         (
             CircuitInstance("resistor", Resistor(2.0), ("n", "0")),
@@ -94,7 +96,7 @@ def test_mna_rlc_phasor_ledger_and_corrupted_contribution():
     assert jnp.abs(reassessed.real_power_residual[0]) > 0.2
 
 
-def test_mna_black_box_power_evidence_is_explicitly_unavailable():
+def test_mna_black_box_power_evidence_is_explicitly_unavailable() -> None:
     black_box = AdmittanceComponent(
         jnp.asarray([[1.0, -1.0], [-1.0, 1.0]]),
         component_id="black-box",
@@ -117,7 +119,7 @@ def test_mna_black_box_power_evidence_is_explicitly_unavailable():
     assert jnp.all(jnp.isnan(ledger.real_power_residual))
 
 
-def test_transient_rlc_energy_ledger_closes_with_separate_source_power():
+def test_transient_rlc_energy_ledger_closes_with_separate_source_power() -> None:
     prepared = prepare_circuit_dae(_parallel_rlc_with_current_source())
     times = jnp.linspace(0.0, 1.0, 257)
     voltage = jnp.sin(times)
@@ -157,7 +159,7 @@ def test_transient_rlc_energy_ledger_closes_with_separate_source_power():
     assert not bool(assess_circuit_energy_ledger(corrupted).closed)
 
 
-def test_source_power_sign_reverses_without_becoming_dissipation():
+def test_source_power_sign_reverses_without_becoming_dissipation() -> None:
     source = CircuitElement(
         IndependentCurrentSourceLaw(1.0, input_key="drive"),
         element_id="source",
@@ -203,7 +205,7 @@ def test_source_power_sign_reverses_without_becoming_dissipation():
     assert bool(absorbed.passive_dissipation_valid)
 
 
-def test_driven_periodic_rlc_energy_ledger_integrates_one_period():
+def test_driven_periodic_rlc_energy_ledger_integrates_one_period() -> None:
     prepared = prepare_circuit_dae(_parallel_rlc_with_current_source())
     temporal = TemporalHarmonicPlan(jnp.asarray(1.0), 17, prepared.plan.layout.size)
     times = temporal.times
@@ -237,7 +239,7 @@ def test_driven_periodic_rlc_energy_ledger_integrates_one_period():
     )
 
 
-def test_transient_element_without_energy_law_is_unavailable():
+def test_transient_element_without_energy_law_is_unavailable() -> None:
     diode = CircuitElement(
         ExponentialDiodeLaw(1e-12, 0.025),
         element_id="diode",

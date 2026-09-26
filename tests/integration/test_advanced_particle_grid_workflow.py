@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_reduced_pic_and_ghost_fluid_workflows_share_fixed_shape_contracts():
+def test_reduced_pic_and_ghost_fluid_workflows_share_fixed_shape_contracts() -> None:
     grid_1d = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
         axis_names=("x",),

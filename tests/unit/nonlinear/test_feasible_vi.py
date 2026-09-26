@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 nl = phx.nonlinear
 
 
-def _termination():
+def _termination() -> Any:
     return nl.NonlinearTermination(
         absolute_residual=1e-10,
         relative_residual=0.0,
@@ -20,8 +23,8 @@ def _termination():
     )
 
 
-def test_preserve_box_never_exposes_domain_restricted_operator_to_outside_state():
-    def operator(state, args):
+def test_preserve_box_never_exposes_domain_restricted_operator_to_outside_state() -> None:
+    def operator(state: Any, args: Any) -> Any:
         del args
         return jnp.where(state < 0.0, jnp.nan, state - 1.0)
 
@@ -44,7 +47,7 @@ def test_preserve_box_never_exposes_domain_restricted_operator_to_outside_state(
     assert "feasibility=preserve-box" in result.provenance.notes
 
 
-def test_prepared_vi_refresh_reuses_plan_and_rejects_bound_topology_change():
+def test_prepared_vi_refresh_reuses_plan_and_rejects_bound_topology_change() -> None:
     problem = nl.VariationalInequalityProblem(
         lambda state, target: state - target,
         nl.Bounds(0.0, jnp.inf),
@@ -87,7 +90,7 @@ def test_prepared_vi_refresh_reuses_plan_and_rejects_bound_topology_change():
         )
 
 
-def test_prepared_feasible_vi_supports_filtered_jit_solve():
+def test_prepared_feasible_vi_supports_filtered_jit_solve() -> None:
     problem = nl.VariationalInequalityProblem(
         lambda state, target: state - target,
         nl.Bounds(0.0, 1.0),
@@ -102,18 +105,18 @@ def test_prepared_feasible_vi_supports_filtered_jit_solve():
     )
 
     @eqx.filter_jit
-    def solve(current):
+    def solve(current: Any) -> Any:
         return nl.solve_prepared_variational_inequality(current).state
 
     assert jnp.allclose(solve(prepared), jnp.asarray([1.0]))
 
 
-def test_preserve_box_accepts_explicit_jacobian_without_adjoint_action():
-    def jacobian(state, args):
+def test_preserve_box_accepts_explicit_jacobian_without_adjoint_action() -> None:
+    def jacobian(state: Any, args: Any) -> Any:
         del args
         space = phx.linalg.PyTreeSpace(state)
 
-        def block(scale):
+        def block(scale: Any) -> Any:
             return phx.linalg.FunctionLinearOperator(
                 lambda vector: scale * vector, source=space, target=space
             )

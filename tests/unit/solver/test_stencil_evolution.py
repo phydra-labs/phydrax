@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _periodic_grid(points=64):
+def _periodic_grid(points: Any = 64) -> Any:
     return phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(
@@ -20,7 +23,7 @@ def _periodic_grid(points=64):
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def test_staggered_acoustic_plan_prepares_locations_cfl_and_sensors():
+def test_staggered_acoustic_plan_prepares_locations_cfl_and_sensors() -> None:
     grid = _periodic_grid()
     acoustic = phx.solver.StaggeredAcousticPlan(
         grid,
@@ -43,7 +46,7 @@ def test_staggered_acoustic_plan_prepares_locations_cfl_and_sensors():
     assert len(acoustic.discretization.locations) == 2
 
 
-def test_staggered_leapfrog_has_bounded_energy_drift_on_periodic_medium():
+def test_staggered_leapfrog_has_bounded_energy_drift_on_periodic_medium() -> None:
     grid = _periodic_grid()
     acoustic = phx.solver.StaggeredAcousticPlan(
         grid,
@@ -64,7 +67,7 @@ def test_staggered_leapfrog_has_bounded_energy_drift_on_periodic_medium():
     assert jnp.abs(final_energy - initial_energy) / initial_energy < 2e-2
 
 
-def test_split_field_pml_profiles_are_nonnegative_and_decay_energy():
+def test_split_field_pml_profiles_are_nonnegative_and_decay_energy() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(41),),
         axis_names=("x",),
@@ -97,7 +100,7 @@ def test_split_field_pml_profiles_are_nonnegative_and_decay_energy():
     assert acoustic.energy(stepped) < acoustic.energy(state)
 
 
-def test_multidimensional_pml_damps_only_matching_pressure_split():
+def test_multidimensional_pml_damps_only_matching_pressure_split() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(21),
@@ -130,7 +133,7 @@ def test_multidimensional_pml_damps_only_matching_pressure_split():
     assert all(jnp.allclose(rate, 0.0) for rate in velocity_rate)
 
 
-def test_split_field_pml_suppresses_outgoing_pulse_reflection():
+def test_split_field_pml_suppresses_outgoing_pulse_reflection() -> None:
     points = 96
     width = 16
     grid = phx.discretization.TensorGridPlan(

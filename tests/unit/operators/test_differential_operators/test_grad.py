@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -11,13 +14,13 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.differential import grad
 
 
-def test_grad_scalar_function_point():
+def test_grad_scalar_function_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     g = grad(f)
@@ -26,13 +29,13 @@ def test_grad_scalar_function_point():
     assert jnp.allclose(out, jnp.array([4.0, 6.0]))
 
 
-def test_grad_vector_function_point():
+def test_grad_vector_function_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     g = grad(f)
@@ -42,13 +45,13 @@ def test_grad_vector_function_point():
     assert jnp.allclose(out, jnp.array([[4.0, 0.0], [0.0, 6.0]]))
 
 
-def test_grad_spacetime_var_x_ignores_t(sample_batch):
+def test_grad_spacetime_var_x_ignores_t(sample_batch: Any) -> None:
     dom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     ) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def f(x, t):
+    def f(x: Any, t: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + t
 
     g = grad(f, var="x")
@@ -61,7 +64,7 @@ def test_grad_spacetime_var_x_ignores_t(sample_batch):
     assert jnp.allclose(out, expected[:, None, :])
 
 
-def test_grad_coord_separable_matches_expected(sample_grid):
+def test_grad_coord_separable_matches_expected(sample_grid: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -69,7 +72,7 @@ def test_grad_coord_separable_matches_expected(sample_grid):
     batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         x, y = x
         return x**2 + y**2
 
@@ -82,7 +85,7 @@ def test_grad_coord_separable_matches_expected(sample_grid):
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_grad_preserves_metadata():
+def test_grad_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )

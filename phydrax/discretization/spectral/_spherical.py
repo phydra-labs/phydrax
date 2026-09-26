@@ -30,6 +30,7 @@ from ...linalg import (
     OperatorProperties,
 )
 from ...linalg._spaces import _coordinate_dtype
+from ...typing import parse
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -124,10 +125,8 @@ class SphericalSpectralPlan(AbstractDiscretizationPlan):
         layout = SphericalModeLayout(bandlimit, spin=int(spin), reality=reality)
         sampling_ = str(sampling).lower()
         execution_ = str(execution).lower()
-        if sampling_ not in ("mw", "mwss", "dh", "gl"):
-            raise ValueError("sampling must be 'mw', 'mwss', 'dh', or 'gl'.")
-        if execution_ not in ("recursive", "precomputed"):
-            raise ValueError("execution must be 'recursive' or 'precomputed'.")
+        sampling_ = parse(sampling_, SphericalSampling, "sampling_")
+        execution_ = parse(execution_, SphericalExecution, "execution_")
         field = str(field_name)
         if not field:
             raise ValueError("field_name must be non-empty.")

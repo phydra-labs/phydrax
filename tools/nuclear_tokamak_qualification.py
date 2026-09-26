@@ -9,13 +9,14 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from typing import Any
 
 import numpy as np
 
 import phydrax as phx
 
 
-def _data(name):
+def _data(name: Any) -> Any:
     payload = name.encode()
     reference = phx.qualification.ReferenceArtifactManifest(
         name,
@@ -41,9 +42,15 @@ def _data(name):
     )
 
 
-def qualify():
+def qualify() -> Any:
     line = phx.discretization.finite_volume.MetricLinePlan(
-        [0.0, 0.25, 1.0], [2.0, 3.0], [1.0, 2.0, 4.0], "qualification-line"
+        # ty: ignore[invalid-argument-type]
+        [0.0, 0.25, 1.0],
+        # ty: ignore[invalid-argument-type]
+        [2.0, 3.0],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 2.0, 4.0],
+        "qualification-line",
     ).prepare()
     flux = np.asarray([[2.0], [3.0], [1.0]])
     line_evidence = line.conservation_evidence(flux)
@@ -53,12 +60,16 @@ def qualify():
         np.diag([0.1, 0.2]),
         ("active", "passive"),
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     circuit = inductance.step_implicit_euler([1.0, 0.0], [1.0, 0.0], 0.1)
 
     parent = phx.nuclear.NuclideKey(10, 20)
     daughter = phx.nuclear.NuclideKey(10, 20, 1)
     groups = phx.nuclear.EnergyGroupStructure(
-        [0.0, 1.0], phx.units.MEGAELECTRONVOLT, source_id="qualification-groups"
+        # ty: ignore[invalid-argument-type]
+        [0.0, 1.0],
+        phx.units.MEGAELECTRONVOLT,
+        source_id="qualification-groups",
     )
     decay_rate = math.log(2.0) / 4.0
     transition = phx.nuclear.InventoryTransition(
@@ -78,6 +89,7 @@ def qualify():
     activation = phx.nuclear.ActivationNetworkPlan(
         (daughter, parent), groups, (transition,), error_tolerance=1.0e-12
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     decay = activation.step(activation.inventory([1.0, 0.0]), [0.0], 2.0)
     decay_error = float(
         np.max(
@@ -119,7 +131,7 @@ def qualify():
     }
 
 
-def main():
+def main() -> None:
     print(json.dumps(qualify(), indent=2, sort_keys=True))
 
 

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _affine_shadowing_case(*, steps: int):
+def _affine_shadowing_case(*, steps: int) -> Any:
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: 0.5 * state + args,
         state_layout=phx.dynamics.StateLayout((1,)),
@@ -37,7 +40,7 @@ def _affine_shadowing_case(*, steps: int):
     return problem, trajectory, args
 
 
-def test_nilss_solves_matrix_free_parameter_directional_gradient():
+def test_nilss_solves_matrix_free_parameter_directional_gradient() -> None:
     problem, trajectory, args = _affine_shadowing_case(steps=100)
     plan = phx.statistical_dynamics.NILSSPlan(1, 0, 0, 10, 10)
 
@@ -59,7 +62,7 @@ def test_nilss_solves_matrix_free_parameter_directional_gradient():
     np.testing.assert_allclose(result.directional_gradient, expected, atol=1e-12)
 
 
-def test_nilss_prepared_identity_binds_exact_trajectory_content():
+def test_nilss_prepared_identity_binds_exact_trajectory_content() -> None:
     problem, trajectory, args = _affine_shadowing_case(steps=4)
     other = phx.dynamics.evolve(
         problem.evolution,
@@ -76,7 +79,7 @@ def test_nilss_prepared_identity_binds_exact_trajectory_content():
     assert first.prepared_id != second.prepared_id
 
 
-def test_nilss_projects_flow_neutral_direction_and_records_time_dilation():
+def test_nilss_projects_flow_neutral_direction_and_records_time_dilation() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 0.5]))
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: matrix @ state + args,
@@ -126,7 +129,7 @@ def test_nilss_projects_flow_neutral_direction_and_records_time_dilation():
     np.testing.assert_allclose(result.directional_gradient, 1.296875, atol=1e-12)
 
 
-def test_nilss_resource_and_rank_preflight_refuse_unsupported_runs():
+def test_nilss_resource_and_rank_preflight_refuse_unsupported_runs() -> None:
     problem, trajectory, args = _affine_shadowing_case(steps=4)
     with pytest.raises(MemoryError, match="maximum_retained_bytes"):
         phx.statistical_dynamics.NILSSPlan(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _compiled_periodic():
+def _compiled_periodic() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(6, periodic=True),
@@ -38,7 +41,7 @@ def _compiled_periodic():
     return compiled, parameters, state
 
 
-def test_kinetic_checkpoint_roundtrip_continues_exactly(tmp_path):
+def test_kinetic_checkpoint_roundtrip_continues_exactly(tmp_path: Any) -> None:
     compiled, parameters, initial = _compiled_periodic()
     first = compiled.dynamics.step_detailed(
         jnp.asarray(0, dtype=jnp.int32),
@@ -87,7 +90,7 @@ def test_kinetic_checkpoint_roundtrip_continues_exactly(tmp_path):
     np.testing.assert_array_equal(continued, uninterrupted)
 
 
-def test_kinetic_checkpoint_rejects_runtime_and_template_mismatch(tmp_path):
+def test_kinetic_checkpoint_rejects_runtime_and_template_mismatch(tmp_path: Any) -> None:
     compiled, parameters, state = _compiled_periodic()
     plan = phx.discretization.KineticCheckpointPlan(
         compiled.dynamics.prepared_id,
@@ -138,7 +141,7 @@ def test_kinetic_checkpoint_rejects_runtime_and_template_mismatch(tmp_path):
         )
 
 
-def test_kinetic_checkpoint_preserves_raw_aa_parity(tmp_path):
+def test_kinetic_checkpoint_preserves_raw_aa_parity(tmp_path: Any) -> None:
     lattice = phx.discretization.D2Q9()
     precision = phx.discretization.LatticeBoltzmannPrecisionPolicy()
     manifest = phx.discretization.athermal_lattice_boltzmann_manifest(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,9 @@ import pytest
 import phydrax as phx
 
 
-def _termination(*, steps=100, evaluations=1000, tolerance=1e-6):
+def _termination(
+    *, steps: Any = 100, evaluations: Any = 1000, tolerance: Any = 1e-6
+) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=tolerance,
         relative_optimality=0.0,
@@ -21,8 +26,8 @@ def _termination(*, steps=100, evaluations=1000, tolerance=1e-6):
     )
 
 
-def test_strong_wolfe_reports_and_satisfies_both_inequalities():
-    def objective(parameters):
+def test_strong_wolfe_reports_and_satisfies_both_inequalities() -> None:
+    def objective(parameters: Any) -> Any:
         return 0.5 * jnp.sum((parameters - 3.0) ** 2)
 
     parameters = jnp.array([0.0, 1.0])
@@ -57,10 +62,10 @@ def test_strong_wolfe_reports_and_satisfies_both_inequalities():
     )
 
 
-def test_newton_trust_region_preserves_pytree_and_reports_ratio_radius():
+def test_newton_trust_region_preserves_pytree_and_reports_ratio_radius() -> None:
     target = {"left": jnp.array([1.0, -2.0]), "right": jnp.array([0.5])}
 
-    def objective(parameters, args):
+    def objective(parameters: Any, args: Any) -> Any:
         del args
         return 0.5 * sum(
             jnp.sum((leaf - target[name]) ** 2) for name, leaf in parameters.items()
@@ -92,9 +97,9 @@ def test_newton_trust_region_preserves_pytree_and_reports_ratio_radius():
     ],
 )
 def test_nonlinear_conjugate_gradient_uses_selected_beta_without_restart(
-    beta_method,
-):
-    def objective(parameters):
+    beta_method: Any,
+) -> None:
+    def objective(parameters: Any) -> Any:
         x, y = parameters
         return 0.5 * x**2 + y**2 + 1e-3 * (x**4 + y**4)
 
@@ -141,8 +146,8 @@ def test_nonlinear_conjugate_gradient_uses_selected_beta_without_restart(
     assert not jnp.allclose(next_parameters, parameters)
 
 
-def test_nonlinear_conjugate_gradient_forced_restart_uses_steepest_descent():
-    def objective(parameters):
+def test_nonlinear_conjugate_gradient_forced_restart_uses_steepest_descent() -> None:
+    def objective(parameters: Any) -> Any:
         return 0.25 * jnp.sum(parameters**4) + 0.5 * jnp.sum(parameters**2)
 
     method = phx.optim.NonlinearConjugateGradient(
@@ -163,7 +168,7 @@ def test_nonlinear_conjugate_gradient_forced_restart_uses_steepest_descent():
     assert jnp.allclose(next_state.direction, -next_state.gradient)
 
 
-def test_builtin_proximal_functionals_have_exact_observable_maps():
+def test_builtin_proximal_functionals_have_exact_observable_maps() -> None:
     vector = {"x": jnp.array([-2.0, -0.25, 3.0])}
     assert jnp.allclose(
         phx.optim.L1Functional(1.0).proximal(vector, 0.5)["x"],
@@ -218,10 +223,10 @@ def test_builtin_proximal_functionals_have_exact_observable_maps():
         phx.optim.ProximalNewton(inner_steps=30),
     ],
 )
-def test_proximal_methods_report_composite_stationarity(method):
+def test_proximal_methods_report_composite_stationarity(method: Any) -> None:
     target = jnp.array([2.0, -1.0, 0.1])
 
-    def smooth(parameters, args):
+    def smooth(parameters: Any, args: Any) -> Any:
         del args
         return 0.5 * jnp.vdot(parameters - target, parameters - target).real
 
@@ -247,8 +252,8 @@ def test_proximal_methods_report_composite_stationarity(method):
     )
 
 
-def test_finite_difference_gauss_newton_works_with_stopped_residual_derivatives():
-    def residual(parameters, args):
+def test_finite_difference_gauss_newton_works_with_stopped_residual_derivatives() -> None:
+    def residual(parameters: Any, args: Any) -> Any:
         del args
         return jax.lax.stop_gradient(parameters * parameters - 4.0)
 
@@ -267,7 +272,7 @@ def test_finite_difference_gauss_newton_works_with_stopped_residual_derivatives(
     assert not result.provenance.implicit_differentiation
 
 
-def test_filter_and_soc_accept_full_step_rejected_by_plain_merit_model():
+def test_filter_and_soc_accept_full_step_rejected_by_plain_merit_model() -> None:
     filter_policy = phx.optim.FilterGlobalization(
         objective_margin=0.9,
         violation_margin=1e-4,
@@ -326,7 +331,7 @@ def test_filter_and_soc_accept_full_step_rejected_by_plain_merit_model():
     )
 
 
-def test_predictor_corrector_reports_all_kkt_residuals():
+def test_predictor_corrector_reports_all_kkt_residuals() -> None:
     constraint = phx.optim.NonlinearConstraint(
         lambda parameters, args: parameters,
         lower=jnp.array([1.0]),
@@ -368,7 +373,7 @@ def test_predictor_corrector_reports_all_kkt_residuals():
     assert result.provenance.globalization == "mehrotra-predictor-corrector-residual"
 
 
-def test_predictor_corrector_rejects_nonfinite_and_infeasible_inputs_explicitly():
+def test_predictor_corrector_rejects_nonfinite_and_infeasible_inputs_explicitly() -> None:
     finite_constraint = phx.optim.NonlinearConstraint(
         lambda parameters, args: parameters,
         lower=jnp.array([0.0]),
@@ -417,15 +422,15 @@ def test_predictor_corrector_rejects_nonfinite_and_infeasible_inputs_explicitly(
     assert infeasible.status == int(phx.optim.OptimizationStatus.INFEASIBLE)
 
 
-def test_constrained_solver_accepts_traced_constraint_and_parameter_bounds():
+def test_constrained_solver_accepts_traced_constraint_and_parameter_bounds() -> None:
     @eqx.filter_jit
     def solve(
-        constraint_lower,
-        constraint_upper,
-        parameter_lower,
-        parameter_upper,
-        initial,
-    ):
+        constraint_lower: Any,
+        constraint_upper: Any,
+        parameter_lower: Any,
+        parameter_upper: Any,
+        initial: Any,
+    ) -> Any:
         constraint = phx.optim.NonlinearConstraint(
             lambda parameters, args: parameters,
             lower=constraint_lower,
@@ -462,9 +467,9 @@ def test_constrained_solver_accepts_traced_constraint_and_parameter_bounds():
     )
 
 
-def test_jitted_dynamic_lower_excludes_known_infinite_upper_from_sqp():
+def test_jitted_dynamic_lower_excludes_known_infinite_upper_from_sqp() -> None:
     @eqx.filter_jit
-    def solve(lower, initial):
+    def solve(lower: Any, initial: Any) -> Any:
         constraint = phx.optim.NonlinearConstraint(
             lambda parameters, args: parameters,
             lower=lower,
@@ -491,9 +496,9 @@ def test_jitted_dynamic_lower_excludes_known_infinite_upper_from_sqp():
     assert jnp.isfinite(result.diagnostics.complementarity)
 
 
-def test_jitted_dynamic_upper_excludes_known_infinite_lower_from_primal_dual():
+def test_jitted_dynamic_upper_excludes_known_infinite_lower_from_primal_dual() -> None:
     @eqx.filter_jit
-    def solve(upper, initial):
+    def solve(upper: Any, initial: Any) -> Any:
         constraint = phx.optim.NonlinearConstraint(
             lambda parameters, args: parameters,
             lower=-jnp.inf,
@@ -526,7 +531,7 @@ def test_jitted_dynamic_upper_excludes_known_infinite_lower_from_primal_dual():
     assert jnp.isfinite(result.diagnostics.complementarity)
 
 
-def test_filter_switches_to_armijo_at_feasible_point():
+def test_filter_switches_to_armijo_at_feasible_point() -> None:
     inactive = phx.optim.NonlinearConstraint(
         lambda parameters, args: parameters,
         lower=jnp.array([-100.0]),
@@ -553,7 +558,7 @@ def test_filter_switches_to_armijo_at_feasible_point():
     assert result.objective < 1.0
 
 
-def test_finite_difference_gauss_newton_honors_exact_remaining_budget():
+def test_finite_difference_gauss_newton_honors_exact_remaining_budget() -> None:
     result = phx.optim.least_squares(
         lambda parameters, args: parameters - 1.0,
         jnp.array([3.0, -2.0]),
@@ -566,7 +571,7 @@ def test_finite_difference_gauss_newton_honors_exact_remaining_budget():
     assert result.diagnostics.globalization_evaluations == 1
 
 
-def test_monotone_fista_recomputes_worse_extrapolated_candidate():
+def test_monotone_fista_recomputes_worse_extrapolated_candidate() -> None:
     problem = phx.optim.ProximalProblem(
         lambda parameters, args: 0.5 * jnp.sum(parameters**2),
         phx.optim.L1Functional(0.0),
@@ -594,7 +599,7 @@ def test_monotone_fista_recomputes_worse_extrapolated_candidate():
     assert next_state.objective_evaluations - state.objective_evaluations == 4
 
 
-def test_predictor_corrector_rejects_equality_only_problem():
+def test_predictor_corrector_rejects_equality_only_problem() -> None:
     equality = phx.optim.NonlinearConstraint(
         lambda parameters, args: parameters,
         lower=jnp.array([0.0]),
@@ -616,7 +621,7 @@ def test_predictor_corrector_rejects_equality_only_problem():
         )
 
 
-def test_predictor_corrector_reports_unusable_kkt_direction():
+def test_predictor_corrector_reports_unusable_kkt_direction() -> None:
     dtype = jnp.asarray(0.0).dtype
     kkt_space = phx.linalg.BlockSpace(
         (
@@ -660,7 +665,7 @@ def test_predictor_corrector_reports_unusable_kkt_direction():
     assert result.status != int(phx.optim.OptimizationStatus.INFEASIBLE)
 
 
-def test_predictor_corrector_reports_exhausted_line_search():
+def test_predictor_corrector_reports_exhausted_line_search() -> None:
     curved = phx.optim.NonlinearConstraint(
         lambda parameters, args: parameters**2,
         lower=jnp.array([0.25]),

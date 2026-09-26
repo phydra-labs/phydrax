@@ -1,4 +1,5 @@
 import hashlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -7,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _manifest(payload=b"fusion-data"):
+def _manifest(payload: Any = b"fusion-data") -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "synthetic-fusion-data",
         checksum_algorithm="sha256",
@@ -25,7 +26,7 @@ def _manifest(payload=b"fusion-data"):
     )
 
 
-def _fusion_plan():
+def _fusion_plan() -> Any:
     deuterium = phx.nuclear.NuclearSpeciesKey.from_nuclide(phx.nuclear.NuclideKey(1, 2))
     tritium = phx.nuclear.NuclearSpeciesKey.from_nuclide(phx.nuclear.NuclideKey(1, 3))
     helium4 = phx.nuclear.NuclearSpeciesKey.from_nuclide(phx.nuclear.NuclideKey(2, 4))
@@ -70,7 +71,7 @@ def _fusion_plan():
     return phx.nuclear.ThermalFusionReactionPlan(channel, reactivity, table), channel
 
 
-def test_dt_fusion_closes_particle_charge_and_energy_ledgers():
+def test_dt_fusion_closes_particle_charge_and_energy_ledgers() -> None:
     plan, channel = _fusion_plan()
     thermal = 10.0 * float(
         phx.units.conversion_factor(phx.units.KILOELECTRONVOLT, phx.units.JOULE)
@@ -93,7 +94,7 @@ def test_dt_fusion_closes_particle_charge_and_energy_ledgers():
     )
 
 
-def test_fusion_reactivity_rejects_out_of_support_temperature():
+def test_fusion_reactivity_rejects_out_of_support_temperature() -> None:
     plan, _ = _fusion_plan()
     result = plan.evaluate(
         np.asarray([1.0e19]), np.asarray([1.0e19]), np.asarray([1.0e-30])
@@ -102,13 +103,13 @@ def test_fusion_reactivity_rejects_out_of_support_temperature():
     assert not bool(result.support_valid[0])
 
 
-def test_fusion_source_is_differentiable_inside_reactivity_support():
+def test_fusion_source_is_differentiable_inside_reactivity_support() -> None:
     plan, _ = _fusion_plan()
     thermal = 8.0 * float(
         phx.units.conversion_factor(phx.units.KILOELECTRONVOLT, phx.units.JOULE)
     )
 
-    def power(density):
+    def power(density: Any) -> Any:
         return plan.evaluate(density, 2.0e19, thermal).total_power_density_w_m3
 
     derivative = jax.grad(power)(jnp.asarray(1.0e19))

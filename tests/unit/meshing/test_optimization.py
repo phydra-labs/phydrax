@@ -4,7 +4,9 @@ import numpy as np
 import phydrax as phx
 
 
-def test_target_matrix_optimization_improves_distorted_mesh_without_moving_boundary():
+def test_target_matrix_optimization_improves_distorted_mesh_without_moving_boundary() -> (
+    None
+):
     target = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5)))
     distorted = target.copy()
     distorted[4] = (0.75, 0.25)
@@ -29,7 +31,7 @@ def test_target_matrix_optimization_improves_distorted_mesh_without_moving_bound
     assert result.result.quality.minimum_mean_ratio > 0.0
 
 
-def test_generic_high_order_coordinate_optimizer_preserves_fixed_nodes():
+def test_generic_high_order_coordinate_optimizer_preserves_fixed_nodes() -> None:
     element = phx.discretization.lagrange_element("triangle", 2)
     coordinates = np.array(element.reference_nodes, copy=True)
     coordinates[3:] += 0.1

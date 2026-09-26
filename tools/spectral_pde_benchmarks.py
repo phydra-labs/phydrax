@@ -9,6 +9,7 @@ import json
 import time
 from dataclasses import asdict, dataclass
 from math import prod
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -54,7 +55,7 @@ class SpectralPDEBenchmarkRecord:
         )
 
 
-def _problem():
+def _problem() -> Any:
     x = phx.equations.PDECoordinate(
         "x",
         "space",
@@ -80,7 +81,7 @@ def _problem():
     )
 
 
-def _measure(function, argument, repeats):
+def _measure(function: Any, argument: Any, repeats: Any) -> Any:
     compiled = jax.jit(function)
     value, first_seconds = measure_synchronized(lambda: compiled(argument))
     value, distribution = measure_repeated(
@@ -91,6 +92,7 @@ def _measure(function, argument, repeats):
     return (
         value,
         1_000.0 * first_seconds,
+        # ty: ignore[invalid-argument-type]
         1_000.0 * float(distribution.mean_seconds),
     )
 
@@ -125,7 +127,7 @@ def run_spectral_pde_benchmark(
     state = compiled.project_state(physical)
     coefficient = jnp.asarray(0.07)
 
-    def drift(arguments):
+    def drift(arguments: Any) -> Any:
         value, kappa = arguments
         return compiled(0.0, value, {"kappa": kappa})
 
@@ -173,7 +175,7 @@ def run_spectral_pde_benchmark(
         t1=0.05,
     )
 
-    def real_drift(time, value, args):
+    def real_drift(time: Any, value: Any, args: Any) -> Any:
         del time, args
         real, imag = value
         return jnp.stack(
@@ -212,6 +214,7 @@ def run_spectral_pde_benchmark(
         real_solution.states[:, 1],
     )
     packed_defect = jnp.max(jnp.abs(packed_solution.states - expected_packed))
+    # ty: ignore[unresolved-attribute]
     coordinates = packed_solution.temporal_evidence.state_coordinates
     if coordinates is None:
         raise RuntimeError(
@@ -276,9 +279,13 @@ def split_form_capacity_metrics(
     )
     return {
         "mode_count": count,
+        # ty: ignore[unresolved-attribute]
         "pair_count": prepared.report.pair_count,
+        # ty: ignore[unresolved-attribute]
         "pair_chunk_size": prepared.report.pair_chunk_size,
+        # ty: ignore[unresolved-attribute]
         "pair_workspace_bytes": prepared.report.pair_workspace_bytes,
+        # ty: ignore[unresolved-attribute]
         "skew_sbp_defect": prepared.report.skew_sbp_defect,
     }
 

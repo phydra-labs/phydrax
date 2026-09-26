@@ -8,7 +8,7 @@ import jax.scipy as jsp
 import phydrax as phx
 
 
-def test_constant_hamiltonian_unitary_propagation_and_density_action():
+def test_constant_hamiltonian_unitary_propagation_and_density_action() -> None:
     hamiltonian = jnp.asarray([[0.0, 0.5], [0.5, 0.0]], dtype="complex128")
     problem = phx.solver.UnitaryPropagatorProblem(
         lambda time, args: hamiltonian,

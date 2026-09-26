@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _manifest():
+def _manifest() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "charged-material",
         checksum_algorithm="sha256",
@@ -27,7 +30,7 @@ def _manifest():
     )
 
 
-def _plan(*, stopping=1000.0, box_length=2.0):
+def _plan(*, stopping: Any = 1000.0, box_length: Any = 2.0) -> Any:
     materials = phx.equations.ChargedRadiationMaterialLibrary(
         jnp.asarray((10.0, 2000.0)),
         jnp.full((1, 2), stopping),
@@ -52,7 +55,7 @@ def _plan(*, stopping=1000.0, box_length=2.0):
     )
 
 
-def test_condensed_history_csda_range_and_kinetic_energy_ledger():
+def test_condensed_history_csda_range_and_kinetic_energy_ledger() -> None:
     plan = _plan()
     result = plan.simulate(
         jnp.asarray(((0.5, 0.5, 0.1),)),
@@ -68,7 +71,7 @@ def test_condensed_history_csda_range_and_kinetic_energy_ledger():
     np.testing.assert_allclose(result.maximum_kinetic_ledger_residual, 0.0, atol=1e-9)
 
 
-def test_boundary_escape_and_positron_annihilation_are_distinct_ledgers():
+def test_boundary_escape_and_positron_annihilation_are_distinct_ledgers() -> None:
     escaping = _plan(stopping=1.0, box_length=0.5).simulate(
         jnp.asarray(((0.5, 0.5, 0.1),)),
         jnp.asarray(((0.0, 0.0, 1.0),)),

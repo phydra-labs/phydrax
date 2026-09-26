@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +17,7 @@ from phydrax.applications.cardiovascular.mechanics import (
 )
 
 
-def _growth_problem(*, target=5.0, maximum_increment=0.03):
+def _growth_problem(*, target: Any = 5.0, maximum_increment: Any = 0.03) -> Any:
     point_ids = ("lv-q0", "lv-q1")
     directions = np.asarray(
         (
@@ -42,7 +44,7 @@ def _growth_problem(*, target=5.0, maximum_increment=0.03):
     return plan, prepared
 
 
-def _constant_cycle(prepared, value, index=0):
+def _constant_cycle(prepared: Any, value: Any, index: Any = 0) -> Any:
     identity = np.eye(prepared.plan.dimension)
     tensor = value * np.broadcast_to(
         identity,
@@ -53,7 +55,7 @@ def _constant_cycle(prepared, value, index=0):
     )
 
 
-def test_homeostatic_cycle_keeps_positive_identity_growth_and_exact_split():
+def test_homeostatic_cycle_keeps_positive_identity_growth_and_exact_split() -> None:
     _, prepared = _growth_problem()
     accumulator = growth.initialize_growth_cycle_accumulator(prepared)
     accumulator = growth.accumulate_growth_cycle(
@@ -86,7 +88,7 @@ def test_homeostatic_cycle_keeps_positive_identity_growth_and_exact_split():
     assert np.allclose(reconstructed, total, rtol=2e-5, atol=2e-6)
 
 
-def test_slow_growth_requires_refinement_before_atomic_commit():
+def test_slow_growth_requires_refinement_before_atomic_commit() -> None:
     _, prepared = _growth_problem(target=0.0, maximum_increment=0.03)
     accumulator = growth.initialize_growth_cycle_accumulator(prepared)
     accumulator = growth.accumulate_growth_cycle(
@@ -120,7 +122,7 @@ def test_slow_growth_requires_refinement_before_atomic_commit():
     assert np.all(eigenvalues >= -psd_tolerance)
 
 
-def test_reference_epoch_transfer_is_discrete_and_forces_all_rebuilds():
+def test_reference_epoch_transfer_is_discrete_and_forces_all_rebuilds() -> None:
     source_plan, source = _growth_problem(target=0.0)
     source_state = growth.LogGrowthTensorState(
         np.asarray(
@@ -180,7 +182,7 @@ def test_reference_epoch_transfer_is_discrete_and_forces_all_rebuilds():
     assert np.allclose(derivative, 0.0)
 
 
-def test_invalid_epoch_transfer_rolls_back_source_epoch_and_cycle_history():
+def test_invalid_epoch_transfer_rolls_back_source_epoch_and_cycle_history() -> None:
     source_plan, source = _growth_problem(target=0.0)
     state = growth.initialize_growth_state(source)
     accumulator = growth.accumulate_growth_cycle(
@@ -211,7 +213,7 @@ def test_invalid_epoch_transfer_rolls_back_source_epoch_and_cycle_history():
     assert result.accumulator.cycle_count == 1
 
 
-def _sarcomere_plan(**overrides):
+def _sarcomere_plan(**overrides: Any) -> Any:
     parameters = dict(
         attachment_rate_per_ms=0.08,
         powerstroke_rate_per_ms=0.05,
@@ -234,10 +236,11 @@ def _sarcomere_plan(**overrides):
         balance_tolerance=2.0e-5,
     )
     parameters.update(overrides)
+    # ty: ignore[invalid-argument-type]
     return sarcomere.MeanFieldSarcomerePlan(**parameters)
 
 
-def _coupling(oxygen, *, velocity=0.0):
+def _coupling(oxygen: Any, *, velocity: Any = 0.0) -> Any:
     return sarcomere.SarcomereCouplingInputs(
         np.asarray((0.001, 0.001)),
         np.asarray((0.002, 0.002)),
@@ -247,7 +250,7 @@ def _coupling(oxygen, *, velocity=0.0):
     )
 
 
-def test_mean_field_species_and_power_ledgers_close_with_oxygen_modulation():
+def test_mean_field_species_and_power_ledgers_close_with_oxygen_modulation() -> None:
     plan = _sarcomere_plan()
     fractions = np.asarray(((0.5, 0.5, 0.0, 0.0),) * 2)
     state = sarcomere.SarcomereState(
@@ -283,7 +286,7 @@ def test_mean_field_species_and_power_ledgers_close_with_oxygen_modulation():
     )
 
 
-def test_invalid_oxygen_input_fails_closed_without_changing_state():
+def test_invalid_oxygen_input_fails_closed_without_changing_state() -> None:
     plan = _sarcomere_plan()
     state = sarcomere.initialize_sarcomere_state(
         plan,
@@ -302,7 +305,7 @@ def test_invalid_oxygen_input_fails_closed_without_changing_state():
     assert float(result.state.time_ms) == float(state.time_ms)
 
 
-def test_stochastic_molecular_fidelity_cannot_be_used_as_mean_field_mode():
+def test_stochastic_molecular_fidelity_cannot_be_used_as_mean_field_mode() -> None:
     stochastic = sarcomere.StochasticMolecularSarcomereFidelity(1000, 8)
     assert stochastic.molecule_count == 1000
     with pytest.raises(TypeError, match="distinct route"):

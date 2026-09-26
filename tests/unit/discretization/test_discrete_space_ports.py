@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import pytest
 
 from phydrax.axes import AxisKey
@@ -15,7 +18,9 @@ from phydrax.discretization import (
 from phydrax.linalg import ArraySpace, DualSpace
 
 
-def _field(name, layout, *, representation="point_value", dual=False):
+def _field(
+    name: Any, layout: Any, *, representation: Any = "point_value", dual: Any = False
+) -> Any:
     space = ArraySpace((layout.size,))
     return DiscreteFieldSpace(
         name,
@@ -26,7 +31,7 @@ def _field(name, layout, *, representation="point_value", dual=False):
     )
 
 
-def test_tensor_field_port_uses_space_identity_and_named_layout_axes():
+def test_tensor_field_port_uses_space_identity_and_named_layout_axes() -> None:
     layout = TensorDofLayout(("i", "j"), (2, 3))
     field = _field("u", layout)
     port = field.value_port()
@@ -45,7 +50,7 @@ def test_tensor_field_port_uses_space_identity_and_named_layout_axes():
     assert (port.frame_id, port.normalization_id) == (None, None)
 
 
-def test_component_axes_leave_axis_keys_undeclared():
+def test_component_axes_leave_axis_keys_undeclared() -> None:
     port = _field("v", TensorDofLayout(("i",), (2,), component_shape=(3,))).value_port()
 
     assert port.event_shape == (2, 3)
@@ -53,7 +58,7 @@ def test_component_axes_leave_axis_keys_undeclared():
     assert port.axis_keys is None
 
 
-def test_entity_modal_and_block_layout_event_structure():
+def test_entity_modal_and_block_layout_event_structure() -> None:
     entity = _field(
         "flux",
         EntityDofLayout("faces", 4, 4, component_shape=(2,)),
@@ -88,7 +93,7 @@ def test_entity_modal_and_block_layout_event_structure():
     assert block.axis_keys is None
 
 
-def test_dual_vector_space_declares_dual_variance():
+def test_dual_vector_space_declares_dual_variance() -> None:
     layout = TensorDofLayout(("i",), (3,))
 
     primal = _field("r", layout).value_port()
@@ -98,7 +103,7 @@ def test_dual_vector_space_declares_dual_variance():
     assert primal.port_id != dual.port_id
 
 
-def test_ports_are_deterministic_and_distinguish_declared_identity():
+def test_ports_are_deterministic_and_distinguish_declared_identity() -> None:
     layout = TensorDofLayout(("i",), (3,))
 
     port = _field("u", layout).value_port()
@@ -112,6 +117,6 @@ def test_ports_are_deterministic_and_distinguish_declared_identity():
     assert port.port_id != _field("u", TensorDofLayout(("k",), (3,))).value_port().port_id
 
 
-def test_field_without_coefficients_has_no_port():
+def test_field_without_coefficients_has_no_port() -> None:
     with pytest.raises(ValueError, match="'empty'"):
         _field("empty", EntityDofLayout("cells", 0, 0)).value_port()

@@ -204,11 +204,11 @@ def _operation(
     case: _Case,
     workload: _Workload,
     solver: phx.transport.Sinkhorn,
-):
+) -> Any:
     count = case.size
     selected = max(1, count // 4)
 
-    def apply(values):
+    def apply(values: Any) -> Any:
         if workload.named:
             value = cx.Field(values, dims=("case", "sample"))
             weights = (
@@ -223,6 +223,7 @@ def _operation(
             axis = -1
 
         if case.operation == "sort":
+            # ty: ignore[no-matching-overload]
             output = phx.transport.soft_sort(
                 value,
                 weights=weights,
@@ -230,6 +231,7 @@ def _operation(
                 solver=solver,
             )
         elif case.operation == "rank":
+            # ty: ignore[no-matching-overload]
             output = phx.transport.soft_rank(
                 value,
                 weights=weights,
@@ -237,6 +239,7 @@ def _operation(
                 solver=solver,
             )
         elif case.operation == "topk":
+            # ty: ignore[no-matching-overload]
             output = phx.transport.soft_topk_mask(
                 value,
                 selected,
@@ -245,6 +248,7 @@ def _operation(
                 solver=solver,
             )
         else:
+            # ty: ignore[no-matching-overload]
             output = phx.transport.soft_quantile(
                 value,
                 _QUANTILES.astype(values.dtype),
@@ -258,26 +262,27 @@ def _operation(
     return apply
 
 
-def _compile(function, example: jax.Array):
+def _compile(function: Any, example: jax.Array) -> Any:
     compiled, elapsed = measure_host(lambda: jax.jit(function).lower(example).compile())
     return compiled, 1_000.0 * elapsed
 
 
-def _execute(compiled, example: jax.Array):
+def _execute(compiled: Any, example: jax.Array) -> Any:
     result, elapsed = measure_synchronized(lambda: compiled(example))
     return result, 1_000.0 * elapsed
 
 
-def _steady_ms(compiled, example: jax.Array, warmups: int, repeats: int) -> float:
+def _steady_ms(compiled: Any, example: jax.Array, warmups: int, repeats: int) -> float:
     _, distribution = measure_repeated(
         lambda: compiled(example),
         warmup=warmups,
         repeats=repeats,
     )
+    # ty: ignore[invalid-argument-type]
     return 1_000.0 * float(distribution.mean_seconds)
 
 
-def _memory(compiled) -> dict[str, int | str]:
+def _memory(compiled: Any) -> dict[str, int | str]:
     analysis = compiled.memory_analysis()
     if analysis is None:
         return {"status": "unavailable"}
@@ -314,7 +319,7 @@ def _hard_output(case: _Case, workload: _Workload) -> jax.Array:
     target_lower = target_index / case.size
     target_upper = (target_index + 1.0) / case.size
 
-    def hard_row(row, row_weights):
+    def hard_row(row: Any, row_weights: Any) -> Any:
         probabilities = row_weights / jnp.sum(row_weights)
         active = probabilities > 0.0
         order = jnp.argsort(jnp.where(active, row, jnp.inf), stable=True)
@@ -494,7 +499,7 @@ def _record(case: _Case, *, seed: int, warmups: int, repeats: int) -> dict[str, 
     output, first_forward_ms = _execute(forward, values)
     steady_forward_ms = _steady_ms(forward, values, warmups, repeats)
 
-    def objective(candidate):
+    def objective(candidate: Any) -> Any:
         transformed = operation(candidate)
         coefficients = jnp.linspace(
             0.5,
@@ -510,7 +515,7 @@ def _record(case: _Case, *, seed: int, warmups: int, repeats: int) -> dict[str, 
 
     direction = jnp.cos(jnp.arange(values.size, dtype=dtype)).reshape(values.shape)
 
-    def jvp(candidate):
+    def jvp(candidate: Any) -> Any:
         return jax.jvp(operation, (candidate,), (direction,))[1]
 
     forward_mode, jvp_compile_ms = _compile(jvp, values)

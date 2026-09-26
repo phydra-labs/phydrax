@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -17,23 +20,23 @@ class _KeyedOperator(AbstractOperatorModel):
     out_size: str = eqx.field(static=True)
     scale: Array
 
-    def __init__(self, scale: float):
+    def __init__(self, scale: float) -> None:
         self.in_size = "scalar"
         self.out_size = "scalar"
         self.scale = jnp.asarray(scale)
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> Any:
         return phx.nn.operator.operator_architecture_contract("DeepONet")
 
-    def __call_operator_batch__(self, batch, /, *, key=None):
+    def __call_operator_batch__(self, batch: Any, /, *, key: Any = None) -> Any:
         coordinates = batch.require_single_query().coordinates_array(
             case_shape=batch.case_shape
         )
         noise = 0.0 if key is None else jr.normal(key, ())
         return self.scale * coordinates[..., 0] + noise
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         if not isinstance(x, phx.nn.operator.OperatorBatch):
             raise TypeError("_KeyedOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
@@ -81,7 +84,7 @@ def _tensor_batch() -> phx.nn.operator.OperatorBatch:
     )
 
 
-def test_homogeneous_operator_ensemble_matches_explicit_member_loop():
+def test_homogeneous_operator_ensemble_matches_explicit_member_loop() -> None:
     members = tuple(_KeyedOperator(scale) for scale in (1.0, 2.0, 3.0))
     ensemble = phx.uq.HomogeneousFunctionEnsemble.from_members(
         members,
@@ -116,7 +119,7 @@ def test_homogeneous_operator_ensemble_matches_explicit_member_loop():
     )
 
 
-def test_heterogeneous_operator_ensemble_matches_explicit_member_loop():
+def test_heterogeneous_operator_ensemble_matches_explicit_member_loop() -> None:
     members = (_KeyedOperator(1.0), _KeyedOperator(-2.0))
     ensemble = phx.uq.HeterogeneousFunctionEnsemble(
         members,
@@ -146,7 +149,7 @@ def test_heterogeneous_operator_ensemble_matches_explicit_member_loop():
     )
 
 
-def test_keyed_operator_sampling_is_reproducible_and_chunk_invariant():
+def test_keyed_operator_sampling_is_reproducible_and_chunk_invariant() -> None:
     model = _KeyedOperator(1.0)
     batch = _point_batch()
     key = jr.key(12)
@@ -196,7 +199,7 @@ def test_keyed_operator_sampling_is_reproducible_and_chunk_invariant():
     )
 
 
-def test_operator_ensemble_preserves_crossed_input_sample_axis():
+def test_operator_ensemble_preserves_crossed_input_sample_axis() -> None:
     stacked = phx.nn.operator.stack_operator_batches(
         (_point_batch(), _point_batch()),
         case_axis="input_draw",
@@ -228,7 +231,7 @@ def test_operator_ensemble_preserves_crossed_input_sample_axis():
     assert prediction.case_axes == ("case",)
 
 
-def test_stochastic_prediction_rejects_draw_dependent_query_geometry():
+def test_stochastic_prediction_rejects_draw_dependent_query_geometry() -> None:
     stacked = phx.nn.operator.stack_operator_batches(
         (_point_batch(), _point_batch(shift=0.1)),
         case_axis="input_draw",
@@ -246,7 +249,7 @@ def test_stochastic_prediction_rejects_draw_dependent_query_geometry():
         )
 
 
-def test_fno_mc_dropout_and_inference_mode_operator_sampling():
+def test_fno_mc_dropout_and_inference_mode_operator_sampling() -> None:
     batch = _tensor_batch()
     model = phx.nn.operator.architectures.FNO(
         n_modes=(3,),

@@ -214,7 +214,10 @@ class _FixedHybridStageFluxCallback(StrictModule):
         del stage_index, time
         dynamics = self.finite_volume.dynamics
         # Construction admits only stationary structured finite-volume dynamics.
-        assert isinstance(dynamics, PreparedFiniteVolumeDynamics)
+        if not (isinstance(dynamics, PreparedFiniteVolumeDynamics)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(dynamics, PreparedFiniteVolumeDynamics)."
+            )
         discretization = dynamics.discretization
         replacements = tuple(
             jnp.zeros(
@@ -722,7 +725,10 @@ class PreparedFixedPartitionHybridRuntime(StrictModule):
         residuals = []
         dynamics = self.finite_volume.dynamics
         # Construction admits only stationary structured finite-volume dynamics.
-        assert isinstance(dynamics, PreparedFiniteVolumeDynamics)
+        if not (isinstance(dynamics, PreparedFiniteVolumeDynamics)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(dynamics, PreparedFiniteVolumeDynamics)."
+            )
         discretization = dynamics.discretization
         for interface_index, (axis, face_index) in enumerate(
             zip(

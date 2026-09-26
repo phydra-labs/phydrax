@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -16,12 +19,19 @@ from phydrax.optim._anchored_target import (
 )
 
 
-def _response(design, args):
+def _response(design: Any, args: Any) -> Any:
     del args
     return design, jnp.asarray(True), {"evaluated_design": design}
 
 
-def _problem(fine=_response, predictor=_response, *, target=1.0, bounds=None, **kwargs):
+def _problem(
+    fine: Any = _response,
+    predictor: Any = _response,
+    *,
+    target: Any = 1.0,
+    bounds: Any = None,
+    **kwargs: Any,
+) -> Any:
     return AnchoredTargetProblem(
         fine,
         AnchoredResponseModel(predictor),
@@ -33,10 +43,10 @@ def _problem(fine=_response, predictor=_response, *, target=1.0, bounds=None, **
     )
 
 
-def test_multiplicative_exact_scale_target_uses_identical_merit_and_one_trial():
+def test_multiplicative_exact_scale_target_uses_identical_merit_and_one_trial() -> None:
     physical_scale = jnp.asarray([1.0e3, 1.0e-3])
 
-    def fine(design, args):
+    def fine(design: Any, args: Any) -> Any:
         del args
         return physical_scale * design, jnp.asarray(True), {"state": design}
 
@@ -67,7 +77,9 @@ def test_multiplicative_exact_scale_target_uses_identical_merit_and_one_trial():
 
 
 @pytest.mark.parametrize("correction", ["additive", "multiplicative"])
-def test_anchor_interpolation_is_exact_even_across_large_physical_offsets(correction):
+def test_anchor_interpolation_is_exact_even_across_large_physical_offsets(
+    correction: Any,
+) -> None:
     model = AnchoredResponseModel(
         _response,
         correction=correction,
@@ -81,8 +93,10 @@ def test_anchor_interpolation_is_exact_even_across_large_physical_offsets(correc
 
 
 @pytest.mark.parametrize("denominator", [0.0, 1e-13, -1e-13])
-def test_unsafe_multiplicative_anchor_is_rejected_without_a_physical_trial(denominator):
-    def model(design, args):
+def test_unsafe_multiplicative_anchor_is_rejected_without_a_physical_trial(
+    denominator: Any,
+) -> None:
+    def model(design: Any, args: Any) -> Any:
         del args
         return design + denominator, jnp.asarray(True), design
 
@@ -104,8 +118,8 @@ def test_unsafe_multiplicative_anchor_is_rejected_without_a_physical_trial(denom
     np.testing.assert_array_equal(result.values, [0.0])
 
 
-def test_wrong_model_rejections_keep_fixed_anchor_and_consume_budget():
-    def reversed_model(design, args):
+def test_wrong_model_rejections_keep_fixed_anchor_and_consume_budget() -> None:
+    def reversed_model(design: Any, args: Any) -> Any:
         del args
         return -design, jnp.asarray(True), {"evaluated_design": design}
 
@@ -130,8 +144,8 @@ def test_wrong_model_rejections_keep_fixed_anchor_and_consume_budget():
     assert np.all(np.asarray(result.history["predicted_reduction"][:3]) > 0)
 
 
-def test_invalid_fine_trials_roll_back_state_values_and_evidence():
-    def fine(design, args):
+def test_invalid_fine_trials_roll_back_state_values_and_evidence() -> None:
+    def fine(design: Any, args: Any) -> Any:
         del args
         valid = design[0] <= 0.25
         # A converged-looking number does not override explicit physical failure.
@@ -153,8 +167,8 @@ def test_invalid_fine_trials_roll_back_state_values_and_evidence():
     assert not np.any(np.asarray(result.history["accepted"][:2]))
 
 
-def test_invalid_initial_physics_never_claims_target_success():
-    def invalid(design, args):
+def test_invalid_initial_physics_never_claims_target_success() -> None:
+    def invalid(design: Any, args: Any) -> Any:
         del args
         return jnp.ones_like(design), jnp.asarray(False), {"residual": jnp.asarray(3.0)}
 
@@ -165,7 +179,7 @@ def test_invalid_initial_physics_never_claims_target_success():
     assert int(result.iterations) == 0
 
 
-def test_bound_stationarity_is_not_unmet_target_success():
+def test_bound_stationarity_is_not_unmet_target_success() -> None:
     result = solve_anchored_target(
         _problem(target=2.0, bounds=phx.optim.Bounds(0.0, 1.0)),
         jnp.asarray([0.0]),
@@ -177,7 +191,7 @@ def test_bound_stationarity_is_not_unmet_target_success():
     assert int(result.evaluations) == 2
 
 
-def test_budget_exhaustion_is_not_partial_target_success():
+def test_budget_exhaustion_is_not_partial_target_success() -> None:
     result = solve_anchored_target(
         _problem(),
         jnp.asarray([0.0]),
@@ -192,7 +206,7 @@ def test_budget_exhaustion_is_not_partial_target_success():
     assert result.target_error > 0.8
 
 
-def test_physical_constraints_share_canonical_order_and_block_infeasible_target():
+def test_physical_constraints_share_canonical_order_and_block_infeasible_target() -> None:
     constraints = (
         phx.optim.NonlinearConstraint(
             lambda point, args: point[1],
@@ -224,8 +238,8 @@ def test_physical_constraints_share_canonical_order_and_block_infeasible_target(
     np.testing.assert_allclose(result.history["ratio"][0], 1.0, atol=1e-10)
 
 
-def test_coupled_native_implicit_predictor_matches_physical_target():
-    def coupled_residual(state, design):
+def test_coupled_native_implicit_predictor_matches_physical_target() -> None:
+    def coupled_residual(state: Any, design: Any) -> Any:
         return jnp.asarray(
             [
                 2.0 * state[0] + state[1] - design[0],
@@ -233,7 +247,7 @@ def test_coupled_native_implicit_predictor_matches_physical_target():
             ]
         )
 
-    def predictor(design, args):
+    def predictor(design: Any, args: Any) -> Any:
         del args
         state = phx.optim.implicit_least_squares(
             coupled_residual,
@@ -248,7 +262,7 @@ def test_coupled_native_implicit_predictor_matches_physical_target():
         defect = jnp.max(jnp.abs(coupled_residual(state, design)))
         return state, defect < 1e-8, {"state": state, "defect": defect}
 
-    def fine(design, args):
+    def fine(design: Any, args: Any) -> Any:
         state, accepted, evidence = predictor(design, args)
         return 2.0 * state, accepted, evidence
 
@@ -275,8 +289,8 @@ def test_coupled_native_implicit_predictor_matches_physical_target():
     assert result.model_evidence["defect"] < 1e-8
 
 
-def test_invalid_predictor_does_not_spend_physical_trial_budget():
-    def predictor(design, args):
+def test_invalid_predictor_does_not_spend_physical_trial_budget() -> None:
+    def predictor(design: Any, args: Any) -> Any:
         del args
         return design, jnp.asarray(False), {"defect": jnp.asarray(1.0)}
 
@@ -287,7 +301,7 @@ def test_invalid_predictor_does_not_spend_physical_trial_budget():
     np.testing.assert_array_equal(result.design, [0.0])
 
 
-def test_named_physical_scales_and_frozen_realization_are_explicit():
+def test_named_physical_scales_and_frozen_realization_are_explicit() -> None:
     with pytest.raises(ValueError):
         AnchoredResponseModel(_response, correction="multiplicative")
     with pytest.raises(ValueError):
@@ -303,10 +317,10 @@ def test_named_physical_scales_and_frozen_realization_are_explicit():
         )
 
 
-def test_host_blackbox_is_never_traced_and_matches_target():
+def test_host_blackbox_is_never_traced_and_matches_target() -> None:
     evaluations = []
 
-    def blackbox(design, args):
+    def blackbox(design: Any, args: Any) -> Any:
         del args
         coordinate = float(design[0])
         evaluations.append(coordinate)
@@ -316,7 +330,7 @@ def test_host_blackbox_is_never_traced_and_matches_target():
             {"coordinate": jnp.asarray(coordinate)},
         )
 
-    def approximate(design, args):
+    def approximate(design: Any, args: Any) -> Any:
         del args
         return design**2, jnp.asarray(True), {"coordinate": design[0]}
 
@@ -331,10 +345,10 @@ def test_host_blackbox_is_never_traced_and_matches_target():
     np.testing.assert_allclose(result.fine_evidence["coordinate"], evaluations[-1])
 
 
-def test_host_rejected_blackbox_calls_are_budgeted_and_not_promoted():
+def test_host_rejected_blackbox_calls_are_budgeted_and_not_promoted() -> None:
     evaluations = []
 
-    def blackbox(design, args):
+    def blackbox(design: Any, args: Any) -> Any:
         del args
         coordinate = float(design[0])
         evaluations.append(coordinate)
@@ -344,7 +358,7 @@ def test_host_rejected_blackbox_calls_are_budgeted_and_not_promoted():
             {"coordinate": jnp.asarray(coordinate)},
         )
 
-    def wrong_predictor(design, args):
+    def wrong_predictor(design: Any, args: Any) -> Any:
         del args
         return -design, jnp.asarray(True), {"coordinate": design[0]}
 
@@ -362,8 +376,8 @@ def test_host_rejected_blackbox_calls_are_budgeted_and_not_promoted():
     np.testing.assert_allclose(result.last_trial_evidence["coordinate"], -0.25, atol=1e-8)
 
 
-def test_failed_inner_prediction_never_promotes_an_unaccepted_trial():
-    def invalid_away_from_anchor(design, args):
+def test_failed_inner_prediction_never_promotes_an_unaccepted_trial() -> None:
+    def invalid_away_from_anchor(design: Any, args: Any) -> Any:
         del args
         return design, design[0] == 0.0, {"coordinate": design[0]}
 

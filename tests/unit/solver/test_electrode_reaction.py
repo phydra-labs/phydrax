@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_butler_volmer_electrode_preserves_sites_and_current_charge_ledger():
+def test_butler_volmer_electrode_preserves_sites_and_current_charge_ledger() -> None:
     phases = (
         phx.equations.ChemicalPhaseSpec(
             "electrolyte", phx.equations.ChemicalPhaseKind.LIQUID, 3

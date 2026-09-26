@@ -91,13 +91,16 @@ def main() -> None:
     )
     if not np.isfinite(
         (fit.initial_training_loss, fit.final_training_loss, fit.validation_loss)
+        # ty: ignore[invalid-argument-type]
     ).all() or not bool(jnp.all(sample.valid)):
         raise RuntimeError("Calorimeter flow fitting or physical sampling failed.")
     print(
         {
             "initial_loss": fit.initial_training_loss,
             "final_loss": fit.final_training_loss,
+            # ty: ignore[unresolved-attribute]
             "solver_valid": sample.solver_valid.tolist(),
+            # ty: ignore[unresolved-attribute]
             "physical_valid": sample.valid.tolist(),
         }
     )

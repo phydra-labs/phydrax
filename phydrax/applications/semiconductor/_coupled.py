@@ -279,7 +279,8 @@ class ClassicalPhysics(StrictModule):
             if plan.electrothermal:
                 capacity = model.lattice_heat_capacity
                 # DevicePlan requires lattice heat capacity for electrothermal plans.
-                assert capacity is not None
+                if not (capacity is not None):
+                    raise RuntimeError("Internal invariant failed: capacity is not None.")
                 capacity_bounds = capacity.temperature_range
                 valid &= jnp.all(
                     (tl[nodes] >= capacity_bounds[0]) & (tl[nodes] <= capacity_bounds[1])
@@ -393,7 +394,12 @@ class ClassicalPhysics(StrictModule):
             nodes = jnp.asarray(plan.material_nodes[index], dtype=jnp.int32)
             if model.thermodynamics is None:
                 # Legacy intrinsic-density materials always resolve their band data.
-                assert model.electron_affinity is not None and model.band_gap is not None
+                if not (
+                    model.electron_affinity is not None and model.band_gap is not None
+                ):
+                    raise RuntimeError(
+                        "Internal invariant failed: model.electron_affinity is not None and model.band_gap is not None."
+                    )
                 conduction_material = -model.electron_affinity
                 valence_material = conduction_material - model.band_gap
                 ec = ec.at[nodes].set(conduction_material - Q * psi[nodes])
@@ -439,7 +445,10 @@ class ClassicalPhysics(StrictModule):
                 continue
             nodes = jnp.asarray(plan.material_nodes[index], dtype=jnp.int32)
             # Incomplete ionization is admitted only against explicit bands.
-            assert model.thermodynamics is not None
+            if not (model.thermodynamics is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: model.thermodynamics is not None."
+                )
             nd, na = model.incomplete_ionization.ionized_densities_split(
                 model.thermodynamics,
                 psi[nodes],
@@ -673,10 +682,19 @@ class ClassicalPhysics(StrictModule):
             model_r = plan.material_models[plan.interface_materials[index][1]]
             # DevicePlan admits thermionic traces only between explicit-band
             # semiconductors.
-            assert isinstance(model_l, SemiconductorMaterial)
-            assert isinstance(model_r, SemiconductorMaterial)
+            if not (isinstance(model_l, SemiconductorMaterial)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(model_l, SemiconductorMaterial)."
+                )
+            if not (isinstance(model_r, SemiconductorMaterial)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(model_r, SemiconductorMaterial)."
+                )
             bands_l, bands_r = model_l.thermodynamics, model_r.thermodynamics
-            assert bands_l is not None and bands_r is not None
+            if not (bands_l is not None and bands_r is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: bands_l is not None and bands_r is not None."
+                )
             fns = tuple(
                 K * plan.temperature * self.field(u, f"interface_{index}_{name}")[0]
                 for name in ("electron_left", "electron_right", "hole_left", "hole_right")
@@ -928,7 +946,10 @@ class ClassicalPhysics(StrictModule):
                     electron,
                 ) in carriers:
                     # DevicePlan requires both laws for carrier-energy evolution.
-                    assert relaxation_law is not None and transport_law is not None
+                    if not (relaxation_law is not None and transport_law is not None):
+                        raise RuntimeError(
+                            "Internal invariant failed: relaxation_law is not None and transport_law is not None."
+                        )
                     relaxation = relaxation_law.evaluate(
                         density[nodes], temperature[nodes], tl[nodes]
                     )
@@ -971,7 +992,8 @@ class ClassicalPhysics(StrictModule):
                 nodes = jnp.asarray(plan.material_nodes[index], dtype=jnp.int32)
                 capacity = model.lattice_heat_capacity
                 # DevicePlan requires lattice heat capacity for electrothermal plans.
-                assert capacity is not None
+                if not (capacity is not None):
+                    raise RuntimeError("Internal invariant failed: capacity is not None.")
                 lattice = lattice.at[nodes].set(capacity.internal_energy(tl[nodes]))
             if plan.carrier_energy:
                 result = self.layout.set(
@@ -1048,14 +1070,18 @@ class ClassicalPhysics(StrictModule):
                 )
                 capacity = model.lattice_heat_capacity
                 # DevicePlan requires lattice heat capacity for electrothermal plans.
-                assert capacity is not None
+                if not (capacity is not None):
+                    raise RuntimeError("Internal invariant failed: capacity is not None.")
                 lower, upper = capacity.temperature_range
                 if isinstance(model, SemiconductorMaterial):
                     lower = jnp.maximum(lower, model.temperature_range[0])
                     upper = jnp.minimum(upper, model.temperature_range[1])
                     bands = model.thermodynamics
                     # Electrothermal plans reject semiconductors without explicit bands.
-                    assert bands is not None
+                    if not (bands is not None):
+                        raise RuntimeError(
+                            "Internal invariant failed: bands is not None."
+                        )
 
                     def solve_one(
                         nn: Array,
@@ -1115,7 +1141,10 @@ class ClassicalPhysics(StrictModule):
                         nodes = jnp.asarray(plan.material_nodes[index], dtype=jnp.int32)
                         bands = model.thermodynamics
                         # Carrier-energy plans are electrothermal, hence explicit-band.
-                        assert bands is not None
+                        if not (bands is not None):
+                            raise RuntimeError(
+                                "Internal invariant failed: bands is not None."
+                            )
                         target = (
                             self.field(stored, f"{name}_energy")[nodes]
                             / plan.support.volumes[nodes]

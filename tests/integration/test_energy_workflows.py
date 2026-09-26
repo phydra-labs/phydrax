@@ -1,6 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Consumer contracts at the RC/planning boundary, using an actual native plan."""
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ from phydrax.applications import energy_planning as ep
 
 
 @pytest.fixture(scope="module")
-def dispatch():
+def dispatch() -> Any:
     with jax.enable_x64(True):
         heat_W = np.array([1500.0, 1800.0])
         spec = make_dispatch_system(
@@ -22,7 +24,7 @@ def dispatch():
         yield spec, solution.plan, heat_W
 
 
-def test_amount_per_hour_must_not_be_consumed_as_watts(dispatch):
+def test_amount_per_hour_must_not_be_consumed_as_watts(dispatch: Any) -> None:
     spec, plan, heat_W = dispatch
     replay, delivered_W = replay_dispatch_heat(spec, plan, heat_W)
     assert replay.successful
@@ -33,7 +35,9 @@ def test_amount_per_hour_must_not_be_consumed_as_watts(dispatch):
         replay_dispatch_heat(spec, plan, heat_W / 1000.0)
 
 
-def test_corrupted_inventory_replay_is_rejected_before_building_integration(dispatch):
+def test_corrupted_inventory_replay_is_rejected_before_building_integration(
+    dispatch: Any,
+) -> None:
     spec, plan, heat_W = dispatch
     name = "inventory/thermal-store/state/day"
     corrupted = ep.EnergyPlan(

@@ -24,7 +24,7 @@ from phydrax.applications.skeletal_muscle.personalization import (
 )
 
 
-def test_motor_force_calibration_and_macroscopic_fatigue_remain_separate_routes():
+def test_motor_force_calibration_and_macroscopic_fatigue_remain_separate_routes() -> None:
     motor = FuglevandWinterPatla1993Plan(
         24,
         event_capacity_per_unit=4,

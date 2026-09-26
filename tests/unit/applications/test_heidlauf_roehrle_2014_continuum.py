@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +21,13 @@ from phydrax.applications.skeletal_muscle.continuum import (
 )
 
 
-def _input(gamma, token=0, *, source="prescribed-test-stress", successful=True):
+def _input(
+    gamma: Any,
+    token: Any = 0,
+    *,
+    source: Any = "prescribed-test-stress",
+    successful: Any = True,
+) -> Any:
     return HeidlaufRoehrle2014StressInput(
         gamma,
         jnp.full((8,), token, dtype=jnp.uint32),
@@ -28,7 +36,7 @@ def _input(gamma, token=0, *, source="prescribed-test-stress", successful=True):
     )
 
 
-def _material(gamma=0.0, *, name="test-2014"):
+def _material(gamma: Any = 0.0, *, name: Any = "test-2014") -> Any:
     architecture = UniformFiberArchitecturePlan("source-x-fibers").prepare(
         jnp.asarray((1.0, 0.0, 0.0))
     )
@@ -39,7 +47,7 @@ def _material(gamma=0.0, *, name="test-2014"):
     )
 
 
-def _numpy_source_equation(deformation, pressure, gamma):
+def _numpy_source_equation(deformation: Any, pressure: Any, gamma: Any) -> Any:
     """Literal Eq. 1 transcription, independent of the energy and JAX kernel."""
     c10, c01, b1, d1, maximum = 6.352e-7, 3627.0, 0.02756, 43.373, 73000.0
     c = deformation.T @ deformation
@@ -57,7 +65,9 @@ def _numpy_source_equation(deformation, pressure, gamma):
 
 
 @pytest.mark.parametrize("stretch", (0.79, 1.0, 1.26))
-def test_source_stress_matches_independent_equation_including_compression(stretch):
+def test_source_stress_matches_independent_equation_including_compression(
+    stretch: Any,
+) -> None:
     material = _material(1.35)
     deformation = np.asarray(
         ((stretch, 0.03, 0.0), (0.0, stretch**-0.5, 0.02), (0.0, 0.0, stretch**-0.5))
@@ -68,7 +78,9 @@ def test_source_stress_matches_independent_equation_including_compression(stretc
     assert bool(actual.evidence.valid)
 
 
-def test_passive_energy_gradient_and_source_pressure_are_unprojected_off_constraint():
+def test_passive_energy_gradient_and_source_pressure_are_unprojected_off_constraint() -> (
+    None
+):
     material = _material()
     deformation = jnp.diag(jnp.asarray((0.82, 1.1, 1.04)))
     pressure = 8500.0
@@ -97,7 +109,7 @@ def test_passive_energy_gradient_and_source_pressure_are_unprojected_off_constra
     assert float(anisotropic_axial) < 0.0
 
 
-def test_passive_rest_requires_the_source_hydrostatic_pressure_not_zero():
+def test_passive_rest_requires_the_source_hydrostatic_pressure_not_zero() -> None:
     material = _material()
     rest_pressure = 2 * material.parameters.c10_pa + 4 * material.parameters.c01_pa
     np.testing.assert_allclose(
@@ -106,7 +118,7 @@ def test_passive_rest_requires_the_source_hydrostatic_pressure_not_zero():
     assert float(material.evaluate(jnp.eye(3), 0.0).first_piola[1, 1]) > 14000.0
 
 
-def test_active_input_is_not_an_activation_bound_or_second_length_multiplier():
+def test_active_input_is_not_an_activation_bound_or_second_length_multiplier() -> None:
     material = _material(1.7)
     compressed = material.evaluate(jnp.diag(jnp.asarray((0.8, 1.0, 1.0))), 0.0)
     stretched = material.evaluate(jnp.diag(jnp.asarray((1.2, 1.0, 1.0))), 0.0)
@@ -126,7 +138,7 @@ def test_active_input_is_not_an_activation_bound_or_second_length_multiplier():
     )
 
 
-def test_objectivity_passive_gradient_active_power_and_full_tangent_difference():
+def test_objectivity_passive_gradient_active_power_and_full_tangent_difference() -> None:
     material = _material(0.6)
     deformation = jnp.asarray(((0.94, 0.04, 0.01), (0.0, 1.03, 0.02), (0.01, 0.0, 1.01)))
     rate = jnp.asarray(((0.04, -0.02, 0.01), (0.01, -0.03, 0.02), (0.0, 0.01, 0.01)))
@@ -147,7 +159,9 @@ def test_objectivity_passive_gradient_active_power_and_full_tangent_difference()
 @pytest.mark.parametrize(
     "cause", ("nonfinite", "source-failure", "foreign-source", "outer-failure")
 )
-def test_every_constitutive_input_failure_rolls_back_all_state_leaves_under_jit(cause):
+def test_every_constitutive_input_failure_rolls_back_all_state_leaves_under_jit(
+    cause: Any,
+) -> None:
     material = _material(0.3)
     source = "other-source" if cause == "foreign-source" else "prescribed-test-stress"
     incoming = _input(
@@ -171,7 +185,7 @@ def test_every_constitutive_input_failure_rolls_back_all_state_leaves_under_jit(
         np.testing.assert_array_equal(before, after)
 
 
-def test_stale_foreign_and_changed_numeric_revision_cannot_apply_commit():
+def test_stale_foreign_and_changed_numeric_revision_cannot_apply_commit() -> None:
     material = _material(0.3)
     first = material.propose_active_stress(_input(0.6, 1)).commit()
     advanced = material.with_commit(first)
@@ -191,7 +205,7 @@ def test_stale_foreign_and_changed_numeric_revision_cannot_apply_commit():
     )
 
 
-def test_reflection_and_partial_quadrature_coverage_fail_without_repair():
+def test_reflection_and_partial_quadrature_coverage_fail_without_repair() -> None:
     material = _material(0.4)
     response = material.evaluate(jnp.diag(jnp.asarray((-1.0, 1.0, 1.0))), 0.0)
     assert not bool(response.evidence.valid)

@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from time import perf_counter
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -15,7 +16,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _benchmark(function, argument, repeats):
+def _benchmark(function: Any, argument: Any, repeats: Any) -> Any:
     compiled = eqx.filter_jit(function)
     start = perf_counter()
     output = jax.block_until_ready(compiled(argument))
@@ -30,7 +31,7 @@ def _benchmark(function, argument, repeats):
     }
 
 
-def run_benchmarks(*, repeats=3):
+def run_benchmarks(*, repeats: Any = 3) -> Any:
     mps = phx.tensor_network.product_mps(
         jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype="complex128")
     )
@@ -52,7 +53,7 @@ def run_benchmarks(*, repeats=3):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--smoke", action="store_true")

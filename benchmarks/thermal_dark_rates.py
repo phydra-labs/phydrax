@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -35,7 +37,7 @@ from phydrax.metrix import (
 )
 
 
-def _context():
+def _context() -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 3, 2, 1)
     units = RelativisticUnitContract(
         scale, RelativityConvention(metric_signature="mostly_minus")
@@ -77,7 +79,7 @@ def _context():
     return units, frame
 
 
-def _case(repetitions: int, basis_size: int, htl_samples: int):
+def _case(repetitions: int, basis_size: int, htl_samples: int) -> Any:
     units, frame = _context()
     temperature = jnp.linspace(1.0, 8.0, 16)
     momentum = jnp.linspace(0.0, 4.0, 24)
@@ -201,7 +203,7 @@ def _case(repetitions: int, basis_size: int, htl_samples: int):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=50)
     parser.add_argument("--basis-size", type=int, default=32)

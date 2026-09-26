@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_phase_geometry_uses_physical_weights_and_ignores_padding():
+def test_phase_geometry_uses_physical_weights_and_ignores_padding() -> None:
     coordinates = jnp.asarray(
         (
             (0.0, 0.0),
@@ -35,7 +35,7 @@ def test_phase_geometry_uses_physical_weights_and_ignores_padding():
     assert bool(metrics.centroid_defined)
 
 
-def test_zero_measure_phase_has_explicitly_undefined_centroid():
+def test_zero_measure_phase_has_explicitly_undefined_centroid() -> None:
     metrics = phx.geometry.phase_geometry_metrics(
         jnp.zeros((3,)),
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
@@ -47,7 +47,7 @@ def test_zero_measure_phase_has_explicitly_undefined_centroid():
     assert jnp.isnan(metrics.centroid).all()
 
 
-def test_interface_distances_recover_uniform_translation_with_padding():
+def test_interface_distances_recover_uniform_translation_with_padding() -> None:
     reference = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (jnp.nan, jnp.nan)))
     predicted = jnp.asarray(((0.0, 1.0), (1.0, 1.0), (2.0, 1.0), (jnp.nan, jnp.nan)))
     mask = jnp.asarray((True, True, True, False))
@@ -69,7 +69,7 @@ def test_interface_distances_recover_uniform_translation_with_padding():
     )
 
 
-def test_percentile_hausdorff_separates_one_spurious_point():
+def test_percentile_hausdorff_separates_one_spurious_point() -> None:
     reference = jnp.zeros((20, 2))
     predicted = jnp.concatenate((reference, jnp.asarray(((10.0, 0.0),))), axis=0)
 
@@ -85,7 +85,7 @@ def test_percentile_hausdorff_separates_one_spurious_point():
     assert 0.0 < metrics.symmetric_mean_distance < 1.0
 
 
-def test_interface_distances_preserve_case_axes():
+def test_interface_distances_preserve_case_axes() -> None:
     reference = jnp.asarray(((0.0, 0.0), (1.0, 0.0)))
     predicted = jnp.stack((reference, reference + jnp.asarray((0.0, 2.0))))
 
@@ -99,7 +99,7 @@ def test_interface_distances_preserve_case_axes():
     )
 
 
-def test_interface_observables_reject_complex_geometry():
+def test_interface_observables_reject_complex_geometry() -> None:
     coordinates = jnp.asarray(((0.0 + 1.0j, 0.0), (1.0, 0.0)))
     with pytest.raises(TypeError, match="coordinates must be real-valued"):
         phx.geometry.phase_geometry_metrics(

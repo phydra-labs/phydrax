@@ -1,10 +1,12 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
 import phydrax as phx
 
 
-def _calculation(task):
+def _calculation(task: Any) -> Any:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     cell = phx.discretization.PeriodicCell(
         5.0 * np.eye(3), periodic_axes=(True, True, True)
@@ -31,7 +33,7 @@ def _calculation(task):
     )
 
 
-def _capabilities(task, properties):
+def _capabilities(task: Any, properties: Any) -> Any:
     return phx.chemistry.ElectronicProviderCapabilities(
         phx.chemistry.ElectronicTheoryCapabilities(
             (phx.chemistry.ElectronicMethodFamily.HARTREE_FOCK,),
@@ -46,7 +48,7 @@ def _capabilities(task, properties):
     )
 
 
-def test_generic_provider_returns_complete_periodic_ground_state_payload():
+def test_generic_provider_returns_complete_periodic_ground_state_payload() -> None:
     properties = (
         phx.chemistry.ElectronicProperty.ENERGY,
         phx.chemistry.ElectronicProperty.FORCES,
@@ -57,7 +59,7 @@ def test_generic_provider_returns_complete_periodic_ground_state_payload():
     task = phx.chemistry.GroundStateTaskPlan(properties)
     calculation = _calculation(task)
 
-    def evaluate(plan, positions, cell_vectors):
+    def evaluate(plan: Any, positions: Any, cell_vectors: Any) -> Any:
         return phx.chemistry.make_electronic_evaluation(
             plan,
             "periodic-provider",
@@ -83,13 +85,15 @@ def test_generic_provider_returns_complete_periodic_ground_state_payload():
 
     assert isinstance(result, phx.chemistry.ElectronicPeriodicEvaluation)
     assert bool(result.successful)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(result.stress, np.diag([1.0, 2.0, 3.0]))
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(result.density_matrices, [[[2.0]]])
     assert result.header.provider_id == "periodic-provider"
     assert result.header.geometry_id
 
 
-def test_generic_provider_rejects_incomplete_periodic_payload():
+def test_generic_provider_rejects_incomplete_periodic_payload() -> None:
     properties = (
         phx.chemistry.ElectronicProperty.ENERGY,
         phx.chemistry.ElectronicProperty.STRESS,
@@ -107,7 +111,7 @@ def test_generic_provider_rejects_incomplete_periodic_payload():
         )
 
 
-def test_generic_provider_returns_band_structure_payload():
+def test_generic_provider_returns_band_structure_payload() -> None:
     task = phx.chemistry.BandStructureTaskPlan(
         np.asarray([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
     )
@@ -127,4 +131,5 @@ def test_generic_provider_returns_band_structure_payload():
     )
 
     assert isinstance(result, phx.chemistry.ElectronicPeriodicEvaluation)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(result.band_energies, bands)

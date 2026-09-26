@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 
@@ -19,7 +21,7 @@ from phydrax.interchange.hep import parse_slha, spectrum_observables_from_slha
 from phydrax.particle_physics import ScaleBVPPlan, solve_scale_bvp
 
 
-def benchmark_case(integration_steps: int):
+def benchmark_case(integration_steps: int) -> Any:
     source = b"BLOCK MASS\n 25 1.251000000E+02\n 1000022 2.0E+02\n"
     document, parse_seconds = measure_host(lambda: parse_slha(source))
     observables, extraction_seconds = measure_host(

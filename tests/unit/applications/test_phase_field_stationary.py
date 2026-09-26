@@ -13,7 +13,7 @@ from phydrax.applications.phase_field import (
 from phydrax.equations import DoubleWellFreeEnergy
 
 
-def test_stationary_double_well_kink_solves_sector_energy_and_stability():
+def test_stationary_double_well_kink_solves_sector_energy_and_stability() -> None:
     plan = DoubleWellKinkPlan(
         jnp.linspace(-8.0, 8.0, 129),
         DoubleWellFreeEnergy(1.0),
@@ -35,7 +35,7 @@ def test_stationary_double_well_kink_solves_sector_energy_and_stability():
     np.testing.assert_allclose(result.field, analytic_double_well_kink(plan), atol=2e-3)
 
 
-def test_kink_resolution_refines_toward_analytic_profile():
+def test_kink_resolution_refines_toward_analytic_profile() -> None:
     errors = []
     for count in (65, 129):
         plan = DoubleWellKinkPlan(

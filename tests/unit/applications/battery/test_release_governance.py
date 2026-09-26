@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
 from dataclasses import asdict, replace
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -82,7 +84,7 @@ TEST_DISTRIBUTION_MANIFEST_JSON = canonical_json(
 
 
 @pytest.fixture
-def release_fixture(monkeypatch):
+def release_fixture(monkeypatch: Any) -> Any:
     pytest.importorskip("cryptography")
     role_keys = {
         "criterion-approver": ("approve",),
@@ -107,7 +109,7 @@ def release_fixture(monkeypatch):
     policy = AsymmetricReleaseTrustPolicy(roles, max_index_age=100)
     attestations = []
 
-    def sign(record, key, role, issued):
+    def sign(record: Any, key: Any, role: Any, issued: Any) -> Any:
         value = SignedQualificationRecord.sign(
             record, signers[key], role=role, issued_at=issued, expires_at=300
         )
@@ -159,7 +161,7 @@ def release_fixture(monkeypatch):
     raw_records = []
     resources = []
 
-    def execution(replay):
+    def execution(replay: Any) -> Any:
         offset = 30 if replay else 0
         executor, reviewer = (
             ("replay-execute", "replay-review") if replay else ("execute", "review")
@@ -301,7 +303,7 @@ def release_fixture(monkeypatch):
     return bundle, proof, policy, index, signers
 
 
-def _admit(fixture):
+def _admit(fixture: Any) -> Any:
     _, proof, policy, index, signers = fixture
     runtime = RuntimeDistributionAttestation.attest_verified_install(
         TEST_DISTRIBUTION_ID, signers["execute"], issued_at=95, expires_at=200
@@ -319,7 +321,9 @@ def _admit(fixture):
     )
 
 
-def test_retained_proof_roundtrip_and_equation_only_admission(release_fixture):
+def test_retained_proof_roundtrip_and_equation_only_admission(
+    release_fixture: Any,
+) -> None:
     _, proof, policy, _, _ = release_fixture
     recovered = BatteryReleaseRecord.from_record(proof.to_record())
     recovered.verify(policy, at_time=100)
@@ -354,8 +358,8 @@ def test_retained_proof_roundtrip_and_equation_only_admission(release_fixture):
 
 @pytest.mark.parametrize("mutation", ("manifest-content", "different-source"))
 def test_distribution_mapping_cannot_relabel_scientific_evidence(
-    release_fixture, mutation
-):
+    release_fixture: Any, mutation: Any
+) -> None:
     bundle, _, policy, _, signers = release_fixture
     manifest = json.loads(bundle.distribution_manifest_json)
     manifest["source_build_id"] = canonical_fingerprint({"test-only-different-source": 1})
@@ -391,7 +395,7 @@ def test_distribution_mapping_cannot_relabel_scientific_evidence(
     "mutation",
     ("tamper", "stale", "revoked", "distribution", "dependency", "replay", "opaque"),
 )
-def test_production_admission_fails_closed(release_fixture, mutation):
+def test_production_admission_fails_closed(release_fixture: Any, mutation: Any) -> None:
     bundle, proof, policy, _, _ = release_fixture
     token = _admit(release_fixture)
     if mutation == "tamper":
@@ -441,8 +445,8 @@ def test_production_admission_fails_closed(release_fixture, mutation):
 
 
 def test_expiry_is_capped_by_typed_evidence_and_unknown_candidates_refused(
-    release_fixture,
-):
+    release_fixture: Any,
+) -> None:
     bundle, _, policy, _, _ = release_fixture
     proof = build_battery_release(
         THERMAL_ECM_CANDIDATE, bundle, trust_policy=policy, at_time=80, expires_at=900
@@ -456,6 +460,7 @@ def test_expiry_is_capped_by_typed_evidence_and_unknown_candidates_refused(
     with pytest.raises(TypeError):
         build_battery_release(
             THERMAL_ECM_CANDIDATE,
+            # ty: ignore[invalid-argument-type]
             "opaque-evidence-id",
             trust_policy=policy,
             at_time=80,
@@ -463,7 +468,7 @@ def test_expiry_is_capped_by_typed_evidence_and_unknown_candidates_refused(
         )
 
 
-def test_unbounded_candidate_domain_cannot_be_promoted(release_fixture):
+def test_unbounded_candidate_domain_cannot_be_promoted(release_fixture: Any) -> None:
     bundle, _, policy, _, _ = release_fixture
     unbounded = replace(bundle, envelope=THERMAL_ECM_ENVELOPE)
     with pytest.raises(ValueError):
@@ -476,7 +481,9 @@ def test_unbounded_candidate_domain_cannot_be_promoted(release_fixture):
         )
 
 
-def test_signed_self_consistent_subset_cannot_omit_physical_criteria(release_fixture):
+def test_signed_self_consistent_subset_cannot_omit_physical_criteria(
+    release_fixture: Any,
+) -> None:
     bundle, _, policy, _, signers = release_fixture
     omitted = next(
         item.criterion_id
@@ -561,14 +568,16 @@ def test_signed_self_consistent_subset_cannot_omit_physical_criteria(release_fix
         )
 
 
-def test_whole_run_jit_cannot_cache_time_scoped_production_authorization(release_fixture):
+def test_whole_run_jit_cannot_cache_time_scoped_production_authorization(
+    release_fixture: Any,
+) -> None:
     import jax
     import jax.numpy as jnp
 
     _, proof, _, _, _ = release_fixture
     token = _admit(release_fixture)
 
-    def escaped_host_dispatch():
+    def escaped_host_dispatch() -> Any:
         validate_battery_execution_admission(
             proof.profile,
             THERMAL_ECM_SUPPORT,
@@ -583,8 +592,8 @@ def test_whole_run_jit_cannot_cache_time_scoped_production_authorization(release
 
 
 def test_changed_imported_runtime_cannot_reuse_old_admission(
-    release_fixture, monkeypatch
-):
+    release_fixture: Any, monkeypatch: Any
+) -> None:
     _, proof, _, _, _ = release_fixture
     token = _admit(release_fixture)
     changed = list(token.runtime_attestation.package_files)
@@ -605,8 +614,8 @@ def test_changed_imported_runtime_cannot_reuse_old_admission(
 
 
 def test_offline_deployment_requires_retained_proofs_and_separate_public_roots(
-    release_fixture,
-):
+    release_fixture: Any,
+) -> None:
     _, proof, policy, index, signers = release_fixture
     token = _admit(release_fixture)
     roots = {
@@ -649,8 +658,8 @@ def test_offline_deployment_requires_retained_proofs_and_separate_public_roots(
 
 
 def test_channel_withdrawal_rollback_cas_and_signed_empty_refusal(
-    release_fixture, tmp_path
-):
+    release_fixture: Any, tmp_path: Any
+) -> None:
     _, _, policy, index, signers = release_fixture
     repository = PromotionRepository(tmp_path / "promotions.sqlite")
     promote = advance_channel(
@@ -677,6 +686,7 @@ def test_channel_withdrawal_rollback_cas_and_signed_empty_refusal(
         at_time=101,
         expires_at=180,
     )
+    # ty: ignore[unresolved-attribute]
     assert repository.current("production", policy.roles, at_time=101).index_id is None
     rollback = advance_channel(
         repository,
@@ -716,6 +726,7 @@ def test_channel_withdrawal_rollback_cas_and_signed_empty_refusal(
     )
     assert (refusal.action, refusal.index_id, refusal.generation) == ("refuse", None, 4)
     assert (
+        # ty: ignore[unresolved-attribute]
         reopened.current("production", policy.roles, at_time=103).state_id
         == refusal.state_id
     )

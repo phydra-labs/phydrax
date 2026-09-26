@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_metric_cochain_assembly_uses_paired_primal_and_dual_measures():
+def test_metric_cochain_assembly_uses_paired_primal_and_dual_measures() -> None:
     chart = phx.metrix.CoordinateChart("line", ("x",))
     complex = phx.graph.cochain_complex_from_incidences(
         (2, 1),

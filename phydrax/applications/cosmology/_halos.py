@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics import gauss_legendre_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._background import FLRWBackground
 from ._products import MatterField, MatterPowerTable
 
@@ -140,12 +141,7 @@ class LinearVariancePlan(StrictModule, NonTrainableState):
         gravity = float(gravitational_constant)
         if not np.isfinite(gravity) or gravity <= 0.0:
             raise ValueError("gravitational_constant must be finite and positive.")
-        if required_field not in (
-            "cold_baryon",
-            "total_matter",
-            "massive_neutrino_total",
-        ):
-            raise ValueError("Unknown linear-variance matter field.")
+        required_field = parse(required_field, MatterField, "required_field")
         self.gravitational_constant = gravity
         self.required_field = required_field
         self.plan_id = canonical_fingerprint(

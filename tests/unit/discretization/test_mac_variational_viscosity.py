@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ import phydrax as phx
 from phydrax.discretization import finite_volume as finite_volume_api
 
 
-def _periodic(count=6):
+def _periodic(count: Any = 6) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(count, periodic=True),
@@ -26,7 +29,7 @@ def _periodic(count=6):
     return discretization, operators, momentum
 
 
-def _taylor_green(discretization):
+def _taylor_green(discretization: Any) -> Any:
     x_faces = discretization.face_centers[0]
     y_faces = discretization.face_centers[1]
     return (
@@ -35,7 +38,7 @@ def _taylor_green(discretization):
     )
 
 
-def _block_until_ready(tree):
+def _block_until_ready(tree: Any) -> Any:
     return jax.tree.map(
         lambda value: (
             value.block_until_ready() if isinstance(value, jax.Array) else value
@@ -44,7 +47,7 @@ def _block_until_ready(tree):
     )
 
 
-def test_mac_variational_viscosity_zero_action_and_frozen_binding():
+def test_mac_variational_viscosity_zero_action_and_frozen_binding() -> None:
     discretization, _, momentum = _periodic()
     action = finite_volume_api.PreparedMACVariationalViscosityAction(momentum)
     velocity = _taylor_green(discretization)
@@ -71,7 +74,9 @@ def test_mac_variational_viscosity_zero_action_and_frozen_binding():
     assert frozen.prepared_action is action
 
 
-def test_mac_variational_viscosity_has_positive_work_and_periodic_laplacian_limit():
+def test_mac_variational_viscosity_has_positive_work_and_periodic_laplacian_limit() -> (
+    None
+):
     discretization, operators, momentum = _periodic(8)
     action = finite_volume_api.PreparedMACVariationalViscosityAction(momentum)
     velocity = _taylor_green(discretization)
@@ -97,7 +102,7 @@ def test_mac_variational_viscosity_has_positive_work_and_periodic_laplacian_limi
     assert result.successful
 
 
-def test_mac_variational_viscosity_runtime_coefficient_is_jittable_and_has_jvp():
+def test_mac_variational_viscosity_runtime_coefficient_is_jittable_and_has_jvp() -> None:
     discretization, operators, momentum = _periodic(5)
     action = finite_volume_api.PreparedMACVariationalViscosityAction(momentum)
     velocity = tuple(
@@ -107,7 +112,7 @@ def test_mac_variational_viscosity_runtime_coefficient_is_jittable_and_has_jvp()
     viscosity = 1.0 + jnp.arange(25, dtype=jnp.float64).reshape(5, 5) / 25.0
     stage = momentum.boundaries.homogeneous_stage()
 
-    def runtime_rate(coefficient):
+    def runtime_rate(coefficient: Any) -> Any:
         result = action.evaluate(velocity, coefficient, stage)
         return operators.velocity_space.flatten(result.physical_diffusive_rate)
 
@@ -123,7 +128,7 @@ def test_mac_variational_viscosity_runtime_coefficient_is_jittable_and_has_jvp()
     assert jnp.linalg.norm(tangent) > 0.0
 
 
-def test_mac_variational_viscosity_reports_boundary_affine_work():
+def test_mac_variational_viscosity_reports_boundary_affine_work() -> None:
     count = 6
     grid = phx.discretization.TensorGridPlan(
         (
@@ -191,7 +196,9 @@ def test_mac_variational_viscosity_reports_boundary_affine_work():
 
 
 @pytest.mark.parametrize("invalid", [-1.0, jnp.inf, jnp.nan])
-def test_mac_variational_viscosity_rejects_invalid_runtime_coefficients(invalid):
+def test_mac_variational_viscosity_rejects_invalid_runtime_coefficients(
+    invalid: Any,
+) -> None:
     discretization, _, momentum = _periodic(4)
     action = finite_volume_api.PreparedMACVariationalViscosityAction(momentum)
     velocity = _taylor_green(discretization)
@@ -203,7 +210,7 @@ def test_mac_variational_viscosity_rejects_invalid_runtime_coefficients(invalid)
         _block_until_ready(action.positive_operator_action(velocity, viscosity))
 
 
-def test_variable_viscosity_stage_plan_delegates_to_prepared_action():
+def test_variable_viscosity_stage_plan_delegates_to_prepared_action() -> None:
     discretization, _, momentum = _periodic(4)
     velocity = _taylor_green(discretization)
     density = tuple(jnp.ones_like(value) for value in velocity)

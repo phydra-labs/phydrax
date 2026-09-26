@@ -5,7 +5,9 @@ import numpy as np
 import phydrax as phx
 
 
-def test_targeted_continuous_priors_are_normalized_and_invert_reference_probabilities():
+def test_targeted_continuous_priors_are_normalized_and_invert_reference_probabilities() -> (
+    None
+):
     cases = (
         (phx.uq.PowerLaw(-1.0, 0.2, 4.0), 0.2, 4.0),
         (phx.uq.TruncatedNormal(0.0, 1.0, -1.5, 2.0), -1.5, 2.0),
@@ -22,7 +24,7 @@ def test_targeted_continuous_priors_are_normalized_and_invert_reference_probabil
         assert np.all(np.asarray(prior.contains(values)))
 
 
-def test_heavy_tail_priors_have_finite_samples_and_correct_center():
+def test_heavy_tail_priors_have_finite_samples_and_correct_center() -> None:
     cauchy = phx.uq.Cauchy(1.0, 2.0)
     student = phx.uq.StudentT(5.0, location=-0.5, scale=1.5)
     np.testing.assert_allclose(cauchy.icdf(0.5), 1.0, atol=1e-12)
@@ -36,7 +38,7 @@ def test_heavy_tail_priors_have_finite_samples_and_correct_center():
     )
 
 
-def test_truncated_normal_infinite_boundaries_have_finite_moments():
+def test_truncated_normal_infinite_boundaries_have_finite_moments() -> None:
     standard = phx.uq.TruncatedNormal(0.0, 1.0, -np.inf, np.inf)
     positive = phx.uq.TruncatedNormal(0.0, 1.0, 0.0, np.inf)
 

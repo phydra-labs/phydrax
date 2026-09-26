@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -20,7 +23,7 @@ from phydrax.discretization.finite_volume import UnstructuredFiniteVolumePlan
 from phydrax.interchange import GeospatialContract
 
 
-def _mesh():
+def _mesh() -> Any:
     return CellMesh.from_tetrahedra(
         np.asarray(
             (
@@ -35,16 +38,17 @@ def _mesh():
     )
 
 
-def _finite_volume(mesh):
+def _finite_volume(mesh: Any) -> Any:
     return UnstructuredFiniteVolumePlan(
         np.asarray(mesh.coordinates),
         tetrahedra=np.asarray(mesh.blocks[0].vertices),
     ).prepare()
 
 
-def _electrical(mesh):
+def _electrical(mesh: Any) -> Any:
     exterior = np.flatnonzero(np.asarray(mesh.connectivity.boundary_faces))
     patches = tuple(
+        # ty: ignore[invalid-argument-type]
         ElectrodePatch(f"E{index}", [int(face)])
         for index, face in enumerate(exterior[:4])
     )
@@ -57,9 +61,12 @@ def _electrical(mesh):
     return FinitePatchDCPlan(mesh, survey).prepare()
 
 
-def test_fixed_nested_transfer_and_uncertain_archie_law_compose_into_dc_prediction():
+def test_fixed_nested_transfer_and_uncertain_archie_law_compose_into_dc_prediction() -> (
+    None
+):
     mesh = _mesh()
     finite_volume = _finite_volume(mesh)
+    # ty: ignore[invalid-argument-type]
     transfer = nested_cell_transfer(finite_volume, finite_volume, [0, 1])
     geospatial = GeospatialContract.local_cartesian(
         SpatialCoordinateContract.si(), vertical_datum="local-survey-datum"
@@ -104,7 +111,7 @@ def test_fixed_nested_transfer_and_uncertain_archie_law_compose_into_dc_predicti
     )
     np.testing.assert_allclose(result.water_volume_residual_m3, 0.0, atol=1.0e-15)
 
-    def response(discrepancy):
+    def response(discrepancy: Any) -> Any:
         return plan.predict(
             porosity, water, temperature, calibration, log_discrepancy=discrepancy
         ).response[0]
@@ -118,7 +125,8 @@ def test_fixed_nested_transfer_and_uncertain_archie_law_compose_into_dc_predicti
         plan.require_geometry("changed", finite_volume.geometry_id)
 
 
-def test_nested_transfer_rejects_nonpartitioning_parent_routes():
+def test_nested_transfer_rejects_nonpartitioning_parent_routes() -> None:
     finite_volume = _finite_volume(_mesh())
     with pytest.raises(ValueError, match="partition"):
+        # ty: ignore[invalid-argument-type]
         nested_cell_transfer(finite_volume, finite_volume, [0, 0])

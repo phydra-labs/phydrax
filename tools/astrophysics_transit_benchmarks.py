@@ -2,6 +2,7 @@
 
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -9,14 +10,14 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _timed(function, *args):
+def _timed(function: Any, *args: Any) -> Any:
     start = time.perf_counter()
     value = function(*args)
     jax.block_until_ready(value)
     return value, time.perf_counter() - start
 
 
-def main():
+def main() -> None:
     physics = phx.applications.astrophysics
     occultation = physics.CircularOccultationPlan(
         physics.PolynomialLimbDarkenedDisk(jnp.asarray([0.3, 0.2]))

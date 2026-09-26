@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -16,7 +18,7 @@ from phydrax.equations._multiphase import (
 
 
 @pytest.fixture(scope="module")
-def eos():
+def eos() -> Any:
     return TwoMaterialEOSClosure(
         IdealGasMaterial(1.4),
         StiffenedGasMaterial(4.4, 2.0, 1.0),
@@ -24,7 +26,7 @@ def eos():
 
 
 @pytest.mark.parametrize("dimension", [1, 2, 3])
-def test_layout_is_static_and_explicit(dimension):
+def test_layout_is_static_and_explicit(dimension: Any) -> None:
     layout = TwoMaterialVOFStateLayout(dimension)
     assert layout.component_count == dimension + 4
     assert layout.component_names == (
@@ -41,13 +43,13 @@ def test_layout_is_static_and_explicit(dimension):
     )
 
 
-def _state(system, *, alpha=0.35, velocity=(0.8, -0.2, 0.15)):
+def _state(system: Any, *, alpha: Any = 0.35, velocity: Any = (0.8, -0.2, 0.15)) -> Any:
     d = system.dimension
     primitive = jnp.asarray([1.2, 0.7, *velocity[:d], 2.5, alpha], dtype=jnp.float64)
     return system.primitive_to_conserved(primitive)
 
 
-def test_conservative_and_advective_fluxes(eos):
+def test_conservative_and_advective_fluxes(eos: Any) -> None:
     system = TwoMaterialVOFSystem(2, eos=eos)
     state = _state(system)
     primitive = system.conserved_to_primitive(state)
@@ -63,7 +65,7 @@ def test_conservative_and_advective_fluxes(eos):
     )
 
 
-def test_normal_flux_covariance_and_signal_bounds(eos):
+def test_normal_flux_covariance_and_signal_bounds(eos: Any) -> None:
     system = TwoMaterialVOFSystem(2, eos=eos)
     state = _state(system)
     normal = jnp.asarray([0.6, -0.8])
@@ -79,7 +81,7 @@ def test_normal_flux_covariance_and_signal_bounds(eos):
         system.physical_normal_flux(state, jnp.asarray(1.0))
 
 
-def test_admissibility_pure_phase_and_fail_closed(eos):
+def test_admissibility_pure_phase_and_fail_closed(eos: Any) -> None:
     system = TwoMaterialVOFSystem(1, eos=eos)
     mixed = _state(system, alpha=0.5)
     pure0 = _state(system, alpha=1.0)
@@ -94,7 +96,7 @@ def test_admissibility_pure_phase_and_fail_closed(eos):
 
 
 @pytest.mark.parametrize("alpha", (1.0e-4, 1.0 - 1.0e-4))
-def test_system_round_trips_active_alpha_floor_boundaries(alpha):
+def test_system_round_trips_active_alpha_floor_boundaries(alpha: Any) -> None:
     floor_eos = TwoMaterialEOSClosure(
         IdealGasMaterial(1.4),
         StiffenedGasMaterial(4.4, 2.0, 1.0),
@@ -119,7 +121,7 @@ def test_system_round_trips_active_alpha_floor_boundaries(alpha):
     )
 
 
-def test_jit_grad_and_dtype(eos):
+def test_jit_grad_and_dtype(eos: Any) -> None:
     system = TwoMaterialVOFSystem(2, eos=eos)
     state = _state(system)
     normal = jnp.asarray([0.8, 0.6], dtype=state.dtype)
@@ -130,7 +132,7 @@ def test_jit_grad_and_dtype(eos):
     assert np.isfinite(np.asarray(jacobian)).all()
 
 
-def test_material_identity_is_part_of_system_identity(eos):
+def test_material_identity_is_part_of_system_identity(eos: Any) -> None:
     first = TwoMaterialVOFSystem(2, eos=eos)
     second = TwoMaterialVOFSystem(2, eos=eos)
     altered_eos = TwoMaterialEOSClosure(
@@ -151,7 +153,7 @@ def test_material_identity_is_part_of_system_identity(eos):
 
 
 @pytest.mark.parametrize("alpha", [0.0, 1.0])
-def test_kapila_coefficient_is_exactly_zero_in_pure_phases(eos, alpha):
+def test_kapila_coefficient_is_exactly_zero_in_pure_phases(eos: Any, alpha: Any) -> None:
     system = TwoMaterialVOFSystem(2, eos=eos)
     state = _state(system, alpha=alpha)
     density_0, density_1 = system.phase_densities(state)
@@ -163,7 +165,7 @@ def test_kapila_coefficient_is_exactly_zero_in_pure_phases(eos, alpha):
     assert jnp.isfinite(sound_1)
 
 
-def test_kapila_coefficient_is_exactly_zero_for_equal_materials():
+def test_kapila_coefficient_is_exactly_zero_for_equal_materials() -> None:
     equal_eos = TwoMaterialEOSClosure(
         IdealGasMaterial(1.4),
         IdealGasMaterial(1.4),
@@ -173,7 +175,7 @@ def test_kapila_coefficient_is_exactly_zero_for_equal_materials():
     assert system.dilatation_coefficient(state) == 0.0
 
 
-def test_mixed_stiffened_ideal_kapila_coefficient_has_expected_sign(eos):
+def test_mixed_stiffened_ideal_kapila_coefficient_has_expected_sign(eos: Any) -> None:
     system = TwoMaterialVOFSystem(2, eos=eos)
     state = _state(system, alpha=0.35)
     density_0, density_1 = system.phase_densities(state)
@@ -206,7 +208,7 @@ def test_mixed_stiffened_ideal_kapila_coefficient_has_expected_sign(eos):
     assert jnp.isnan(system.dilatation_coefficient(invalid))
 
 
-def test_uniform_divergence_uses_conservative_volume_fraction_source(eos):
+def test_uniform_divergence_uses_conservative_volume_fraction_source(eos: Any) -> None:
     system = TwoMaterialVOFSystem(2, eos=eos)
     states = jnp.stack(
         (
@@ -228,7 +230,7 @@ def test_uniform_divergence_uses_conservative_volume_fraction_source(eos):
     assert jnp.isnan(system.volume_fraction_source(alpha + 2.0, divergence, states)).all()
 
 
-def test_incompressible_divergence_has_zero_volume_fraction_source(eos):
+def test_incompressible_divergence_has_zero_volume_fraction_source(eos: Any) -> None:
     system = TwoMaterialVOFSystem(2, eos=eos)
     state = _state(system, alpha=0.35)
     source = system.volume_fraction_source(
@@ -239,15 +241,15 @@ def test_incompressible_divergence_has_zero_volume_fraction_source(eos):
     assert source == 0.0
 
 
-def test_kapila_dilatation_is_jittable_and_differentiable(eos):
+def test_kapila_dilatation_is_jittable_and_differentiable(eos: Any) -> None:
     system = TwoMaterialVOFSystem(2, eos=eos)
     primitive = system.conserved_to_primitive(_state(system, alpha=0.35))
 
-    def coefficient(alpha):
+    def coefficient(alpha: Any) -> Any:
         state = system.primitive_to_conserved(primitive.at[-1].set(alpha))
         return system.dilatation_coefficient(state)
 
-    def source(alpha):
+    def source(alpha: Any) -> Any:
         state = system.primitive_to_conserved(primitive.at[-1].set(alpha))
         return system.volume_fraction_source(alpha, 0.2, state)
 
@@ -267,7 +269,7 @@ def test_kapila_dilatation_is_jittable_and_differentiable(eos):
     assert jnp.isfinite(jax.grad(source)(jnp.asarray(0.35)))
 
 
-def test_kapila_model_variant_changes_all_two_material_identities(eos):
+def test_kapila_model_variant_changes_all_two_material_identities(eos: Any) -> None:
     system = TwoMaterialVOFSystem(2, eos=eos)
     closure_payload = {
         "kind": "two-material-eos-closure",

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -7,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def _constant_mode_problems():
+def _constant_mode_problems() -> Any:
     times = jnp.asarray([[0.5, 1.0, 1.5], [0.5, 1.0, 1.0]])
     values = jnp.asarray([[[1.0], [0.0], [1.5]], [[-0.5], [0.7], [0.0]]])
     masks = jnp.asarray([[[True], [False], [True]], [[True], [True], [False]]])
@@ -92,7 +94,7 @@ def _constant_mode_problems():
     return rb_problem, kalman_problem
 
 
-def _initial_mode_dependent_problems():
+def _initial_mode_dependent_problems() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[0.8], [2.2]]),
@@ -161,16 +163,16 @@ def _initial_mode_dependent_problems():
     return rb_problem, linear_problem
 
 
-def _correlated_nonlinear_problem(*, normalized=True):
+def _correlated_nonlinear_problem(*, normalized: Any = True) -> Any:
     covariance = jnp.asarray([[1.0, 0.94], [0.94, 1.0]])
     inverse = jnp.linalg.inv(covariance)
     log_determinant = jnp.linalg.slogdet(covariance)[1]
 
-    def sample(key, state, t0, t1, context):
+    def sample(key: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         del t0, t1, context
         return 0.55 * state + jr.multivariate_normal(key, jnp.zeros(2), covariance)
 
-    def log_prob(next_state, state, t0, t1, context):
+    def log_prob(next_state: Any, state: Any, t0: Any, t1: Any, context: Any) -> Any:
         del t0, t1, context
         residual = next_state - 0.55 * state
         return -0.5 * (
@@ -218,7 +220,7 @@ def _correlated_nonlinear_problem(*, normalized=True):
     )
 
 
-def test_single_mode_full_smoother_matches_kalman_rts_for_masks_and_padding():
+def test_single_mode_full_smoother_matches_kalman_rts_for_masks_and_padding() -> None:
     rb_problem, kalman_problem = _constant_mode_problems()
     filtered = phx.uq.rao_blackwellized_particle_filter(
         jr.key(1), rb_problem, num_particles=4, resampling_policy="never"
@@ -268,7 +270,7 @@ def test_single_mode_full_smoother_matches_kalman_rts_for_masks_and_padding():
     assert jnp.all(result.successful)
 
 
-def test_first_conditional_transition_uses_sampled_initial_nonlinear_state():
+def test_first_conditional_transition_uses_sampled_initial_nonlinear_state() -> None:
     rb_problem, linear_problem = _initial_mode_dependent_problems()
     filtered = phx.uq.rao_blackwellized_particle_filter(
         jr.key(3), rb_problem, num_particles=4, resampling_policy="never"
@@ -291,7 +293,7 @@ def test_first_conditional_transition_uses_sampled_initial_nonlinear_state():
     )
 
 
-def test_backward_path_prefixes_are_stable_and_resampling_policies_are_coherent():
+def test_backward_path_prefixes_are_stable_and_resampling_policies_are_coherent() -> None:
     problem, _ = _constant_mode_problems()
     never = phx.uq.rao_blackwellized_particle_filter(
         jr.key(5), problem, num_particles=4, resampling_policy="never"
@@ -318,7 +320,7 @@ def test_backward_path_prefixes_are_stable_and_resampling_policies_are_coherent(
     )
 
 
-def test_backward_simulation_uses_full_correlated_transition_density():
+def test_backward_simulation_uses_full_correlated_transition_density() -> None:
     problem = _correlated_nonlinear_problem()
     filtered = phx.uq.rao_blackwellized_particle_filter(
         jr.key(8), problem, num_particles=4, resampling_policy="never"
@@ -375,7 +377,7 @@ def test_backward_simulation_uses_full_correlated_transition_density():
     assert jnp.max(jnp.abs(empirical - full_probability)) < 0.1
 
 
-def test_backward_simulation_rejects_missing_normalized_transition_density():
+def test_backward_simulation_rejects_missing_normalized_transition_density() -> None:
     filtered = phx.uq.rao_blackwellized_particle_filter(
         jr.key(10),
         _correlated_nonlinear_problem(normalized=False),

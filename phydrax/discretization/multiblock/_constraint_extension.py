@@ -17,6 +17,7 @@ from ...geometry._interface_extension import (
 from ...geometry._trace_extension import PreparedTraceExtension
 from ...linalg import RankPolicy, SolveResourcePolicy
 from ...linalg._operators import AbstractLinearOperator
+from ...typing import parse
 from ._core import BlockInterface, PreparedMultiblockGrid
 
 
@@ -86,8 +87,7 @@ class MultiblockInterfaceCorrectionProvider(StrictModule, NonTrainableState):
                 "The oriented interface support must retain its SAT stability owner."
             )
         gauge_ = str(gauge)
-        if gauge_ not in ("minimum_energy", "minus_only", "plus_only"):
-            raise ValueError("Unknown multiblock interface gauge.")
+        gauge_ = parse(gauge_, InterfaceGauge, "gauge_")
         gauge_id = None if gauge_certificate_id is None else str(gauge_certificate_id)
         if gauge_ != "minimum_energy" and (gauge_id is None or not gauge_id):
             raise ValueError("One-sided multiblock gauges require a certificate.")

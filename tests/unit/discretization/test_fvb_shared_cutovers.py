@@ -18,7 +18,8 @@ from phydrax.discretization.finite_volume import (
 from phydrax.discretization.vem import prepare_polyhedral_h1_virtual_element_3d
 
 
-def test_rank_two_periodic_cell_preserves_orthogonal_component():
+def test_rank_two_periodic_cell_preserves_orthogonal_component() -> None:
+    # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[2.0, 0.0, 0.0], [0.5, 1.5, 0.0]])
     point = jnp.asarray([2.25, -0.1, 3.0])
     wrapped, images = cell.wrap(point)
@@ -31,7 +32,7 @@ def test_rank_two_periodic_cell_preserves_orthogonal_component():
     )
 
 
-def test_root_polyhedral_connectivity_drives_degree_one_vem():
+def test_root_polyhedral_connectivity_drives_degree_one_vem() -> None:
     points = np.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     )
@@ -41,6 +42,7 @@ def test_root_polyhedral_connectivity_drives_degree_one_vem():
         (0, 3, 2),
         (1, 2, 3),
     )
+    # ty: ignore[invalid-argument-type]
     mesh = CellMesh.from_polyhedra(points, (faces,))
     assert isinstance(mesh.connectivity, PolyhedralConnectivity)
     assert bool(jnp.all(mesh.connectivity.boundary_faces))
@@ -50,7 +52,7 @@ def test_root_polyhedral_connectivity_drives_degree_one_vem():
     assert prepared.evidence.minimum_volume > 0.0
 
 
-def test_pathological_polyhedral_arity_keeps_actual_storage_linear():
+def test_pathological_polyhedral_arity_keeps_actual_storage_linear() -> None:
     arity = 256
     tetrahedron_count = 128
     pyramid = (tuple(reversed(range(arity))),) + tuple(
@@ -61,7 +63,9 @@ def test_pathological_polyhedral_arity_keeps_actual_storage_linear():
     )
     vertex_count = arity + 1 + 4 * tetrahedron_count
     connectivity = polyhedral_connectivity(
-        (pyramid, ("tetrahedron", tetrahedra)), vertex_count
+        # ty: ignore[invalid-argument-type]
+        (pyramid, ("tetrahedron", tetrahedra)),
+        vertex_count,
     )
     input_entries = 4 * arity + 12 * tetrahedron_count
     stored_bytes = sum(array.nbytes for array in jax.tree.leaves(connectivity))
@@ -70,7 +74,9 @@ def test_pathological_polyhedral_arity_keeps_actual_storage_linear():
         prepare_polyhedral_worksets(connectivity, maximum_entries=input_entries)
 
 
-def test_mixed_polyhedral_incidence_preserves_ids_orientation_and_workset_budget():
+def test_mixed_polyhedral_incidence_preserves_ids_orientation_and_workset_budget() -> (
+    None
+):
     prism_faces = (
         (0, 2, 1),
         (3, 4, 5),
@@ -86,9 +92,13 @@ def test_mixed_polyhedral_incidence_preserves_ids_orientation_and_workset_budget
         "cell_global_ids": np.asarray((901, 42)),
     }
     connectivity = polyhedral_connectivity(
-        (("prism", np.arange(6)[None, :]), tetrahedron_faces), 7, **identifiers
+        # ty: ignore[invalid-argument-type]
+        (("prism", np.arange(6)[None, :]), tetrahedron_faces),
+        7,
+        **identifiers,
     )
     rotated = polyhedral_connectivity(
+        # ty: ignore[invalid-argument-type]
         tuple(
             tuple(face[1:] + face[:1] for face in faces)
             for faces in (prism_faces, tetrahedron_faces)
@@ -127,7 +137,7 @@ def test_mixed_polyhedral_incidence_preserves_ids_orientation_and_workset_budget
     np.testing.assert_array_equal(dense_boundary, boundary)
 
 
-def test_mixed_standard_polyhedral_geometry_preserves_reference_vertex_order():
+def test_mixed_standard_polyhedral_geometry_preserves_reference_vertex_order() -> None:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -145,12 +155,17 @@ def test_mixed_standard_polyhedral_geometry_preserves_reference_vertex_order():
             CellBlock(
                 "prism",
                 "prism",
+                # ty: ignore[invalid-argument-type]
                 ((1, 2, 0, 4, 5, 3),),
+                # ty: ignore[invalid-argument-type]
                 global_ids=(901,),
             ),
         ),
+        # ty: ignore[invalid-argument-type]
         polyhedra={"cap": (((3, 5, 4), (3, 4, 6), (3, 6, 5), (4, 5, 6)),)},
+        # ty: ignore[invalid-argument-type]
         vertex_global_ids=(50, 10, 70, 20, 80, 30, 90),
+        # ty: ignore[invalid-argument-type]
         polyhedral_cell_global_ids={"cap": (42,)},
     )
     geometry = prepare_polyhedral_finite_volume_geometry(mesh)

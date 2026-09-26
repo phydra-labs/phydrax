@@ -142,7 +142,7 @@ def _tree_bytes(tree: Any, /) -> int:
     )
 
 
-def _parameter_count(potential, /) -> int:
+def _parameter_count(potential: Any, /) -> int:
     trainable, _, _ = partition_parameters(potential)
     return sum(
         leaf.size
@@ -151,7 +151,7 @@ def _parameter_count(potential, /) -> int:
     )
 
 
-def _rotation_evidence(potential, batch, execution):
+def _rotation_evidence(potential: Any, batch: Any, execution: Any) -> Any:
     one = phx.atomistic.AtomisticBatch(
         np.asarray(batch.atomic_numbers[:1]),
         np.asarray(batch.positions[:1]),
@@ -189,7 +189,9 @@ def _rotation_evidence(potential, batch, execution):
     }
 
 
-def _prediction_metrics(prediction, target_energy, target_forces, atom_mask):
+def _prediction_metrics(
+    prediction: Any, target_energy: Any, target_forces: Any, atom_mask: Any
+) -> Any:
     atom_count = jnp.sum(atom_mask, axis=1)
     energy_residual = (prediction.energy - target_energy) / atom_count
     force_mask = jnp.broadcast_to(atom_mask[:, :, None], target_forces.shape)
@@ -210,7 +212,7 @@ def _prediction_metrics(prediction, target_energy, target_forces, atom_mask):
     }
 
 
-def _gates(metrics):
+def _gates(metrics: Any) -> Any:
     checks = {name: metrics[name] <= threshold for name, threshold in RMD17_GATES.items()}
     checks["all_predictions_valid"] = metrics["all_predictions_valid"]
     checks["no_neighbor_overflow"] = metrics["neighbor_overflow_count"] == 0
@@ -218,7 +220,7 @@ def _gates(metrics):
     return {"checks": checks, "passed": all(checks.values())}
 
 
-def _potential(model_name, dataset, arguments, seed):
+def _potential(model_name: Any, dataset: Any, arguments: Any, seed: Any) -> Any:
     common = {
         "cutoff": arguments.cutoff,
         "feature_count": arguments.features,
@@ -227,24 +229,26 @@ def _potential(model_name, dataset, arguments, seed):
         "key": jr.key(seed),
     }
     if model_name == "painn":
+        # ty: ignore[invalid-argument-type]
         return phx.nn.atomistic.PaiNNPotential(dataset.scale, **common)
     if model_name == "nequip":
+        # ty: ignore[invalid-argument-type]
         return phx.nn.atomistic.NequIPPotential(dataset.scale, **common)
     raise ValueError(f"Unknown atomistic benchmark model {model_name!r}.")
 
 
 def _run_model(
-    model_name,
-    dataset,
-    arguments,
-    seed,
-    problem,
-    policy,
-    test_batch,
-    test_energy,
-    test_forces,
-    neighborhood_work,
-):
+    model_name: Any,
+    dataset: Any,
+    arguments: Any,
+    seed: Any,
+    problem: Any,
+    policy: Any,
+    test_batch: Any,
+    test_energy: Any,
+    test_forces: Any,
+    neighborhood_work: Any,
+) -> Any:
     model = _potential(model_name, dataset, arguments, seed)
     tracemalloc.start()
     training_started = time.perf_counter()
@@ -302,6 +306,7 @@ def _run_model(
                 ),
                 "tensor_product_parameter_count_per_interaction": [
                     interaction.tensor_product.plan.parameter_count
+                    # ty: ignore[unresolved-attribute]
                     for interaction in potential.interactions
                 ],
             }
@@ -315,7 +320,7 @@ def _run_model(
     }
 
 
-def _run_seed(dataset, arguments, seed):
+def _run_seed(dataset: Any, arguments: Any, seed: Any) -> Any:
     split = phx.atomistic.split_rmd17(
         dataset,
         train_size=arguments.train_size,
@@ -353,6 +358,7 @@ def _run_seed(dataset, arguments, seed):
         cutoff=arguments.cutoff,
     )
     candidate_per_case = test_batch.atom_capacity * (test_batch.atom_capacity - 1)
+    # ty: ignore[invalid-argument-type]
     active_total = int(jnp.sum(graph.graph.edge_mask))
     neighborhood_work = {
         "dense_candidate_directed_edges_per_case": int(candidate_per_case),
@@ -402,7 +408,7 @@ def _run_seed(dataset, arguments, seed):
     }
 
 
-def _aggregate(values):
+def _aggregate(values: Any) -> Any:
     array = np.asarray(tuple(values), dtype="float64")
     return {
         "mean": float(np.mean(array)),
@@ -412,7 +418,7 @@ def _aggregate(values):
     }
 
 
-def _summary(records):
+def _summary(records: Any) -> Any:
     metric_names = (
         "energy_mae_per_atom",
         "energy_rmse_per_atom",

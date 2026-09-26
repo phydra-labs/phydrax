@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -17,7 +20,7 @@ from phydrax.domain import (
 )
 
 
-def _make_domain(*, sampling="observation_uniform"):
+def _make_domain(*, sampling: Any = "observation_uniform") -> Any:
     inputs = jnp.asarray([[0.0], [1.0], [2.0]])
     times = jnp.asarray(
         [
@@ -35,7 +38,7 @@ def _make_domain(*, sampling="observation_uniform"):
     )
 
 
-def test_irregular_trajectory_observation_uniform_samples_stored_times():
+def test_irregular_trajectory_observation_uniform_samples_stored_times() -> None:
     domain = _make_domain(sampling="observation_uniform")
     batch = domain.component().sample(
         phx.domain.PointSampling(16, layout=SampleLayout((("data", "t"),))), key=jr.key(0)
@@ -49,7 +52,7 @@ def test_irregular_trajectory_observation_uniform_samples_stored_times():
     assert jnp.allclose(batch["data"].data[:, 0], domain.inputs[case_indices, 0])
 
 
-def test_irregular_trajectory_fixed_end_is_row_specific():
+def test_irregular_trajectory_fixed_end_is_row_specific() -> None:
     domain = _make_domain()
     batch = domain.component({"t": FixedEnd()}).sample(
         phx.domain.PointSampling(12, layout=SampleLayout((("data", "t"),))), key=jr.key(1)
@@ -59,7 +62,7 @@ def test_irregular_trajectory_fixed_end_is_row_specific():
     assert jnp.allclose(jnp.asarray(batch["t"].data), domain.end_times[case_indices])
 
 
-def test_irregular_trajectory_fixed_time_samples_only_valid_cases():
+def test_irregular_trajectory_fixed_time_samples_only_valid_cases() -> None:
     domain = _make_domain()
     batch = domain.component({"t": Fixed(0.6)}).sample(
         phx.domain.PointSampling(10, layout=SampleLayout((("data", "t"),))), key=jr.key(2)
@@ -70,7 +73,7 @@ def test_irregular_trajectory_fixed_time_samples_only_valid_cases():
     assert jnp.allclose(jnp.asarray(batch["t"].data), 0.6)
 
 
-def test_irregular_trajectory_rejects_non_increasing_valid_times():
+def test_irregular_trajectory_rejects_non_increasing_valid_times() -> None:
     inputs = jnp.asarray([[0.0]])
     times = jnp.asarray([[0.0, 0.2, 0.1]])
     lengths = jnp.asarray([3])

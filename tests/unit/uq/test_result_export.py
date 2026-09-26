@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -12,7 +15,7 @@ from phydrax.uq._checkpoint import _json_value, _read_array_archive
 from phydrax.uq._result_export import _adapt_result
 
 
-def _problem():
+def _problem() -> Any:
     target = {
         "offset": jnp.asarray(0.5),
         "slope": jnp.asarray([-0.3, 0.8]),
@@ -42,7 +45,7 @@ def _problem():
     )
 
 
-def _assert_archive_matches_adapter(result, destination):
+def _assert_archive_matches_adapter(result: Any, destination: Any) -> Any:
     expected_arrays = {}
     expected_fields = {}
     expected_trees = {}
@@ -69,7 +72,7 @@ def _assert_archive_matches_adapter(result, destination):
     return archive
 
 
-def test_portable_result_archives_cover_declared_uq_result_types(tmp_path):
+def test_portable_result_archives_cover_declared_uq_result_types(tmp_path: Any) -> None:
     problem = _problem()
     map_search = phx.uq.search_map(
         problem,
@@ -171,7 +174,9 @@ def test_portable_result_archives_cover_declared_uq_result_types(tmp_path):
     ]
 
 
-def test_map_candidate_search_archives_preserve_valid_and_invalid_evidence(tmp_path):
+def test_map_candidate_search_archives_preserve_valid_and_invalid_evidence(
+    tmp_path: Any,
+) -> None:
     problem = _problem()
     candidates = phx.optim.FiniteProductSpace(
         {
@@ -211,7 +216,7 @@ def test_map_candidate_search_archives_preserve_valid_and_invalid_evidence(tmp_p
     assert invalid_archive.excluded == ("problem", "search")
 
 
-def test_arviz_adapter_preserves_chain_draw_parameter_and_sampler_dimensions():
+def test_arviz_adapter_preserves_chain_draw_parameter_and_sampler_dimensions() -> None:
     problem = _problem()
     result = phx.uq.sample_nuts(
         problem,
@@ -251,7 +256,7 @@ def test_arviz_adapter_preserves_chain_draw_parameter_and_sampler_dimensions():
     assert "observed_data" not in inference_data.children
 
 
-def test_result_archive_reader_rejects_truncated_archives(tmp_path):
+def test_result_archive_reader_rejects_truncated_archives(tmp_path: Any) -> None:
     result = phx.uq.find_map(_problem(), gradient_tolerance=1e-8)
     destination = phx.uq.export_result(result, tmp_path / "result.phxuq")
     destination.write_bytes(destination.read_bytes()[:48])
@@ -260,7 +265,7 @@ def test_result_archive_reader_rejects_truncated_archives(tmp_path):
         phx.uq.read_result_archive(destination)
 
 
-def _sgmcmc_result():
+def _sgmcmc_result() -> Any:
     data = jnp.linspace(-1.0, 1.0, 7)
     source = phx.uq.ArrayMinibatchSource(data, batch_size=3, seed=12)
     problem = phx.uq.MinibatchPosteriorProblem(
@@ -290,7 +295,7 @@ def _sgmcmc_result():
     )
 
 
-def test_sgmcmc_result_and_mixing_report_have_portable_archives(tmp_path):
+def test_sgmcmc_result_and_mixing_report_have_portable_archives(tmp_path: Any) -> None:
     result = _sgmcmc_result()
     report = result.mixing_report(
         max_rhat=2.0,
@@ -317,7 +322,7 @@ def test_sgmcmc_result_and_mixing_report_have_portable_archives(tmp_path):
     assert report_archive.metadata["approximation"] == "unadjusted_fixed_step"
 
 
-def test_sgmcmc_arviz_export_preserves_approximation_and_thermostat_semantics():
+def test_sgmcmc_arviz_export_preserves_approximation_and_thermostat_semantics() -> None:
     result = _sgmcmc_result()
     inference_data = phx.uq.to_arviz(result)
     posterior = inference_data["posterior"].dataset
@@ -339,7 +344,9 @@ def test_sgmcmc_arviz_export_preserves_approximation_and_thermostat_semantics():
     )
 
 
-def test_bellman_and_rao_blackwellized_results_have_portable_archives(tmp_path):
+def test_bellman_and_rao_blackwellized_results_have_portable_archives(
+    tmp_path: Any,
+) -> None:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[0.5], [1.0]]),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -11,7 +13,7 @@ sm = phx.applications.solid_mechanics
 mn = sm.member_network
 
 
-def _axial_problem(*, cable: bool = False, rest_length: float = 1.0):
+def _axial_problem(*, cable: bool = False, rest_length: float = 1.0) -> Any:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1),), dtype=jnp.int32),
         2,
@@ -21,6 +23,7 @@ def _axial_problem(*, cable: bool = False, rest_length: float = 1.0):
     positions = jnp.asarray(((0.0, 0.0), (1.0, 0.0)))
     material = mn.LinearElasticMaterial(100.0, 40.0, 1.0, yield_strength=50.0)
     section = mn.AxialSection(1.0)
+    # ty: ignore[invalid-argument-type]
     properties = mn.MemberPropertyMap((material,), (section,), (0,), (0,))
     reference = mn.MemberReferenceState(
         structure, positions, rest_lengths=jnp.asarray((rest_length,))
@@ -30,6 +33,7 @@ def _axial_problem(*, cable: bool = False, rest_length: float = 1.0):
     )
     definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
     law = mn.TensionOnlyCableLaw() if cable else mn.LinearAxialLaw()
+    # ty: ignore[invalid-argument-type]
     assembly = mn.MemberNetworkAssembly((mn.AxialMemberBlock((0,), law),))
     problem = mn.MemberNetworkProblem(definition, assembly)
     rotations = jnp.zeros((2, 1))
@@ -37,7 +41,7 @@ def _axial_problem(*, cable: bool = False, rest_length: float = 1.0):
     return structure, definition, problem, initial
 
 
-def _inputs(structure, definition, load, rest_length):
+def _inputs(structure: Any, definition: Any, load: Any, rest_length: Any) -> Any:
     rotations = jnp.zeros((2, 1))
     return mn.MemberNetworkInputs(
         structure.prescribed_values(definition.reference.positions),
@@ -48,7 +52,7 @@ def _inputs(structure, definition, load, rest_length):
     )
 
 
-def test_product_state_geometry_composes_euclidean_blocks():
+def test_product_state_geometry_composes_euclidean_blocks() -> None:
     geometry = phx.metrix.ProductStateGeometry(
         (
             phx.metrix.ProductStateGeometryBlock(
@@ -66,7 +70,7 @@ def test_product_state_geometry_composes_euclidean_blocks():
     assert geometry.split_point(state)[0] == pytest.approx(jnp.asarray((1.0, 2.0)))
 
 
-def test_axial_member_equilibrium_matches_closed_form_and_derivative():
+def test_axial_member_equilibrium_matches_closed_form_and_derivative() -> None:
     structure, definition, problem, initial = _axial_problem()
     inputs = _inputs(structure, definition, 10.0, 1.0)
     result = mn.member_network_equilibrium(problem, inputs, initial)
@@ -77,7 +81,7 @@ def test_axial_member_equilibrium_matches_closed_form_and_derivative():
 
     plan = mn.plan_member_network(problem, inputs, initial)
 
-    def displacement(load):
+    def displacement(load: Any) -> Any:
         dynamic = _inputs(structure, definition, load, 1.0)
         solved = mn.solve_member_network(
             mn.prepare_member_network(plan, dynamic, initial)
@@ -87,7 +91,7 @@ def test_axial_member_equilibrium_matches_closed_form_and_derivative():
     assert jax.grad(displacement)(jnp.asarray(10.0)) == pytest.approx(0.01, rel=1.0e-5)
 
 
-def test_tension_only_cable_slackens_and_retensions_with_active_set_evidence():
+def test_tension_only_cable_slackens_and_retensions_with_active_set_evidence() -> None:
     structure, definition, problem, initial = _axial_problem(cable=True, rest_length=1.1)
     slack_inputs = _inputs(structure, definition, 0.0, 1.1)
     plan = mn.plan_member_network(problem, slack_inputs, initial)
@@ -112,7 +116,7 @@ def test_tension_only_cable_slackens_and_retensions_with_active_set_evidence():
     )
 
 
-def test_force_density_bridge_infers_compatible_rest_lengths():
+def test_force_density_bridge_infers_compatible_rest_lengths() -> None:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
         3,
@@ -128,8 +132,14 @@ def test_force_density_bridge_infers_compatible_rest_lengths():
     force_result = sm.force_density_equilibrium(force_problem, force_inputs)
     material = mn.LinearElasticMaterial(100.0, 40.0, 1.0)
     properties = mn.MemberPropertyMap(
-        (material,), (mn.AxialSection(1.0),), (0, 0), (0, 0)
+        (material,),
+        (mn.AxialSection(1.0),),
+        # ty: ignore[invalid-argument-type]
+        (0, 0),
+        # ty: ignore[invalid-argument-type]
+        (0, 0),
     )
+    # ty: ignore[invalid-argument-type]
     assembly = mn.MemberNetworkAssembly((mn.AxialMemberBlock((0, 1)),))
     target, definition, inputs, initial = mn.member_network_from_force_density(
         force_result, structure, properties, assembly

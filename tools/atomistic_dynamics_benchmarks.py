@@ -8,6 +8,7 @@ import argparse
 import json
 import platform
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -38,7 +39,7 @@ def _positions(count: int) -> tuple[np.ndarray, float]:
     return 1.0 + spacing * grid, side * spacing + 2.5
 
 
-def _runtime(arguments):
+def _runtime(arguments: Any) -> Any:
     if arguments.atoms < 2 or arguments.steps <= 0 or arguments.repeats <= 0:
         raise ValueError(
             "atoms, steps, and repeats must be positive; atoms must exceed one."
@@ -60,6 +61,7 @@ def _runtime(arguments):
         base, 2.5, 0.3
     ).prepare(system.particles)
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5, switch_distance=2.2)]
     ).prepare(system)
     dynamics = phx.atomistic.AtomisticDynamicsPlan(

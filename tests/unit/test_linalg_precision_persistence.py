@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -29,7 +32,7 @@ from phydrax.optim._state_compression import (
 )
 
 
-def _positive_properties():
+def _positive_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -40,7 +43,7 @@ def _positive_properties():
     )
 
 
-def test_batched_factorization_matrix_functions_estimators_and_inertia():
+def test_batched_factorization_matrix_functions_estimators_and_inertia() -> None:
     matrices = jnp.asarray(
         [
             [[4.0, 1.0], [1.0, 3.0]],
@@ -90,7 +93,7 @@ def test_batched_factorization_matrix_functions_estimators_and_inertia():
     assert jnp.all(inertia.zero_count_reliable)
 
 
-def test_shared_pattern_sparse_factorization_batch_is_independent():
+def test_shared_pattern_sparse_factorization_batch_is_independent() -> None:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1, 0, 1], dtype=jnp.int32),
         jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
@@ -119,7 +122,9 @@ def test_shared_pattern_sparse_factorization_batch_is_independent():
     assert jnp.allclose(result.value, expected)
 
 
-def test_traced_sparse_value_refresh_preserves_solves_gradients_and_batch_failures():
+def test_traced_sparse_value_refresh_preserves_solves_gradients_and_batch_failures() -> (
+    None
+):
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1, 0, 1, 2, 1, 2], dtype=jnp.int32),
         jnp.asarray([0, 0, 1, 1, 1, 2, 2], dtype=jnp.int32),
@@ -141,10 +146,10 @@ def test_traced_sparse_value_refresh_preserves_solves_gradients_and_batch_failur
     values = storage.values.at[:, 0].add(jnp.asarray([0.5, 1.0]))
 
     @eqx.filter_jit
-    def solve(symbolic, numeric):
+    def solve(symbolic: Any, numeric: Any) -> Any:
         return la.refresh_sparse_factorization_values(symbolic, numeric).solve(rhs)
 
-    def reference(numeric):
+    def reference(numeric: Any) -> Any:
         dense = jnp.zeros((2, 3, 3), dtype=numeric.dtype)
         dense = dense.at[:, rows, storage.indices].set(numeric)
         return jax.vmap(jnp.linalg.solve)(dense, jnp.broadcast_to(rhs, (2, 3)))
@@ -175,7 +180,7 @@ def test_traced_sparse_value_refresh_preserves_solves_gradients_and_batch_failur
     assert jnp.all(nonfinite.lower_status == int(la.SparseTriangularStatus.NONFINITE))
 
 
-def test_numeric_sparse_refresh_accepts_traced_routes_and_coalesces_duplicates():
+def test_numeric_sparse_refresh_accepts_traced_routes_and_coalesces_duplicates() -> None:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([1, 0, 0, 1, 0], dtype=jnp.int32),
         jnp.asarray([0, 1, 0, 1, 0], dtype=jnp.int32),
@@ -193,7 +198,7 @@ def test_numeric_sparse_refresh_accepts_traced_routes_and_coalesces_duplicates()
     )
 
     @jax.jit
-    def run(value):
+    def run(value: Any) -> Any:
         factor = la.refresh_sparse_factorization(plan, value)
         return factor.solve(jnp.asarray([8.0, 6.0]))
 
@@ -202,7 +207,7 @@ def test_numeric_sparse_refresh_accepts_traced_routes_and_coalesces_duplicates()
     # Changed matrix is [[6,2],[1,5]], including duplicate (0,0) routes.
     assert jnp.allclose(result.value, jnp.ones(2), rtol=1e-10)
 
-    def sum_solution(scale):
+    def sum_solution(scale: Any) -> Any:
         scaled = eqx.tree_at(
             lambda value: value.coefficients, updated, scale * updated.coefficients
         )
@@ -211,7 +216,7 @@ def test_numeric_sparse_refresh_accepts_traced_routes_and_coalesces_duplicates()
     assert jnp.allclose(jax.grad(sum_solution)(1.0), -2.0, rtol=1e-10)
 
 
-def test_sparse_derivatives_have_explicit_dtype_complex_and_hessian_semantics():
+def test_sparse_derivatives_have_explicit_dtype_complex_and_hessian_semantics() -> None:
     source = la.ArraySpace((2,), dtype=jnp.float32)
     target = la.ArraySpace((2,), dtype=jnp.float64)
     diagonal = phx.sparse.EdgeRelation(
@@ -256,7 +261,7 @@ def test_sparse_derivatives_have_explicit_dtype_complex_and_hessian_semantics():
     )
 
 
-def test_mx_formats_rewrite_and_local_optimizer_compression_are_explicit():
+def test_mx_formats_rewrite_and_local_optimizer_compression_are_explicit() -> None:
     values = jnp.linspace(-3.0, 3.0, 35, dtype=jnp.float32)
     format_ = MicroscalingFormat("mxfp4-e2m1", axis=0)
     payload = quantize_mx(values, format_)
@@ -292,7 +297,9 @@ def test_mx_formats_rewrite_and_local_optimizer_compression_are_explicit():
     )
     compressed = compress_optimizer_state(plan, state)
     decompressed = decompress_optimizer_state(plan, compressed)
+    # ty: ignore[not-subscriptable]
     assert decompressed["count"] == state["count"]
+    # ty: ignore[not-subscriptable, unresolved-attribute]
     assert decompressed["moment"].dtype == state["moment"].dtype
     assert compressed.diagnostics[0].payload_bytes < state["moment"].nbytes
 
@@ -308,11 +315,14 @@ def test_mx_formats_rewrite_and_local_optimizer_compression_are_explicit():
         compressed_state,
         jnp.asarray([1.0, -1.0]),
     )
+    # ty: ignore[unresolved-attribute]
     assert updates.shape == (2,)
     assert compressed_state.plan_id == prepared_optimizer.plan.plan_id
 
 
-def test_coordinate_tree_and_full_complex_training_checkpoint_round_trip(tmp_path):
+def test_coordinate_tree_and_full_complex_training_checkpoint_round_trip(
+    tmp_path: Any,
+) -> None:
     complex_space = la.ArraySpace((2,), dtype=jnp.complex64)
     coordinate_map = la.ComplexCartesianCoordinates(complex_space)
     template = {"complex": jnp.ones((2,), dtype=jnp.complex64)}

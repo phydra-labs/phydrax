@@ -29,7 +29,7 @@ from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.nonlinear import NonlinearTermination
 
 
-def _quadratic_path_costs(parameters, noise, args):
+def _quadratic_path_costs(parameters: Any, noise: Any, args: Any) -> Any:
     """Return every complete frozen-path cost before SAA aggregation."""
     signal = jnp.mean(noise.increments, axis=tuple(range(1, noise.increments.ndim)))
     signal_shape = (1,) * (parameters.ndim - 1) + (noise.num_paths, 1)
@@ -51,7 +51,7 @@ def _noise(
     noise_size: int,
     cluster_count: int,
     /,
-):
+) -> Any:
     path = jnp.arange(path_count, dtype=jnp.float32)[:, None, None]
     step = jnp.arange(horizon, dtype=jnp.float32)[None, :, None]
     component = jnp.arange(noise_size, dtype=jnp.float32)[None, None, :]
@@ -79,7 +79,7 @@ def _prepared_problem(
     case_shape: tuple[int, ...],
     cluster_count: int,
     /,
-):
+) -> Any:
     partition = phx.control.games.PlayerControlPartition(
         tuple(f"player-{index}" for index in range(len(control_sizes))),
         control_sizes,
@@ -140,7 +140,7 @@ def _prepared_problem(
     return prepared
 
 
-def _certificates(prepared, result) -> dict[str, Any]:
+def _certificates(prepared: Any, result: Any) -> dict[str, Any]:
     training_ids = set(prepared.training_realization_ids)
     holdout_ids = set(prepared.holdout_realization_ids)
     training_signal_mean = jnp.mean(prepared.training_noise.increments)
@@ -320,7 +320,7 @@ def _case(
     }
 
 
-def _specifications():
+def _specifications() -> Any:
     return (
         ("baseline", 32, 8, 2, (2, 2), (), 8),
         ("paths-8", 8, 8, 2, (2, 2), (), 4),

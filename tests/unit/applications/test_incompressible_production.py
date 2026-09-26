@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -19,7 +21,7 @@ from phydrax.qualification._evidence import SupportDependency
 from phydrax.solver._production_runtime import ArtifactCheckpointStore
 
 
-def _periodic_production_inputs():
+def _periodic_production_inputs() -> Any:
     space = phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(4),
@@ -70,7 +72,7 @@ def _periodic_production_inputs():
     return compiled, method, forcing, statistics, case, initial
 
 
-def _periodic_plan(*, end_time=0.1, output_times=None):
+def _periodic_plan(*, end_time: Any = 0.1, output_times: Any = None) -> Any:
     dynamics, method, forcing, statistics, case, initial = _periodic_production_inputs()
     plan = flow.PeriodicSpectralProductionPlan(
         dynamics,
@@ -88,7 +90,7 @@ def _periodic_plan(*, end_time=0.1, output_times=None):
     return plan, method, forcing, initial
 
 
-def _channel_production_inputs():
+def _channel_production_inputs() -> Any:
     space = phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(4),
@@ -130,7 +132,7 @@ def _channel_production_inputs():
     return method, velocity_coordinates, pressure_coordinates, statistics
 
 
-def _mac_production_inputs():
+def _mac_production_inputs() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),
@@ -173,7 +175,7 @@ def _mac_production_inputs():
     return discretization, operators, pressure_gradient, dynamics, method, statistics
 
 
-def _periodic_les_production_inputs():
+def _periodic_les_production_inputs() -> Any:
     space = phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(4) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -238,7 +240,7 @@ def _periodic_les_production_inputs():
     return dynamics, method, statistics, case, initial
 
 
-def _periodic_dynamic_production_inputs():
+def _periodic_dynamic_production_inputs() -> Any:
     resolved = phx.discretization.TensorSpectralPlan(
         tuple(phx.discretization.FourierBasisPlan(8) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -288,6 +290,7 @@ def _periodic_dynamic_production_inputs():
         phx.equations.DynamicLESProvenance(
             provenance,
             test_filter,
+            # ty: ignore[invalid-argument-type]
             (2.0, 2.0, 2.0),
         )
     )
@@ -334,8 +337,8 @@ def _periodic_dynamic_production_inputs():
 
 
 def test_periodic_dynamic_production_commits_only_accepted_state_and_restarts(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     dynamics, method, statistics, case, initial_velocity = (
         _periodic_dynamic_production_inputs()
     )
@@ -422,7 +425,7 @@ def test_periodic_dynamic_production_commits_only_accepted_state_and_restarts(
     )
 
 
-def test_periodic_plan_identity_and_checkpoint_binding_change_with_runtime():
+def test_periodic_plan_identity_and_checkpoint_binding_change_with_runtime() -> None:
     first, base_method, forcing, _ = _periodic_plan(end_time=0.1)
     second, _, _, _ = _periodic_plan(end_time=0.15)
 
@@ -439,7 +442,9 @@ def test_periodic_plan_identity_and_checkpoint_binding_change_with_runtime():
     )
 
 
-def test_periodic_les_production_uses_guarded_first_stage_and_statistics(tmp_path):
+def test_periodic_les_production_uses_guarded_first_stage_and_statistics(
+    tmp_path: Any,
+) -> None:
     dynamics, method, statistics, case, initial_velocity = (
         _periodic_les_production_inputs()
     )
@@ -480,6 +485,7 @@ def test_periodic_les_production_uses_guarded_first_stage_and_statistics(tmp_pat
 
     assert bool(guarded_result.successful)
     assert bool(transition.successful)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         guarded_result.accepted_state,
         reused_result.accepted_state,
@@ -495,7 +501,9 @@ def test_periodic_les_production_uses_guarded_first_stage_and_statistics(tmp_pat
     )
 
 
-def test_periodic_constant_power_adapter_executes_through_generic_runtime(tmp_path):
+def test_periodic_constant_power_adapter_executes_through_generic_runtime(
+    tmp_path: Any,
+) -> None:
     plan, base_method, forcing, initial_velocity = _periodic_plan(end_time=0.05)
     prepared = plan.prepare(tmp_path / "periodic")
     initial = prepared.initialize(initial_velocity)
@@ -518,7 +526,7 @@ def test_periodic_constant_power_adapter_executes_through_generic_runtime(tmp_pa
         prepared.initialize(2.0 * initial_velocity)
 
 
-def test_constant_power_failure_rolls_back_periodic_production(tmp_path):
+def test_constant_power_failure_rolls_back_periodic_production(tmp_path: Any) -> None:
     dynamics, method, forcing, statistics, _, initial_velocity = (
         _periodic_production_inputs()
     )
@@ -551,7 +559,7 @@ def test_constant_power_failure_rolls_back_periodic_production(tmp_path):
     assert not bool(snapshot.successful)
 
 
-def test_periodic_artifact_checkpoint_restart_preserves_exact_case(tmp_path):
+def test_periodic_artifact_checkpoint_restart_preserves_exact_case(tmp_path: Any) -> None:
     plan, _, _, initial_velocity = _periodic_plan(end_time=0.05)
     profile = HPCFilesystemProfile(
         "periodic-production-posix",
@@ -628,7 +636,7 @@ def test_periodic_artifact_checkpoint_restart_preserves_exact_case(tmp_path):
         mismatched_plan.prepare(store)
 
 
-def test_rejected_periodic_attempt_does_not_update_statistics(tmp_path):
+def test_rejected_periodic_attempt_does_not_update_statistics(tmp_path: Any) -> None:
     dynamics, method, forcing, statistics, _, initial_velocity = (
         _periodic_production_inputs()
     )
@@ -662,7 +670,7 @@ def test_rejected_periodic_attempt_does_not_update_statistics(tmp_path):
     )
 
 
-def test_channel_binds_complete_continuation_leaves_and_rejects_off_lattice():
+def test_channel_binds_complete_continuation_leaves_and_rejects_off_lattice() -> None:
     method, velocity_coordinates, pressure_coordinates, statistics = (
         _channel_production_inputs()
     )
@@ -700,7 +708,7 @@ def test_channel_binds_complete_continuation_leaves_and_rejects_off_lattice():
     assert plan.runtime_plan.retry_policy.maximum_retries == 0
 
 
-def test_mac_pressure_gradient_and_native_statistics_are_bound(tmp_path):
+def test_mac_pressure_gradient_and_native_statistics_are_bound(tmp_path: Any) -> None:
     discretization, operators, pressure_gradient, dynamics, method, statistics = (
         _mac_production_inputs()
     )
@@ -722,6 +730,7 @@ def test_mac_pressure_gradient_and_native_statistics_are_bound(tmp_path):
     initial = prepared.initialize(velocity)
     snapshot = prepared.statistics_snapshot(initial.time, initial.accepted_state)
 
+    # ty: ignore[unresolved-attribute]
     assert plan.constant_pressure_gradient.forcing_id == dynamics.problem.forcing_id
     assert plan.checkpoint_encoding.bindings == ()
     assert snapshot.operators_id == operators.prepared_id
@@ -733,7 +742,7 @@ def test_mac_pressure_gradient_and_native_statistics_are_bound(tmp_path):
     assert snapshot.raw_second_moment.shape == (4, 3, 3)
 
 
-def test_mac_statistics_use_declared_moving_wall_velocity():
+def test_mac_statistics_use_declared_moving_wall_velocity() -> None:
     discretization, operators, _, _, _, _ = _mac_production_inputs()
     statistics = flow.MACPlaneWallStatisticsPlan(
         operators,
@@ -766,7 +775,7 @@ def test_mac_statistics_use_declared_moving_wall_velocity():
     )
 
 
-def test_ou_forced_periodic_production_couples_and_restarts(tmp_path):
+def test_ou_forced_periodic_production_couples_and_restarts(tmp_path: Any) -> None:
     dynamics, method, _, statistics, case, initial_velocity = (
         _periodic_production_inputs()
     )
@@ -823,7 +832,7 @@ def test_ou_forced_periodic_production_couples_and_restarts(tmp_path):
     assert bool(snapshot.forcing_available)
 
 
-def test_ou_method_uses_continuation_time_with_fixed_step_scheduler_roundoff():
+def test_ou_method_uses_continuation_time_with_fixed_step_scheduler_roundoff() -> None:
     _, method, _, statistics, _, initial_velocity = _periodic_production_inputs()
     basis = flow.SolenoidalHermitianFourierBasis(
         statistics.projector,
@@ -843,7 +852,7 @@ def test_ou_method_uses_continuation_time_with_fixed_step_scheduler_roundoff():
     prepared = flow.prepare_ou_forced_periodic_method(method, forcing, realization)
     initial = prepared.initial_state(initial_velocity, 0.0)
 
-    def body(step_index, carry):
+    def body(step_index: Any, carry: Any) -> Any:
         current, successful = carry
         result = prepared.step(
             step_index,

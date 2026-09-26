@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -41,7 +43,7 @@ from phydrax.applications.solid_mechanics._rod_tendon import (
 from phydrax.dynamics import PlantRuntimeState, PlantStepContext
 
 
-def _plant_and_tendon():
+def _plant_and_tendon() -> Any:
     dtype = jnp.float32
     nodes = jnp.asarray(
         ((0.0, 0.0, 0.0), (0.0, 0.0, 0.5), (0.0, 0.0, 1.0)),
@@ -94,7 +96,7 @@ def _plant_and_tendon():
     return plant, tendon
 
 
-def _runtime(plant, *, time=0.0, epoch=0, key_seed=7):
+def _runtime(plant: Any, *, time: Any = 0.0, epoch: Any = 0, key_seed: Any = 7) -> Any:
     dtype = plant.initial_state.reduced_state.values.dtype
     return PlantRuntimeState(
         plant.initial_state,
@@ -108,7 +110,7 @@ def _runtime(plant, *, time=0.0, epoch=0, key_seed=7):
     )
 
 
-def _full_plan(tendon, *, sensor=None, ledger=False):
+def _full_plan(tendon: Any, *, sensor: Any = None, ledger: Any = False) -> Any:
     frame_reconstruction = RodReconstructionPlan(
         RodFrameQueryPlan(jnp.asarray((0.23, 1.0), dtype=jnp.float32))
     )
@@ -139,7 +141,7 @@ def _full_plan(tendon, *, sensor=None, ledger=False):
     )
 
 
-def test_exact_layout_arbitrary_arc_length_provenance_and_zero_noise_mechanics():
+def test_exact_layout_arbitrary_arc_length_provenance_and_zero_noise_mechanics() -> None:
     plant, tendon = _plant_and_tendon()
     runtime = _runtime(plant)
     plan = prepare_soft_observation_plan(
@@ -210,7 +212,9 @@ def test_exact_layout_arbitrary_arc_length_provenance_and_zero_noise_mechanics()
     assert len(set(plan.layout.component_query_ids[50:62])) == 1
     assert plan.layout.component_query_ids[12] != plan.layout.component_query_ids[50]
 
+    # ty: ignore[unresolved-attribute]
     frame_evaluation = plan.frame.reconstruction.evaluate(runtime.payload.reduced_state)
+    # ty: ignore[unresolved-attribute]
     strain_evaluation = plan.strain.reconstruction.evaluate(runtime.payload.reduced_state)
     assert jnp.array_equal(
         frame_evaluation.arc_lengths,
@@ -255,7 +259,7 @@ def test_exact_layout_arbitrary_arc_length_provenance_and_zero_noise_mechanics()
     assert candidate_sensor is not sensor_state
 
 
-def test_same_plant_key_replays_noise_and_sample_hold_is_explicit():
+def test_same_plant_key_replays_noise_and_sample_hold_is_explicit() -> None:
     plant, _ = _plant_and_tendon()
     runtime = _runtime(plant, key_seed=19)
     prepared = prepare_soft_observation_plan(
@@ -277,6 +281,7 @@ def test_same_plant_key_replays_noise_and_sample_hold_is_explicit():
     assert jnp.array_equal(first.values, replay.values)
     assert jnp.array_equal(first.noise, replay.noise)
     assert jnp.array_equal(first.noise_key, replay.noise_key)
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(first_candidate.held_values, replay_candidate.held_values)
     assert jnp.allclose(first.values, first.ideal_values + first.bias + first.noise)
 
@@ -298,7 +303,7 @@ def test_same_plant_key_replays_noise_and_sample_hold_is_explicit():
     assert not jnp.array_equal(resampled.noise_key, first.noise_key)
 
 
-def test_foreign_plant_stale_tendon_and_query_mismatches_reject():
+def test_foreign_plant_stale_tendon_and_query_mismatches_reject() -> None:
     plant, tendon = _plant_and_tendon()
     runtime = _runtime(plant)
     prepared = prepare_soft_observation_plan(plant, _full_plan(tendon))
@@ -338,7 +343,7 @@ def test_foreign_plant_stale_tendon_and_query_mismatches_reject():
         )
 
 
-def test_complete_energy_load_ledger_requires_the_current_accepted_step():
+def test_complete_energy_load_ledger_requires_the_current_accepted_step() -> None:
     plant, _ = _plant_and_tendon()
     parameters = plant.bind_parameters()
     reset = plant.reset(jax.random.key(31), parameters)

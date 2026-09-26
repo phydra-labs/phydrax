@@ -13,7 +13,7 @@ from phydrax.ml._contracts import (
 )
 
 
-def test_weighted_reductions_mask_zero_weight_nonfinite_values():
+def test_weighted_reductions_mask_zero_weight_nonfinite_values() -> None:
     values = jnp.array([[1.0, 3.0], [jnp.nan, jnp.nan], [5.0, 7.0]])
     weights = jnp.array([1.0, 0.0, 3.0])
 
@@ -36,7 +36,7 @@ def test_weighted_reductions_mask_zero_weight_nonfinite_values():
     assert jnp.array_equal(mean_mass, mass)
 
 
-def test_augmented_svd_solves_weighted_multioutput_and_differentiates():
+def test_augmented_svd_solves_weighted_multioutput_and_differentiates() -> None:
     design = jnp.array([[-2.0, 1.0], [-1.0, 2.0], [1.0, 1.0], [2.0, -1.0]])
     coefficients = jnp.array([[2.0, -1.0], [0.5, 3.0]])
     intercept = jnp.array([1.5, -2.0])
@@ -64,7 +64,7 @@ def test_augmented_svd_solves_weighted_multioutput_and_differentiates():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_least_squares_reports_invalid_weights_and_unidentified_intercept():
+def test_least_squares_reports_invalid_weights_and_unidentified_intercept() -> None:
     design = jnp.ones((3, 1))
     target = jnp.arange(3.0)
 
@@ -87,7 +87,7 @@ def test_least_squares_reports_invalid_weights_and_unidentified_intercept():
     assert int(unidentified.status) == ML_RANK_DEFICIENT
 
 
-def test_weighted_subspace_reconstructs_and_ignores_zero_weight_nan_rows():
+def test_weighted_subspace_reconstructs_and_ignores_zero_weight_nan_rows() -> None:
     values = jnp.array(
         [
             [1.0, 2.0, 3.0],
@@ -115,7 +115,7 @@ def test_weighted_subspace_reconstructs_and_ignores_zero_weight_nan_rows():
     assert jnp.all(jnp.isfinite(projector_gradient))
 
 
-def test_pairwise_chunking_and_assignment_surfaces_are_consistent():
+def test_pairwise_chunking_and_assignment_surfaces_are_consistent() -> None:
     left = jnp.array([[0.0, 0.0], [1.0, 0.0], [3.0, 4.0]])
     right = jnp.array([[0.0, 0.0], [2.0, 0.0]])
     dense = numerics.pairwise_distances(left, right, metric="squared-euclidean")
@@ -134,7 +134,7 @@ def test_pairwise_chunking_and_assignment_surfaces_are_consistent():
     assert jnp.allclose(jnp.sum(probabilities, axis=-1), 1.0)
 
 
-def test_histogram_statistics_and_xgboost_newton_formulas():
+def test_histogram_statistics_and_xgboost_newton_formulas() -> None:
     bins = jnp.array([[0, 1], [1, 0], [1, 1]])
     gradients = jnp.array([1.0, jnp.nan, -2.0])
     hessians = jnp.array([2.0, jnp.nan, 4.0])
@@ -165,7 +165,7 @@ def test_histogram_statistics_and_xgboost_newton_formulas():
     assert jnp.allclose(gain, expected)
 
 
-def test_proximal_and_fixed_iteration_primitives_have_fixed_shapes():
+def test_proximal_and_fixed_iteration_primitives_have_fixed_shapes() -> None:
     projected = numerics.project_simplex(jnp.array([0.2, -0.5, 2.0]))
     assert jnp.all(projected >= 0.0)
     assert jnp.allclose(jnp.sum(projected), 1.0)

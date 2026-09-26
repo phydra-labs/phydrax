@@ -6,6 +6,7 @@
 
 import json
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     side = 24
     axis = np.linspace(-0.5, 0.5, side, endpoint=False) + 0.5 / side
     xx, yy = np.meshgrid(axis, axis, indexing="ij")
@@ -62,7 +63,7 @@ def _problem():
     )
 
 
-def _compile(backend):
+def _compile(backend: Any) -> Any:
     particles, spheres, method, problem, box, position, radii = _problem()
     pair_capacity = particles.capacity * (particles.capacity - 1) // 2
     if backend == "single-cell-scale":
@@ -91,11 +92,11 @@ def _compile(backend):
     return compiled, state
 
 
-def _measure(backend, repeats=10):
+def _measure(backend: Any, repeats: Any = 10) -> Any:
     compiled, state = _compile(backend)
 
     @jax.jit
-    def evaluate(current):
+    def evaluate(current: Any) -> Any:
         result = compiled.dynamics.evaluate(
             jnp.asarray(0.0), current, jnp.asarray(1.0e-5), None
         )
@@ -122,7 +123,7 @@ def _measure(backend, repeats=10):
     }
 
 
-def main():
+def main() -> None:
     results = [_measure("single-cell-scale"), _measure("sparse-hierarchy")]
     print(json.dumps({"benchmark": "broad-psd-dem", "results": results}, indent=2))
 

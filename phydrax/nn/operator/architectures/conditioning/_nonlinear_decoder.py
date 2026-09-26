@@ -36,7 +36,7 @@ from phydrax.nn.operator.architectures.conditioning._deeponet import (
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 
-from .....typing import PRNGKey
+from .....typing import parse, PRNGKey
 
 
 class CoordinateDecoderState(StrictModule):
@@ -207,8 +207,7 @@ class CoordinateConditionedOperator(AbstractEncodedOperatorModel):
         self.branch_mixer = branch_mixer
         if self.latent_size <= 0 or self.coord_dim <= 0:
             raise ValueError("latent_size and coord_dim must be positive.")
-        if fusion not in ("sum", "product", "concat"):
-            raise ValueError("fusion must be 'sum', 'product', or 'concat'.")
+        fusion = parse(fusion, BranchFusion, "fusion")
         if isinstance(decoder, Linear):
             raise ValueError(
                 "CoordinateConditionedOperator requires a genuinely nonlinear decoder."

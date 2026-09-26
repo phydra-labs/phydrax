@@ -66,7 +66,7 @@ def _chain_urdf(joint_count: int, /) -> str:
     return f'<robot name="benchmark-chain-{joint_count}">{links}{joints}\n</robot>'
 
 
-def _prepare_chain(joint_count: int, /):
+def _prepare_chain(joint_count: int, /) -> Any:
     adaptation = parse_urdf_text(_chain_urdf(joint_count), root_policy="fixed_world")
     particles = adaptation.particles.prepare()
     bodies = adaptation.bodies.prepare(particles)
@@ -113,20 +113,22 @@ def _scalar_float(value: Any, /) -> float:
 
 
 def _rollout_workload(
-    articulation,
-    configuration,
+    articulation: Any,
+    configuration: Any,
     /,
     *,
     batch_size: int,
     step_count: int,
-):
+) -> Any:
     if articulation.state_layout is None or articulation.input_layout is None:
         raise ValueError("rollout benchmarking requires at least one moving joint")
     dtype = articulation.reference_position.dtype
     gravity = jnp.zeros((3,), dtype=dtype)
     policy = ReducedSemiImplicitVelocityEulerStepPolicy(maximum_step_size=0.01)
 
-    def transition(context, packed_state, generalized_effort, args):
+    def transition(
+        context: Any, packed_state: Any, generalized_effort: Any, args: Any
+    ) -> Any:
         del args
         source = articulation.unpack_state(packed_state)
         result = reduced_semi_implicit_velocity_euler_step(
@@ -177,7 +179,7 @@ def _rollout_workload(
         dtype=dtype,
     )
 
-    def rollout(initial, coefficients):
+    def rollout(initial: Any, coefficients: Any) -> Any:
         return dynamics.rollout(
             grid,
             initial,
@@ -213,7 +215,7 @@ def _run_case(
         lambda point, rate: articulation.forward_kinematics(point, rate)
     )
 
-    def jacobian_actions(point, rate, load):
+    def jacobian_actions(point: Any, rate: Any, load: Any) -> Any:
         operator = articulation.frame_jacobian_operator(point, tip_body_id)
         return operator.mv(rate), operator.transpose_mv(load)
 

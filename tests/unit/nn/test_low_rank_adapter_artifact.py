@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -14,7 +17,7 @@ from phydrax._array_archive import ArrayArchiveCorruptionError
 _KEY0 = jr.key(0)
 
 
-def _base(*, key=_KEY0):
+def _base(*, key: Any = _KEY0) -> Any:
     return phx.nn.models.MLP(
         in_size=3,
         out_size=2,
@@ -25,7 +28,7 @@ def _base(*, key=_KEY0):
     )
 
 
-def _adapted(base):
+def _adapted(base: Any) -> Any:
     paths = phx.nn.parameters.low_rank_sites(base)
     model, _ = phx.nn.parameters.adapt_low_rank(
         base,
@@ -43,7 +46,9 @@ def _adapted(base):
     return eqx.tree_at(lambda value: value.layers[0].weight, model, changed)
 
 
-def test_low_rank_adapter_round_trip_binds_base_and_preserves_merge(tmp_path):
+def test_low_rank_adapter_round_trip_binds_base_and_preserves_merge(
+    tmp_path: Any,
+) -> None:
     base = _base()
     adapted = _adapted(base)
     destination = tmp_path / "adapter.phx"
@@ -73,7 +78,7 @@ def test_low_rank_adapter_round_trip_binds_base_and_preserves_merge(tmp_path):
     )
 
 
-def test_low_rank_adapter_rejects_wrong_base_content_or_structure(tmp_path):
+def test_low_rank_adapter_rejects_wrong_base_content_or_structure(tmp_path: Any) -> None:
     base = _base()
     destination = tmp_path / "adapter.phx"
     phx.nn.parameters.save_low_rank_adapter(destination, _adapted(base))
@@ -92,7 +97,9 @@ def test_low_rank_adapter_rejects_wrong_base_content_or_structure(tmp_path):
         phx.nn.parameters.read_low_rank_adapter(destination, wrong_structure)
 
 
-def test_low_rank_adapter_rejects_payload_corruption_and_dense_save(tmp_path):
+def test_low_rank_adapter_rejects_payload_corruption_and_dense_save(
+    tmp_path: Any,
+) -> None:
     with pytest.raises(ValueError, match="without adapters"):
         phx.nn.parameters.save_low_rank_adapter(tmp_path / "dense.phx", _base())
 
@@ -105,7 +112,7 @@ def test_low_rank_adapter_rejects_payload_corruption_and_dense_save(tmp_path):
         phx.nn.parameters.read_low_rank_adapter(destination, _base())
 
 
-def test_adapted_model_round_trips_through_native_ml_artifact(tmp_path):
+def test_adapted_model_round_trips_through_native_ml_artifact(tmp_path: Any) -> None:
     adapted = _adapted(_base())
     destination = tmp_path / "adapted.phxml"
     phx.ml.artifacts.save_ml_artifact(destination, adapted)

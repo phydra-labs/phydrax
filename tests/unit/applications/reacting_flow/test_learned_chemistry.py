@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +16,7 @@ from phydrax._admissibility import AdmissibilityReason, DOMAIN_REASON_SHIFT
 from tests._ported_models import full_port, PortedAffine
 
 
-def _manifest(name, *, training=True):
+def _manifest(name: Any, *, training: Any = True) -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -31,7 +34,7 @@ def _manifest(name, *, training=True):
     )
 
 
-def _mechanism():
+def _mechanism() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (phx.equations.ChemicalPhaseKind.GAS,) * 2,
@@ -63,7 +66,7 @@ def _mechanism():
     ).prepare()
 
 
-def _schema():
+def _schema() -> Any:
     return phx.applications.reacting_flow.LearnedChemicalFeatureSchema(
         ("log_A", "log_B", "temperature", "pressure", "log_step"),
         ("log(mol/m3)", "log(mol/m3)", "K", "Pa", "log(s)"),
@@ -72,12 +75,12 @@ def _schema():
     )
 
 
-def _uncertainty(features):
+def _uncertainty(features: Any) -> Any:
     return jnp.zeros(features.shape[:-1])
 
 
-def test_supported_learned_extent_preserves_invariants_without_fallback():
-    def model(features):
+def test_supported_learned_extent_preserves_invariants_without_fallback() -> None:
+    def model(features: Any) -> Any:
         return 0.01 * jnp.ones(features.shape[:-1] + (1,))
 
     plan = phx.applications.reacting_flow.LearnedChemicalTransitionPlan(
@@ -99,8 +102,8 @@ def test_supported_learned_extent_preserves_invariants_without_fallback():
     np.testing.assert_allclose(result.charge_residual, 0.0, atol=1e-12)
 
 
-def test_out_of_support_and_nonphysical_models_use_exact_mechanism():
-    def bad_model(features):
+def test_out_of_support_and_nonphysical_models_use_exact_mechanism() -> None:
+    def bad_model(features: Any) -> Any:
         return 2.0 * jnp.ones(features.shape[:-1] + (1,))
 
     plan = phx.applications.reacting_flow.LearnedChemicalTransitionPlan(
@@ -130,8 +133,8 @@ def test_out_of_support_and_nonphysical_models_use_exact_mechanism():
     )
 
 
-def _small_extent_plan(model_id="extent-model"):
-    def model(features):
+def _small_extent_plan(model_id: Any = "extent-model") -> Any:
+    def model(features: Any) -> Any:
         return 0.01 * jnp.ones(features.shape[:-1] + (1,))
 
     return phx.applications.reacting_flow.LearnedChemicalTransitionPlan(
@@ -150,7 +153,9 @@ _LANES = jnp.asarray(((0.9, 0.1), (0.9, 0.1)))
 _TEMPERATURES = jnp.asarray((1000.0, 3000.0))
 
 
-def test_header_marks_learned_lanes_eligible_and_records_out_of_support_fallback():
+def test_header_marks_learned_lanes_eligible_and_records_out_of_support_fallback() -> (
+    None
+):
     plan = _small_extent_plan()
     result = plan.advance(_LANES, _TEMPERATURES, 101325.0, 0.01)
 
@@ -167,8 +172,8 @@ def test_header_marks_learned_lanes_eligible_and_records_out_of_support_fallback
     assert result.derivative_contract.conditions == ("decisions-frozen",)
 
 
-def test_header_sets_domain_bit_for_nonphysical_learned_extent():
-    def bad_model(features):
+def test_header_sets_domain_bit_for_nonphysical_learned_extent() -> None:
+    def bad_model(features: Any) -> Any:
         return 2.0 * jnp.ones(features.shape[:-1] + (1,))
 
     plan = phx.applications.reacting_flow.LearnedChemicalTransitionPlan(
@@ -194,7 +199,7 @@ def test_header_sets_domain_bit_for_nonphysical_learned_extent():
     assert not int(result.header.reason_bits) & int(AdmissibilityReason.OUTSIDE_SUPPORT)
 
 
-def test_invalid_derivative_lanes_are_poisoned_without_changing_primals():
+def test_invalid_derivative_lanes_are_poisoned_without_changing_primals() -> None:
     plan = _small_extent_plan()
     result = plan.advance(_LANES, _TEMPERATURES, 101325.0, 0.01)
 
@@ -216,16 +221,16 @@ class _ConstantExtent(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, extent):
+    def __init__(self, extent: Any) -> None:
         self.extent = jnp.asarray(extent)
         self.in_size = 5
         self.out_size = 1
 
-    def __call__(self, features, /, *, key=None):
+    def __call__(self, features: Any, /, *, key: Any = None) -> Any:
         return self.extent * jnp.ones(features.shape[:-1] + (1,))
 
 
-def _artifact(model=None):
+def _artifact(model: Any = None) -> Any:
     return phx.applications.reacting_flow.LearnedChemicalTransitionPlan(
         _mechanism(),
         _schema(),
@@ -238,12 +243,12 @@ def _artifact(model=None):
     )
 
 
-def _target_loss(plan):
+def _target_loss(plan: Any) -> Any:
     result = plan.advance(jnp.asarray((0.9, 0.1)), 1000.0, 101325.0, 0.01)
     return jnp.sum((result.accepted_concentrations - jnp.asarray((0.87, 0.13))) ** 2)
 
 
-def test_frozen_chemistry_artifact_exposes_no_parameters():
+def test_frozen_chemistry_artifact_exposes_no_parameters() -> None:
     artifact = _artifact()
     resolution = phx.require_parameter_roles(artifact, context="chemistry artifact")
 
@@ -251,7 +256,9 @@ def test_frozen_chemistry_artifact_exposes_no_parameters():
     assert not jax.tree_util.tree_leaves(phx.partition_parameters(artifact)[0])
 
 
-def test_explicit_trainable_chemistry_binding_trains_without_touching_the_artifact():
+def test_explicit_trainable_chemistry_binding_trains_without_touching_the_artifact() -> (
+    None
+):
     artifact = _artifact()
     trainable = artifact.as_trainable_binding()
 
@@ -261,7 +268,7 @@ def test_explicit_trainable_chemistry_binding_trains_without_touching_the_artifa
     assert float(parameter) == 0.01
 
     @eqx.filter_jit
-    def step(plan):
+    def step(plan: Any) -> Any:
         parameters, model_state, fixed = phx.partition_parameters(plan)
         gradient = jax.grad(
             lambda values: _target_loss(
@@ -284,20 +291,21 @@ class _FixedExtent(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True, default=5)
     out_size: int = eqx.field(static=True, default=1)
 
-    def __call__(self, features, /, *, key=None):
+    def __call__(self, features: Any, /, *, key: Any = None) -> Any:
         return self.extent * jnp.ones(features.shape[:-1] + (1,))
 
 
-def test_trainable_binding_requires_a_parameter_model_array():
-    def model(features):
+def test_trainable_binding_requires_a_parameter_model_array() -> None:
+    def model(features: Any) -> Any:
         return 0.01 * jnp.ones(features.shape[:-1] + (1,))
 
+    # ty: ignore[invalid-argument-type]
     for untrainable in (model, _FixedExtent(jnp.asarray(0.01))):
         with pytest.raises(ValueError, match="no PARAMETER leaf"):
             _artifact(untrainable).as_trainable_binding()
 
 
-def test_port_declaring_extent_models_are_refused_without_owner_ports():
+def test_port_declaring_extent_models_are_refused_without_owner_ports() -> None:
     ported = PortedAffine(
         phx.ModelPorts(
             inputs=(full_port("chemistry.features", (5,)),),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -26,7 +27,7 @@ from phydrax.applications.solid_mechanics import (
 from phydrax.dynamics import PlantStepContext
 
 
-def build_plant():
+def build_plant() -> Any:
     """Prepare the exact fixed-base/contact-free two-tendon profile."""
     dtype = jnp.float32
     rest_positions = jnp.asarray(

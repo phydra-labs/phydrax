@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _periodic_gravity(shape: tuple[int, ...], particles):
+def _periodic_gravity(shape: tuple[int, ...], particles: Any) -> Any:
     dimension = len(shape)
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -35,6 +37,7 @@ def _periodic_gravity(shape: tuple[int, ...], particles):
         problem, discretization, method
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -46,7 +49,7 @@ def _periodic_gravity(shape: tuple[int, ...], particles):
     return phx.solver.ParticleMeshGravityPlan(gravity, transfer)
 
 
-def build_workflow():
+def build_workflow() -> Any:
     shape = (4, 4, 4)
     count = 4**3
     scale = phx.applications.cosmology.CosmologyScaleContract(
@@ -115,7 +118,7 @@ def main() -> None:
     wavenumbers = jnp.linspace(1.0, 30.0, 96)
     first_growth = growth.evaluate(0.1)[0]
 
-    def objective(amplitude):
+    def objective(amplitude: Any) -> Any:
         base_power = amplitude / (1.0 + (wavenumbers / 8.0) ** 2)
         power = phx.applications.cosmology.MatterPowerTable(
             jnp.asarray([0.1, 1.0]),

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -26,7 +29,9 @@ _PER_MINUTE = derived_unit("test-min^-1", ((_MINUTE, -1),))
 _SUPPORT_POLICY = EnsembleSupportPolicy(1.1, 0.01)
 
 
-def _physical_provenance(source_id, *, converged=True, authorized=True):
+def _physical_provenance(
+    source_id: Any, *, converged: Any = True, authorized: Any = True
+) -> Any:
     return PhysicalEquilibriumSupportProvenance(
         source_id,
         f"manifest:{source_id}",
@@ -43,16 +48,16 @@ def _physical_provenance(source_id, *, converged=True, authorized=True):
 
 
 def _cholesky_plan(
-    per_sample,
-    observed,
-    standard_deviation,
-    observation_id,
+    per_sample: Any,
+    observed: Any,
+    standard_deviation: Any,
+    observation_id: Any,
     *,
-    usage="calibration",
-    source_ids=None,
-    case_ids=None,
-    parent_ids=None,
-):
+    usage: Any = "calibration",
+    source_ids: Any = None,
+    case_ids: Any = None,
+    parent_ids: Any = None,
+) -> Any:
     observed_array = np.atleast_1d(np.asarray(observed, dtype="float64"))
     standard_deviation_array = np.broadcast_to(
         np.asarray(standard_deviation, dtype="float64"), observed_array.shape
@@ -77,15 +82,15 @@ def _cholesky_plan(
 
 
 def _precision_plan(
-    per_sample,
-    observed,
-    standard_deviation,
-    observation_id,
+    per_sample: Any,
+    observed: Any,
+    standard_deviation: Any,
+    observation_id: Any,
     *,
-    source_ids=None,
-    case_ids=None,
-    parent_ids=None,
-):
+    source_ids: Any = None,
+    case_ids: Any = None,
+    parent_ids: Any = None,
+) -> Any:
     observed_array = np.atleast_1d(np.asarray(observed, dtype="float64"))
     standard_deviation_array = np.broadcast_to(
         np.asarray(standard_deviation, dtype="float64"), observed_array.shape
@@ -112,11 +117,12 @@ def _precision_plan(
     )
 
 
-def test_two_state_bme_solution_and_reference_normalization_are_known():
+def test_two_state_bme_solution_and_reference_normalization_are_known() -> None:
     theta = 0.5
     sigma = 0.25
     expected_excited_population = 0.8
     observed = expected_excited_population + theta * sigma**2 * np.log(4.0)
+    # ty: ignore[invalid-argument-type]
     support = phx.uq.EnsembleSupport([23.0, 23.0], "empirical", "two-state-collection")
     plan = _cholesky_plan([[0.0], [1.0]], [observed], sigma, "calibration-population")
 
@@ -132,7 +138,7 @@ def test_two_state_bme_solution_and_reference_normalization_are_known():
     assert not bool(result.physical_equilibrium_valid)
 
 
-def test_physical_support_requires_typed_converged_authorized_provenance():
+def test_physical_support_requires_typed_converged_authorized_provenance() -> None:
     with pytest.raises(TypeError, match="typed physical provenance"):
         phx.uq.EnsembleSupport(
             np.zeros(3), "physical-equilibrium", "renamed-empirical-source"
@@ -158,7 +164,7 @@ def test_physical_support_requires_typed_converged_authorized_provenance():
         )
 
 
-def test_reweighting_is_translation_invariant_and_covariance_whitened():
+def test_reweighting_is_translation_invariant_and_covariance_whitened() -> None:
     support = phx.uq.EnsembleSupport(
         np.log([0.2, 0.5, 0.3]), "empirical", "three-state-collection"
     )
@@ -194,7 +200,7 @@ def test_reweighting_is_translation_invariant_and_covariance_whitened():
     )
 
 
-def test_uniform_observable_cannot_change_weights():
+def test_uniform_observable_cannot_change_weights() -> None:
     support = phx.uq.EnsembleSupport(
         np.log([0.1, 0.2, 0.7]), "empirical", "uniform-observable-support"
     )
@@ -210,7 +216,7 @@ def test_uniform_observable_cannot_change_weights():
     assert bool(result.convex_support.within_support)
 
 
-def test_effective_support_policy_is_explicit_fractional_and_inclusive():
+def test_effective_support_policy_is_explicit_fractional_and_inclusive() -> None:
     support = phx.uq.EnsembleSupport(np.zeros(3), "empirical", "ess-boundary-support")
     plan = _cholesky_plan([[1.0], [1.0], [1.0]], [1.0], 0.2, "ess-boundary-fit")
 
@@ -230,7 +236,9 @@ def test_effective_support_policy_is_explicit_fractional_and_inclusive():
         EnsembleSupportPolicy(1.0, 0.01)
 
 
-def test_effective_fraction_rejects_large_support_with_only_two_effective_samples():
+def test_effective_fraction_rejects_large_support_with_only_two_effective_samples() -> (
+    None
+):
     support = phx.uq.EnsembleSupport(
         np.zeros(100),
         "empirical",
@@ -252,7 +260,7 @@ def test_effective_fraction_rejects_large_support_with_only_two_effective_sample
     assert not bool(result.support_valid)
 
 
-def test_support_collapse_and_out_of_convex_support_are_explicit():
+def test_support_collapse_and_out_of_convex_support_are_explicit() -> None:
     support = phx.uq.EnsembleSupport(
         np.zeros(5),
         "physical-equilibrium",
@@ -285,7 +293,7 @@ def test_support_collapse_and_out_of_convex_support_are_explicit():
     np.testing.assert_allclose(jnp.sum(jnp.exp(outside.log_weights)), 1.0)
 
 
-def test_nonfinite_whitening_reports_array_valued_dual_objective():
+def test_nonfinite_whitening_reports_array_valued_dual_objective() -> None:
     support = phx.uq.EnsembleSupport(np.zeros(2), "empirical", "overflow-support")
     plan = _cholesky_plan([[0.0], [1.0e308]], [0.0], 1.0e-300, "overflow-calibration")
 
@@ -299,7 +307,7 @@ def test_nonfinite_whitening_reports_array_valued_dual_objective():
     assert bool(jnp.isposinf(evidence.dual_objective))
 
 
-def test_held_out_nonlinear_observable_is_averaged_per_conformation():
+def test_held_out_nonlinear_observable_is_averaged_per_conformation() -> None:
     support = phx.uq.EnsembleSupport(
         np.zeros(3), "empirical", "nonlinear-observable-support"
     )
@@ -326,7 +334,7 @@ def test_held_out_nonlinear_observable_is_averaged_per_conformation():
         phx.uq.predict_held_out_observables(result, calibration)
 
 
-def test_renaming_an_observation_cannot_relabel_fitted_lineage_as_held_out():
+def test_renaming_an_observation_cannot_relabel_fitted_lineage_as_held_out() -> None:
     support = phx.uq.EnsembleSupport(np.zeros(3), "empirical", "lineage-support")
     calibration = _cholesky_plan([[0.0], [1.0], [2.0]], [0.8], 0.3, "fit-observation")
     result = phx.uq.reweight_ensemble(
@@ -347,7 +355,7 @@ def test_renaming_an_observation_cannot_relabel_fitted_lineage_as_held_out():
         phx.uq.predict_held_out_observables(result, renamed)
 
 
-def test_regularization_selection_refuses_held_out_outcomes():
+def test_regularization_selection_refuses_held_out_outcomes() -> None:
     support = phx.uq.EnsembleSupport(np.zeros(3), "empirical", "selection-support")
     calibration = _cholesky_plan([[0.0], [1.0], [2.0]], [0.8], 0.3, "fit-observation")
     selection = _cholesky_plan(
@@ -369,6 +377,7 @@ def test_regularization_selection_refuses_held_out_outcomes():
         support,
         calibration,
         selection,
+        # ty: ignore[invalid-argument-type]
         [0.05, 0.5, 5.0],
         support_policy=_SUPPORT_POLICY,
     )
@@ -376,6 +385,7 @@ def test_regularization_selection_refuses_held_out_outcomes():
     assert bool(selected.valid)
     assert float(selected.selected_regularization) in (0.05, 0.5, 5.0)
     with pytest.raises(ValueError, match="model-selection"):
+        # ty: ignore[invalid-argument-type]
         phx.uq.select_ensemble_regularization(support, calibration, held_out, [0.05, 0.5])
 
     renamed_selection = _cholesky_plan(
@@ -390,7 +400,11 @@ def test_regularization_selection_refuses_held_out_outcomes():
     )
     with pytest.raises(ValueError, match="lineages must be disjoint"):
         phx.uq.select_ensemble_regularization(
-            support, calibration, renamed_selection, [0.05, 0.5]
+            support,
+            calibration,
+            renamed_selection,
+            # ty: ignore[invalid-argument-type]
+            [0.05, 0.5],
         )
 
     selected_fit = phx.uq.reweight_ensemble(
@@ -410,7 +424,7 @@ def test_regularization_selection_refuses_held_out_outcomes():
         phx.uq.predict_held_out_observables(selected_fit, renamed_held_out)
 
 
-def _closure_inputs(source_kind):
+def _closure_inputs(source_kind: Any) -> Any:
     source = (
         _physical_provenance(f"{source_kind}-closure-support")
         if source_kind == "physical-equilibrium"
@@ -478,7 +492,9 @@ def _closure_inputs(source_kind):
     return result, prediction, closure_plan, equilibrium, kinetic
 
 
-def _evaluate_closure(result, prediction, plan, equilibrium, kinetic):
+def _evaluate_closure(
+    result: Any, prediction: Any, plan: Any, equilibrium: Any, kinetic: Any
+) -> Any:
     return phx.uq.evaluate_two_state_thermodynamic_closure(
         result,
         prediction,
@@ -492,11 +508,11 @@ def _evaluate_closure(result, prediction, plan, equilibrium, kinetic):
     )
 
 
-def _closure_evidence(source_kind):
+def _closure_evidence(source_kind: Any) -> Any:
     return _evaluate_closure(*_closure_inputs(source_kind))
 
 
-def test_thermodynamic_closure_requires_a_physical_reference_measure():
+def test_thermodynamic_closure_requires_a_physical_reference_measure() -> None:
     physical = _closure_evidence("physical-equilibrium")
     proposal_only = _closure_evidence("proposal-only")
 
@@ -509,7 +525,7 @@ def test_thermodynamic_closure_requires_a_physical_reference_measure():
     assert bool(proposal_only.kinetic_evidence_valid)
 
 
-def test_thermodynamic_closure_rejects_mixed_record_identity():
+def test_thermodynamic_closure_rejects_mixed_record_identity() -> None:
     result, prediction, plan, equilibrium, kinetic = _closure_inputs(
         "physical-equilibrium"
     )
@@ -542,7 +558,7 @@ def test_thermodynamic_closure_rejects_mixed_record_identity():
         _evaluate_closure(result, prediction, plan, equilibrium, wrong_state_order)
 
 
-def test_unknown_or_excessive_closure_uncertainty_is_inconclusive():
+def test_unknown_or_excessive_closure_uncertainty_is_inconclusive() -> None:
     result, prediction, plan, _, _ = _closure_inputs("physical-equilibrium")
     assignment = plan.state_assignment_record(
         result.support,
@@ -570,7 +586,7 @@ def test_unknown_or_excessive_closure_uncertainty_is_inconclusive():
     assert not bool(excessive.valid)
 
 
-def test_closure_population_ratio_is_derived_from_bound_state_assignments():
+def test_closure_population_ratio_is_derived_from_bound_state_assignments() -> None:
     result, prediction, plan, _, kinetic = _closure_inputs("physical-equilibrium")
     reversed_assignment = plan.state_assignment_record(
         result.support,
@@ -590,7 +606,7 @@ def test_closure_population_ratio_is_derived_from_bound_state_assignments():
     assert not bool(evidence.valid)
 
 
-def test_kinetic_rates_convert_compatible_reciprocal_time_units():
+def test_kinetic_rates_convert_compatible_reciprocal_time_units() -> None:
     result, prediction, plan, equilibrium, per_second = _closure_inputs(
         "physical-equilibrium"
     )

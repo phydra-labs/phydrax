@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -28,7 +31,7 @@ from phydrax.sampling import (
 )
 
 
-def test_hamiltonian_chain_has_semantic_replay_and_frozen_production():
+def test_hamiltonian_chain_has_semantic_replay_and_frozen_production() -> None:
     kernel = prepare_hamiltonian_kernel(
         lambda value: -0.5 * jnp.sum(value**2),
         jnp.array([[2.0, 0.2], [0.2, 1.0]]),
@@ -59,14 +62,14 @@ def test_hamiltonian_chain_has_semantic_replay_and_frozen_production():
     assert trace.records.metrics.accepted.shape[1:] == (2,)
 
 
-def _nonfinite_hmc_result(monkeypatch, cutoff):
+def _nonfinite_hmc_result(monkeypatch: Any, cutoff: Any) -> Any:
     monkeypatch.setattr(
         hamiltonian,
         "_sample_momentum",
         lambda _kernel, _key: jnp.ones((1,)),
     )
 
-    def bounded_log_target(value):
+    def bounded_log_target(value: Any) -> Any:
         finite_value = -0.5 * jnp.sum(value**2)
         return jnp.where(jnp.abs(value[0]) <= cutoff, finite_value, jnp.nan)
 
@@ -81,7 +84,7 @@ def _nonfinite_hmc_result(monkeypatch, cutoff):
     return state, sample_hamiltonian(kernel, state, key=jr.key(41), num_draws=1)
 
 
-def test_hmc_rejects_a_first_step_nonfinite_trajectory(monkeypatch):
+def test_hmc_rejects_a_first_step_nonfinite_trajectory(monkeypatch: Any) -> None:
     state, result = _nonfinite_hmc_result(monkeypatch, 0.25)
 
     assert jnp.array_equal(result.samples[:, 0], state.position)
@@ -94,8 +97,8 @@ def test_hmc_rejects_a_first_step_nonfinite_trajectory(monkeypatch):
 
 
 def test_hmc_rejects_an_entire_trajectory_after_a_later_nonfinite_step(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     state, result = _nonfinite_hmc_result(monkeypatch, 0.6)
 
     assert jnp.array_equal(result.samples[:, 0], state.position)
@@ -107,7 +110,7 @@ def test_hmc_rejects_an_entire_trajectory_after_a_later_nonfinite_step(
     assert result.acceptance_probability[0, 0] == 0.0
 
 
-def test_bounded_nuts_preserves_a_gaussian_and_reports_consumed_capacity():
+def test_bounded_nuts_preserves_a_gaussian_and_reports_consumed_capacity() -> None:
     maximum_tree_depth = 4
     kernel = prepare_hamiltonian_kernel(
         lambda value: -0.5 * jnp.sum(value**2),
@@ -133,7 +136,7 @@ def test_bounded_nuts_preserves_a_gaussian_and_reports_consumed_capacity():
     assert jnp.all(jnp.isfinite(result.acceptance_probability))
 
 
-def test_bounded_nuts_reports_divergence_without_claiming_tree_capacity():
+def test_bounded_nuts_reports_divergence_without_claiming_tree_capacity() -> None:
     kernel = prepare_hamiltonian_kernel(
         lambda value: -0.5 * jnp.sum(value**2),
         jnp.eye(1),
@@ -153,7 +156,7 @@ def test_bounded_nuts_reports_divergence_without_claiming_tree_capacity():
     assert jnp.array_equal(result.samples[:, 0], initial_positions)
 
 
-def test_hamiltonian_initial_positions_fail_closed_even_for_constant_target():
+def test_hamiltonian_initial_positions_fail_closed_even_for_constant_target() -> None:
     kernel = prepare_hamiltonian_kernel(
         lambda _value: jnp.asarray(0.0),
         jnp.eye(1),
@@ -172,7 +175,7 @@ def test_hamiltonian_initial_positions_fail_closed_even_for_constant_target():
     assert not result.final_state.valid[0]
 
 
-def test_chunked_markov_prefix_and_partial_mask_are_explicit():
+def test_chunked_markov_prefix_and_partial_mask_are_explicit() -> None:
     kernel = MetropolisHastings(GaussianRandomWalkProposal(0.2))
     initial = jnp.zeros((3, 1))
     target = FullMarkovTarget(
@@ -192,7 +195,7 @@ def test_chunked_markov_prefix_and_partial_mask_are_explicit():
     assert bool(result.replay_exact)
 
 
-def test_hamiltonian_state_is_bound_to_exact_prepared_kernel():
+def test_hamiltonian_state_is_bound_to_exact_prepared_kernel() -> None:
     log_target = lambda value: -0.5 * jnp.sum(value**2)
     first = prepare_hamiltonian_kernel(
         log_target,
@@ -232,7 +235,7 @@ def test_hamiltonian_state_is_bound_to_exact_prepared_kernel():
     assert adapted.final_state.kernel_id == adapted.kernel.kernel_id
 
 
-def test_robbins_monro_scale_adapts_only_before_frozen_boundary():
+def test_robbins_monro_scale_adapts_only_before_frozen_boundary() -> None:
     policy = RobbinsMonroScalePolicy(warmup_chunks=1)
     state = initialize_proposal_adaptation(policy, 1.0)
     adapted = adapt_proposal_scale(policy, state, 0.9)
@@ -241,7 +244,7 @@ def test_robbins_monro_scale_adapts_only_before_frozen_boundary():
     assert jnp.allclose(frozen.scale, adapted.scale)
 
 
-def test_jastrow_rbm_caches_and_autoregressive_normalization():
+def test_jastrow_rbm_caches_and_autoregressive_normalization() -> None:
     spins = jnp.array([1.0, -1.0, 1.0])
     jastrow = JastrowSpinAmplitude(
         jnp.array([0.2, -0.1, 0.3]),

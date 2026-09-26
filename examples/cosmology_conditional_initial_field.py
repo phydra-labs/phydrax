@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -26,7 +28,7 @@ def main() -> None:
         tuple(f"shell:{index}" for index in range(valid_count))
     )
 
-    def observe(field, args):
+    def observe(field: Any, args: Any) -> Any:
         result = discrepancy.evaluate(
             field.reshape(shape), target, "latent-field", "target-field"
         )

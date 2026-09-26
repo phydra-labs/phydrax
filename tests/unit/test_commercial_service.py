@@ -17,6 +17,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -104,7 +105,7 @@ from phydrax.service._security import (
 
 
 class _Clock:
-    def __init__(self, now: int):
+    def __init__(self, now: int) -> None:
         self.value = now
 
     def now(self) -> int:
@@ -156,7 +157,7 @@ def _service_submission(request_id: str) -> JobSubmission:
 
 
 class _Executor:
-    def __init__(self, results: list[CommandResult]):
+    def __init__(self, results: list[CommandResult]) -> None:
         self.results = results
         self.argv: list[tuple[str, ...]] = []
         self.stdin: list[bytes | None] = []
@@ -169,7 +170,7 @@ class _Executor:
         return self.results.pop(0)
 
 
-def test_transaction_rollback_outbox_idempotency_audit_and_quota_recovery():
+def test_transaction_rollback_outbox_idempotency_audit_and_quota_recovery() -> None:
     store = SQLiteServiceStore()
     quota = TenantQuota(2, 2, 4096, 0, 1024)
     resources = ResourceRequest(1, 1024)
@@ -225,7 +226,7 @@ def test_transaction_rollback_outbox_idempotency_audit_and_quota_recovery():
     assert store.reconcile_quota("tenant", ()).active_jobs == 0
 
 
-def test_sqlite_store_rejects_symlink_database_path(tmp_path):
+def test_sqlite_store_rejects_symlink_database_path(tmp_path: Any) -> None:
     target = tmp_path / "target.sqlite"
     target.touch()
     link = tmp_path / "service.sqlite"
@@ -234,7 +235,9 @@ def test_sqlite_store_rejects_symlink_database_path(tmp_path):
         SQLiteServiceStore(link)
 
 
-def test_sqlite_store_detects_final_path_swap_during_connect(tmp_path, monkeypatch):
+def test_sqlite_store_detects_final_path_swap_during_connect(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     import phydrax.service._durability as durability
 
     path = tmp_path / "service.sqlite"
@@ -242,7 +245,7 @@ def test_sqlite_store_detects_final_path_swap_during_connect(tmp_path, monkeypat
     target.touch()
     real_connect = durability.sqlite3.connect
 
-    def swapping_connect(value, *args, **kwargs):
+    def swapping_connect(value: Any, *args: Any, **kwargs: Any) -> Any:
         path.rename(tmp_path / "admitted.sqlite")
         path.symlink_to(target)
         return real_connect(value, *args, **kwargs)
@@ -252,7 +255,9 @@ def test_sqlite_store_detects_final_path_swap_during_connect(tmp_path, monkeypat
         SQLiteServiceStore(path)
 
 
-def test_sqlite_store_detects_parent_swap_during_connect(tmp_path, monkeypatch):
+def test_sqlite_store_detects_parent_swap_during_connect(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     import phydrax.service._durability as durability
 
     parent = tmp_path / "database"
@@ -262,7 +267,7 @@ def test_sqlite_store_detects_parent_swap_during_connect(tmp_path, monkeypatch):
     target.touch()
     real_connect = durability.sqlite3.connect
 
-    def swapping_connect(value, *args, **kwargs):
+    def swapping_connect(value: Any, *args: Any, **kwargs: Any) -> Any:
         parent.rename(tmp_path / "admitted-database")
         parent.mkdir()
         path.symlink_to(target)
@@ -273,7 +278,9 @@ def test_sqlite_store_detects_parent_swap_during_connect(tmp_path, monkeypatch):
         SQLiteServiceStore(path)
 
 
-def test_sqlite_connection_remains_bound_through_swap_and_restore(tmp_path, monkeypatch):
+def test_sqlite_connection_remains_bound_through_swap_and_restore(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     import phydrax.service._durability as durability
 
     path = tmp_path / "service.sqlite"
@@ -282,7 +289,7 @@ def test_sqlite_connection_remains_bound_through_swap_and_restore(tmp_path, monk
     admitted = tmp_path / "admitted.sqlite"
     real_connect = durability.sqlite3.connect
 
-    def swapping_connect(value, *args, **kwargs):
+    def swapping_connect(value: Any, *args: Any, **kwargs: Any) -> Any:
         path.rename(admitted)
         path.symlink_to(target)
         connection = real_connect(value, *args, **kwargs)
@@ -297,7 +304,7 @@ def test_sqlite_connection_remains_bound_through_swap_and_restore(tmp_path, monk
     assert target.stat().st_size == 0
 
 
-def test_outbox_dispatcher_releases_failures_for_durable_retry():
+def test_outbox_dispatcher_releases_failures_for_durable_retry() -> None:
     store = SQLiteServiceStore()
     with store.transaction() as transaction:
         transaction.enqueue(
@@ -313,7 +320,7 @@ def test_outbox_dispatcher_releases_failures_for_durable_retry():
         )
     attempts = 0
 
-    def handler(message: OutboxMessage, transaction) -> None:
+    def handler(message: OutboxMessage, transaction: Any) -> None:
         nonlocal attempts
         attempts += 1
         transaction.enqueue(
@@ -338,7 +345,7 @@ def test_outbox_dispatcher_releases_failures_for_durable_retry():
     assert tuple(message.message_id for message in effects) == ("effect",)
 
 
-def test_durable_request_id_rejects_conflicting_payload():
+def test_durable_request_id_rejects_conflicting_payload() -> None:
     store = SQLiteServiceStore()
     first = DurableJobRecord(
         "one", "tenant", "request", "0" * 64, JobState.QUEUED, 1, {}, 1, 1
@@ -390,7 +397,7 @@ def test_durable_request_id_rejects_conflicting_payload():
             transaction.insert_job(conflict)
 
 
-def test_scheduler_timeout_kills_descendants_that_ignore_sigterm(tmp_path):
+def test_scheduler_timeout_kills_descendants_that_ignore_sigterm(tmp_path: Any) -> None:
     child_pid_path = tmp_path / "child.pid"
     child_code = (
         "import signal,time;signal.signal(signal.SIGTERM, signal.SIG_IGN);time.sleep(60)"
@@ -418,7 +425,7 @@ def test_scheduler_timeout_kills_descendants_that_ignore_sigterm(tmp_path):
         pytest.fail("Scheduler timeout left a descendant process running.")
 
 
-def test_scheduler_command_executor_bounds_response_before_decode():
+def test_scheduler_command_executor_bounds_response_before_decode() -> None:
     executor = SubprocessCommandExecutor(
         timeout_seconds=5.0,
         maximum_response_bytes=16,
@@ -433,7 +440,7 @@ def test_scheduler_command_executor_bounds_response_before_decode():
         )
 
 
-def test_slurm_uses_argv_and_maps_machine_state():
+def test_slurm_uses_argv_and_maps_machine_state() -> None:
     executor = _Executor(
         [
             CommandResult(0, "42;cluster\n", ""),
@@ -455,6 +462,7 @@ def test_slurm_uses_argv_and_maps_machine_state():
         ]
     )
     ledger = SQLiteServiceStore()
+    # ty: ignore[invalid-argument-type]
     scheduler = SlurmScheduler(executor, ledger=ledger)
     spec = SlurmJobSpec(
         "/safe/worker",
@@ -463,6 +471,7 @@ def test_slurm_uses_argv_and_maps_machine_state():
         "job-name",
         ResourceRequest(2, 4096),
     )
+    # ty: ignore[invalid-argument-type]
     duplicate = SlurmScheduler(executor, ledger=ledger)
     assert scheduler.submit(spec) == duplicate.submit(spec) == "42"
     assert executor.argv[0][-3:] == (
@@ -502,9 +511,10 @@ def test_slurm_ranked_job_uses_one_safe_srun_step() -> None:
     assert "'; rm -rf /'" in decoded
 
 
-def test_slurm_idempotency_binds_the_complete_submission():
+def test_slurm_idempotency_binds_the_complete_submission() -> None:
     executor = _Executor([CommandResult(0, "42\n", "")])
     ledger = SQLiteServiceStore()
+    # ty: ignore[invalid-argument-type]
     scheduler = SlurmScheduler(executor, ledger=ledger)
     original = SlurmJobSpec(
         "/safe/worker",
@@ -520,16 +530,16 @@ def test_slurm_idempotency_binds_the_complete_submission():
 
 
 class _KubernetesTransport:
-    def __init__(self):
+    def __init__(self) -> None:
         self.requests: list[tuple[str, str, dict[str, str], bytes | None]] = []
         self.responses: list[HTTPResponse] = []
 
-    def request(self, method, url, /, *, headers, body=None):
+    def request(self, method: Any, url: Any, /, *, headers: Any, body: Any = None) -> Any:
         self.requests.append((method, url, dict(headers), body))
         return self.responses.pop(0)
 
 
-def test_kubernetes_rejects_oversized_transport_responses_before_json_decode():
+def test_kubernetes_rejects_oversized_transport_responses_before_json_decode() -> None:
     transport = _KubernetesTransport()
     transport.responses.append(HTTPResponse(200, {}, b"x" * 9))
     scheduler = KubernetesScheduler(
@@ -542,7 +552,7 @@ def test_kubernetes_rejects_oversized_transport_responses_before_json_decode():
         scheduler.status("tenant", "job")
 
 
-def test_kubernetes_idempotency_authentication_and_resource_version():
+def test_kubernetes_idempotency_authentication_and_resource_version() -> None:
     spec = KubernetesJobSpec(
         "tenant",
         "image@sha256:digest",
@@ -554,7 +564,9 @@ def test_kubernetes_idempotency_authentication_and_resource_version():
 
     # Populate the create response with the digest generated in the outgoing body.
     class _CreateTransport(_KubernetesTransport):
-        def request(self, method, url, /, *, headers, body=None):
+        def request(
+            self, method: Any, url: Any, /, *, headers: Any, body: Any = None
+        ) -> Any:
             self.requests.append((method, url, dict(headers), body))
             if method == "GET":
                 return HTTPResponse(404, {}, b"{}")
@@ -579,7 +591,9 @@ def test_kubernetes_idempotency_authentication_and_resource_version():
 
 def test_kubernetes_ranked_job_creates_headless_rendezvous_service() -> None:
     class CreateTransport(_KubernetesTransport):
-        def request(self, method, url, /, *, headers, body=None):
+        def request(
+            self, method: Any, url: Any, /, *, headers: Any, body: Any = None
+        ) -> Any:
             self.requests.append((method, url, dict(headers), body))
             if method == "GET":
                 return HTTPResponse(404, {}, b"{}")
@@ -633,7 +647,7 @@ def _b64(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
 
 
-def test_jwks_ed25519_claims_and_key_rotation():
+def test_jwks_ed25519_claims_and_key_rotation() -> None:
     crypto = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.ed25519")
     serialization = pytest.importorskip("cryptography.hazmat.primitives.serialization")
     clock = _Clock(100)
@@ -641,7 +655,7 @@ def test_jwks_ed25519_claims_and_key_rotation():
     old = crypto.Ed25519PrivateKey.generate()
     new = crypto.Ed25519PrivateKey.generate()
 
-    def jwk(key, kid):
+    def jwk(key: Any, kid: Any) -> Any:
         raw = key.public_key().public_bytes(
             serialization.Encoding.Raw, serialization.PublicFormat.Raw
         )
@@ -661,7 +675,7 @@ def test_jwks_ed25519_claims_and_key_rotation():
         configuration, provider, clock=clock, accepted_algorithms=frozenset({"EdDSA"})
     )
 
-    def issue(key, kid, **overrides):
+    def issue(key: Any, kid: Any, **overrides: Any) -> Any:
         header = _b64(
             json.dumps(
                 {"alg": "EdDSA", "kid": kid, "typ": "at+jwt"},
@@ -695,7 +709,7 @@ def test_jwks_ed25519_claims_and_key_rotation():
         validator.validate(issue(new, "new", aud="other"))
 
 
-def test_mtls_san_expiry_and_issuer_policy():
+def test_mtls_san_expiry_and_issuer_policy() -> None:
     policy = MTLSCertificatePolicy("cluster.example", frozenset({"1" * 64}), 100, 0)
     certificate = WorkloadCertificate(
         ("spiffe://cluster.example/ns/tenant/sa/worker",), 10, 50, "0" * 64, "1" * 64
@@ -708,14 +722,14 @@ def test_mtls_san_expiry_and_issuer_policy():
         policy.validate(wrong_san, 20)
 
 
-def test_hmac_signing_key_repr_does_not_disclose_secret():
+def test_hmac_signing_key_repr_does_not_disclose_secret() -> None:
     secret = b"not-for-logs-" + b"x" * 32
     rendered = repr(HMACSigningKey("key", secret))
     assert secret.hex() not in rendered
     assert repr(secret) not in rendered
 
 
-def test_ed25519_sign_verify_rotate_and_revoke():
+def test_ed25519_sign_verify_rotate_and_revoke() -> None:
     pytest.importorskip("cryptography")
     signer = Ed25519Signer("one", b"1" * 32)
     verifier = Ed25519Verifier("one", signer.public_key_bytes)
@@ -733,12 +747,14 @@ def test_ed25519_sign_verify_rotate_and_revoke():
         )
 
 
-def test_injected_kms_sign_and_verify():
+def test_injected_kms_sign_and_verify() -> None:
     class KMS:
-        def sign(self, key_id, algorithm, message, /):
+        def sign(self, key_id: Any, algorithm: Any, message: Any, /) -> Any:
             return hmac.new(b"kms", message, hashlib.sha256).digest()
 
-        def verify(self, key_id, algorithm, message, signature, /):
+        def verify(
+            self, key_id: Any, algorithm: Any, message: Any, signature: Any, /
+        ) -> Any:
             return hmac.compare_digest(signature, self.sign(key_id, algorithm, message))
 
     kms = KMS()
@@ -754,7 +770,7 @@ def test_injected_kms_sign_and_verify():
         )
 
 
-def test_short_lived_scoped_secrets_and_redaction():
+def test_short_lived_scoped_secrets_and_redaction() -> None:
     clock = _Clock(10)
     broker = LocalSecretHandleBroker(clock=clock, maximum_lifetime_seconds=60)
     handle = broker.issue(
@@ -779,7 +795,7 @@ def test_short_lived_scoped_secrets_and_redaction():
     }
 
 
-def test_support_bundle_is_allowlisted_redacted_and_privacy_bounded():
+def test_support_bundle_is_allowlisted_redacted_and_privacy_bounded() -> None:
     telemetry = HostTelemetrySnapshot.create(
         (
             TelemetryDatum("safe", 1, "count", PrivacyClassification.INTERNAL, 10),
@@ -811,8 +827,8 @@ def test_support_bundle_is_allowlisted_redacted_and_privacy_bounded():
 
 
 def test_provenance_hash_holds_ancestor_descriptors_during_replacement(
-    tmp_path, monkeypatch
-):
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     import phydrax.lifecycle._provenance as provenance
 
     root = tmp_path / "root"
@@ -826,7 +842,7 @@ def test_provenance_hash_holds_ancestor_descriptors_during_replacement(
     real_open = provenance.open_regular_beneath
 
     @contextmanager
-    def swapping_open(*args, **kwargs):
+    def swapping_open(*args: Any, **kwargs: Any) -> Any:
         with real_open(*args, **kwargs) as opened:
             source.rename(root / "held-source")
             source.symlink_to(outside, target_is_directory=True)
@@ -837,8 +853,8 @@ def test_provenance_hash_holds_ancestor_descriptors_during_replacement(
 
 
 def test_host_telemetry_is_explicit_structured_and_logged_by_identity(
-    phydrax_events,
-):
+    phydrax_events: Any,
+) -> None:
     snapshot = HostTelemetryCollector(
         clock=_Clock(10),
         policy=HostTelemetryPolicy(include_jax_runtime=False),
@@ -871,7 +887,7 @@ def test_host_telemetry_is_explicit_structured_and_logged_by_identity(
         assert host_name not in serialized
 
 
-def test_source_build_and_spdx_provenance_are_deterministic(tmp_path: Path):
+def test_source_build_and_spdx_provenance_are_deterministic(tmp_path: Path) -> None:
     (tmp_path / "a.lock").write_text("a")
     (tmp_path / "source.py").write_text("source")
     first_digest = digest_paths(tmp_path, ("source.py", "a.lock"))
@@ -910,7 +926,7 @@ def test_source_build_and_spdx_provenance_are_deterministic(tmp_path: Path):
     assert first.lock_digest in comment
 
 
-def test_provider_construction_has_no_network_or_telemetry_effects():
+def test_provider_construction_has_no_network_or_telemetry_effects() -> None:
     transport = _KubernetesTransport()
     KubernetesScheduler("https://cluster.example", "credential", transport)
     HTTPSJWKSProvider(
@@ -923,8 +939,8 @@ def test_provider_construction_has_no_network_or_telemetry_effects():
 
 
 def test_runtime_admits_exact_support_before_allocation_and_bootstrap(
-    phydrax_events,
-):
+    phydrax_events: Any,
+) -> None:
     dependency = SupportDependency("profile", "provider-tuple")
     resolved = ResolvedRunSpec(
         (dependency,),
@@ -967,7 +983,7 @@ def test_runtime_admits_exact_support_before_allocation_and_bootstrap(
             )
 
     class Admitter:
-        def __init__(self):
+        def __init__(self) -> None:
             self.calls: list[tuple[str, int]] = []
 
         def require(self, value: SupportDependency, /, *, at_time: int) -> None:
@@ -988,6 +1004,7 @@ def test_runtime_admits_exact_support_before_allocation_and_bootstrap(
         clock=_Clock(10),
         dependency_admitter=admitter,
         durable_store=store,
+        # ty: ignore[invalid-argument-type]
         repository=Repository(),
         scheduler_id="scheduler",
         auth_policy_id="authentication",
@@ -1034,7 +1051,7 @@ def test_runtime_admits_exact_support_before_allocation_and_bootstrap(
     assert len(store.claim_outbox("dispatcher", 10)) == 1
 
 
-def test_execution_heartbeat_and_attempt_fence_reject_stale_completion():
+def test_execution_heartbeat_and_attempt_fence_reject_stale_completion() -> None:
     class Validator:
         def validate(self, token: str, /) -> ValidatedPrincipal:
             return ValidatedPrincipal(
@@ -1055,7 +1072,7 @@ def test_execution_heartbeat_and_attempt_fence_reject_stale_completion():
     release = threading.Event()
     calls = 0
 
-    def provider(submission, context):
+    def provider(submission: Any, context: Any) -> Any:
         nonlocal calls
         del submission
         calls += 1
@@ -1121,7 +1138,9 @@ def test_execution_heartbeat_and_attempt_fence_reject_stale_completion():
     assert durable.state is JobState.SUCCEEDED
 
 
-def test_durable_service_restart_rehydrates_results_and_idempotency(tmp_path):
+def test_durable_service_restart_rehydrates_results_and_idempotency(
+    tmp_path: Any,
+) -> None:
     path = tmp_path / "service.sqlite"
     quota = {"tenant": TenantQuota(2, 2, 4096, 0, 1024)}
     first_store = SQLiteServiceStore(path)
@@ -1183,7 +1202,9 @@ def test_durable_service_restart_rehydrates_results_and_idempotency(tmp_path):
         "nested",
     ],
 )
-def test_durable_restart_refuses_tampered_payload_types(tmp_path, path, tampered):
+def test_durable_restart_refuses_tampered_payload_types(
+    tmp_path: Any, path: Any, tampered: Any
+) -> None:
     database = tmp_path / "service.sqlite"
     quota = {"tenant": TenantQuota(2, 2, 4096, 0, 1024)}
     store = SQLiteServiceStore(database)
@@ -1227,7 +1248,7 @@ def test_durable_restart_refuses_tampered_payload_types(tmp_path, path, tampered
         )
 
 
-def test_provider_failure_preserves_exact_exception_status_and_message():
+def test_provider_failure_preserves_exact_exception_status_and_message() -> None:
     service = InProcessReferenceService(
         _ServiceValidator(),
         ScopeTenantAuthorizer(),
@@ -1235,10 +1256,11 @@ def test_provider_failure_preserves_exact_exception_status_and_message():
         clock=_Clock(10),
     )
 
-    def provider(submission, context):
+    def provider(submission: Any, context: Any) -> None:
         del submission, context
         raise ProfileUnavailable("provider refused exact problem identity")
 
+    # ty: ignore[invalid-argument-type]
     service.register_provider("profile", provider, support_tuple_id="provider-tuple")
     failed = service.execute(
         "tenant",
@@ -1254,7 +1276,9 @@ def test_provider_failure_preserves_exact_exception_status_and_message():
     assert failed.failure.message == "provider refused exact problem identity"
 
 
-def test_checkpoint_callback_requires_repository_commit_and_survives_restart(tmp_path):
+def test_checkpoint_callback_requires_repository_commit_and_survives_restart(
+    tmp_path: Any,
+) -> None:
     profile = HPCFilesystemProfile(
         "service-checkpoint",
         "local-posix",
@@ -1341,7 +1365,7 @@ def test_checkpoint_callback_requires_repository_commit_and_survives_restart(tmp
         artifact_signing_secret=artifact_signing_secret,
     )
 
-    def provider(submission, context):
+    def provider(submission: Any, context: Any) -> Any:
         del submission
         assert context.checkpoint(checkpoint) == checkpoint.checkpoint_id
         assert context.checkpoint(checkpoint) == checkpoint.checkpoint_id
@@ -1399,7 +1423,9 @@ def test_checkpoint_callback_requires_repository_commit_and_survives_restart(tmp
     assert restarted.fetch_artifact("tenant", restarted_grant).content == artifact_content
 
 
-def test_failed_durable_transition_leaves_memory_and_store_unchanged(monkeypatch):
+def test_failed_durable_transition_leaves_memory_and_store_unchanged(
+    monkeypatch: Any,
+) -> None:
     import phydrax.service._durability as durability
 
     store = SQLiteServiceStore()
@@ -1420,7 +1446,7 @@ def test_failed_durable_transition_leaves_memory_and_store_unchanged(monkeypatch
         before = transaction.get_job("tenant", queued.job_id)
     assert before is not None
 
-    def fail_update(self, record, /, *, expected_version):
+    def fail_update(self: Any, record: Any, /, *, expected_version: Any) -> None:
         del self, record, expected_version
         raise RuntimeError("commit failure")
 
@@ -1434,7 +1460,7 @@ def test_failed_durable_transition_leaves_memory_and_store_unchanged(monkeypatch
     assert after == before
 
 
-def test_bearer_token_resource_limits_precede_validators_and_crypto():
+def test_bearer_token_resource_limits_precede_validators_and_crypto() -> None:
     class IngressValidator:
         called = False
 
@@ -1453,7 +1479,7 @@ def test_bearer_token_resource_limits_precede_validators_and_crypto():
     assert ingress_validator.called is False
 
     class UnreachedJWKSProvider:
-        def get(self, issuer: str, /, *, force_refresh: bool = False):
+        def get(self, issuer: str, /, *, force_refresh: bool = False) -> None:
             raise AssertionError("rejected token reached JWKS lookup")
 
     configuration = OIDCConfiguration("https://issuer.example", "phydrax", 0, 100)
@@ -1463,6 +1489,7 @@ def test_bearer_token_resource_limits_precede_validators_and_crypto():
         ),
         OIDCJWKSTokenValidator(
             configuration,
+            # ty: ignore[invalid-argument-type]
             UnreachedJWKSProvider(),
             clock=_Clock(10),
             accepted_algorithms=frozenset({"RS256"}),
@@ -1505,7 +1532,7 @@ def test_bearer_token_resource_limits_precede_validators_and_crypto():
                 validator.validate(f"{header}.{_b64(payload)}.c2ln")
 
 
-def test_artifact_rights_remain_bound_and_gate_grant_and_fetch():
+def test_artifact_rights_remain_bound_and_gate_grant_and_fetch() -> None:
     class Validator:
         def validate(self, token: str, /) -> ValidatedPrincipal:
             assert token == "token"

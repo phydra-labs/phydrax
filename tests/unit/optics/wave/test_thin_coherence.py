@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -20,7 +22,7 @@ from phydrax.optics.wave import (
 )
 
 
-def _space(shape=(6, 8)):
+def _space(shape: Any = (6, 8)) -> Any:
     grid = TensorGridPlan(
         tuple(FourierAxisSpec(size) for size in shape),
         axis_names=("u", "v"),
@@ -28,7 +30,7 @@ def _space(shape=(6, 8)):
     return PlaneFieldSpace(grid, RigidFrame.identity(3), "periodic-cell")
 
 
-def test_scalar_thin_mask_acts_equally_on_scalar_and_tangential_fields():
+def test_scalar_thin_mask_acts_equally_on_scalar_and_tangential_fields() -> None:
     space = _space()
     coordinates = space.transverse_coordinates
     transmission = jnp.exp(0.3j * coordinates[..., 0])
@@ -48,7 +50,7 @@ def test_scalar_thin_mask_acts_equally_on_scalar_and_tangential_fields():
     assert jnp.allclose(tangential_output.values[..., 1], transmission)
 
 
-def test_jones_thin_action_uses_local_tangential_basis_order():
+def test_jones_thin_action_uses_local_tangential_basis_order() -> None:
     space = _space()
     matrix = jnp.broadcast_to(
         jnp.asarray([[0.0, 1.0j], [1.0, 0.0]], dtype="complex128"),
@@ -65,7 +67,7 @@ def test_jones_thin_action_uses_local_tangential_basis_order():
     assert jnp.allclose(output.values[..., 1], 2.0)
 
 
-def test_thin_lens_factory_has_explicit_paraxial_phase():
+def test_thin_lens_factory_has_explicit_paraxial_phase() -> None:
     space = _space()
     focal_length = -2.5
     medium_wavenumber = 7.0
@@ -77,10 +79,10 @@ def test_thin_lens_factory_has_explicit_paraxial_phase():
     assert jnp.allclose(jnp.abs(lens.transmission), 1.0)
 
 
-def test_thin_lens_phase_is_differentiable_in_focal_length():
+def test_thin_lens_phase_is_differentiable_in_focal_length() -> None:
     space = _space()
 
-    def sampled_real_phase(focal_length):
+    def sampled_real_phase(focal_length: Any) -> Any:
         return jnp.real(thin_lens(space, focal_length, 7.0).transmission[1, 2])
 
     derivative = jax.grad(sampled_real_phase)(jnp.asarray(2.5))
@@ -88,7 +90,7 @@ def test_thin_lens_phase_is_differentiable_in_focal_length():
     assert jnp.abs(derivative) > 0.0
 
 
-def test_coherent_mode_reduction_has_no_cross_terms():
+def test_coherent_mode_reduction_has_no_cross_terms() -> None:
     space = _space()
     first = ScalarPlaneField(space, jnp.ones(space.shape), 4.0, 1.0)
     second = ScalarPlaneField(space, 1.0j * jnp.ones(space.shape), 4.0, 1.0)
@@ -102,7 +104,7 @@ def test_coherent_mode_reduction_has_no_cross_terms():
     assert jnp.allclose(intensity.values, 5.0)
 
 
-def test_inactive_coherent_mode_nans_are_masked_before_arithmetic():
+def test_inactive_coherent_mode_nans_are_masked_before_arithmetic() -> None:
     space = _space()
     active = TangentialPlaneField(
         space,

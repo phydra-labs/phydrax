@@ -23,7 +23,7 @@ from phydrax.domain import (
 from phydrax.sampling import SobolDesign
 
 
-def test_product_domain_sampling_produces_labeled_points_batch():
+def test_product_domain_sampling_produces_labeled_points_batch() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 2.0)
     dom = geom @ time
@@ -49,7 +49,7 @@ def test_product_domain_sampling_produces_labeled_points_batch():
     assert t.data.shape == (4,)
 
 
-def test_same_block_sobol_uses_one_joint_reference_design():
+def test_same_block_sobol_uses_one_joint_reference_design() -> None:
     domain = TimeInterval(0.0, 1.0).relabel("x") @ TimeInterval(0.0, 1.0)
     structure = SampleLayout((("x", "t"),))
 
@@ -58,13 +58,15 @@ def test_same_block_sobol_uses_one_joint_reference_design():
     )
 
     actual = np.column_stack((batch["x"].data, batch["t"].data))
+    # ty: ignore[invalid-argument-type]
     expected = Sobol(2, scramble=False).random(8)
 
     assert np.array_equal(actual, expected)
     assert np.mean((actual[:, 0] - actual[:, 1]) ** 2) > 0.0
 
 
-def test_joint_design_slices_multidimensional_reference_transports():
+def test_joint_design_slices_multidimensional_reference_transports() -> None:
+    # ty: ignore[invalid-argument-type]
     box = HyperRectangle([1.0, 10.0], [3.0, 14.0], label="x")
     domain = box @ TimeInterval(-1.0, 1.0)
     structure = SampleLayout((("x", "t"),))
@@ -73,6 +75,7 @@ def test_joint_design_slices_multidimensional_reference_transports():
         phx.domain.PointSampling(8, layout=structure, design=SobolDesign()), key=jr.key(0)
     )
 
+    # ty: ignore[invalid-argument-type]
     unit = Sobol(3, scramble=False).random(8)
     expected_x = np.column_stack(
         (
@@ -86,7 +89,7 @@ def test_joint_design_slices_multidimensional_reference_transports():
     assert np.array_equal(batch["t"].data, expected_t)
 
 
-def test_joint_design_preserves_finite_dataset_rows():
+def test_joint_design_preserves_finite_dataset_rows() -> None:
     dataset = DatasetDomain(
         {"value": np.asarray([10.0, 20.0, 30.0, 40.0])},
         label="data",
@@ -98,6 +101,7 @@ def test_joint_design_preserves_finite_dataset_rows():
         phx.domain.PointSampling(8, layout=structure, design=SobolDesign()), key=jr.key(0)
     )
 
+    # ty: ignore[invalid-argument-type]
     unit = Sobol(2, scramble=False).random(8)
     indices = np.floor(4 * unit[:, 0]).astype("int64")
 
@@ -108,7 +112,7 @@ def test_joint_design_preserves_finite_dataset_rows():
     assert np.array_equal(batch["t"].data, unit[:, 1])
 
 
-def test_fixed_start_excludes_time_axis_from_structure():
+def test_fixed_start_excludes_time_axis_from_structure() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 2.0)
     dom = geom @ time
@@ -123,7 +127,7 @@ def test_fixed_start_excludes_time_axis_from_structure():
     assert batch["t"].dims == ()
 
 
-def test_coord_separable_sampling_for_geometry_label():
+def test_coord_separable_sampling_for_geometry_label() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 2.0)
     dom = geom @ time
@@ -146,7 +150,7 @@ def test_coord_separable_sampling_for_geometry_label():
     assert batch["t"].dims[0].startswith("__phydra_blk__t")
 
 
-def test_coord_separable_sampling_rejects_boundary_component():
+def test_coord_separable_sampling_rejects_boundary_component() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 2.0)
     dom = geom @ time
@@ -162,8 +166,9 @@ def test_coord_separable_sampling_rejects_boundary_component():
         )
 
 
-def test_product_boundary_is_additive_component_collection():
+def test_product_boundary_is_additive_component_collection() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
+    # ty: ignore[unresolved-attribute]
     boundary = domain.boundary()
 
     assert isinstance(boundary, ComponentSum)
@@ -172,7 +177,7 @@ def test_product_boundary_is_additive_component_collection():
     assert float(boundary.mass.value) == pytest.approx(4.0)
 
 
-def test_component_collection_rejects_invalid_terms():
+def test_component_collection_rejects_invalid_terms() -> None:
     domain = Interval1d(0.0, 1.0)
     term = domain.component({"x": Interior()})
     incompatible = Interval1d(0.0, 2.0).component({"x": Interior()})

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -24,7 +27,7 @@ from phydrax.solver._runtime_lifecycle import (
 )
 
 
-def test_trigger_graph_debounces_persistent_conditions_and_staggered_crossings():
+def test_trigger_graph_debounces_persistent_conditions_and_staggered_crossings() -> None:
     graph = AcceptedStepTriggerGraph(
         (
             AcceptedStepTrigger(1.0),
@@ -46,7 +49,7 @@ def test_trigger_graph_debounces_persistent_conditions_and_staggered_crossings()
     assert state.fire_count == 1
 
 
-def test_runtime_checkpoint_roundtrip_binds_all_compatibility_ids(tmp_path):
+def test_runtime_checkpoint_roundtrip_binds_all_compatibility_ids(tmp_path: Any) -> None:
     state = {"solution": jnp.arange(6.0).reshape((3, 2))}
     controller = {"previous_error": jnp.asarray(0.25)}
     observer = ({"sum": jnp.asarray((1.0, 2.0))},)
@@ -84,7 +87,7 @@ def test_runtime_checkpoint_roundtrip_binds_all_compatibility_ids(tmp_path):
     assert restored.checkpoint_id == envelope.checkpoint_id
 
 
-def test_exact_schedule_observable_and_trigger_are_restartable():
+def test_exact_schedule_observable_and_trigger_are_restartable() -> None:
     schedule = ExactTimeSchedule(jnp.asarray((0.25, 0.5, 1.0)))
     np.testing.assert_allclose(schedule.clamp_step(0.2, 0.2, 0), 0.05)
     assert schedule.advance_cursor(0.5, 0) == 2
@@ -114,11 +117,11 @@ def test_exact_schedule_observable_and_trigger_are_restartable():
 
 
 def test_bounded_async_publisher_snapshots_drains_and_propagates_context(
-    phydrax_events,
-):
+    phydrax_events: Any,
+) -> None:
     published = []
 
-    def writer(value):
+    def writer(value: Any) -> None:
         published.append(value)
         phx.logging.emit(
             "INFO",
@@ -139,7 +142,7 @@ def test_bounded_async_publisher_snapshots_drains_and_propagates_context(
     assert phydrax_events.records("output.publication.completed")
 
 
-def test_runtime_checkpoint_identity_is_content_derived():
+def test_runtime_checkpoint_identity_is_content_derived() -> None:
     first = RuntimeCheckpointEnvelope(
         {"state": jnp.asarray((1.0, 2.0))},
         time=0.0,
@@ -174,7 +177,7 @@ def test_runtime_checkpoint_identity_is_content_derived():
     assert first.checkpoint_id != changed.checkpoint_id
 
 
-def test_windowed_time_moments_and_batch_means_restart_exactly(tmp_path):
+def test_windowed_time_moments_and_batch_means_restart_exactly(tmp_path: Any) -> None:
     plan = StreamingMomentPlan(
         lambda time, state, args: state,
         weighting="time",
@@ -216,7 +219,7 @@ def test_windowed_time_moments_and_batch_means_restart_exactly(tmp_path):
     np.testing.assert_allclose(plan.batch_mean_standard_error(restored), 1.0)
 
 
-def test_runtime_checkpoint_leafwise_hermitian_encoding_roundtrip(tmp_path):
+def test_runtime_checkpoint_leafwise_hermitian_encoding_roundtrip(tmp_path: Any) -> None:
     space = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(8),),
         axis_names=("x",),
@@ -253,7 +256,9 @@ def test_runtime_checkpoint_leafwise_hermitian_encoding_roundtrip(tmp_path):
     assert restored.encoding_plan.encoding_id == encoding.encoding_id
 
 
-def test_runtime_envelope_owns_immutable_arrays_and_rechecks_digest(tmp_path):
+def test_runtime_envelope_owns_immutable_arrays_and_rechecks_digest(
+    tmp_path: Any,
+) -> None:
     source = np.asarray((1.0, 2.0))
     envelope = RuntimeCheckpointEnvelope(
         {"value": source},
@@ -268,6 +273,7 @@ def test_runtime_envelope_owns_immutable_arrays_and_rechecks_digest(tmp_path):
     source[:] = -1.0
     np.testing.assert_array_equal(envelope.state["value"], (1.0, 2.0))
     with pytest.raises(TypeError):
+        # ty: ignore[invalid-assignment]
         envelope.archive_arrays["forged"] = np.asarray(0.0)
     stored = envelope.archive_arrays["state/000000"]
     assert stored.flags.c_contiguous
@@ -278,14 +284,14 @@ def test_runtime_envelope_owns_immutable_arrays_and_rechecks_digest(tmp_path):
         write_runtime_checkpoint(tmp_path / "mutated.phx", envelope)
 
 
-def test_byte_publisher_rejects_oversize_before_host_copy(monkeypatch):
+def test_byte_publisher_rejects_oversize_before_host_copy(monkeypatch: Any) -> None:
     publisher = ByteBoundedAsyncPublisher(
         lambda event_id, snapshot: None,
         maximum_pending=1,
         maximum_pending_bytes=8,
     )
 
-    def fail_copy(leaf):
+    def fail_copy(leaf: Any) -> None:
         raise AssertionError("host copy occurred before byte admission")
 
     monkeypatch.setattr(lifecycle_module, "_immutable_host_snapshot_leaf", fail_copy)

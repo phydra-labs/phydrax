@@ -208,7 +208,10 @@ def _finite_domain(
         raise ValueError(f"{basis} bases require an {expected} axis domain.")
     lower, upper = domain.lower, domain.upper
     # AxisDomain requires both endpoints for bounded and periodic kinds.
-    assert lower is not None and upper is not None
+    if not (lower is not None and upper is not None):
+        raise RuntimeError(
+            "Internal invariant failed: lower is not None and upper is not None."
+        )
     return lower, upper
 
 
@@ -528,8 +531,14 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
                 derivative_matrix = self.derivative_matrix
                 # Prepared Chebyshev/Legendre axes carry their family and a modal
                 # derivative matrix by construction.
-                assert family in ("chebyshev", "legendre")
-                assert derivative_matrix is not None
+                if family not in ("chebyshev", "legendre"):
+                    raise RuntimeError(
+                        "Internal invariant failed: family must be Chebyshev or Legendre."
+                    )
+                if derivative_matrix is None:
+                    raise RuntimeError(
+                        "Internal invariant failed: derivative_matrix is required."
+                    )
                 reference = (2.0 * points - (lower + upper)) / length
                 rows = standard_vandermonde(family, reference, count - 1)
                 if family == "legendre":

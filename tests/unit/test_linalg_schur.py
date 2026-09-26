@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -14,13 +17,13 @@ la = phx.linalg
 eig = la.eigen
 
 
-def _problem(matrix, *, operator_id="general-schur"):
+def _problem(matrix: Any, *, operator_id: Any = "general-schur") -> Any:
     return eig.SchurEigenproblem(
         la.DenseLinearOperator(jnp.asarray(matrix), operator_id=operator_id)
     )
 
 
-def test_complex_schur_reconstructs_nonnormal_operator_and_reports_spectrum():
+def test_complex_schur_reconstructs_nonnormal_operator_and_reports_spectrum() -> None:
     matrix = jnp.asarray(
         [
             [1.0, 8.0, 0.0],
@@ -44,7 +47,7 @@ def test_complex_schur_reconstructs_nonnormal_operator_and_reports_spectrum():
     assert result.provenance.ordering == "backend Schur order; no eigenvalue reordering"
 
 
-def test_schur_relation_and_column_diagnostics_hold_for_complex_operator():
+def test_schur_relation_and_column_diagnostics_hold_for_complex_operator() -> None:
     matrix = jnp.asarray(
         [
             [1.0 + 2.0j, 3.0 - 1.0j, 0.5j],
@@ -66,7 +69,7 @@ def test_schur_relation_and_column_diagnostics_hold_for_complex_operator():
     assert result.diagnostics.unitarity_error < 1e-12
 
 
-def test_defective_jordan_block_preserves_schur_semantics_without_eigenvectors():
+def test_defective_jordan_block_preserves_schur_semantics_without_eigenvectors() -> None:
     matrix = jnp.asarray(
         [
             [2.0, 1.0, 0.0],
@@ -83,7 +86,7 @@ def test_defective_jordan_block_preserves_schur_semantics_without_eigenvectors()
     assert result.schur_vectors.shape == (3, 3)
 
 
-def test_prepared_schur_is_jittable_and_refreshes_under_same_symbolic_plan():
+def test_prepared_schur_is_jittable_and_refreshes_under_same_symbolic_plan() -> None:
     first_matrix = jnp.asarray([[1.0, 3.0], [-2.0, 4.0]])
     second_matrix = jnp.asarray([[2.0, -1.0], [5.0, 3.0]])
     first_problem = _problem(first_matrix, operator_id="refreshable-schur")
@@ -109,7 +112,7 @@ def test_prepared_schur_is_jittable_and_refreshes_under_same_symbolic_plan():
     )
 
 
-def test_schur_planning_enforces_materialization_and_resource_budgets():
+def test_schur_planning_enforces_materialization_and_resource_budgets() -> None:
     problem = _problem(jnp.eye(4), operator_id="budgeted-schur")
     materialization_policy = eig.SchurSolvePolicy(
         materialization=la.MaterializationPolicy(max_entries=15)
@@ -125,7 +128,7 @@ def test_schur_planning_enforces_materialization_and_resource_budgets():
         eig.plan_schur_eigensolve(problem, resource_policy)
 
 
-def test_schur_status_reports_an_unsatisfied_zero_tolerance():
+def test_schur_status_reports_an_unsatisfied_zero_tolerance() -> None:
     matrix = jnp.asarray(
         [
             [1.0, 8.0, 0.0],
@@ -145,7 +148,7 @@ def test_schur_status_reports_an_unsatisfied_zero_tolerance():
     assert not result.diagnostics.converged
 
 
-def test_schur_rejects_nonfinite_inputs_and_incompatible_refreshes():
+def test_schur_rejects_nonfinite_inputs_and_incompatible_refreshes() -> None:
     with pytest.raises(ValueError, match="finite"):
         eig.prepare_schur_eigensolve(
             _problem(jnp.asarray([[1.0, jnp.nan], [0.0, 2.0]]), operator_id="nan-schur")

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -37,7 +40,7 @@ def _batch(*, quadrature_scale: float = 1.0) -> phx.nn.operator.OperatorBatch:
     )
 
 
-def _prediction(parameters, batch, spec):
+def _prediction(parameters: Any, batch: Any, spec: Any) -> Any:
     values = jnp.broadcast_to(parameters["level"], spec.expected_shape(batch))
     return phx.nn.operator.OperatorPrediction.from_field(
         "output",
@@ -50,7 +53,7 @@ def _prediction(parameters, batch, spec):
     )
 
 
-def _target_and_mask():
+def _target_and_mask() -> Any:
     target = jnp.asarray(
         [
             [[1.0, 2.0], [3.0, 4.0], [jnp.nan, jnp.nan]],
@@ -66,7 +69,7 @@ def _target_and_mask():
     return target, observation_mask
 
 
-def test_operator_likelihood_matches_manual_sum_and_is_jittable():
+def test_operator_likelihood_matches_manual_sum_and_is_jittable() -> None:
     batch = _batch()
     spec = phx.nn.operator.OperatorOutputSpec(2, component_names=("u", "v"))
     target, observation_mask = _target_and_mask()
@@ -103,7 +106,7 @@ def test_operator_likelihood_matches_manual_sum_and_is_jittable():
     assert jnp.allclose(compiled(term, parameters), jnp.sum(expected))
 
 
-def test_operator_likelihood_gradient_and_standardized_residual():
+def test_operator_likelihood_gradient_and_standardized_residual() -> None:
     batch = _batch()
     spec = phx.nn.operator.OperatorOutputSpec(2)
     target, observation_mask = _target_and_mask()
@@ -136,13 +139,13 @@ def test_operator_likelihood_gradient_and_standardized_residual():
     )
 
 
-def test_operator_likelihood_is_independent_of_quadrature_weights():
+def test_operator_likelihood_is_independent_of_quadrature_weights() -> None:
     first = _batch(quadrature_scale=1.0)
     second = _batch(quadrature_scale=17.0)
     spec = phx.nn.operator.OperatorOutputSpec(2)
     target, observation_mask = _target_and_mask()
 
-    def make_term(batch):
+    def make_term(batch: Any) -> Any:
         return phx.uq.FixedOperatorObservationLikelihood(
             lambda parameters: _prediction(parameters, batch, spec),
             batch,
@@ -161,7 +164,7 @@ def test_operator_likelihood_is_independent_of_quadrature_weights():
     )
 
 
-def test_operator_likelihood_handles_nonfinite_values_by_observation_status():
+def test_operator_likelihood_handles_nonfinite_values_by_observation_status() -> None:
     batch = _batch()
     spec = phx.nn.operator.OperatorOutputSpec(2)
     target, observation_mask = _target_and_mask()
@@ -176,7 +179,7 @@ def test_operator_likelihood_handles_nonfinite_values_by_observation_status():
         observation_mask=observation_mask,
     )
 
-    def invalid_prediction(parameters):
+    def invalid_prediction(parameters: Any) -> Any:
         prediction = _prediction(parameters, batch, spec)
         values = prediction.field("output").values.at[0, 0, 0].set(jnp.nan)
         values = values.at[0, 2, 0].set(jnp.nan)
@@ -206,7 +209,7 @@ def test_operator_likelihood_handles_nonfinite_values_by_observation_status():
     assert invalid_term.log_prob(parameters) == -jnp.inf
 
 
-def test_operator_likelihood_rejects_empty_cases_and_contract_mismatches():
+def test_operator_likelihood_rejects_empty_cases_and_contract_mismatches() -> None:
     batch = _batch()
     spec = phx.nn.operator.OperatorOutputSpec(2)
     target, _ = _target_and_mask()
@@ -245,7 +248,7 @@ def test_operator_likelihood_rejects_empty_cases_and_contract_mismatches():
         term.log_prob({"level": jnp.asarray(0.0)})
 
 
-def _operator_dataset(cases=5, resolution=4):
+def _operator_dataset(cases: Any = 5, resolution: Any = 4) -> Any:
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, resolution))
     values = jnp.arange(cases, dtype="float64")[:, None] + axis.nodes[None, :]
     return phx.nn.operator.training.operator_dataset_from_arrays(
@@ -256,7 +259,7 @@ def _operator_dataset(cases=5, resolution=4):
     )
 
 
-def _dynamic_prediction(parameter, batch):
+def _dynamic_prediction(parameter: Any, batch: Any) -> Any:
     return phx.nn.operator.OperatorPrediction.from_field(
         "solution",
         parameter * batch.input("state").values,
@@ -268,7 +271,7 @@ def _dynamic_prediction(parameter, batch):
     )
 
 
-def test_dynamic_operator_likelihood_matches_fixed_full_batch_and_is_jittable():
+def test_dynamic_operator_likelihood_matches_fixed_full_batch_and_is_jittable() -> None:
     dataset = _operator_dataset()
     target_field = dataset.targets.field("solution")
     dynamic = phx.uq.OperatorBatchObservationLikelihood(
@@ -311,7 +314,7 @@ def test_dynamic_operator_likelihood_matches_fixed_full_batch_and_is_jittable():
     assert compiled[-1] == 0.0
 
 
-def test_operator_minibatch_source_is_complete_padded_and_content_addressed():
+def test_operator_minibatch_source_is_complete_padded_and_content_addressed() -> None:
     dataset = _operator_dataset()
     loader = phx.nn.operator.training.OperatorBatchLoader(
         dataset,
@@ -365,7 +368,7 @@ def test_operator_minibatch_source_is_complete_padded_and_content_addressed():
     assert source.fingerprint != changed_data.fingerprint
 
 
-def test_operator_minibatch_source_rejects_lossy_loader_policies():
+def test_operator_minibatch_source_rejects_lossy_loader_policies() -> None:
     dataset = _operator_dataset()
     with pytest.raises(ValueError, match="drop_last=True"):
         phx.uq.OperatorMinibatchSource(
@@ -391,7 +394,7 @@ def test_operator_minibatch_source_rejects_lossy_loader_policies():
         )
 
 
-def test_operator_sgmcmc_supports_selected_parameter_subspaces_and_predictions():
+def test_operator_sgmcmc_supports_selected_parameter_subspaces_and_predictions() -> None:
     dataset = _operator_dataset()
     source = phx.uq.OperatorMinibatchSource(
         phx.nn.operator.training.OperatorBatchLoader(
@@ -411,7 +414,7 @@ def test_operator_sgmcmc_supports_selected_parameter_subspaces_and_predictions()
         priors={"frozen": None, "weight": phx.uq.Normal(0.0, 3.0)},
     )
 
-    def predict(selected, batch):
+    def predict(selected: Any, batch: Any) -> Any:
         parameters = subspace.reconstruct(selected)
         return _dynamic_prediction(parameters["weight"], batch)
 

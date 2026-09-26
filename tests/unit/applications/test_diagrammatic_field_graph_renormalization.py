@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,9 @@ import pytest
 from phydrax.applications import diagrammatic_field as df
 
 
-def _phi4_diagram(*, vertex_label="interaction", line_label="loop", order=1):
+def _phi4_diagram(
+    *, vertex_label: Any = "interaction", line_label: Any = "loop", order: Any = 1
+) -> Any:
     phi = df.FieldSpec("phi", statistics="boson", mass_dimension=1.0)
     propagator = df.PropagatorSpec(phi, mass=2.0)
     rule = df.VertexRule(
@@ -49,7 +54,7 @@ def _phi4_diagram(*, vertex_label="interaction", line_label="loop", order=1):
     )
 
 
-def test_diagram_graph_is_canonical_conserving_and_has_exact_symmetry_factor():
+def test_diagram_graph_is_canonical_conserving_and_has_exact_symmetry_factor() -> None:
     first = _phi4_diagram()
     relabeled = _phi4_diagram(vertex_label="z", line_label="anything")
 
@@ -64,12 +69,14 @@ def test_diagram_graph_is_canonical_conserving_and_has_exact_symmetry_factor():
     assert first.loop_order == 1
 
 
-def test_canonical_graph_identity_is_invariant_to_boson_orientation_and_labels():
+def test_canonical_graph_identity_is_invariant_to_boson_orientation_and_labels() -> None:
     phi = df.FieldSpec("canonical-phi")
     propagator = df.PropagatorSpec(phi, mass=1.0)
     rule = df.VertexRule("canonical-phi3", (phi, phi, phi), 1.0)
 
-    def build(left, right, source, target, internal_momentum):
+    def build(
+        left: Any, right: Any, source: Any, target: Any, internal_momentum: Any
+    ) -> Any:
         return df.DiagramGraph(
             (df.VertexInsertion(left, rule), df.VertexInsertion(right, rule)),
             (
@@ -78,13 +85,18 @@ def test_canonical_graph_identity_is_invariant_to_boson_orientation_and_labels()
                     propagator,
                     source,
                     target,
+                    # ty: ignore[invalid-argument-type]
                     df.MomentumRoute([internal_momentum]),
                 ),
             ),
             (
+                # ty: ignore[invalid-argument-type]
                 df.ExternalLeg("i1", phi, left, df.MomentumRoute([0.4]), incoming=True),
+                # ty: ignore[invalid-argument-type]
                 df.ExternalLeg("i2", phi, left, df.MomentumRoute([0.6]), incoming=True),
+                # ty: ignore[invalid-argument-type]
                 df.ExternalLeg("o1", phi, right, df.MomentumRoute([0.2]), incoming=False),
+                # ty: ignore[invalid-argument-type]
                 df.ExternalLeg("o2", phi, right, df.MomentumRoute([0.8]), incoming=False),
             ),
         )
@@ -99,19 +111,21 @@ def test_canonical_graph_identity_is_invariant_to_boson_orientation_and_labels()
     assert reversed_route.evidence.successful
 
 
-def test_fixed_order_and_skeleton_generation_are_complete_and_duplicate_free():
+def test_fixed_order_and_skeleton_generation_are_complete_and_duplicate_free() -> None:
     reference = _phi4_diagram()
     phi = reference.vertices[0].rule.fields[0]
     propagator = reference.lines[0].propagator
     incoming = df.ExternalState(
         "in",
         phi,
+        # ty: ignore[invalid-argument-type]
         df.MomentumRoute([1.0], 0.5),
         incoming=True,
     )
     outgoing = df.ExternalState(
         "out",
         phi,
+        # ty: ignore[invalid-argument-type]
         df.MomentumRoute([1.0], 0.5),
         incoming=False,
     )
@@ -132,7 +146,9 @@ def test_fixed_order_and_skeleton_generation_are_complete_and_duplicate_free():
     assert fixed.diagrams[0].graph_id == reference.graph_id
 
 
-def test_diagram_lowering_executes_the_graphir_product_with_complex_sign_evidence():
+def test_diagram_lowering_executes_the_graphir_product_with_complex_sign_evidence() -> (
+    None
+):
     diagram = _phi4_diagram()
     prepared = df.DiagramLoweringPlan().prepare(diagram)
     result = prepared.evaluate()
@@ -145,7 +161,7 @@ def test_diagram_lowering_executes_the_graphir_product_with_complex_sign_evidenc
     assert result.evidence.successful
 
 
-def test_closed_fermion_loop_contributes_its_explicit_minus_sign():
+def test_closed_fermion_loop_contributes_its_explicit_minus_sign() -> None:
     fermion = df.FieldSpec("psi", statistics="fermion", mass_dimension=1.5)
     propagator = df.PropagatorSpec(fermion, mass=1.0)
     rule = df.VertexRule("fermion-bilinear", (fermion, fermion), 1.0)
@@ -157,6 +173,7 @@ def test_closed_fermion_loop_contributes_its_explicit_minus_sign():
                 propagator,
                 "insertion",
                 "insertion",
+                # ty: ignore[invalid-argument-type]
                 df.MomentumRoute([0.0]),
             ),
         ),
@@ -169,7 +186,8 @@ def test_closed_fermion_loop_contributes_its_explicit_minus_sign():
     np.testing.assert_allclose(result.evidence.phase, -1.0 + 0.0j)
 
 
-def test_bphz_polynomial_subtraction_annihilates_declared_taylor_conditions():
+def test_bphz_polynomial_subtraction_annihilates_declared_taylor_conditions() -> None:
+    # ty: ignore[invalid-argument-type]
     scheme = df.MomentumSubtractionScheme("MOM", 2.0, [1.0], 1)
     prepared = df.BPHZSubtractionPlan(scheme, (4,)).prepare()
     result = prepared.subtract(jnp.asarray([3.0, 2.0, 1.0, 4.0]))
@@ -196,7 +214,7 @@ def test_bphz_polynomial_subtraction_annihilates_declared_taylor_conditions():
     )
 
 
-def test_native_weighted_quadrature_preserves_mass_and_reports_sampling_error():
+def test_native_weighted_quadrature_preserves_mass_and_reports_sampling_error() -> None:
     prepared = df.DiagramQuadraturePlan(
         jnp.asarray([[0.0], [1.0]]),
         jnp.asarray([1.0, 3.0]),
@@ -208,7 +226,8 @@ def test_native_weighted_quadrature_preserves_mass_and_reports_sampling_error():
     assert result.successful
 
 
-def test_resource_guards_reject_before_dense_or_dag_allocation():
+def test_resource_guards_reject_before_dense_or_dag_allocation() -> None:
+    # ty: ignore[invalid-argument-type]
     scheme = df.MomentumSubtractionScheme("guarded-MOM", 1.0, [0.0], 0)
     with pytest.raises(ValueError, match="maximum_matrix_elements"):
         df.BPHZSubtractionPlan(

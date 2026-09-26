@@ -547,8 +547,7 @@ class HOFNO(AbstractOperatorModel):
             raise ValueError("ffn_expansion must be positive.")
         if self.norm_epsilon <= 0.0:
             raise ValueError("norm_epsilon must be positive.")
-        if activation not in ("gelu", "silu", "tanh"):
-            raise ValueError("activation must be 'gelu', 'silu', or 'tanh'.")
+        activation = parse(activation, Activation, "activation")
         spectral_channel_mixing = parse(
             spectral_channel_mixing, SpectralChannelMixing, "spectral_channel_mixing"
         )

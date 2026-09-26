@@ -42,9 +42,10 @@ def _harmonic_record(
     *,
     boundary_points: int,
     evaluation_points: int,
-    key,
+    key: Any,
 ) -> TrefftzBenchmarkRecord:
     basis = phx.equations.HarmonicPolynomialBasis(dimension, 1)
+    # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle((-1.0,) * dimension, (1.0,) * dimension)
     field = domain.Model("x")(phx.equations.LinearTrefftzField(basis))
     coefficients = jnp.linspace(0.1, 0.1 * dimension, dimension)
@@ -73,6 +74,7 @@ def _harmonic_record(
     )
     evaluate = eqx.filter_jit(lambda model: model(batch).data)
     compiled_evaluate, compilation = measure_lower_and_compile(
+        # ty: ignore[unresolved-attribute]
         lambda: evaluate.lower(result.solver["u"]),
         lambda lowered: lowered.compile(),
     )
@@ -85,6 +87,7 @@ def _harmonic_record(
     )
     expected = jnp.asarray(target(batch).data)
     relative_l2 = jnp.linalg.norm(predicted - expected) / jnp.linalg.norm(expected)
+    # ty: ignore[invalid-argument-type]
     audit = phx.equations.audit_trial_space(result.solver["u"], batch)
     certificate = phx.equations.trial_space_certificate(result.solver["u"])
     passed = bool(
@@ -146,6 +149,7 @@ def run_trefftz_benchmarks(
         "environment": {
             "platform": device.platform,
             "device_kind": device.device_kind,
+            # ty: ignore[unresolved-attribute]
             "jax_enable_x64": bool(jax.config.x64_enabled),
         },
         "records": [asdict(record) for record in records],

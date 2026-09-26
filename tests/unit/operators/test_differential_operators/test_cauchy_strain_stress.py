@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -11,13 +14,13 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.differential import cauchy_strain, cauchy_stress
 
 
-def test_cauchy_strain_point():
+def test_cauchy_strain_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     strain_u = cauchy_strain(u)
@@ -27,14 +30,14 @@ def test_cauchy_strain_point():
     assert jnp.allclose(out, jnp.array([[4.0, 0.0], [0.0, 6.0]]))
 
 
-def test_cauchy_strain_spacetime_depends_on_t(sample_batch):
+def test_cauchy_strain_spacetime_depends_on_t(sample_batch: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return jnp.array([x[0] * t, x[1] * t])
 
     strain_u = cauchy_strain(u, var="x")
@@ -47,7 +50,7 @@ def test_cauchy_strain_spacetime_depends_on_t(sample_batch):
     assert jnp.allclose(out, expected)
 
 
-def test_cauchy_strain_coord_separable(sample_grid):
+def test_cauchy_strain_coord_separable(sample_grid: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -55,7 +58,7 @@ def test_cauchy_strain_coord_separable(sample_grid):
     batch = sample_grid(component, {"x": (4, 5)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         x, y = x
         return jnp.stack([2.0 * x, 3.0 * y], axis=-1)
 
@@ -64,13 +67,13 @@ def test_cauchy_strain_coord_separable(sample_grid):
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_cauchy_stress_point():
+def test_cauchy_stress_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0], x[1]])
 
     sigma = cauchy_stress(u, lambda_=1.0, mu=2.0)
@@ -79,14 +82,14 @@ def test_cauchy_stress_point():
     assert jnp.allclose(out, jnp.array([[6.0, 0.0], [0.0, 6.0]]))
 
 
-def test_cauchy_stress_time_dependent(sample_batch):
+def test_cauchy_stress_time_dependent(sample_batch: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return jnp.array([x[0] * t, x[1] * t])
 
     sigma = cauchy_stress(u, lambda_=1.0, mu=2.0, var="x")
@@ -99,13 +102,13 @@ def test_cauchy_stress_time_dependent(sample_batch):
     assert jnp.allclose(out, expected)
 
 
-def test_cauchy_stress_complex_valued_u():
+def test_cauchy_stress_complex_valued_u() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.array([x[0], 1j * x[1]])
 
     sigma = cauchy_stress(u, lambda_=1.0, mu=2.0)
@@ -115,7 +118,7 @@ def test_cauchy_stress_complex_valued_u():
     assert jnp.allclose(out, expected)
 
 
-def test_cauchy_strain_preserves_metadata():
+def test_cauchy_strain_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )

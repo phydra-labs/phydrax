@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -25,7 +28,9 @@ from phydrax.equations._mac_les import (
 )
 
 
-def _grid(*, counts=(4, 4, 4), axis_specs=None, side_kind=None):
+def _grid(
+    *, counts: Any = (4, 4, 4), axis_specs: Any = None, side_kind: Any = None
+) -> Any:
     specs = (
         tuple(phx.discretization.UniformCellAxisSpec(n, periodic=True) for n in counts)
         if axis_specs is None
@@ -53,14 +58,14 @@ def _grid(*, counts=(4, 4, 4), axis_specs=None, side_kind=None):
 
 
 def _les_plan(
-    discretization,
+    discretization: Any,
     *,
-    coefficient=0.17,
-    boundary_class="periodic",
-    discretization_id=None,
-    regime="incompressible-unit-density",
-    family="implicit-grid-volume",
-):
+    coefficient: Any = 0.17,
+    boundary_class: Any = "periodic",
+    discretization_id: Any = None,
+    regime: Any = "incompressible-unit-density",
+    family: Any = "implicit-grid-volume",
+) -> Any:
     resolved_filter = ResolvedLESFilter(
         "mac-cell-volume",
         family=family,
@@ -85,7 +90,7 @@ def _les_plan(
     return MACAlgebraicLESPlan(SmagorinskyLESPlan(coefficient).prepare(provenance))
 
 
-def _compiled(*, coefficient=0.17, viscosity=0.01, count=4):
+def _compiled(*, coefficient: Any = 0.17, viscosity: Any = 0.01, count: Any = 4) -> Any:
     discretization, operators, momentum = _grid(counts=(count,) * 3)
     projection = phx.solver.MACPressureProjectionPlan(operators, solve_method="transform")
     dynamics = compile_mac_incompressible_flow(
@@ -97,7 +102,7 @@ def _compiled(*, coefficient=0.17, viscosity=0.01, count=4):
     return discretization, operators, dynamics
 
 
-def _taylor_green(discretization):
+def _taylor_green(discretization: Any) -> Any:
     x_faces, y_faces, z_faces = discretization.face_centers
     return (
         jnp.sin(x_faces[..., 0]) * jnp.cos(x_faces[..., 1]) * jnp.cos(x_faces[..., 2]),
@@ -106,7 +111,7 @@ def _taylor_green(discretization):
     )
 
 
-def test_mac_les_preparation_retains_only_factored_filter_width_metadata():
+def test_mac_les_preparation_retains_only_factored_filter_width_metadata() -> None:
     edges = jnp.asarray((0.0, 0.1, 0.35, 0.7, 1.0))
     specs = tuple(
         phx.discretization.NonuniformCellAxisSpec(edges, periodic=True) for _ in range(3)
@@ -140,13 +145,15 @@ def test_mac_les_preparation_retains_only_factored_filter_width_metadata():
         ({"family": "explicit-filter"}, "filter semantics"),
     ),
 )
-def test_mac_les_refuses_mismatched_prepared_provenance(plan_change, message):
+def test_mac_les_refuses_mismatched_prepared_provenance(
+    plan_change: Any, message: Any
+) -> None:
     discretization, _, momentum = _grid()
     with pytest.raises(ValueError, match=message):
         _les_plan(discretization, **plan_change).prepare(momentum)
 
 
-def test_mac_les_refuses_non_3d_and_unsupported_physical_boundaries():
+def test_mac_les_refuses_non_3d_and_unsupported_physical_boundaries() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(2)),
         axis_names=("x", "y"),
@@ -190,7 +197,7 @@ def test_mac_les_refuses_non_3d_and_unsupported_physical_boundaries():
 
 
 @pytest.mark.parametrize("coefficient", (0.0, 0.17))
-def test_mac_les_typed_preprojection_rate_and_work_identity(coefficient):
+def test_mac_les_typed_preprojection_rate_and_work_identity(coefficient: Any) -> None:
     discretization, operators, dynamics = _compiled(
         coefficient=coefficient, count=4 if coefficient == 0.0 else 5
     )
@@ -235,7 +242,7 @@ def test_mac_les_typed_preprojection_rate_and_work_identity(coefficient):
         assert jnp.std(components.les_stage.model_result.kinematic_viscosity) > 0.0
 
 
-def test_mac_les_restriction_and_diagnostics_are_current_state_dependent():
+def test_mac_les_restriction_and_diagnostics_are_current_state_dependent() -> None:
     discretization, _, dynamics = _compiled(coefficient=0.17, count=5)
     state = dynamics.pack_velocity(_taylor_green(discretization))
     zero = jnp.zeros_like(state)
@@ -262,7 +269,7 @@ def test_mac_les_restriction_and_diagnostics_are_current_state_dependent():
     assert diagnostics.successful
 
 
-def test_mac_no_les_rate_preserves_the_original_momentum_formula_exactly():
+def test_mac_no_les_rate_preserves_the_original_momentum_formula_exactly() -> None:
     discretization, operators, momentum = _grid()
     projection = phx.solver.MACPressureProjectionPlan(operators, solve_method="transform")
     viscosity = jnp.asarray(0.03)
@@ -296,11 +303,11 @@ def test_mac_no_les_rate_preserves_the_original_momentum_formula_exactly():
     assert restriction.sgs_supported
 
 
-def test_mac_les_rate_is_jittable_and_has_state_jvp():
+def test_mac_les_rate_is_jittable_and_has_state_jvp() -> None:
     discretization, operators, dynamics = _compiled(coefficient=0.12, count=3)
     state = dynamics.pack_velocity(_taylor_green(discretization))
 
-    def sgs_rate(coordinates):
+    def sgs_rate(coordinates: Any) -> Any:
         components = dynamics.rate_components(0.0, coordinates)
         return operators.velocity_space.flatten(components.sgs)
 
@@ -313,7 +320,7 @@ def test_mac_les_rate_is_jittable_and_has_state_jvp():
     assert jnp.linalg.norm(tangent) > 0.0
 
 
-def test_active_mac_les_selects_the_frozen_implicit_temporal_profile():
+def test_active_mac_les_selects_the_frozen_implicit_temporal_profile() -> None:
     _, _, dynamics = _compiled(coefficient=0.12, count=3)
     method = phx.solver.MACIMEXEulerMethod(dynamics, solve_method="iterative")
 

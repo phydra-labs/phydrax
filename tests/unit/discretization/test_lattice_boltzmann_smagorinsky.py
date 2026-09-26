@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -23,7 +26,7 @@ from phydrax.discretization.lattice_boltzmann._collision import (
 from tools.lattice_boltzmann_smagorinsky_qualification import qualification
 
 
-def _nonequilibrium_state():
+def _nonequilibrium_state() -> Any:
     lattice = D2Q9()
     precision = LatticeBoltzmannPrecisionPolicy()
     density = jnp.asarray(1.0)
@@ -36,7 +39,15 @@ def _nonequilibrium_state():
     return lattice, precision, density, velocity, equilibrium, equilibrium + perturbation
 
 
-def _collide(coefficient, populations, density, velocity, lattice, precision, rate):
+def _collide(
+    coefficient: Any,
+    populations: Any,
+    density: Any,
+    velocity: Any,
+    lattice: Any,
+    precision: Any,
+    rate: Any,
+) -> Any:
     return LatticeBoltzmannMethodPlan(SmagorinskyCollisionPlan(coefficient)).collide(
         populations,
         density,
@@ -48,7 +59,9 @@ def _collide(coefficient, populations, density, velocity, lattice, precision, ra
     )
 
 
-def test_nonzero_smagorinsky_uses_local_nonequilibrium_stress_and_reports_evidence():
+def test_nonzero_smagorinsky_uses_local_nonequilibrium_stress_and_reports_evidence() -> (
+    None
+):
     lattice, precision, density, velocity, equilibrium, populations = (
         _nonequilibrium_state()
     )
@@ -104,7 +117,7 @@ def test_nonzero_smagorinsky_uses_local_nonequilibrium_stress_and_reports_eviden
     assert float(evidence.conserved_moment_defect) <= 5.0e-16
 
 
-def test_zero_coefficient_parity_equilibrium_limit_and_monotonic_response():
+def test_zero_coefficient_parity_equilibrium_limit_and_monotonic_response() -> None:
     lattice, precision, density, velocity, equilibrium, populations = (
         _nonequilibrium_state()
     )
@@ -159,7 +172,7 @@ def test_zero_coefficient_parity_equilibrium_limit_and_monotonic_response():
     )
 
 
-def test_smagorinsky_rejects_invalid_coefficient_and_relaxation_rate():
+def test_smagorinsky_rejects_invalid_coefficient_and_relaxation_rate() -> None:
     for coefficient in (-0.1, np.nan, np.inf):
         with pytest.raises(ValueError, match="finite and nonnegative"):
             SmagorinskyCollisionPlan(coefficient)
@@ -176,7 +189,7 @@ def test_smagorinsky_rejects_invalid_coefficient_and_relaxation_rate():
             jax.block_until_ready(result.populations)
 
 
-def test_smagorinsky_eager_jit_and_jvp_are_consistent_and_finite():
+def test_smagorinsky_eager_jit_and_jvp_are_consistent_and_finite() -> None:
     lattice, precision, density, velocity, _, populations = _nonequilibrium_state()
     prepared = LatticeBoltzmannMethodPlan(SmagorinskyCollisionPlan(0.16)).prepare(
         lattice, precision
@@ -184,7 +197,7 @@ def test_smagorinsky_eager_jit_and_jvp_are_consistent_and_finite():
     rate = jnp.asarray(1.25)
     force = jnp.zeros_like(velocity)
 
-    def collide(values):
+    def collide(values: Any) -> Any:
         return prepared.collide(
             values, density, velocity, force, rate, lattice, precision
         )
@@ -215,7 +228,7 @@ def test_smagorinsky_eager_jit_and_jvp_are_consistent_and_finite():
     np.testing.assert_allclose(tangent, finite_difference, rtol=2.0e-7, atol=2.0e-9)
 
 
-def test_smagorinsky_decaying_shear_qualification_is_observable_and_scoped():
+def test_smagorinsky_decaying_shear_qualification_is_observable_and_scoped() -> None:
     record = qualification(
         resolution=12,
         steps=8,

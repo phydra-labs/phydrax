@@ -371,7 +371,8 @@ class QuantityField:
                 )
         mask = self.valid_mask
         # __post_init__ always replaces a None valid_mask with an all-true mask.
-        assert mask is not None
+        if not (mask is not None):
+            raise RuntimeError("Internal invariant failed: mask is not None.")
         return PreparedQuantityField(
             values,
             mask,

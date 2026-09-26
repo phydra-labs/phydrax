@@ -19,7 +19,7 @@ from phydrax.applications.compact_objects._extended_thermodynamics import (
 jax.config.update("jax_enable_x64", True)
 
 
-def test_kerr_newman_neutral_limit_matches_stationary_kerr_horizon():
+def test_kerr_newman_neutral_limit_matches_stationary_kerr_horizon() -> None:
     scale = RelativityScaleContract.si()
     mass = 2.0
     specific_spin = 0.35
@@ -47,7 +47,7 @@ def test_kerr_newman_neutral_limit_matches_stationary_kerr_horizon():
     assert bool(extended.derivative_valid)
 
 
-def test_kerr_newman_extremal_and_overextremal_branches_do_not_share_status():
+def test_kerr_newman_extremal_and_overextremal_branches_do_not_share_status() -> None:
     scale = RelativityScaleContract.si()
     extremal = KerrNewmanThermodynamicsPlan(1.0, 0.0, 1.0, scale).evaluate()
     overextremal = KerrNewmanThermodynamicsPlan(1.0, 0.0, 1.01, scale).evaluate()
@@ -67,7 +67,7 @@ def test_kerr_newman_extremal_and_overextremal_branches_do_not_share_status():
     assert int(overextremal.branch_status) == 2
 
 
-def test_charged_flat_smarr_and_einstein_wald_entropy_are_explicit():
+def test_charged_flat_smarr_and_einstein_wald_entropy_are_explicit() -> None:
     scale = RelativityScaleContract.si()
     result = KerrNewmanThermodynamicsPlan(
         2.0,
@@ -89,7 +89,7 @@ def test_charged_flat_smarr_and_einstein_wald_entropy_are_explicit():
     assert bool(result.qualified)
 
 
-def test_ads_extended_variables_satisfy_enthalpy_and_smarr_relations():
+def test_ads_extended_variables_satisfy_enthalpy_and_smarr_relations() -> None:
     scale = RelativityScaleContract.si()
     result = eqx.filter_jit(
         KerrNewmanAdSThermodynamicsPlan(
@@ -114,7 +114,7 @@ def test_ads_extended_variables_satisfy_enthalpy_and_smarr_relations():
     assert bool(result.derivative_valid)
 
 
-def test_ads_observables_recover_asymptotically_flat_kerr_newman_limit():
+def test_ads_observables_recover_asymptotically_flat_kerr_newman_limit() -> None:
     scale = RelativityScaleContract.si()
     radius = 3.0
     spin = 0.4
@@ -144,7 +144,7 @@ def test_ads_observables_recover_asymptotically_flat_kerr_newman_limit():
     )
 
 
-def test_finite_cavity_exposes_tolman_first_law_and_heat_capacity_branch():
+def test_finite_cavity_exposes_tolman_first_law_and_heat_capacity_branch() -> None:
     scale = RelativityScaleContract.si()
     stable = ReissnerNordstromCavityPlan(
         2.0,

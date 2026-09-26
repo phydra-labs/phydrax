@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -15,7 +17,7 @@ from phydrax.applications.solid_mechanics._rod_loads import (
 )
 
 
-def _spatial_rod():
+def _spatial_rod() -> Any:
     return prepare_rod(
         RodPlan(
             jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
@@ -29,7 +31,7 @@ def _spatial_rod():
     )
 
 
-def test_load_ledger_preserves_source_frame_unit_and_channel_semantics():
+def test_load_ledger_preserves_source_frame_unit_and_channel_semantics() -> None:
     contact = RodLoad(
         jnp.asarray(((1.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 0.0))),
         jnp.asarray(((0.0, 0.0, 0.5), (0.0, 0.0, 0.0))),
@@ -56,7 +58,7 @@ def test_load_ledger_preserves_source_frame_unit_and_channel_semantics():
     assert ledger.moment_unit == "N*m"
 
 
-def test_load_power_evidence_uses_native_dual_pairing_and_named_channels():
+def test_load_power_evidence_uses_native_dual_pairing_and_named_channels() -> None:
     rod = _spatial_rod()
     linear_velocity = jnp.asarray(((0.1, -0.2, 0.3), (0.4, 0.2, -0.1), (-0.3, 0.5, 0.6)))
     body_angular_velocity = jnp.asarray(((0.2, 0.4, -0.1), (-0.3, 0.1, 0.5)))
@@ -108,7 +110,7 @@ def test_load_power_evidence_uses_native_dual_pairing_and_named_channels():
     assert evidence.absolute_pairing_error == pytest.approx(0.0, abs=2.0e-6)
 
 
-def test_spatial_load_rejects_world_or_quaternion_storage_moments():
+def test_spatial_load_rejects_world_or_quaternion_storage_moments() -> None:
     with pytest.raises(ValueError, match="material frame"):
         RodLoad(
             jnp.zeros((3, 3)),
@@ -126,7 +128,7 @@ def test_spatial_load_rejects_world_or_quaternion_storage_moments():
         )
 
 
-def test_reduced_bundle_keeps_native_source_order_and_channel_aggregation():
+def test_reduced_bundle_keeps_native_source_order_and_channel_aggregation() -> None:
     first = RodLoad(
         jnp.zeros((3, 3)),
         jnp.zeros((2, 3)),

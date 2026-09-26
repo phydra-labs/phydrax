@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _compiled(cells=16):
+def _compiled(cells: Any = 16) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(cells, periodic=True),),
         axis_names=("x",),
@@ -35,7 +38,7 @@ def _compiled(cells=16):
     return phx.equations.compile_conservation_problem(problem, discretization, method)
 
 
-def test_named_sharding_plan_validates_local_extent_and_shards_state():
+def test_named_sharding_plan_validates_local_extent_and_shards_state() -> None:
     plan = phx.discretization.FiniteVolumeDecompositionPlan(
         (16,), (1,), ("x",), halo_width=2
     )
@@ -47,7 +50,7 @@ def test_named_sharding_plan_validates_local_extent_and_shards_state():
     assert state.sharding == prepared.cell_sharding
 
 
-def test_distributed_residual_matches_local_residual_on_one_device():
+def test_distributed_residual_matches_local_residual_on_one_device() -> None:
     compiled = _compiled()
     decomposition = phx.discretization.FiniteVolumeDecompositionPlan(
         (16,), (1,), ("x",), halo_width=1
@@ -61,7 +64,7 @@ def test_distributed_residual_matches_local_residual_on_one_device():
     np.testing.assert_allclose(distributed, local, rtol=1e-12, atol=1e-12)
 
 
-def test_periodic_halo_on_sharded_state_has_expected_wrapped_layers():
+def test_periodic_halo_on_sharded_state_has_expected_wrapped_layers() -> None:
     decomposition = phx.discretization.FiniteVolumeDecompositionPlan(
         (8,), (1,), ("x",), halo_width=2
     ).prepare((jax.devices()[0],))
@@ -72,7 +75,7 @@ def test_periodic_halo_on_sharded_state_has_expected_wrapped_layers():
     np.testing.assert_allclose(halo[-2:, 0], [0.0, 1.0])
 
 
-def test_decomposition_rejects_nondivisible_or_halo_dominated_domains():
+def test_decomposition_rejects_nondivisible_or_halo_dominated_domains() -> None:
     with pytest.raises(ValueError, match="divide exactly"):
         phx.discretization.FiniteVolumeDecompositionPlan(
             (10,), (3,), ("x",), halo_width=1
@@ -85,7 +88,7 @@ def test_decomposition_rejects_nondivisible_or_halo_dominated_domains():
     len(jax.devices()) < 2,
     reason="requires at least two JAX devices",
 )
-def test_two_device_routes_and_residual_match_single_device():
+def test_two_device_routes_and_residual_match_single_device() -> None:
     compiled = _compiled(16)
     decomposition = phx.discretization.FiniteVolumeDecompositionPlan(
         (16,), (2,), ("x",), halo_width=1

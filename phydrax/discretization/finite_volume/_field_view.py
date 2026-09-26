@@ -504,10 +504,16 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
                 PiecewiseConstantReconstruction() | PreparedCellPolynomialReconstruction()
             ):
                 # locate() binds gather stencils for linear reconstructions.
-                assert isinstance(route, GatherStencil)
+                if not (isinstance(route, GatherStencil)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(route, GatherStencil)."
+                    )
                 return linear_apply(route.relation, route.weights, coefficients)
             case PreparedUnstructuredWENOZReconstruction():
-                assert isinstance(route, _WENORoute)
+                if not (isinstance(route, _WENORoute)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(route, _WENORoute)."
+                    )
                 modal = self.reconstruction.coefficients(coefficients)
                 values = contract("pkf,pk...f->pk...", route.basis, modal[route.cells])
                 if route.constant:
@@ -521,7 +527,10 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
             case (
                 PiecewiseConstantReconstruction() | PreparedCellPolynomialReconstruction()
             ):
-                assert isinstance(route, GatherStencil)
+                if not (isinstance(route, GatherStencil)):
+                    raise RuntimeError(
+                        "Internal invariant failed: isinstance(route, GatherStencil)."
+                    )
                 return linear_transpose_apply(route.relation, route.weights, cotangent)
             case PreparedUnstructuredWENOZReconstruction():
                 raise ValueError(

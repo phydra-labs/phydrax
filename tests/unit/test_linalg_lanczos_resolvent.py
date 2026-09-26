@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +17,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _self_adjoint_operator(matrix, operator_id):
+def _self_adjoint_operator(matrix: Any, operator_id: Any) -> Any:
     return la.DenseLinearOperator(
         matrix,
         properties=la.OperatorProperties(
@@ -25,7 +28,7 @@ def _self_adjoint_operator(matrix, operator_id):
     )
 
 
-def _projection(matrix, initial, max_dimension, operator_id):
+def _projection(matrix: Any, initial: Any, max_dimension: Any, operator_id: Any) -> Any:
     operator = _self_adjoint_operator(matrix, operator_id)
     projection = la.prepare_krylov_projection(
         operator,
@@ -35,7 +38,7 @@ def _projection(matrix, initial, max_dimension, operator_id):
     return operator, projection
 
 
-def _dense_resolvent_form(matrix, initial, shifts):
+def _dense_resolvent_form(matrix: Any, initial: Any, shifts: Any) -> Any:
     identity = jnp.eye(matrix.shape[0], dtype=matrix.dtype)
     return jax.vmap(
         lambda shift: jnp.vdot(
@@ -45,7 +48,7 @@ def _dense_resolvent_form(matrix, initial, shifts):
     )(shifts)
 
 
-def test_lanczos_resolvent_form_matches_dense_and_transforms():
+def test_lanczos_resolvent_form_matches_dense_and_transforms() -> None:
     matrix = jnp.asarray(
         [
             [2.0, 1.0 + 0.5j, 0.0],
@@ -77,7 +80,7 @@ def test_lanczos_resolvent_form_matches_dense_and_transforms():
     assert bool(jnp.all(jnp.imag(eager.value) < 0.0))
 
 
-def test_truncated_lanczos_resolvent_is_finite_without_false_success():
+def test_truncated_lanczos_resolvent_is_finite_without_false_success() -> None:
     diagonal = jnp.asarray([0.5, 1.0, 1.5, 2.0, 2.5], dtype=jnp.float64)
     off_diagonal = jnp.asarray([0.4, -0.3, 0.5, 0.2], dtype=jnp.float64)
     matrix = jnp.diag(diagonal)
@@ -107,7 +110,7 @@ def test_truncated_lanczos_resolvent_is_finite_without_false_success():
     assert bool(jnp.all(jnp.isfinite(result.diagnostics.truncation_indicator)))
 
 
-def test_terminal_resolvent_closes_uniform_chain_without_success_claim():
+def test_terminal_resolvent_closes_uniform_chain_without_success_claim() -> None:
     coupling = jnp.asarray(0.7, dtype=jnp.float64)
     matrix = jnp.diag(jnp.full((6,), coupling), 1)
     matrix = matrix + matrix.T
@@ -136,7 +139,7 @@ def test_terminal_resolvent_closes_uniform_chain_without_success_claim():
     assert result.provenance.termination == "explicit-terminal-resolvent"
 
 
-def test_lanczos_resolvent_reports_lane_failures_and_rejects_wrong_projection():
+def test_lanczos_resolvent_reports_lane_failures_and_rejects_wrong_projection() -> None:
     matrix = jnp.asarray([[2.0]], dtype=jnp.float64)
     initial = jnp.asarray([1.0], dtype=jnp.float64)
     operator, projection = _projection(matrix, initial, 1, "resolvent-statuses")
@@ -174,12 +177,12 @@ def test_lanczos_resolvent_reports_lane_failures_and_rejects_wrong_projection():
         )
 
 
-def test_lanczos_resolvent_shift_jvp_matches_dense_derivative():
+def test_lanczos_resolvent_shift_jvp_matches_dense_derivative() -> None:
     matrix = jnp.asarray([[2.0, 0.4], [0.4, 1.0]], dtype=jnp.float64)
     initial = jnp.asarray([1.0, -0.25], dtype=jnp.float64)
     _, projection = _projection(matrix, initial, 2, "resolvent-jvp")
 
-    def evaluate(real_shift):
+    def evaluate(real_shift: Any) -> Any:
         shift = real_shift + 0.35j
         return la.lanczos_resolvent_form(projection, shift).value
 

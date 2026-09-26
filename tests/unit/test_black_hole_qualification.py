@@ -2,14 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
+from typing import Any
 
 import pytest
 
 from tools import black_hole_qualification as qualification
 
 
-def _passing_profile(name):
+def _passing_profile(name: Any) -> Any:
     return qualification._profile_result(
         name,
         checks={"analytic_identity": True},
@@ -20,14 +22,14 @@ def _passing_profile(name):
     )
 
 
-def test_requested_profiles_are_independent_and_fail_closed(monkeypatch):
+def test_requested_profiles_are_independent_and_fail_closed(monkeypatch: Any) -> None:
     monkeypatch.setitem(
         qualification.PROFILE_RUNNERS,
         "geometry",
         lambda: _passing_profile("geometry"),
     )
 
-    def fail_thermodynamics():
+    def fail_thermodynamics() -> None:
         raise RuntimeError("bounded scientific failure")
 
     monkeypatch.setitem(
@@ -40,12 +42,18 @@ def test_requested_profiles_are_independent_and_fail_closed(monkeypatch):
     assert report["requested_profiles"] == ["geometry", "thermodynamics"]
     assert report["failed_profiles"] == ["thermodynamics"]
     assert not report["passed"]
+    # ty: ignore[not-subscriptable]
     assert report["profiles"]["geometry"]["passed"]
+    # ty: ignore[not-subscriptable]
     manifest_id = report["manifest"]["manifest_id"]
+    # ty: ignore[not-subscriptable]
     assert report["manifest"]["validity"]["evaluated_at_unix_seconds"] == 10
+    # ty: ignore[not-subscriptable]
     assert report["profiles"]["geometry"]["manifest_id"] == manifest_id
+    # ty: ignore[not-subscriptable]
     assert report["profiles"]["thermodynamics"]["manifest_id"] == manifest_id
     assert report["report_id"]
+    # ty: ignore[no-matching-overload]
     manifest_payload = dict(report["manifest"])
     assert manifest_payload.pop("manifest_id") == qualification._content_id(
         "black-hole-runtime-manifest", manifest_payload
@@ -54,6 +62,7 @@ def test_requested_profiles_are_independent_and_fail_closed(monkeypatch):
     assert report_payload.pop("report_id") == qualification._content_id(
         "black-hole-qualification-report", report_payload
     )
+    # ty: ignore[not-subscriptable]
     failure = report["profiles"]["thermodynamics"]
     assert not failure["passed"]
     assert failure["failure"] == {
@@ -63,7 +72,7 @@ def test_requested_profiles_are_independent_and_fail_closed(monkeypatch):
     assert json.loads(qualification.serialize_report(report)) == report
 
 
-def test_profile_selection_rejects_unknown_and_duplicate_names():
+def test_profile_selection_rejects_unknown_and_duplicate_names() -> None:
     with pytest.raises(ValueError, match="Unknown"):
         qualification.run_qualification(("not-a-profile",), valid_at=10)
     with pytest.raises(ValueError, match="unique"):
@@ -72,6 +81,6 @@ def test_profile_selection_rejects_unknown_and_duplicate_names():
         qualification.run_qualification(("geometry",), valid_at=-1)
 
 
-def test_report_serialization_rejects_nonfinite_json_numbers():
+def test_report_serialization_rejects_nonfinite_json_numbers() -> None:
     with pytest.raises(ValueError, match="Out of range float values"):
         qualification.serialize_report({"residual": float("nan")})

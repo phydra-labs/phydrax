@@ -297,7 +297,8 @@ def reexpress_tensor(
     for axis, variance in enumerate(tensor_type.variance):
         linear = jacobian if variance == "contravariant" else inverse_transpose
         # inverse_transpose is computed above whenever any axis is covariant.
-        assert linear is not None
+        if not (linear is not None):
+            raise RuntimeError("Internal invariant failed: linear is not None.")
         result = _apply_linear_axis(
             result,
             linear,

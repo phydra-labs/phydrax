@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +14,7 @@ import phydrax as phx
 from benchmarks._runtime import capture_environment
 
 
-def _mechanism():
+def _mechanism() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (
@@ -49,7 +50,7 @@ def _mechanism():
     ).prepare()
 
 
-def qualification():
+def qualification() -> Any:
     mechanism = _mechanism()
     fields = mechanism.evaluate(jnp.asarray((1.0, 0.0)), 500.0, 101325.0)
     rate_gradient = jax.grad(
@@ -172,7 +173,7 @@ def qualification():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",

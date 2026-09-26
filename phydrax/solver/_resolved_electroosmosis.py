@@ -312,7 +312,10 @@ class ResolvedElectroosmoticStokesPlan(StrictModule, NonTrainableState):
             else:
                 previous_electrode = state.electrode
                 # A plan-owned state carries an electrode exactly when a binding exists.
-                assert previous_electrode is not None and electrode_state is not None
+                if not (previous_electrode is not None and electrode_state is not None):
+                    raise RuntimeError(
+                        "Internal invariant failed: previous_electrode is not None and electrode_state is not None."
+                    )
                 electrode_evaluation = self.electrode_binding.evaluate(
                     concentration,
                     electrode_state,
@@ -416,7 +419,10 @@ class ResolvedElectroosmoticStokesPlan(StrictModule, NonTrainableState):
             electrode_ok = jnp.asarray(True)
         else:
             # An electrode evaluation is recorded only with its electrode candidate.
-            assert electrode_state is not None
+            if not (electrode_state is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: electrode_state is not None."
+                )
             electrode_species_change = step * jnp.sum(
                 volumes[..., None] * final_electrode.concentration_rate,
                 axis=spatial_axes,

@@ -223,7 +223,10 @@ def _load_structured_case(payload: dict[str, Any], /) -> PreparedFiniteVolumeCas
     execution = _execution(payload["execution"])
     dynamics = compiled.dynamics
     # Structured finite-volume plans compile to structured finite-volume dynamics.
-    assert isinstance(dynamics, PreparedFiniteVolumeDynamics)
+    if not (isinstance(dynamics, PreparedFiniteVolumeDynamics)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(dynamics, PreparedFiniteVolumeDynamics)."
+        )
     runtime = PreparedFiniteVolumeRuntime(
         dynamics, FluxPositivityPlan(), execution.step_policy
     )
@@ -326,7 +329,10 @@ def _load_unstructured_case(
     execution = _execution(payload["execution"])
     dynamics = compiled.dynamics
     # Unstructured finite-volume plans compile to unstructured dynamics.
-    assert isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics)
+    if not (isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics)."
+        )
     runtime = PreparedFiniteVolumeRuntime(
         dynamics, FluxPositivityPlan(), execution.step_policy
     )

@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import importlib.util
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -18,7 +20,7 @@ from phydrax.discretization.lattice_boltzmann._lattice import D2Q9
 from phydrax.export._iree import load_iree
 
 
-def _step(step_index, time, populations, step_size, args):
+def _step(step_index: Any, time: Any, populations: Any, step_size: Any, args: Any) -> Any:
     del step_index, time, step_size, args
     return LatticeBoltzmannExecutionStep(
         populations,
@@ -30,7 +32,7 @@ def _step(step_index, time, populations, step_size, args):
     )
 
 
-def _plan():
+def _plan() -> Any:
     return ReferenceLatticeBoltzmannExecutionPlan(
         D2Q9(),
         _step,
@@ -38,7 +40,7 @@ def _plan():
     )
 
 
-def test_lbm_iree_contract_has_explicit_forward_and_vjp_abis():
+def test_lbm_iree_contract_has_explicit_forward_and_vjp_abis() -> None:
     plan = _plan()
     initial = jnp.ones((3, 4, plan.velocity_set.population_count), dtype=jnp.float64)
 
@@ -90,8 +92,12 @@ if _HAS_IREE:
 
 
 @pytest.mark.skipif(not _HAS_IREE, reason="IREE optional packages are not installed")
-def test_lbm_iree_forward_and_ordered_vjp_execute_with_named_outputs(tmp_path):
-    def scaled_step(step_index, time, populations, step_size, args):
+def test_lbm_iree_forward_and_ordered_vjp_execute_with_named_outputs(
+    tmp_path: Any,
+) -> None:
+    def scaled_step(
+        step_index: Any, time: Any, populations: Any, step_size: Any, args: Any
+    ) -> Any:
         del step_index, time, step_size
         _, runtime_values = args
         (coefficient,) = runtime_values
@@ -152,8 +158,8 @@ def test_lbm_iree_forward_and_ordered_vjp_execute_with_named_outputs(tmp_path):
 
 
 def test_lbm_iree_export_fails_closed_at_existing_availability_gate(
-    monkeypatch, tmp_path
-):
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     unavailable = BackendAvailability(
         capabilities=IREE_CAPABILITIES,
         available=False,

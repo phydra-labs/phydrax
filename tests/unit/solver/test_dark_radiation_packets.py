@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -28,14 +31,14 @@ from phydrax.solver._dark_radiation_packets import (
 from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
 
 
-def _units():
+def _units() -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1)
     return RelativisticUnitContract(
         scale, RelativityConvention(metric_signature="mostly_minus")
     )
 
 
-def _frame(units, *, time, scale_factor, snapshot):
+def _frame(units: Any, *, time: Any, scale_factor: Any, snapshot: Any) -> Any:
     geometry = ADMGridGeometry(
         jnp.asarray(1.0),
         jnp.zeros((3,)),
@@ -73,7 +76,7 @@ def _frame(units, *, time, scale_factor, snapshot):
     )
 
 
-def _epoch_plan(*, capacity=2, event_capacity=2):
+def _epoch_plan(*, capacity: Any = 2, event_capacity: Any = 2) -> Any:
     return DarkSectorEpochPlan(
         packet_capacity=1,
         event_capacity=event_capacity,
@@ -92,7 +95,7 @@ def _epoch_plan(*, capacity=2, event_capacity=2):
     )
 
 
-def _plan_and_state(*, capacity=2, event_capacity=2):
+def _plan_and_state(*, capacity: Any = 2, event_capacity: Any = 2) -> Any:
     units = _units()
     frame = _frame(units, time=0.0, scale_factor=1.0, snapshot=1)
     plan = DarkRadiationPacketPlan(
@@ -126,7 +129,7 @@ def _plan_and_state(*, capacity=2, event_capacity=2):
     return units, frame, plan, admission.accepted_state
 
 
-def test_minkowski_and_flrw_scattering_propagation_redshift_and_polarization():
+def test_minkowski_and_flrw_scattering_propagation_redshift_and_polarization() -> None:
     units, frame0, plan, state = _plan_and_state()
     frame1 = _frame(units, time=1.0, scale_factor=2.0, snapshot=2)
     mueller = jnp.diag(jnp.asarray((1.0, 0.5, 0.5, 0.5)))
@@ -160,7 +163,7 @@ def test_minkowski_and_flrw_scattering_propagation_redshift_and_polarization():
     assert bool(plan.valid(result.accepted_state))
 
 
-def test_absorption_event_four_force_and_event_capacity_rollback():
+def test_absorption_event_four_force_and_event_capacity_rollback() -> None:
     units, frame0, plan, state = _plan_and_state(event_capacity=1)
     frame1 = _frame(units, time=0.5, scale_factor=1.0, snapshot=2)
     absorbed = plan.advance(
@@ -219,7 +222,9 @@ def test_absorption_event_four_force_and_event_capacity_rollback():
     assert not bool(jnp.any(overflow.events.mask))
 
 
-def test_capacity_and_exact_checkpoint_restart_preserve_rng_and_epoch(tmp_path):
+def test_capacity_and_exact_checkpoint_restart_preserve_rng_and_epoch(
+    tmp_path: Any,
+) -> None:
     _, _, plan, state = _plan_and_state(capacity=1)
     full = plan.admit(
         state,

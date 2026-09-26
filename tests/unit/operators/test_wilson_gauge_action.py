@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _action(dimension=2, beta=1.4):
+def _action(dimension: Any = 2, beta: Any = 1.4) -> Any:
     topology = phx.discretization.polygonal_cell_complex(
         jnp.asarray([[0, 1, 2]]), None, 3
     )
@@ -23,7 +26,7 @@ def _action(dimension=2, beta=1.4):
     return action
 
 
-def _perturbed_links(action):
+def _perturbed_links(action: Any) -> Any:
     dimension = action.link_space.group.algebra_shape[0]
     coordinates = 0.1 * jnp.reshape(
         jnp.arange(action.link_space.num_edges * dimension, dtype="float64") + 1.0,
@@ -32,7 +35,7 @@ def _perturbed_links(action):
     return action.geometry.retract(action.link_space.identity(), coordinates)
 
 
-def test_wilson_action_uses_normalized_trace_and_explicit_constant():
+def test_wilson_action_uses_normalized_trace_and_explicit_constant() -> None:
     for dimension in (2, 3):
         action = _action(dimension)
         identity = action.link_space.identity()
@@ -43,7 +46,7 @@ def test_wilson_action_uses_normalized_trace_and_explicit_constant():
         assert action.link_space.contains(identity)
 
 
-def test_wilson_action_is_gauge_invariant():
+def test_wilson_action_is_gauge_invariant() -> None:
     action = _action(2)
     links = _perturbed_links(action)
     group = action.link_space.group
@@ -60,7 +63,7 @@ def test_wilson_action_is_gauge_invariant():
     assert jnp.allclose(action.action(links), action.action(transformed), atol=1e-10)
 
 
-def test_wilson_incremental_cache_matches_full_recomputation():
+def test_wilson_incremental_cache_matches_full_recomputation() -> None:
     action = _action(2)
     links = _perturbed_links(action)
     value, cache = action.initialize_incremental(links)
@@ -93,7 +96,7 @@ def test_wilson_incremental_cache_matches_full_recomputation():
     )
 
 
-def test_wilson_local_coordinate_gradient_matches_directional_difference():
+def test_wilson_local_coordinate_gradient_matches_directional_difference() -> None:
     action = _action(2)
     links = _perturbed_links(action)
     direction = jnp.asarray(

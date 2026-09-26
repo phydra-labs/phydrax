@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -22,7 +23,7 @@ _M2_PER_KG = phx.units.derived_unit(
 )
 
 
-def _reference():
+def _reference() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "synthetic-diagnostic-photon-qualification",
         checksum_algorithm="sha256",
@@ -75,7 +76,9 @@ def qualify() -> dict[str, object]:
     transform = tomography.VoxelXRayTransformPlan(
         support,
         (2, 1, 1),
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.0, 0.0),
+        # ty: ignore[invalid-argument-type]
         (1.0, 1.0, 1.0),
         contract,
     )

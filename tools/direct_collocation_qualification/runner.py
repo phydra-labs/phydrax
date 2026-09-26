@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +19,7 @@ from .contracts import DirectCollocationQualificationRecord
 QualificationBackend = Literal["native", "ipopt"]
 
 
-def _method(backend: QualificationBackend):
+def _method(backend: QualificationBackend) -> Any:
     if backend == "native":
         return phx.optim.PrimalDualInteriorPoint(
             mode="dense-filter", max_dense_dimension=512

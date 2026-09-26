@@ -8,6 +8,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +19,7 @@ import phydrax as phx
 mn = phx.applications.solid_mechanics.member_network
 
 
-def catenary_campaign(count):
+def catenary_campaign(count: Any) -> Any:
     reference = mn.ElasticCatenaryReference(10.5, 1.0e5, jnp.asarray((0.0, -2.0, 0.0)))
     starts = jnp.zeros((count, 3))
     ends = jnp.zeros((count, 3)).at[:, 0].set(10.0)
@@ -39,7 +40,7 @@ def catenary_campaign(count):
     }
 
 
-def strip_campaign(wavelength_count):
+def strip_campaign(wavelength_count: Any) -> Any:
     section = mn.ThinWalledSection(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 0.2))),
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
@@ -64,7 +65,7 @@ def strip_campaign(wavelength_count):
     }
 
 
-def reliability_campaign(sample_count):
+def reliability_campaign(sample_count: Any) -> Any:
     model = mn.StructuralRandomModel(
         jnp.asarray((0.0,)), jnp.asarray(((1.0,),)), ("load",)
     )
@@ -82,7 +83,7 @@ def reliability_campaign(sample_count):
     }
 
 
-def sequence_campaign(operation_count):
+def sequence_campaign(operation_count: Any) -> Any:
     operations = [phx.optim.PrecedenceOperation("op-0")]
     for index in range(1, operation_count):
         operations.append(

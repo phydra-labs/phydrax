@@ -2,6 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
+# ty: ignore[unresolved-import]
 import marimo
 
 
@@ -10,14 +14,18 @@ app = marimo.App(width="full", app_title="Spring-Mass ODE in Phydrax")
 
 
 @app.cell
-def _():
+def _() -> Any:
     import time as time_mod
 
     import equinox as eqx
     import jax
     import jax.numpy as jnp
     import jax.random as jr
+
+    # ty: ignore[unresolved-import]
     import marimo as mo
+
+    # ty: ignore[unresolved-import]
     import matplotlib.pyplot as plt
     import optax
 
@@ -28,7 +36,7 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _(mo: Any) -> None:
     mo.md(
         r"""
     # Coupled Spring-Mass ODE in Phydrax
@@ -79,7 +87,7 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _(mo: Any) -> None:
     mo.callout(
         mo.md(
             r"""
@@ -98,7 +106,7 @@ def _(mo):
 
 
 @app.cell
-def _():
+def _() -> Any:
     # -------------------------------------------------------------------------
     # Configurations
     # -------------------------------------------------------------------------
@@ -133,7 +141,7 @@ def _():
 
 
 @app.cell
-def _(eqx, jax, jnp, phx):
+def _(eqx: Any, jax: Any, jnp: Any, phx: Any) -> Any:
     # -------------------------------------------------------------------------
     # Utility functions
     # -------------------------------------------------------------------------
@@ -163,7 +171,7 @@ def _(eqx, jax, jnp, phx):
         potential = (x1**2) + 0.5 * (x2 - x1) ** 2 + 0.5 * (x3 - x2) ** 2 + (x3**2)
         return kinetic + potential
 
-    def count_parameters(module) -> int:
+    def count_parameters(module: Any) -> int:
         leaves = jax.tree_util.tree_leaves(eqx.filter(module, eqx.is_inexact_array))
         return sum(leaf.size for leaf in leaves)
 
@@ -324,20 +332,20 @@ def _(eqx, jax, jnp, phx):
 
 @app.cell
 def _(
-    depth,
-    jr,
-    learning_rate,
-    make_solver,
-    mo,
-    num_iter,
-    num_t_interior,
-    optax,
-    seed,
-    t_max,
-    t_min,
-    time_mod,
-    width_size,
-):
+    depth: Any,
+    jr: Any,
+    learning_rate: Any,
+    make_solver: Any,
+    mo: Any,
+    num_iter: Any,
+    num_t_interior: Any,
+    optax: Any,
+    seed: Any,
+    t_max: Any,
+    t_min: Any,
+    time_mod: Any,
+    width_size: Any,
+) -> Any:
     # -------------------------------------------------------------------------
     # Main execution path
     # -------------------------------------------------------------------------
@@ -387,16 +395,16 @@ def _(
 
 @app.cell
 def _(
-    evaluate_solver,
-    exact_states,
-    initial_condition_errors,
-    jnp,
-    nt_plot,
-    t_max,
-    t_min,
-    total_energy,
-    trained_solver,
-):
+    evaluate_solver: Any,
+    exact_states: Any,
+    initial_condition_errors: Any,
+    jnp: Any,
+    nt_plot: Any,
+    t_max: Any,
+    t_min: Any,
+    total_energy: Any,
+    trained_solver: Any,
+) -> Any:
     t_diag, x_pred_diag, x_true_diag, x_err_diag, v_pred_diag, v_true_diag = (
         evaluate_solver(
             trained_solver,
@@ -436,7 +444,7 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(diag_stats, mo, train_stats):
+def _(diag_stats: Any, mo: Any, train_stats: Any) -> None:
     diagnostics_panel = mo.callout("Diagnostics unavailable.", kind="warn")
     if diag_stats is not None:
         msg = f"""
@@ -465,7 +473,7 @@ def _(diag_stats, mo, train_stats):
 
 
 @app.cell(hide_code=True)
-def _(jnp, mo, plot_data, plt):
+def _(jnp: Any, mo: Any, plot_data: Any, plt: Any) -> None:
     plot_panel = mo.callout("No plot data available.", kind="warn")
     if plot_data is not None:
         t_plot, x_pred_plot, x_true_plot, x_err_plot, e_pred_plot = plot_data
@@ -525,17 +533,17 @@ def _(jnp, mo, plot_data, plt):
 
 @app.cell(hide_code=True)
 def _(
-    diag_stats,
-    jax,
-    mo,
-    num_iter,
-    num_t_interior,
-    our_params,
-    physicsnemo_interior_batch,
-    physicsnemo_params,
-    physicsnemo_steps,
-    train_stats,
-):
+    diag_stats: Any,
+    jax: Any,
+    mo: Any,
+    num_iter: Any,
+    num_t_interior: Any,
+    our_params: Any,
+    physicsnemo_interior_batch: Any,
+    physicsnemo_params: Any,
+    physicsnemo_steps: Any,
+    train_stats: Any,
+) -> None:
     our_steps = num_iter
     our_points_per_step = num_t_interior
     physicsnemo_interior = physicsnemo_interior_batch
@@ -617,7 +625,7 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _(mo: Any) -> None:
     mo.md(
         """
     ---

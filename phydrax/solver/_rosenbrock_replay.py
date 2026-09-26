@@ -914,7 +914,8 @@ def _scheduled_from_source(
     if not isinstance(replay_, FixedStepReplayPolicy):
         raise TypeError("replay must be a FixedStepReplayPolicy or None.")
     if replay_.mode == "scheduled":
-        assert replay_.schedule is not None
+        if not (replay_.schedule is not None):
+            raise RuntimeError("Internal invariant failed: replay_.schedule is not None.")
         if replay_.schedule.step_count != count:
             raise ValueError(
                 "Prepared replay schedule does not match accepted step count."

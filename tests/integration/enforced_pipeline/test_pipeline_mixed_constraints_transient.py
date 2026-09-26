@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -24,7 +27,7 @@ from phydrax.enforcement import (
 from phydrax.operators.differential import dt
 
 
-def _paired_batch(domain, xs, ts):
+def _paired_batch(domain: Any, xs: Any, ts: Any) -> Any:
     structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
@@ -42,13 +45,13 @@ def _paired_batch(domain, xs, ts):
     return PointBatch(points=points, structure=structure)
 
 
-def test_mixed_constraints_transient():
+def test_mixed_constraints_transient() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return x[0] + t
 
     boundary_component = domain.component({"x": Boundary()})

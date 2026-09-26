@@ -15,7 +15,7 @@ from jax import Array
 from .._frozendict import frozendict
 from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._bsde import (
     BSDEControlMode,
     BSDEEvaluation,
@@ -405,8 +405,7 @@ def jump_bsde_objective_loss(
     """Masked mean-square objective for a compensated jump BSDE evaluation."""
     if not isinstance(evaluation, JumpBSDEEvaluation):
         raise TypeError("evaluation must be a JumpBSDEEvaluation.")
-    if mode not in ("terminal", "local", "global", "joint"):
-        raise ValueError("mode must be 'terminal', 'local', 'global', or 'joint'.")
+    mode = parse(mode, BSDEObjectiveMode, "mode")
     weights = (float(terminal_weight), float(local_weight), float(global_weight))
     if any(not jnp.isfinite(weight) or weight < 0.0 for weight in weights):
         raise ValueError("BSDE objective weights must be finite and nonnegative.")

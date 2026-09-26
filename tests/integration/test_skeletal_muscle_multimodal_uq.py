@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -23,7 +26,7 @@ from phydrax.uq import (
 )
 
 
-def _plan():
+def _plan() -> Any:
     force = SkeletalObservationChannel(
         "force",
         "observed_force",
@@ -43,7 +46,7 @@ def _plan():
     return SkeletalMultimodalLikelihoodPlan((force, emg))
 
 
-def _predictions():
+def _predictions() -> Any:
     base_force = jnp.asarray((100.0, 120.0, 140.0))
     base_emg = jnp.asarray((1.0e-4, jnp.nan, 5.0e-5))
     return {
@@ -52,7 +55,7 @@ def _predictions():
     }
 
 
-def test_multimodal_plan_assembles_core_likelihood_terms_and_posterior():
+def test_multimodal_plan_assembles_core_likelihood_terms_and_posterior() -> None:
     plan = _plan()
     predictions = _predictions()
     terms = plan.likelihood_terms(predictions)
@@ -96,7 +99,7 @@ def test_multimodal_plan_assembles_core_likelihood_terms_and_posterior():
     assert hessian["force_scale"]["force_scale"] > 0.0
 
 
-def test_integer_observations_keep_float_uncertainty_and_gradients():
+def test_integer_observations_keep_float_uncertainty_and_gradients() -> None:
     channel = SkeletalObservationChannel(
         "integer-observation",
         skeletal_muscle_quantity("relative_isometric_force"),
@@ -128,7 +131,7 @@ def test_integer_observations_keep_float_uncertainty_and_gradients():
     assert gradient["location"] != 0.0
 
 
-def test_masked_nonfinite_data_scale_and_prediction_are_inactive():
+def test_masked_nonfinite_data_scale_and_prediction_are_inactive() -> None:
     channel = SkeletalObservationChannel(
         "masked",
         "observed_force",
@@ -155,7 +158,7 @@ def test_masked_nonfinite_data_scale_and_prediction_are_inactive():
     assert gradient["location"] == 0.0
 
 
-def test_channels_reject_unknown_quantities_complex_data_and_incomplete_maps():
+def test_channels_reject_unknown_quantities_complex_data_and_incomplete_maps() -> None:
     with pytest.raises(KeyError, match="Unknown skeletal-muscle quantity"):
         SkeletalObservationChannel(
             "unknown",

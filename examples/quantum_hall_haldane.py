@@ -16,7 +16,9 @@ plan = qh.HaldaneModelPlan(
 result = qh.evaluate_haldane_topology(plan, mesh_shape=(21, 21))
 print(
     {
+        # ty: ignore[unresolved-attribute]
         "chern": int(np.asarray(result.chern.nearest_integer)),
+        # ty: ignore[unresolved-attribute]
         "minimum_gap": float(np.asarray(result.chern.minimum_direct_gap)),
         "successful": bool(np.asarray(result.successful)),
     }

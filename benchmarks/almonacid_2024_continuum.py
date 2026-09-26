@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -15,7 +17,7 @@ import jax.numpy as jnp
 from phydrax.applications.skeletal_muscle.continuum import almonacid_2024_repository_case
 
 
-def run(inputs, refinement, steps, repetitions, sensitivity):
+def run(inputs: Any, refinement: Any, steps: Any, repetitions: Any, sensitivity: Any) -> Any:
     start = time.perf_counter()
     plan, parameters, history, dt, _ = almonacid_2024_repository_case(
         inputs, refinement=refinement
@@ -71,7 +73,7 @@ def run(inputs, refinement, steps, repetitions, sensitivity):
     derivative = None
     if sensitivity:
         # Actual implicit tangent and adjoint to density at a loaded source step.
-        def reaction(log_density):
+        def reaction(log_density: Any) -> Any:
             varied = eqx.tree_at(
                 lambda p: p.parameters.density_kg_per_m3,
                 initial,
@@ -136,7 +138,7 @@ def run(inputs, refinement, steps, repetitions, sensitivity):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--inputs",

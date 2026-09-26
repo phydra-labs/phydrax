@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,7 +10,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def _table():
+def _table() -> Any:
     background = cosmology.FLRWBackground(1.0, 0.3)
     provenance = cosmology.CosmologyProductProvenance(
         producer="test-cmb",
@@ -37,7 +39,7 @@ def _table():
     )
 
 
-def test_cmb_raw_dl_temperature_and_packing_conventions():
+def test_cmb_raw_dl_temperature_and_packing_conventions() -> None:
     table = _table()
     d_ell = table.d_ell()
     factor = 2.0 * 3.0 / (2.0 * np.pi)
@@ -52,19 +54,19 @@ def test_cmb_raw_dl_temperature_and_packing_conventions():
     np.testing.assert_allclose(packed[0], [2.0, 3.0])
 
 
-def test_primordial_power_law_amplitude_and_gradients():
+def test_primordial_power_law_amplitude_and_gradients() -> None:
     primordial = cosmology.PrimordialPowerLaw(2.1e-9, 0.965, 0.05)
     np.testing.assert_allclose(primordial.scalar_power(0.05), 2.1e-9)
     np.testing.assert_allclose(primordial.tensor_power(0.05), 0.0)
 
-    def value(amplitude):
+    def value(amplitude: Any) -> Any:
         return cosmology.PrimordialPowerLaw(amplitude, 0.965, 0.05).scalar_power(0.1)
 
     derivative = jax.grad(value)(jnp.asarray(2.1e-9))
     assert derivative > 0.0
 
 
-def test_cmb_bandpower_response_uses_canonical_packed_theory():
+def test_cmb_bandpower_response_uses_canonical_packed_theory() -> None:
     table = _table()
     transform = cosmology.CmbSpectrumTransformPlan((0,), ((0, 0),))
     windows = jnp.asarray([[[1.0, 0.0]]])

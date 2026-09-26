@@ -2,17 +2,21 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _compiled():
+def _compiled() -> Any:
     count = 8
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
         phx.discretization.WendlandC2SPHKernel(1),
@@ -41,7 +45,7 @@ def _compiled():
     return compiled, position, velocity
 
 
-def test_wcsph_stabilizations_report_every_balance_term():
+def test_wcsph_stabilizations_report_every_balance_term() -> None:
     compiled, position, velocity = _compiled()
     state = compiled.initialize_state(position, velocity)
     rate = compiled.dynamics(0.0, state, None)
@@ -54,7 +58,7 @@ def test_wcsph_stabilizations_report_every_balance_term():
     assert diagnostics.free_surface_count >= 0
 
 
-def test_shepard_renormalization_runs_on_explicit_schedule():
+def test_shepard_renormalization_runs_on_explicit_schedule() -> None:
     compiled, position, velocity = _compiled()
     density = 1.0 + 0.05 * jnp.sin(2.0 * jnp.pi * position[:, 0])
     state = compiled.initialize_state(position, velocity, density)

@@ -8,6 +8,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -29,7 +30,7 @@ def run_case(points: int, samples_per_axis: int, /) -> dict[str, object]:
     geometry = phx.geometry.Circle((0.5, 0.5), 0.2, feature_id="inclusion").compile()
     radius_id = phx.geometry.ParameterId("inclusion", "radius")
 
-    def mean_fill(radius):
+    def mean_fill(radius: Any) -> Any:
         current = geometry.with_parameters({radius_id: radius})
         result = phx.solver.maxwell.fourier_modal.rasterize_fourier_modal_material(
             plan,

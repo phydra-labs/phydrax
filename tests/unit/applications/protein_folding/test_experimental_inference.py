@@ -1,5 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
+
 from dataclasses import replace
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -26,7 +28,7 @@ from phydrax.optim import OptimizationTermination
 from phydrax.units import JOULE, MILLISECOND
 
 
-def _population(t, d):
+def _population(t: Any, d: Any) -> Any:
     # Independently specified synthetic reference (kJ/mol, concentration mol/m^3).
     g = (
         180 * (1 - t / 298.15)
@@ -37,7 +39,7 @@ def _population(t, d):
     return 1 / (1 + np.exp(-g / (0.00831446261815324 * t)))
 
 
-def _joint_problem():
+def _joint_problem() -> Any:
     t, d = np.meshgrid(np.linspace(290, 355, 8), np.linspace(0, 6000, 9), indexing="ij")
     t, d = np.repeat(t.ravel(), 2), np.repeat(d.ravel(), 2)
     group = tuple(
@@ -72,7 +74,9 @@ def _joint_problem():
     return prepare_protein_experiments((plan,), parameters), plan, parameters
 
 
-def test_joint_multichannel_fit_predicts_unseen_conditions_and_reports_covariance():
+def test_joint_multichannel_fit_predicts_unseen_conditions_and_reports_covariance() -> (
+    None
+):
     problem, _, _ = _joint_problem()
     initial = float(jnp.sum(problem.residual(problem.initial_coordinates) ** 2))
     fit = fit_protein_experiments(
@@ -102,7 +106,7 @@ def test_joint_multichannel_fit_predicts_unseen_conditions_and_reports_covarianc
         )
 
 
-def test_single_isotherm_does_not_identify_enthalpy_or_manufacture_covariance():
+def test_single_isotherm_does_not_identify_enthalpy_or_manufacture_covariance() -> None:
     model = TwoStateUnfolding()
     d = np.linspace(0, 6000, 21)
     t = np.full_like(d, 298.15)
@@ -141,7 +145,7 @@ def test_single_isotherm_does_not_identify_enthalpy_or_manufacture_covariance():
     np.testing.assert_allclose(fit.predict()[0], plan.observed, atol=2e-5)
 
 
-def test_active_mask_correlated_noise_and_explicit_prior_density():
+def test_active_mask_correlated_noise_and_explicit_prior_density() -> None:
     model = TwoStateUnfolding()
     conditions = ExperimentConditions([298.15] * 3, [0, 2500, 5000])
     root = np.array([[0.2, 0], [0.06, 0.19]])
@@ -151,12 +155,14 @@ def test_active_mask_correlated_noise_and_explicit_prior_density():
         model,
         conditions,
         ("a",) * 3,
+        # ty: ignore[invalid-argument-type]
         [0.9, np.nan, 0.3],
         error,
         "synthetic:masked",
         "Reversible",
         True,
         baseline_terms=("intercept",),
+        # ty: ignore[invalid-argument-type]
         mask=[True, False, True],
         covariance_cholesky=root,
     )
@@ -178,7 +184,11 @@ def test_active_mask_correlated_noise_and_explicit_prior_density():
     )
     assert np.isfinite(np.asarray(jax.grad(problem.log_likelihood)(z))).all()
     posterior = protein_experiment_posterior_problem(
-        problem, prior_mean=[0], prior_standard_deviation=[2]
+        problem,
+        # ty: ignore[invalid-argument-type]
+        prior_mean=[0],
+        # ty: ignore[invalid-argument-type]
+        prior_standard_deviation=[2],
     )
     expected_prior = -0.5 * ((0.7 / 2) ** 2 + 2 * np.log(2) + np.log(2 * np.pi))
     np.testing.assert_allclose(posterior.log_density(z), expected_logp + expected_prior)
@@ -188,7 +198,7 @@ def test_active_mask_correlated_noise_and_explicit_prior_density():
         )
 
 
-def test_real_kinetic_fit_and_time_conversion_predict_unseen_denaturant():
+def test_real_kinetic_fit_and_time_conversion_predict_unseen_denaturant() -> None:
     model = ChevronKinetics()
     d = np.linspace(0, 7000, 31)
     kt = model.convention.thermal_constant * 298.15
@@ -235,7 +245,7 @@ def test_real_kinetic_fit_and_time_conversion_predict_unseen_denaturant():
         )
 
 
-def test_preparation_refuses_wrong_basis_zero_dimer_and_irreversible_data():
+def test_preparation_refuses_wrong_basis_zero_dimer_and_irreversible_data() -> None:
     _, plan, parameters = _joint_problem()
     with pytest.raises(ValueError):
         prepare_protein_experiments((replace(plan, reversible=False),), parameters)
@@ -253,7 +263,7 @@ def test_preparation_refuses_wrong_basis_zero_dimer_and_irreversible_data():
         )
 
 
-def test_phi_preserves_paired_draws_and_marks_unresolved_denominators():
+def test_phi_preserves_paired_draws_and_marks_unresolved_denominators() -> None:
     convention = ThermodynamicConvention()
     kt = convention.thermal_constant * convention.reference_temperature
     wt = np.array([[8.0, 9.0, 10.0], [8.5, 9.5, 10.5]])
@@ -273,22 +283,26 @@ def test_phi_preserves_paired_draws_and_marks_unresolved_denominators():
         source_id="synthetic:paired-posterior-derivation",
         minimum_stability_change=0.1,
     )
+    # ty: ignore[invalid-argument-type]
     result = phi_posterior(samples, **kwargs)
     np.testing.assert_allclose(result.samples, 1.2)
     np.testing.assert_allclose(result.credible_interval, [1.2, 1.2])
     samples["mutant"] = samples["mutant"].copy()
     samples["mutant"][0, 0] = wt[0, 0]
+    # ty: ignore[invalid-argument-type]
     result = phi_posterior(samples, **kwargs)
     assert not bool(result.valid[0, 0])
     assert np.isnan(np.asarray(result.credible_interval)).all()
     assert result.valid_fraction == 5 / 6
 
 
-def test_repeat_fit_uses_explicit_shared_intrinsic_energy_without_duplicate_degrees_of_freedom():
+def test_repeat_fit_uses_explicit_shared_intrinsic_energy_without_duplicate_degrees_of_freedom() -> (
+    None
+):
     model = RepeatTransferUnfolding(2)
     kt = model.convention.thermal_constant * 298.15
 
-    def exact_mean(d):
+    def exact_mean(d: Any) -> Any:
         # States 00, 10, 01, 11 with one favorable -2 kJ/mol interface.
         g = 6.0 - 0.002 * np.asarray(d)
         weights = np.stack(

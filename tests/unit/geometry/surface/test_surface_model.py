@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
+from typing import Any
 
 import meshio
 import numpy as np
@@ -29,7 +31,7 @@ from phydrax.geometry.surface._model import SurfaceModel
 from phydrax.units import METER
 
 
-def _metadata(*, tags=()):
+def _metadata(*, tags: Any = ()) -> Any:
     return SurfaceMetadata(
         source_id="unit-tetrahedron",
         source_revision="r1",
@@ -39,7 +41,7 @@ def _metadata(*, tags=()):
     )
 
 
-def _tetrahedron():
+def _tetrahedron() -> Any:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -54,7 +56,7 @@ def _tetrahedron():
     return points, outward_faces
 
 
-def test_closed_and_open_surfaces_prepare_with_computed_classification():
+def test_closed_and_open_surfaces_prepare_with_computed_classification() -> None:
     points, faces = _tetrahedron()
     closed = SurfaceModel.from_triangles(
         points,
@@ -97,7 +99,7 @@ def test_closed_and_open_surfaces_prepare_with_computed_classification():
     assert component_surface.audit.boundary_loop_count == 2
 
 
-def test_audit_rejects_degenerate_and_capacity_exhausted_surfaces():
+def test_audit_rejects_degenerate_and_capacity_exhausted_surfaces() -> None:
     points = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)))
     model = SurfaceModel.from_triangles(
         points, np.asarray(((0, 1, 2),), dtype=np.int32), _metadata()
@@ -110,6 +112,7 @@ def test_audit_rejects_degenerate_and_capacity_exhausted_surfaces():
         model.prepare()
     assert error.value.status is SurfacePreparationStatus.AUDIT_REJECTED
     assert (
+        # ty: ignore[unresolved-attribute]
         error.value.report is report or error.value.report.report_id == report.report_id
     )
 
@@ -120,10 +123,11 @@ def test_audit_rejects_degenerate_and_capacity_exhausted_surfaces():
     with pytest.raises(SurfacePreparationError) as capacity_error:
         valid.prepare(SurfaceAuditPolicy(maximum_vertices=2))
     assert capacity_error.value.status is SurfacePreparationStatus.AUDIT_REJECTED
+    # ty: ignore[unresolved-attribute]
     assert not bool(capacity_error.value.report.capacity_valid)
 
 
-def test_malformed_nonfinite_and_unrepaired_orientation_fail_typed():
+def test_malformed_nonfinite_and_unrepaired_orientation_fail_typed() -> None:
     points, faces = _tetrahedron()
     nonfinite = points.copy()
     nonfinite[0, 0] = np.nan
@@ -176,7 +180,7 @@ def test_malformed_nonfinite_and_unrepaired_orientation_fail_typed():
     assert bool(repaired.audit.orientation_consistent)
 
 
-def test_selections_interfaces_and_refresh_remain_exactly_topology_bound():
+def test_selections_interfaces_and_refresh_remain_exactly_topology_bound() -> None:
     points, faces = _tetrahedron()
     model = SurfaceModel.from_triangles(
         points,
@@ -185,6 +189,7 @@ def test_selections_interfaces_and_refresh_remain_exactly_topology_bound():
         vertex_global_ids=np.asarray((101, 102, 103, 104), dtype=np.int64),
         cell_global_ids=np.asarray((11, 12, 13, 14), dtype=np.int64),
     )
+    # ty: ignore[invalid-argument-type]
     support = model.bind_selection("dielectric", (12, 14), role="interface")
     interface = SurfaceInterface(
         "material-jump",
@@ -220,10 +225,13 @@ def test_selections_interfaces_and_refresh_remain_exactly_topology_bound():
     )
 
 
-def test_bounded_surface_interop_preserves_source_identity_and_noop_repair(tmp_path):
+def test_bounded_surface_interop_preserves_source_identity_and_noop_repair(
+    tmp_path: Any,
+) -> None:
     points = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     faces = np.asarray(((0, 1, 2),), dtype=np.int32)
     source = tmp_path / "source.vtu"
+    # ty: ignore[invalid-argument-type]
     meshio.write(source, meshio.Mesh(points, (("triangle", faces),)))
     imported = import_surface(
         source,

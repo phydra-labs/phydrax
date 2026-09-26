@@ -310,7 +310,10 @@ def multifield_step_detailed(
                 )
             else:
                 if dynamics.compact_storage:
-                    assert storage_state is not None
+                    if not (storage_state is not None):
+                        raise RuntimeError(
+                            "Internal invariant failed: storage_state is not None."
+                        )
                     result = dynamics.boundary.apply_indexed(
                         constrained[field],
                         grid_mass[field],
@@ -490,7 +493,10 @@ def multifield_step_detailed(
                     second_values.append(second_constrained[field])
                 else:
                     if dynamics.compact_storage:
-                        assert storage_state is not None
+                        if not (storage_state is not None):
+                            raise RuntimeError(
+                                "Internal invariant failed: storage_state is not None."
+                            )
                         boundary = dynamics.boundary.apply_indexed(
                             second_constrained[field],
                             second_mass_grid[field],

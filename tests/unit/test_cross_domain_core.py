@@ -4,7 +4,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_scale_artifact_and_observation_contracts_are_shared():
+def test_scale_artifact_and_observation_contracts_are_shared() -> None:
     cosmology = phx.applications.cosmology
     astrodynamics = phx.applications.astrodynamics
     assert cosmology.CosmologyScaleContract is phx.DimensionalScaleContract
@@ -17,14 +17,18 @@ def test_scale_artifact_and_observation_contracts_are_shared():
 
     source = phx.observation.CoordinateLayout(("source:0", "source:1"))
     target = phx.observation.CoordinateLayout(("target:0",))
+    # ty: ignore[invalid-argument-type]
     response = phx.observation.LinearObservationPlan([[1.0, 2.0]], source, target)
+    # ty: ignore[invalid-argument-type]
     product = phx.observation.TheoryVector([2.0, 3.0], source, "fixture")
     np.testing.assert_allclose(response.apply(product).values, [8.0])
+    # ty: ignore[invalid-argument-type]
     covariance = phx.observation.CholeskyCovarianceAction([[2.0]], target)
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(covariance.whiten([4.0]), [2.0])
 
 
-def test_core_gravity_is_shared_by_cosmology_and_astrodynamics():
+def test_core_gravity_is_shared_by_cosmology_and_astrodynamics() -> None:
     cosmology = phx.applications.cosmology
     astrodynamics = phx.applications.astrodynamics
     assert cosmology.BarnesHutGravityPlan is phx.solver.BarnesHutGravityPlan
@@ -43,19 +47,26 @@ def test_core_gravity_is_shared_by_cosmology_and_astrodynamics():
     assert bool(evidence.successful)
 
 
-def test_core_kdk_and_event_replay_adapters():
+def test_core_kdk_and_event_replay_adapters() -> None:
     coefficients = phx.solver.KDKCoefficients(0.5, 1.0, 0.5)
     kdk = phx.solver.KDKTransactionPlan((10.0,))
+    # ty: ignore[invalid-argument-type]
     proposal = kdk.propose([[1.0]], [[0.0]], [1.0], [[1.0]], coefficients)
+    # ty: ignore[invalid-argument-type]
     completed = kdk.complete(proposal, [1.0], [[1.0]])
     np.testing.assert_allclose(completed.positions, [[1.5]])
     np.testing.assert_allclose(completed.momenta, [[1.0]])
 
     event = phx.events.FixedCapacityEventState(
+        # ty: ignore[invalid-argument-type]
         [1, 2],
+        # ty: ignore[invalid-argument-type]
         [3, 4],
+        # ty: ignore[invalid-argument-type]
         [0, 1],
+        # ty: ignore[invalid-argument-type]
         [phx.events.EVENT_COMMITTED, phx.events.EVENT_DEFERRED],
+        # ty: ignore[invalid-argument-type]
         [True, True],
         False,
     )

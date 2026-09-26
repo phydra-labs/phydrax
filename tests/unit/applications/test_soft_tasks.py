@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from math import prod
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -44,7 +45,7 @@ from phydrax.metrix import QuaternionPoseStateGeometry
 _POSE = QuaternionPoseStateGeometry(convention="body", tolerance=1.0e-9)
 
 
-def _spatial_reconstruction(*, queries=(0.0, 0.25, 0.5, 0.75, 1.0)):
+def _spatial_reconstruction(*, queries: Any = (0.0, 0.25, 0.5, 0.75, 1.0)) -> Any:
     dtype = jnp.float64
     segment_count = 6
     arc = jnp.linspace(0.0, 1.0, segment_count + 1, dtype=dtype)
@@ -100,7 +101,7 @@ def _spatial_reconstruction(*, queries=(0.0, 0.25, 0.5, 0.75, 1.0)):
     return reduction, reconstruction
 
 
-def _termination(maximum_steps=80):
+def _termination(maximum_steps: Any = 80) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=1.0e-9,
         relative_optimality=0.0,
@@ -110,11 +111,13 @@ def _termination(maximum_steps=80):
     )
 
 
-def _constant_curvature_target(reconstruction):
+def _constant_curvature_target(reconstruction: Any) -> Any:
     return jnp.asarray((0.05, -0.03, 0.08, 0.14, -0.09, 0.21), dtype=jnp.float64)
 
 
-def test_all_continuum_task_contracts_match_an_analytic_constant_curvature_target():
+def test_all_continuum_task_contracts_match_an_analytic_constant_curvature_target() -> (
+    None
+):
     reduction, reconstruction = _spatial_reconstruction()
     target_coefficients = _constant_curvature_target(reconstruction)
     target_poses = reconstruction.pose(target_coefficients)
@@ -157,7 +160,9 @@ def test_all_continuum_task_contracts_match_an_analytic_constant_curvature_targe
     )
 
 
-def test_continuum_pose_ik_solves_local_nls_and_retains_native_accepted_evidence():
+def test_continuum_pose_ik_solves_local_nls_and_retains_native_accepted_evidence() -> (
+    None
+):
     _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
     target_coefficients = _constant_curvature_target(reconstruction)
     target_pose = reconstruction.pose(target_coefficients)[-1]
@@ -188,7 +193,7 @@ def test_continuum_pose_ik_solves_local_nls_and_retains_native_accepted_evidence
     )
 
 
-def test_quaternion_sign_has_one_content_identity_and_one_pose_residual():
+def test_quaternion_sign_has_one_content_identity_and_one_pose_residual() -> None:
     _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
     coefficients = _constant_curvature_target(reconstruction)
     pose = reconstruction.pose(coefficients)[-1]
@@ -212,7 +217,7 @@ def test_quaternion_sign_has_one_content_identity_and_one_pose_residual():
     )
 
 
-def test_conflicting_tasks_report_infeasible_candidate_and_roll_back_source():
+def test_conflicting_tasks_report_infeasible_candidate_and_roll_back_source() -> None:
     _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
     source = jnp.zeros((6,), dtype=jnp.float64)
     position = reconstruction.pose(source)[-1, 4:]
@@ -237,7 +242,7 @@ def test_conflicting_tasks_report_infeasible_candidate_and_roll_back_source():
     assert result.candidate_evaluation.maximum_task_violation > 0.1
 
 
-def test_coefficient_bounds_are_separate_from_task_feasibility_and_fail_closed():
+def test_coefficient_bounds_are_separate_from_task_feasibility_and_fail_closed() -> None:
     _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
     source = jnp.zeros((6,), dtype=jnp.float64)
     target = source.at[0].set(0.25)
@@ -260,7 +265,9 @@ def test_coefficient_bounds_are_separate_from_task_feasibility_and_fail_closed()
     assert result.candidate_state.coefficients[0] <= 0.04 + 1.0e-7
 
 
-def test_continuum_sqp_problem_exposes_exact_task_constraints_and_solves_posture():
+def test_continuum_sqp_problem_exposes_exact_task_constraints_and_solves_posture() -> (
+    None
+):
     _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
     source = jnp.zeros((6,), dtype=jnp.float64)
     target = jnp.asarray((0.02, -0.01, 0.0, 0.01, 0.0, -0.02), dtype=source.dtype)
@@ -278,12 +285,13 @@ def test_continuum_sqp_problem_exposes_exact_task_constraints_and_solves_posture
         termination=_termination(),
         coefficient_bounds=phx.optim.Bounds(-0.1, 0.1),
     )
+    # ty: ignore[unresolved-attribute]
     assert result.optimizer.certificate is not None
     assert result.successful
     np.testing.assert_allclose(result.accepted_state.coefficients, target, atol=2.0e-6)
 
 
-def test_differential_ik_compiles_native_qp_with_velocity_and_one_step_bounds():
+def test_differential_ik_compiles_native_qp_with_velocity_and_one_step_bounds() -> None:
     _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
     source = jnp.zeros((6,), dtype=jnp.float64)
     target = source.at[0].set(0.2)
@@ -328,7 +336,7 @@ def test_differential_ik_compiles_native_qp_with_velocity_and_one_step_bounds():
     )
 
 
-def _passive_axial_plant_and_reconstruction():
+def _passive_axial_plant_and_reconstruction() -> Any:
     dtype = jnp.float32
     rod = prepare_rod(
         RodPlan(
@@ -374,7 +382,9 @@ def _passive_axial_plant_and_reconstruction():
     return plant, reconstruction
 
 
-def test_passive_trajectory_uses_complete_codec_and_authoritative_accepted_replay():
+def test_passive_trajectory_uses_complete_codec_and_authoritative_accepted_replay() -> (
+    None
+):
     plant, reconstruction = _passive_axial_plant_and_reconstruction()
     parameters = plant.bind_parameters()
     reset = plant.reset(jnp.asarray((11, 7), dtype=jnp.uint32), parameters)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,7 +12,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _graph(*, masked: bool = False):
+def _graph(*, masked: bool = False) -> Any:
     return phx.graph.GraphIR(
         nodes={"type": jnp.asarray([0, 1, 1], dtype=jnp.int32)},
         edges={"weight": jnp.ones((3,))},
@@ -23,7 +26,7 @@ def _graph(*, masked: bool = False):
     )
 
 
-def _batch(*, source_mask=None):
+def _batch(*, source_mask: Any = None) -> Any:
     graph = _graph()
     topology = phx.nn.operator.OperatorTopology.from_graph(graph)
     coordinates = jnp.asarray([[0.0], [0.5], [1.0]])
@@ -46,7 +49,7 @@ def _batch(*, source_mask=None):
     )
 
 
-def test_graph_batch_roundtrip_preserves_all_masks():
+def test_graph_batch_roundtrip_preserves_all_masks() -> None:
     first = _graph(masked=False)
     second = _graph(masked=True)
     batched = phx.graph.batch_graphs((first, second))
@@ -78,7 +81,7 @@ def test_graph_batch_roundtrip_preserves_all_masks():
         assert jnp.array_equal(actual.graph_mask, expected.graph_mask)
 
 
-def test_operator_topology_materializes_and_gathers_case_local_graph_fields():
+def test_operator_topology_materializes_and_gathers_case_local_graph_fields() -> None:
     batch = _batch(source_mask=jnp.asarray([[True, True, False], [True, True, True]]))
     graph = phx.nn.operator.operator_graph_from_samples(
         batch.input("u"), case_shape=batch.case_shape
@@ -101,7 +104,7 @@ def test_operator_topology_materializes_and_gathers_case_local_graph_fields():
     assert jnp.array_equal(gathered, jnp.asarray([[0.0, 1.0, 0.0], [3.0, 4.0, 5.0]]))
 
 
-def test_operator_topology_materializes_edge_and_global_entity_fields():
+def test_operator_topology_materializes_edge_and_global_entity_fields() -> None:
     graph = _graph()
     edge_topology = phx.nn.operator.OperatorTopology.from_graph(graph, site="edge")
     edge_samples = phx.nn.operator.FunctionSamples(
@@ -132,14 +135,18 @@ def test_operator_topology_materializes_edge_and_global_entity_fields():
     assert edge_topology.entity == "edge"
     assert edge_topology.entity_count == 3
     assert jnp.array_equal(edge_graph.edges["features"], jnp.asarray([2.0, 3.0, 5.0]))
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(edge_values, edge_samples.values)
     assert global_topology.entity == "global"
     assert global_topology.entity_count == 1
     assert jnp.array_equal(global_graph.globals["features"], jnp.asarray([7.0]))
+    # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(global_values, global_samples.values)
 
 
-def test_native_graph_operator_executes_graphir_and_is_jittable_and_differentiable():
+def test_native_graph_operator_executes_graphir_and_is_jittable_and_differentiable() -> (
+    None
+):
     batch = _batch()
     processor = phx.graph.GraphNeuralOperator(
         input_key="features",
@@ -176,7 +183,7 @@ def test_native_graph_operator_executes_graphir_and_is_jittable_and_differentiab
     assert jnp.all(jnp.isfinite(input_gradient))
 
 
-def test_topology_survives_padding_stacking_slicing_and_sampling():
+def test_topology_survives_padding_stacking_slicing_and_sampling() -> None:
     topology = phx.nn.operator.OperatorTopology.from_graph(_graph())
     samples = phx.nn.operator.FunctionSamples(
         values=jnp.asarray([1.0, 2.0, 3.0]),
@@ -203,7 +210,7 @@ def test_topology_survives_padding_stacking_slicing_and_sampling():
     assert sliced_u.topology.case_shape == ()
 
 
-def test_simplicial_complex_maps_vertices_edges_and_faces_to_native_sites():
+def test_simplicial_complex_maps_vertices_edges_and_faces_to_native_sites() -> None:
     complex_graph = phx.graph.triangle_mesh_to_simplicial_graph(
         jnp.asarray([[0, 1, 2], [0, 2, 3]]),
         num_vertices=4,
@@ -223,7 +230,7 @@ def test_simplicial_complex_maps_vertices_edges_and_faces_to_native_sites():
     )
 
 
-def test_topology_fingerprint_changes_with_connectivity_not_only_sample_shape():
+def test_topology_fingerprint_changes_with_connectivity_not_only_sample_shape() -> None:
     first = phx.nn.operator.OperatorTopology.from_graph(_graph())
     changed_graph = _graph().replace(
         senders=jnp.asarray([0, 0, 2]),
@@ -239,7 +246,7 @@ def test_topology_fingerprint_changes_with_connectivity_not_only_sample_shape():
     ) != phx.nn.operator.operator_topology_fingerprint(second)
 
 
-def test_stack_operator_batches_broadcasts_shared_inner_case_topology():
+def test_stack_operator_batches_broadcasts_shared_inner_case_topology() -> None:
     first = _batch()
     second = _batch()
     stacked = phx.nn.operator.stack_operator_batches(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -34,7 +37,7 @@ target_inputs = fd.ForceDensityInputs(
 target = fd.force_density_equilibrium(equilibrium, target_inputs).state.positions
 
 
-def decode(magnitude, _):
+def decode(magnitude: Any, _: Any) -> Any:
     return fd.ForceDensityInputs(
         jnp.full((node_count - 1,), -magnitude.reshape(())),
         sample.prescribed_values,
@@ -42,7 +45,7 @@ def decode(magnitude, _):
     )
 
 
-def objective(state, magnitude, _):
+def objective(state: Any, magnitude: Any, _: Any) -> Any:
     target_residual = fd.point_target_residual(state, target, span)
     return jnp.mean(target_residual**2) + 0.1 * (magnitude - 8.0) ** 2
 

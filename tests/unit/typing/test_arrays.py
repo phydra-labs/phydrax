@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -21,7 +21,7 @@ class BatchDims(pt.VariadicDim):
     pass
 
 
-def test_exact_dtype_forms_accept_only_their_dtype():
+def test_exact_dtype_forms_accept_only_their_dtype() -> None:
     values = jnp.zeros((3,), dtype=jnp.float64)
 
     assert pt.parse(values, pt.Float64[NodeDim], "values") is values
@@ -45,7 +45,9 @@ def test_exact_dtype_forms_accept_only_their_dtype():
         (pt.Shaped, jnp.int8, True),
     ],
 )
-def test_category_forms_follow_the_jax_dtype_hierarchy(form, dtype, accepted):
+def test_category_forms_follow_the_jax_dtype_hierarchy(
+    form: Any, dtype: Any, accepted: Any
+) -> None:
     value = jnp.zeros((2,), dtype=dtype)
     if accepted:
         assert pt.parse(value, form[NodeDim], "value") is value
@@ -54,7 +56,7 @@ def test_category_forms_follow_the_jax_dtype_hierarchy(form, dtype, accepted):
             pt.parse(value, form[NodeDim], "value")
 
 
-def test_shape_terms_bind_fixed_named_repeated_and_anonymous_extents():
+def test_shape_terms_bind_fixed_named_repeated_and_anonymous_extents() -> None:
     square = jnp.eye(3)
     pt.parse(square, pt.Float64[NodeDim, NodeDim], "square")
     pt.parse(square, pt.Float64[Literal[3], pt.AnyDim], "square")
@@ -66,7 +68,7 @@ def test_shape_terms_bind_fixed_named_repeated_and_anonymous_extents():
         pt.parse(jnp.zeros((3,)), pt.Float64[NodeDim, NodeDim], "rank")
 
 
-def test_scalar_and_any_shape_are_standalone_shapes():
+def test_scalar_and_any_shape_are_standalone_shapes() -> None:
     pt.parse(jnp.asarray(1.0), pt.Float64[pt.Scalar], "scalar")
     with pytest.raises(ValueError):
         pt.parse(jnp.zeros((1,)), pt.Float64[pt.Scalar], "scalar")
@@ -74,12 +76,12 @@ def test_scalar_and_any_shape_are_standalone_shapes():
     pt.parse(jnp.asarray(1.0), pt.Float64[pt.AnyShape], "any")
 
 
-def test_minimum_extent_is_a_value_contract():
+def test_minimum_extent_is_a_value_contract() -> None:
     with pytest.raises(ValueError):
         pt.parse(jnp.zeros((0,)), pt.Float64[ComponentDim], "components")
 
 
-def test_broadcast_extents_accept_one_or_the_bound_extent():
+def test_broadcast_extents_accept_one_or_the_bound_extent() -> None:
     scope = pt.Scope()
     pt.parse(jnp.zeros((1,)), pt.Float64[pt.Broadcast[NodeDim]], "unit", scope=scope)
     with pytest.raises(ValueError):
@@ -91,7 +93,7 @@ def test_broadcast_extents_accept_one_or_the_bound_extent():
         pt.parse(jnp.zeros((3,)), pt.Float64[pt.Broadcast[NodeDim]], "other", scope=scope)
 
 
-def test_variadic_groups_bind_zero_or_more_extents():
+def test_variadic_groups_bind_zero_or_more_extents() -> None:
     scope = pt.Scope()
     pt.parse(jnp.zeros((2, 5, 3)), pt.Float64[BatchDims, NodeDim], "batched", scope=scope)
     assert scope.shape(BatchDims) == (2, 5)
@@ -101,7 +103,7 @@ def test_variadic_groups_bind_zero_or_more_extents():
     pt.parse(jnp.zeros((3,)), pt.Float64[BatchDims, NodeDim], "unbatched")
 
 
-def test_backends_are_distinct_kinds():
+def test_backends_are_distinct_kinds() -> None:
     with pytest.raises(TypeError):
         pt.parse(np.zeros((3,)), pt.Float64[NodeDim], "host")
     with pytest.raises(TypeError):
@@ -111,7 +113,7 @@ def test_backends_are_distinct_kinds():
     pt.parse(np.zeros((3,)), pt.HostFloat64[NodeDim], "host")
 
 
-def test_typed_keys_are_the_only_prng_keys():
+def test_typed_keys_are_the_only_prng_keys() -> None:
     key = jax.random.key(0)
 
     assert pt.parse(key, pt.PRNGKey, "key") is key
@@ -121,8 +123,8 @@ def test_typed_keys_are_the_only_prng_keys():
         pt.parse(jax.random.split(key, 2), pt.PRNGKey, "keys")
 
 
-def test_checks_run_at_trace_time_on_tracers_without_adding_operations():
-    def body(values):
+def test_checks_run_at_trace_time_on_tracers_without_adding_operations() -> None:
+    def body(values: Any) -> Any:
         pt.parse(values, pt.Float64[NodeDim, ComponentDim], "values")
         return values
 
@@ -135,8 +137,8 @@ def test_checks_run_at_trace_time_on_tracers_without_adding_operations():
         jax.jit(body)(jnp.zeros((2, 0)))
 
 
-def test_vmap_checks_the_per_example_shape():
-    def body(values):
+def test_vmap_checks_the_per_example_shape() -> None:
+    def body(values: Any) -> Any:
         pt.parse(values, pt.Float64[ComponentDim], "example")
         return values
 
@@ -145,8 +147,8 @@ def test_vmap_checks_the_per_example_shape():
         pt.parse(jnp.zeros((5, 3)), pt.Float64[ComponentDim], "stacked")
 
 
-def test_scan_bodies_are_checked_once_during_tracing():
-    def step(carry, row):
+def test_scan_bodies_are_checked_once_during_tracing() -> None:
+    def step(carry: Any, row: Any) -> Any:
         pt.parse(row, pt.Float64[ComponentDim], "row")
         return carry + jnp.sum(row), row
 
@@ -154,10 +156,10 @@ def test_scan_bodies_are_checked_once_during_tracing():
     assert total == 12.0
 
 
-def test_symbolic_extents_are_refused():
+def test_symbolic_extents_are_refused() -> None:
     (n,) = export.symbolic_shape("n")
 
-    def body(values):
+    def body(values: Any) -> Any:
         pt.parse(values, pt.Float64[NodeDim], "symbolic")
         return values
 

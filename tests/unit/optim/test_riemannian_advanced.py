@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +12,9 @@ import pytest
 import phydrax as phx
 
 
-def test_weighted_product_geometry_controls_global_metric_without_changing_residuals():
+def test_weighted_product_geometry_controls_global_metric_without_changing_residuals() -> (
+    None
+):
     parameters = {
         "euclidean": jnp.array([1.0, -1.0]),
         "sphere": jnp.array([1.0, 0.0, 0.0]),
@@ -29,7 +34,7 @@ def test_weighted_product_geometry_controls_global_metric_without_changing_resid
     assert geometry.maximum_constraint_residual(parameters) == 0.0
 
 
-def _minimize_sphere(optimizer_factory):
+def _minimize_sphere(optimizer_factory: Any) -> Any:
     target = jnp.array([0.0, 1.0, 0.0])
     point = jnp.array([1.0, 0.0, 0.0])
     geometry = phx.optim.ParameterGeometry.from_leaf_paths(
@@ -54,7 +59,7 @@ def _minimize_sphere(optimizer_factory):
     return point, state, geometry, accepted
 
 
-def test_riemannian_conjugate_gradient_uses_armijo_and_converges_on_sphere():
+def test_riemannian_conjugate_gradient_uses_armijo_and_converges_on_sphere() -> None:
     point, state, geometry, accepted = _minimize_sphere(
         lambda geometry: phx.optim.riemannian_conjugate_gradient(geometry)
     )
@@ -71,7 +76,7 @@ def test_riemannian_conjugate_gradient_uses_armijo_and_converges_on_sphere():
     assert bool(metrics.restarted) == bool(state.restarted)
 
 
-def test_riemannian_lbfgs_transports_bounded_history_and_converges_on_sphere():
+def test_riemannian_lbfgs_transports_bounded_history_and_converges_on_sphere() -> None:
     point, state, geometry, accepted = _minimize_sphere(
         lambda geometry: phx.optim.riemannian_lbfgs(geometry, history_size=4)
     )
@@ -106,7 +111,9 @@ def test_riemannian_lbfgs_transports_bounded_history_and_converges_on_sphere():
         phx.optim.riemannian_lbfgs,
     ),
 )
-def test_advanced_optimizers_reject_nonfinite_gradient_norms(optimizer_factory):
+def test_advanced_optimizers_reject_nonfinite_gradient_norms(
+    optimizer_factory: Any,
+) -> None:
     point = jnp.array([1.0, 0.0, 0.0])
     geometry = phx.optim.ParameterGeometry.from_leaf_paths(
         point,
@@ -124,7 +131,7 @@ def test_advanced_optimizers_reject_nonfinite_gradient_norms(optimizer_factory):
         )
 
 
-def test_armijo_rejects_a_nonfinite_frozen_objective_value():
+def test_armijo_rejects_a_nonfinite_frozen_objective_value() -> None:
     point = jnp.array([1.0, 0.0, 0.0])
     geometry = phx.optim.ParameterGeometry.from_leaf_paths(
         point,
@@ -142,7 +149,7 @@ def test_armijo_rejects_a_nonfinite_frozen_objective_value():
         )
 
 
-def test_rejected_conjugate_gradient_step_preserves_point_and_forces_restart():
+def test_rejected_conjugate_gradient_step_preserves_point_and_forces_restart() -> None:
     point = jnp.array([1.0, 0.0, 0.0])
     geometry = phx.optim.ParameterGeometry.from_leaf_paths(
         point,
@@ -177,7 +184,7 @@ def test_rejected_conjugate_gradient_step_preserves_point_and_forces_restart():
     assert bool(next_state.restarted)
 
 
-def test_rejected_lbfgs_step_preserves_point_and_active_history():
+def test_rejected_lbfgs_step_preserves_point_and_active_history() -> None:
     target = jnp.array([0.0, 1.0, 0.0])
     point = jnp.array([1.0, 0.0, 0.0])
     geometry = phx.optim.ParameterGeometry.from_leaf_paths(

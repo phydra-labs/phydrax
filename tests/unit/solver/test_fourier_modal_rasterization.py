@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,13 +12,13 @@ from phydrax.discretization.spectral import LatticeHarmonicPlan
 from phydrax.solver.maxwell import fourier_modal as fm
 
 
-def _harmonics(points: int = 48):
+def _harmonics(points: int = 48) -> Any:
     return LatticeHarmonicPlan.parallelogramic((1, 1), (points, points)).prepare(
         jnp.eye(2)
     )
 
 
-def _circle(radius=0.25):
+def _circle(radius: Any = 0.25) -> Any:
     return phx.geometry.Circle(
         center=(0.5, 0.5),
         radius=radius,
@@ -24,7 +26,7 @@ def _circle(radius=0.25):
     ).compile()
 
 
-def test_sharp_rasterization_preserves_material_endpoints_and_area():
+def test_sharp_rasterization_preserves_material_endpoints_and_area() -> None:
     harmonics = _harmonics()
     plan = fm.FourierModalRasterizationPlan(harmonics)
     result = fm.rasterize_fourier_modal_material(
@@ -47,7 +49,7 @@ def test_sharp_rasterization_preserves_material_endpoints_and_area():
     )
 
 
-def test_smoothed_subpixel_rasterization_is_parameter_differentiable():
+def test_smoothed_subpixel_rasterization_is_parameter_differentiable() -> None:
     harmonics = _harmonics(32)
     plan = fm.FourierModalRasterizationPlan(
         harmonics,
@@ -59,7 +61,7 @@ def test_smoothed_subpixel_rasterization_is_parameter_differentiable():
     geometry = _circle()
     radius_id = phx.geometry.ParameterId("inclusion", "radius")
 
-    def mean_fill(radius):
+    def mean_fill(radius: Any) -> Any:
         current = geometry.with_parameters({radius_id: radius})
         return jnp.mean(
             fm.rasterize_fourier_modal_material(
@@ -86,7 +88,7 @@ def test_smoothed_subpixel_rasterization_is_parameter_differentiable():
     assert float(derivative) == pytest.approx(2.0 * np.pi * 0.25, rel=8.0e-2)
 
 
-def test_rasterization_rejects_unsupported_lattice_and_material_shapes():
+def test_rasterization_rejects_unsupported_lattice_and_material_shapes() -> None:
     line = LatticeHarmonicPlan.parallelogramic((1,), (8,)).prepare(
         jnp.asarray(((1.0, 0.0),))
     )

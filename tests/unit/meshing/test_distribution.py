@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,7 +10,7 @@ from phydrax.meshing._assembly import MeshPart
 from phydrax.meshing._distribution import MeshDistribution
 
 
-def _cell_part(name="cells", scale=1.0, single=False):
+def _cell_part(name: Any = "cells", scale: Any = 1.0, single: Any = False) -> Any:
     points = scale * np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     cells = np.asarray(((0, 1, 3), (1, 2, 3)), dtype=np.int32)
     if single:
@@ -20,7 +22,7 @@ def _cell_part(name="cells", scale=1.0, single=False):
     )
 
 
-def _fe(part):
+def _fe(part: Any) -> Any:
     return phx.discretization.fem.FiniteElementPlan(
         part.carrier.mesh,
         phx.discretization.fem.FiniteElementFieldSpec(
@@ -30,14 +32,14 @@ def _fe(part):
     ).prepare()
 
 
-def _grid_part(name="grid", *, periodic=True, scale=1.0):
+def _grid_part(name: Any = "grid", *, periodic: Any = True, scale: Any = 1.0) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=periodic),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [scale]]))
     return MeshPart(name, grid, coordinate_contract=phx.SpatialCoordinateContract.si())
 
 
-def _compiled_fv(part):
+def _compiled_fv(part: Any) -> Any:
     discretization = phx.discretization.FiniteVolumePlan(part.carrier).prepare()
     system = phx.equations.ScalarConservationSystem(
         1,
@@ -58,7 +60,7 @@ def _compiled_fv(part):
     return phx.equations.compile_conservation_problem(problem, discretization, method)
 
 
-def test_global_id_ownership_normalization_lowers_to_conservative_fe_execution():
+def test_global_id_ownership_normalization_lowers_to_conservative_fe_execution() -> None:
     part = _cell_part()
     native_ids = np.concatenate(
         [np.asarray(block.global_ids) for block in part.carrier.mesh.blocks]
@@ -84,7 +86,7 @@ def test_global_id_ownership_normalization_lowers_to_conservative_fe_execution()
         distribution.lower_finite_element(part, _fe(_cell_part(scale=2.0)))
 
 
-def test_fe_distribution_handles_no_interior_interfaces_without_fake_facets():
+def test_fe_distribution_handles_no_interior_interfaces_without_fake_facets() -> None:
     part = _cell_part(single=True)
     distribution = MeshDistribution(
         part, phx.discretization.CellPartition(np.asarray([0]), 1)
@@ -96,7 +98,9 @@ def test_fe_distribution_handles_no_interior_interfaces_without_fake_facets():
     )
 
 
-def test_distribution_rejects_fractional_ownership_missing_halos_and_wrong_partition_geometry():
+def test_distribution_rejects_fractional_ownership_missing_halos_and_wrong_partition_geometry() -> (
+    None
+):
     part = _cell_part()
     with pytest.raises(TypeError, match="integer vector"):
         phx.discretization.CellPartition(np.asarray([0.2, 1.0]), 2)
@@ -106,12 +110,14 @@ def test_distribution_rejects_fractional_ownership_missing_halos_and_wrong_parti
         MeshDistribution(
             part,
             phx.discretization.CellPartition(np.asarray([0, 1]), 2),
+            # ty: ignore[invalid-argument-type]
             halo_global_ids=([], []),
         )
     with pytest.raises(ValueError, match="locally owned"):
         MeshDistribution(
             part,
             phx.discretization.CellPartition(np.asarray([0, 1]), 2),
+            # ty: ignore[invalid-argument-type]
             halo_global_ids=([0, 1], [0]),
         )
     grid = _grid_part()
@@ -123,7 +129,7 @@ def test_distribution_rejects_fractional_ownership_missing_halos_and_wrong_parti
         )
 
 
-def test_tensor_halos_respect_periodic_topology_and_lower_to_real_fv_residual():
+def test_tensor_halos_respect_periodic_topology_and_lower_to_real_fv_residual() -> None:
     part = _grid_part()
     distribution = MeshDistribution.cartesian(part, (2,))
     np.testing.assert_array_equal(distribution.halo_global_ids[0], [4, 7])

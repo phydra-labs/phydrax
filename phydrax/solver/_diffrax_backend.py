@@ -1228,7 +1228,10 @@ def solve_diffrax(
         throw=throw,
     )
     # SaveAt always requests saved times, so Diffrax populates ts and ys.
-    assert native.ts is not None and native.ys is not None
+    if not (native.ts is not None and native.ys is not None):
+        raise RuntimeError(
+            "Internal invariant failed: native.ts is not None and native.ys is not None."
+        )
     native_times = jnp.asarray(native.ts["requested"])
     native_states = precision.output(
         state_adapter.unpack_values(native.ys["requested"], 1)

@@ -16,7 +16,7 @@ import phydrax.ein as ein
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ....discretization._spectral import BasisTransformPlan, ModalTransformKind
-from ....typing import PRNGKey
+from ....typing import parse, PRNGKey
 from ..data import OperatorAxis
 
 
@@ -58,8 +58,7 @@ class BasisSpectralConvND(StrictModule):
         if self.in_channels <= 0 or self.out_channels <= 0:
             raise ValueError("in_channels and out_channels must be positive.")
         for basis in bases_value:
-            if basis not in ("fourier", "sine", "cosine", "legendre"):
-                raise ValueError(f"Unsupported spectral basis {basis!r}.")
+            basis = parse(basis, ModalTransformKind, "basis")
         self.n_modes = modes
         self.bases = bases_value
         scale = 1.0 / float(self.in_channels * self.out_channels)

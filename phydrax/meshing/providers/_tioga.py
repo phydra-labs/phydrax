@@ -433,7 +433,10 @@ def _write_input(
         )
         node_counts: list[int] = []
         for part in assembly.parts:
-            assert isinstance(part.carrier, CellMeshingResult)
+            if not (isinstance(part.carrier, CellMeshingResult)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(part.carrier, CellMeshingResult)."
+                )
             node_counts.append(part.carrier.mesh.coordinates.shape[0])
         part_node_counts = np.asarray(node_counts, dtype="<u8")
         part_node_counts.tofile(stream)
@@ -605,7 +608,10 @@ def _couplings(
             np.zeros((len(rows), width)),
         )
         cells = np.asarray([row[1] for row in rows], dtype=np.int64)
-        assert isinstance(source.carrier, CellMeshingResult)
+        if not (isinstance(source.carrier, CellMeshingResult)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(source.carrier, CellMeshingResult)."
+            )
         source_mesh = source.carrier.mesh
         cell_nodes = {
             int(identifier): np.asarray(source_mesh.vertex_global_ids)[vertices]

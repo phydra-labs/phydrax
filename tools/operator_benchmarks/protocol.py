@@ -78,7 +78,7 @@ class OperatorBenchmarkLadder:
     regime: str
     levels: tuple[OperatorBenchmarkScenario, ...]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name or not self.regime:
             raise ValueError("Difficulty ladder name and regime must be non-empty.")
         if len(self.levels) < 2:
@@ -186,7 +186,7 @@ class KernelParityCheck:
     tolerance: float
     passed: bool
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.name or not self.family or not self.reference:
             raise ValueError("Parity check name, family, and reference are required.")
         if not math.isfinite(float(self.tolerance)) or float(self.tolerance) < 0.0:
@@ -214,7 +214,7 @@ class FamilyParityEvidence:
     status: ParityStatus
     checks: tuple[KernelParityCheck, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.family or not self.reference_uri or not self.revision:
             raise ValueError("Parity family, reference URI, and revision are required.")
         if self.status not in ("verified", "failed", "not_run"):
@@ -264,7 +264,7 @@ class OperatorBenchmarkProtocol:
     resume: bool = False
     sensor_training_dropout: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.seeds:
             raise ValueError("Benchmark protocol requires at least one model seed.")
         if self.profile not in ("smoke", "shortlist", "decision"):
@@ -426,7 +426,7 @@ class PromotionCriteria:
     require_baseline_hardness: bool = True
     require_convergence: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         positive = (
             self.maximum_relative_l2,
             self.maximum_shift_degradation,
@@ -558,7 +558,7 @@ class OperatorBenchmarkV2Result:
     promotions: tuple[ArchitecturePromotionReport, ...]
     portfolio_promotions: tuple[ArchitecturePortfolioPromotion, ...]
 
-    def to_dict(self):
+    def to_dict(self) -> Any:
         return {
             "metadata": self.metadata.to_dict(),
             "protocol": asdict(self.protocol),
@@ -1192,7 +1192,7 @@ def flatten_operator_benchmark_ladders(
     return tuple(scenario for scenario in scenarios if scenario.difficulty == difficulty)
 
 
-def _split_ids(scenario: OperatorBenchmarkScenario):
+def _split_ids(scenario: OperatorBenchmarkScenario) -> Any:
     validation_ids = () if scenario.validation is None else scenario.validation.case_ids
     evaluation_ids = tuple(
         case_id for evaluation in scenario.evaluations for case_id in evaluation.case_ids
@@ -1330,7 +1330,7 @@ def _near_identity_diagnostic(
     )
 
 
-def _tree_numerically_finite(tree) -> bool:
+def _tree_numerically_finite(tree: Any) -> bool:
     for leaf in jax.tree_util.tree_leaves(tree):
         if isinstance(leaf, (jax.Array, np.ndarray)):
             if not bool(np.all(np.isfinite(np.asarray(jax.device_get(leaf))))):
@@ -1433,10 +1433,10 @@ def audit_geometry_scenario(
         (evaluation.batch, evaluation.target) for evaluation in scenario.evaluations
     )
 
-    def host(value):
+    def host(value: Any) -> Any:
         return np.asarray(jax.device_get(value))
 
-    def same(left, right):
+    def same(left: Any, right: Any) -> Any:
         left_array = host(left)
         right_array = host(right)
         return left_array.shape == right_array.shape and np.allclose(
@@ -1657,7 +1657,7 @@ def audit_geometry_scenario(
     )
 
 
-def _case_matrix(values, case_shape: tuple[int, ...], /) -> np.ndarray:
+def _case_matrix(values: Any, case_shape: tuple[int, ...], /) -> np.ndarray:
     case_count = int(np.prod(case_shape, dtype=np.int64))
     array = np.asarray(jax.device_get(values), dtype=np.float64)
     return array.reshape((case_count, -1))
@@ -1690,7 +1690,7 @@ def _rank_diagnostics(
     return effective_rank, rank_99, rank_fraction, maximum_rank
 
 
-def _primary_samples(batch: phx.nn.operator.OperatorBatch, /):
+def _primary_samples(batch: phx.nn.operator.OperatorBatch, /) -> Any:
     source_key = max(
         sorted(batch.inputs),
         key=lambda name: int(np.prod(batch.input(name).sample_shape, dtype=np.int64)),
@@ -1887,7 +1887,7 @@ def audit_scenario_difficulty(
     )
 
 
-def _relative_array_error(left, right) -> float:
+def _relative_array_error(left: Any, right: Any) -> float:
     numerator = jnp.linalg.norm(jnp.asarray(left) - jnp.asarray(right))
     denominator = jnp.maximum(jnp.linalg.norm(jnp.asarray(right)), 1e-12)
     return float(numerator / denominator)
@@ -1975,6 +1975,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
         key=None,
     )
     explicit = ein.contract("cql,cl->cq", basis[..., 0, :], coefficients)
+    # ty: ignore[not-subscriptable]
     explicit = explicit + deeponet.bias[0]
     deeponet_error = _relative_array_error(deeponet(deeponet_batch), explicit)
     checks.append(
@@ -2274,7 +2275,7 @@ class _NormalizedOperator(eqx.Module):
 
     def __init__(
         self,
-        model,
+        model: Any,
         input_statistics: tuple[tuple[str, float, float], ...],
         target_location: float,
         target_scale: float,
@@ -2282,7 +2283,7 @@ class _NormalizedOperator(eqx.Module):
         *,
         domain_support_key: str | None,
         conservation_source_key: str | None,
-    ):
+    ) -> None:
         self.model = model
         self.input_statistics = input_statistics
         self.target_location = float(target_location)
@@ -2291,7 +2292,7 @@ class _NormalizedOperator(eqx.Module):
         self.domain_support_key = domain_support_key
         self.conservation_source_key = conservation_source_key
 
-    def __call__(self, batch: phx.nn.operator.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch) -> Any:
         statistics = {
             name: (location, scale) for name, location, scale in self.input_statistics
         }
@@ -2351,7 +2352,7 @@ def _normalization_statistics(
     scenario: OperatorBenchmarkScenario,
     policy: str,
     /,
-):
+) -> Any:
     statistics = []
     for name, samples in scenario.train_batch.inputs.items():
         if samples.values is None:
@@ -2377,7 +2378,7 @@ def _normalization_statistics(
     return tuple(statistics), target_location, target_scale
 
 
-def _normalized_model(model, scenario, architecture, protocol):
+def _normalized_model(model: Any, scenario: Any, architecture: Any, protocol: Any) -> Any:
     if (
         not protocol.normalize
         or architecture.normalization == "none"
@@ -3181,7 +3182,7 @@ def _sample_efficiency_curve(
     planned_steps: int,
     full_result: OperatorBenchmarkResult,
     evaluation: OperatorBenchmarkEvaluation,
-    full_evaluation,
+    full_evaluation: Any,
 ) -> SampleEfficiencyCurve:
     total = int(scenario.train_batch.case_shape[0])
     counts = tuple(
@@ -3274,11 +3275,11 @@ def _sample_efficiency_curve(
 
 
 def _run_operator_benchmark_scenario(
-    scenario,
-    architectures,
-    protocol,
-    scopes,
-    selected_names,
+    scenario: Any,
+    architectures: Any,
+    protocol: Any,
+    scopes: Any,
+    selected_names: Any,
     comparisons: list[Any],
     trials: list[Any],
     selected_results: list[Any],
@@ -3759,7 +3760,7 @@ def run_operator_benchmark_protocol(
     )
 
 
-def _rows(values):
+def _rows(values: Any) -> Any:
     return [asdict(value) for value in values]
 
 

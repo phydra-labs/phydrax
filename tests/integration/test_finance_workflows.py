@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +15,7 @@ from phydrax.dynamics import TimeGrid
 
 
 @pytest.fixture(autouse=True)
-def _double_precision():
+def _double_precision() -> Any:
     with jax.enable_x64(True):
         yield
 
@@ -31,7 +34,7 @@ def _timestamp(
     )
 
 
-def test_market_curve_valuation_archive_workflow(tmp_path):
+def test_market_curve_valuation_archive_workflow(tmp_path: Any) -> None:
     finance = phx.finance
     usd = finance.Currency("USD", 2)
     asset = finance.AssetReference(
@@ -124,7 +127,7 @@ def test_market_curve_valuation_archive_workflow(tmp_path):
     np.testing.assert_allclose(reopened.arrays["present_value"], result.value)
 
 
-def test_physical_forecast_to_portfolio_decision_workflow():
+def test_physical_forecast_to_portfolio_decision_workflow() -> None:
     series = jnp.asarray([0.010, 0.015, 0.012, 0.020, 0.018, 0.024, 0.021, 0.027])
     fit = phx.uq.fit_arima(series, p=1)
     assert bool(fit.successful)
@@ -155,6 +158,7 @@ def test_physical_forecast_to_portfolio_decision_workflow():
         decision_time_ns=11,
     )
     compiled = phx.finance.portfolio.compile_portfolio_problem(problem)
+    # ty: ignore[invalid-argument-type]
     native = phx.optim.solve_quadratic_program(compiled.program)
     result = phx.finance.portfolio.portfolio_result_from_native(
         compiled,
@@ -167,7 +171,7 @@ def test_physical_forecast_to_portfolio_decision_workflow():
     )
 
 
-def test_credit_exposure_xva_workflow():
+def test_credit_exposure_xva_workflow() -> None:
     finance = phx.finance
     profile = finance.exposure.ExposureProfile(
         jnp.asarray([0.0, 1.0, 2.0]),
@@ -245,7 +249,7 @@ def test_credit_exposure_xva_workflow():
     assert float(result.dva.adjustment) > 0.0
 
 
-def test_event_model_to_execution_control_workflow():
+def test_event_model_to_execution_control_workflow() -> None:
     model = phx.finance.execution.AlmgrenChrissModel(
         volatility=0.2,
         risk_aversion=0.1,

@@ -8,6 +8,8 @@ hidden in runtime APIs. Model 1 is a structural fixture, never a population.
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import importlib.metadata
@@ -51,7 +53,7 @@ from phydrax.units import KILOJOULE_PER_MOLE
 _PDB_SHA256 = "5d1bbb545a312dfff1ae1e64b6d8addecb2f561ddc4011aeb5bee9d1dfcd4438"
 
 
-def _rights(name, data, license_id, lineage, *, uncertainty):
+def _rights(name: Any, data: Any, license_id: Any, lineage: Any, *, uncertainty: Any) -> Any:
     return ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -69,7 +71,7 @@ def _rights(name, data, license_id, lineage, *, uncertainty):
     )
 
 
-def prepare_fixture(path):
+def prepare_fixture(path: Any) -> Any:
     import openmm
     from openmm import app, unit
 
@@ -219,7 +221,7 @@ def prepare_fixture(path):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--pdb",

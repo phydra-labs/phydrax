@@ -1,6 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
 from itertools import combinations
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -22,7 +24,7 @@ from phydrax.uq._multiobjective_bayesian_optimization import (
 )
 
 
-def _domain():
+def _domain() -> Any:
     return phx.uq.BayesianOptimizationDomain(
         jnp.asarray([0.5]),
         lower_bounds=jnp.asarray([0.0]),
@@ -30,7 +32,7 @@ def _domain():
     )
 
 
-def _state(names=("cost", "loss"), *, noise=0.2):
+def _state(names: Any = ("cost", "loss"), *, noise: Any = 0.2) -> Any:
     count = len(names)
     coregionalization = phx.uq.Coregionalization(
         jnp.ones((count, 1)) * 0.8,
@@ -46,7 +48,13 @@ def _state(names=("cost", "loss"), *, noise=0.2):
     )
 
 
-def _problem(*, pending=(), objective=None, validity=None, constraints=()):
+def _problem(
+    *,
+    pending: Any = (),
+    objective: Any = None,
+    validity: Any = None,
+    constraints: Any = (),
+) -> Any:
     return MultiObjectiveBayesianOptimizationProblem(
         (
             lambda point, key: jnp.stack(
@@ -66,7 +74,7 @@ def _problem(*, pending=(), objective=None, validity=None, constraints=()):
     )
 
 
-def _plan(**kwargs):
+def _plan(**kwargs: Any) -> Any:
     options = dict(
         objective_surrogate=_state(),
         initial_evaluations=2,
@@ -75,10 +83,11 @@ def _plan(**kwargs):
         fantasy_count=16,
     )
     options.update(kwargs)
+    # ty: ignore[invalid-argument-type]
     return GaussianProcessMultiObjectiveBayesianOptimization(5, **options)
 
 
-def test_exact_hypervolume_and_tied_finite_minimization_dominance():
+def test_exact_hypervolume_and_tied_finite_minimization_dominance() -> None:
     front = jnp.asarray([[1.0, 4.0], [2.0, 2.0], [4.0, 1.0]])
     reference = jnp.asarray([5.0, 5.0])
     assert float(hypervolume(front, reference)) == 11.0
@@ -96,7 +105,7 @@ def test_exact_hypervolume_and_tied_finite_minimization_dominance():
     assert float(hypervolume(jnp.empty((0, 2)), reference)) == 0.0
 
 
-def test_exact_3d_hypervolume_matches_box_inclusion_exclusion():
+def test_exact_3d_hypervolume_matches_box_inclusion_exclusion() -> None:
     points = np.asarray(
         [[1.0, 4.0, 1.0], [2.0, 2.0, 2.0], [4.0, 1.0, 1.0], [2.0, 2.0, 2.0]]
     )
@@ -110,7 +119,7 @@ def test_exact_3d_hypervolume_matches_box_inclusion_exclusion():
     assert float(jax.jit(hypervolume)(points, reference)) == expected
 
 
-def test_qhvi_filters_each_member_instead_of_rejecting_a_partly_feasible_batch():
+def test_qhvi_filters_each_member_instead_of_rejecting_a_partly_feasible_batch() -> None:
     baseline = jnp.asarray([[[1.0, 4.0], [2.0, 2.0], [4.0, 1.0]]])
     candidates = jnp.asarray([[[1.0, 1.0], [0.0, 0.0]]])
     gains = _sample_hvi(
@@ -132,7 +141,9 @@ def test_qhvi_filters_each_member_instead_of_rejecting_a_partly_feasible_batch()
     assert float(gains[0]) == 6.0
 
 
-def test_pending_is_in_the_sampled_attained_set_not_only_a_conditioning_location():
+def test_pending_is_in_the_sampled_attained_set_not_only_a_conditioning_location() -> (
+    None
+):
     point = _domain().decode(jnp.asarray([0.9]))
     plan = _plan(fantasy_count=64)
     encoded = jnp.asarray([[0.1]])
@@ -153,7 +164,7 @@ def test_pending_is_in_the_sampled_attained_set_not_only_a_conditioning_location
     assert float(without_pending[0]) > 0.1
 
 
-def test_historical_baseline_is_joint_latent_not_the_noisy_observed_front():
+def test_historical_baseline_is_joint_latent_not_the_noisy_observed_front() -> None:
     plan = _plan(objective_surrogate=_state(noise=1.0), fantasy_count=64)
     # A candidate already in B cannot improve B, despite high observation noise.
     # Plugging the noisy observed vector into the baseline gives spurious gain.
@@ -171,7 +182,9 @@ def test_historical_baseline_is_joint_latent_not_the_noisy_observed_front():
     assert float(errors[0]) < 1e-4
 
 
-def test_correlated_latent_draws_preserve_output_covariance_and_exclude_observation_noise():
+def test_correlated_latent_draws_preserve_output_covariance_and_exclude_observation_noise() -> (
+    None
+):
     state = _state(noise=2.0)
     plan = _plan(objective_surrogate=state, fantasy_count=8192)
     gp = _PreparedGP(
@@ -198,7 +211,7 @@ def test_correlated_latent_draws_preserve_output_covariance_and_exclude_observat
         _psd_factors(jnp.asarray([[1.0, 2.0], [2.0, 1.0]]), 1e-6)
 
 
-def test_seeded_mixed_noisy_constrained_q_batches_replay_and_keep_vector_front():
+def test_seeded_mixed_noisy_constrained_q_batches_replay_and_keep_vector_front() -> None:
     categorical = phx.optim.FiniteProductSpace(
         {"material": phx.optim.FiniteAxis(jnp.asarray([0.0, 1.0]))}
     )
@@ -209,7 +222,7 @@ def test_seeded_mixed_noisy_constrained_q_batches_replay_and_keep_vector_front()
         categorical=categorical,
     )
 
-    def objective(point, key):
+    def objective(point: Any, key: Any) -> Any:
         x, material = point.continuous[0], point.categorical["material"]
         return jnp.stack(
             ((x - 0.15) ** 2 + 0.1 * material, (x - 0.85) ** 2 - 0.05 * material)
@@ -260,10 +273,10 @@ def test_seeded_mixed_noisy_constrained_q_batches_replay_and_keep_vector_front()
     assert first.globally_optimal is False
 
 
-def test_invalid_physics_is_guarded_and_excluded_from_gp_training():
+def test_invalid_physics_is_guarded_and_excluded_from_gp_training() -> None:
     calls = []
 
-    def objective(point, key):
+    def objective(point: Any, key: Any) -> Any:
         calls.append(float(point.continuous[0]))
         return jnp.asarray([point.continuous[0], 1 - point.continuous[0]])
 
@@ -290,10 +303,10 @@ def test_invalid_physics_is_guarded_and_excluded_from_gp_training():
         {"max_hypervolume_work": 1},
     ],
 )
-def test_all_resource_limits_fail_before_physical_evaluation(limits):
+def test_all_resource_limits_fail_before_physical_evaluation(limits: Any) -> None:
     calls = []
 
-    def objective(point, key):
+    def objective(point: Any, key: Any) -> Any:
         calls.append(point)
         return jnp.zeros((2,))
 
@@ -309,7 +322,7 @@ def test_all_resource_limits_fail_before_physical_evaluation(limits):
     assert calls == []
 
 
-def test_unsupported_geometry_and_hypervolume_capacity_are_explicit():
+def test_unsupported_geometry_and_hypervolume_capacity_are_explicit() -> None:
     with pytest.raises(ValueError, match="two or three"):
         hypervolume(jnp.zeros((2, 4)), jnp.ones((4,)))
     with pytest.raises(ValueError, match="capacity"):
@@ -320,12 +333,14 @@ def test_unsupported_geometry_and_hypervolume_capacity_are_explicit():
             _domain(),
             objective_names=("a", "b"),
             directions=("min", "max"),
+            # ty: ignore[invalid-argument-type]
             scales=[1.0, 0.0],
+            # ty: ignore[invalid-argument-type]
             reference=[2.0, -2.0],
         )
 
 
-def test_three_objectives_respect_maximization_and_physical_scales():
+def test_three_objectives_respect_maximization_and_physical_scales() -> None:
     names = ("mass", "efficiency", "cost")
     problem = MultiObjectiveBayesianOptimizationProblem(
         lambda point, key: jnp.stack(
@@ -334,7 +349,9 @@ def test_three_objectives_respect_maximization_and_physical_scales():
         _domain(),
         objective_names=names,
         directions=("min", "max", "min"),
+        # ty: ignore[invalid-argument-type]
         scales=[1.0, 2.0, 3.0],
+        # ty: ignore[invalid-argument-type]
         reference=[2.0, -2.0, 6.0],
     )
     plan = GaussianProcessMultiObjectiveBayesianOptimization(

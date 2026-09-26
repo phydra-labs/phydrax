@@ -228,7 +228,8 @@ class CorrectedP3MPlan(StrictModule):
                     request=VortexFieldRequest(velocity=True),
                 ).velocity
                 # A velocity request always populates the velocity field.
-                assert velocity is not None
+                if not (velocity is not None):
+                    raise RuntimeError("Internal invariant failed: velocity is not None.")
                 return velocity[0]
 
             jacobian = jax.vmap(jax.jacfwd(point_velocity))(target.positions)

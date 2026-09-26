@@ -14,7 +14,7 @@ SQUARE = np.asarray(
 TRIANGLE = np.asarray([[0.0, 0.0], [2.0, 0.0], [0.0, 2.0]], dtype=np.float64)
 
 
-def test_identity_returns_canonical_polygon_area_and_centroid():
+def test_identity_returns_canonical_polygon_area_and_centroid() -> None:
     result = intersect_convex_polygons(
         TRIANGLE, TRIANGLE, source_id="left", target_id="right"
     )
@@ -34,7 +34,7 @@ def test_identity_returns_canonical_polygon_area_and_centroid():
     )
 
 
-def test_containment_and_analytic_partial_triangle_overlap():
+def test_containment_and_analytic_partial_triangle_overlap() -> None:
     inner = np.asarray([[0.25, 0.25], [0.75, 0.25], [0.25, 0.75]])
     contained = intersect_convex_polygons(SQUARE, inner)
     assert contained.status is IntersectionStatus.SUCCESS
@@ -51,7 +51,7 @@ def test_containment_and_analytic_partial_triangle_overlap():
     np.testing.assert_allclose(partial.centroid, [1.0 / 6.0, 1.0 / 6.0])
 
 
-def test_partial_quad_overlap_and_permutation_canonicalization():
+def test_partial_quad_overlap_and_permutation_canonicalization() -> None:
     left = np.asarray([[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]])
     right = np.asarray([[1.0, -0.5], [3.0, -0.5], [3.0, 0.5], [1.0, 0.5]])
     expected = np.asarray([[1.0, 0.0], [2.0, 0.0], [2.0, 0.5], [1.0, 0.5]])
@@ -70,7 +70,7 @@ def test_partial_quad_overlap_and_permutation_canonicalization():
     assert rotated.area == reference.area == reversed_order.area
 
 
-def test_shared_edge_and_vertex_are_explicit_zero_measure_contacts():
+def test_shared_edge_and_vertex_are_explicit_zero_measure_contacts() -> None:
     edge = intersect_convex_polygons(SQUARE, SQUARE + [1.0, 0.0])
     vertex = intersect_convex_polygons(SQUARE, SQUARE + [1.0, 1.0])
 
@@ -84,7 +84,7 @@ def test_shared_edge_and_vertex_are_explicit_zero_measure_contacts():
     np.testing.assert_allclose(vertex.centroid, [1.0, 1.0])
 
 
-def test_near_degenerate_predicate_fails_closed():
+def test_near_degenerate_predicate_fails_closed() -> None:
     thin = np.asarray([[0.0, 0.0], [1.0, 1.0e-16], [1.0, 0.0]])
     result = intersect_convex_polygons(thin, thin)
 
@@ -93,7 +93,7 @@ def test_near_degenerate_predicate_fails_closed():
     assert result.predicate_evidence.uncertain_count > 0
 
 
-def test_nonconvex_and_nonfinite_inputs_are_rejected():
+def test_nonconvex_and_nonfinite_inputs_are_rejected() -> None:
     nonconvex = np.asarray([[0.0, 0.0], [2.0, 0.0], [1.0, 0.5], [2.0, 2.0], [0.0, 2.0]])
     crossing = np.asarray([[0.0, 0.0], [1.0, 1.0], [0.0, 1.0], [1.0, 0.0]])
 
@@ -113,7 +113,7 @@ def test_nonconvex_and_nonfinite_inputs_are_rejected():
     )
 
 
-def test_intersection_areas_conserve_a_partition_without_jit():
+def test_intersection_areas_conserve_a_partition_without_jit() -> None:
     lower = np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]])
     upper = np.asarray([[0.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     first = intersect_convex_polygons(lower, SQUARE)

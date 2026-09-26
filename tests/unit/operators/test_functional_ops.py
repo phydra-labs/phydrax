@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -13,7 +16,7 @@ from phydrax.operators.functional import (
 )
 
 
-def test_spatial_mean_constant_matches_constant(sample_batch):
+def test_spatial_mean_constant_matches_constant(sample_batch: Any) -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     batch = sample_batch(component, blocks=(("x",),), num_points=2048, key=0)
@@ -26,13 +29,13 @@ def test_spatial_mean_constant_matches_constant(sample_batch):
     assert jnp.allclose(val, 2.0, atol=1e-12, rtol=0.0)
 
 
-def test_spatial_mean_time_broadcasts_over_space(sample_batch):
+def test_spatial_mean_time_broadcasts_over_space(sample_batch: Any) -> None:
     dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     component = dom.component()
     batch = sample_batch(component, blocks=(("x",), ("t",)), num_points=(3, 4), key=1)
 
     @dom.Function("t")
-    def u(t):
+    def u(t: Any) -> Any:
         return t
 
     realization = phx.integration.from_samples(
@@ -44,7 +47,7 @@ def test_spatial_mean_time_broadcasts_over_space(sample_batch):
     assert jnp.allclose(out, t, atol=1e-12, rtol=0.0)
 
 
-def test_spatial_inner_product_constant(sample_batch):
+def test_spatial_inner_product_constant(sample_batch: Any) -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     batch = sample_batch(component, blocks=(("x",),), num_points=1024, key=2)
@@ -56,7 +59,7 @@ def test_spatial_inner_product_constant(sample_batch):
     assert jnp.allclose(val, 6.0, atol=1e-12, rtol=0.0)
 
 
-def test_spatial_l2_norm_constant_matches_closed_form(sample_batch):
+def test_spatial_l2_norm_constant_matches_closed_form(sample_batch: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )  # area=4

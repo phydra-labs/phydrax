@@ -109,7 +109,9 @@ THRESHOLDS = {
 class _ExpectedRefusal:
     """Capture one specifically named refusal without accepting foreign failures."""
 
-    def __init__(self, exception_type: type[BaseException], message_fragment: str, /):
+    def __init__(
+        self, exception_type: type[BaseException], message_fragment: str, /
+    ) -> None:
         self.exception_type = exception_type
         self.message_fragment = str(message_fragment)
         self.observed = False
@@ -394,6 +396,7 @@ def _relative_l2(candidate: Any, reference: Any, /) -> float:
     denominator = max(
         float(np.linalg.norm(reference_array.reshape(-1))), np.finfo(np.float64).tiny
     )
+    # ty: ignore[invalid-return-type]
     return numerator / denominator
 
 
@@ -508,6 +511,7 @@ def _finite_volume_runtime(
     method_plan = FiniteVolumeMethodPlan(MUSCLReconstruction(), HLLCFluxPlan())
     dynamics = compile_conservation_problem(problem, discretization, method_plan).dynamics
     return PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         FluxPositivityPlan(),
         FiniteVolumeStepPolicy(

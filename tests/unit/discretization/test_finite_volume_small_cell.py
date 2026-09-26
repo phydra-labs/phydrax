@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import math
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -25,7 +27,7 @@ from phydrax.discretization.finite_volume._unstructured_embedded_boundary import
 )
 
 
-def _quadrilateral_grid(nx, ny, *, cell_global_ids=None):
+def _quadrilateral_grid(nx: Any, ny: Any, *, cell_global_ids: Any = None) -> Any:
     vertices = np.asarray(
         [(float(i), float(j)) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -44,7 +46,7 @@ def _quadrilateral_grid(nx, ny, *, cell_global_ids=None):
     ).prepare()
 
 
-def _metrics(discretization, level_set, field_id, policy):
+def _metrics(discretization: Any, level_set: Any, field_id: Any, policy: Any) -> Any:
     return EmbeddedBoundaryPlan(
         discretization,
         level_set,
@@ -54,12 +56,12 @@ def _metrics(discretization, level_set, field_id, policy):
 
 
 def _policy(
-    minimum_volume_fraction=0.5,
-    maximum_recipients=2,
+    minimum_volume_fraction: Any = 0.5,
+    maximum_recipients: Any = 2,
     *,
-    absolute_tolerance=1.0e-14,
-    relative_tolerance=1.0e-14,
-):
+    absolute_tolerance: Any = 1.0e-14,
+    relative_tolerance: Any = 1.0e-14,
+) -> Any:
     return EmbeddedBoundaryStabilizationPolicy(
         minimum_volume_fraction=minimum_volume_fraction,
         maximum_recipients=maximum_recipients,
@@ -68,7 +70,7 @@ def _policy(
     )
 
 
-def _scatter_rate_block(block, cell_count):
+def _scatter_rate_block(block: Any, cell_count: Any) -> Any:
     scattered = jnp.zeros(
         (cell_count,) + block.component_shape, dtype=block.flux_rate.dtype
     )
@@ -76,7 +78,7 @@ def _scatter_rate_block(block, cell_count):
     return scattered.at[block.neighbor_cells].add(block.flux_rate)
 
 
-def _ledger_scatter(plan, block, source_rate):
+def _ledger_scatter(plan: Any, block: Any, source_rate: Any) -> Any:
     return ConservationStageLedger(
         (block,),
         source_rate,
@@ -90,7 +92,7 @@ def _ledger_scatter(plan, block, source_rate):
     ).scatter_content_rate()
 
 
-def _four_recipient_plan():
+def _four_recipient_plan() -> Any:
     discretization = _quadrilateral_grid(3, 3)
     nodal_level_set = jnp.asarray(
         (
@@ -101,7 +103,7 @@ def _four_recipient_plan():
         )
     )
 
-    def level_set(points, args):
+    def level_set(points: Any, args: Any) -> Any:
         del args
         vertex_indices = jnp.rint(points).astype(jnp.int32)
         return nodal_level_set[vertex_indices[:, 1], vertex_indices[:, 0]]
@@ -119,7 +121,7 @@ def _four_recipient_plan():
     return plan
 
 
-def test_one_sliver_retains_threshold_scaled_rate_and_conserves_constant_source():
+def test_one_sliver_retains_threshold_scaled_rate_and_conserves_constant_source() -> None:
     discretization = _quadrilateral_grid(3, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=1)
     metrics = _metrics(
@@ -151,7 +153,9 @@ def test_one_sliver_retains_threshold_scaled_rate_and_conserves_constant_source(
     assert result.evidence.policy_id == policy.policy_id
 
 
-def test_redistribution_flux_block_scatter_matches_delta_and_keeps_source_separate():
+def test_redistribution_flux_block_scatter_matches_delta_and_keeps_source_separate() -> (
+    None
+):
     discretization = _quadrilateral_grid(3, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=1)
     metrics = _metrics(
@@ -186,7 +190,7 @@ def test_redistribution_flux_block_scatter_matches_delta_and_keeps_source_separa
     assert same_routes.rate_block_id == block.rate_block_id
 
 
-def test_adjacent_slivers_route_only_to_stable_non_small_recipients():
+def test_adjacent_slivers_route_only_to_stable_non_small_recipients() -> None:
     discretization = _quadrilateral_grid(3, 2)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=2)
     metrics = _metrics(
@@ -230,7 +234,7 @@ def test_adjacent_slivers_route_only_to_stable_non_small_recipients():
     )
 
 
-def test_all_sliver_chain_fails_instead_of_routing_excess_between_small_cells():
+def test_all_sliver_chain_fails_instead_of_routing_excess_between_small_cells() -> None:
     discretization = _quadrilateral_grid(3, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=2)
     metrics = _metrics(
@@ -246,7 +250,7 @@ def test_all_sliver_chain_fails_instead_of_routing_excess_between_small_cells():
         ConservativeSmallCellRedistributionPlan(discretization, metrics, policy)
 
 
-def test_equal_measure_ties_are_broken_by_stable_cell_id():
+def test_equal_measure_ties_are_broken_by_stable_cell_id() -> None:
     stable_ids = np.asarray((40, 30, 10, 20), dtype=np.int64)
     discretization = _quadrilateral_grid(2, 2, cell_global_ids=stable_ids)
     policy = _policy(minimum_volume_fraction=0.1, maximum_recipients=1)
@@ -276,7 +280,7 @@ def test_equal_measure_ties_are_broken_by_stable_cell_id():
     np.testing.assert_array_equal(reversed_plan.recipient_cells, ((1,),))
 
 
-def test_vector_rates_are_componentwise_conservative_under_jit_and_grad():
+def test_vector_rates_are_componentwise_conservative_under_jit_and_grad() -> None:
     discretization = _quadrilateral_grid(3, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=1)
     metrics = _metrics(
@@ -303,7 +307,7 @@ def test_vector_rates_are_componentwise_conservative_under_jit_and_grad():
 
 
 @pytest.mark.parametrize("dtype", (jnp.float32, jnp.float64))
-def test_scale_separated_defect_matches_accurate_signed_sum(dtype):
+def test_scale_separated_defect_matches_accurate_signed_sum(dtype: Any) -> None:
     plan = _four_recipient_plan()
     rates = np.random.default_rng(20260826).normal(size=(9, 3))
     rates *= np.asarray((1.0, 1.0e8, 1.0e16))
@@ -322,7 +326,7 @@ def test_scale_separated_defect_matches_accurate_signed_sum(dtype):
     np.testing.assert_array_equal(result.conservation_defect, expected)
 
 
-def test_float32_extreme_weights_renormalize_under_jit_and_conserve_gradient():
+def test_float32_extreme_weights_renormalize_under_jit_and_conserve_gradient() -> None:
     plan = _four_recipient_plan()
     prepared_weights = np.asarray(
         ((0.31141971, 0.48647018, 0.20211012, 1.0e-30),),
@@ -365,7 +369,7 @@ def test_float32_extreme_weights_renormalize_under_jit_and_conserve_gradient():
     )
 
 
-def test_float32_flux_block_uses_normalized_route_weights_under_jit_and_grad():
+def test_float32_flux_block_uses_normalized_route_weights_under_jit_and_grad() -> None:
     plan = _four_recipient_plan()
     prepared_weights = np.asarray(
         ((0.31141971, 0.48647018, 0.20211012, 1.0e-30),),
@@ -400,7 +404,7 @@ def test_float32_flux_block_uses_normalized_route_weights_under_jit_and_grad():
         atol=0.0,
     )
 
-    def block_delta(value):
+    def block_delta(value: Any) -> Any:
         built = plan.redistribution_flux_rate_block(value)
         assert built is not None
         return _scatter_rate_block(built, plan.active_cells.size)
@@ -431,7 +435,7 @@ def test_float32_flux_block_uses_normalized_route_weights_under_jit_and_grad():
     )
 
 
-def test_float32_recipient_weight_underflow_fails_explicitly_under_jit():
+def test_float32_recipient_weight_underflow_fails_explicitly_under_jit() -> None:
     plan = _four_recipient_plan()
     prepared_weights = jnp.asarray(
         ((1.0e-50, 0.25, 0.25, 0.5 - 1.0e-50),),
@@ -452,7 +456,7 @@ def test_float32_recipient_weight_underflow_fails_explicitly_under_jit():
         jax.block_until_ready(result.redistributed_rate)
 
 
-def test_float32_nonfinite_conservation_defect_fails_explicitly():
+def test_float32_nonfinite_conservation_defect_fails_explicitly() -> None:
     plan = _four_recipient_plan()
     source = int(plan.source_cells[0])
     recipient = int(plan.recipient_cells[0, 0])
@@ -473,7 +477,7 @@ def test_float32_nonfinite_conservation_defect_fails_explicitly():
         jax.block_until_ready(result.redistributed_rate)
 
 
-def test_inactive_rates_are_zero_and_nonzero_inactive_content_fails():
+def test_inactive_rates_are_zero_and_nonzero_inactive_content_fails() -> None:
     discretization = _quadrilateral_grid(3, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=1)
     metrics = _metrics(
@@ -496,7 +500,7 @@ def test_inactive_rates_are_zero_and_nonzero_inactive_content_fails():
         jax.block_until_ready(result.redistributed_rate)
 
 
-def test_sliver_with_only_inactive_or_closed_neighbors_fails_preparation():
+def test_sliver_with_only_inactive_or_closed_neighbors_fails_preparation() -> None:
     discretization = _quadrilateral_grid(2, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=2)
     metrics = _metrics(
@@ -511,7 +515,7 @@ def test_sliver_with_only_inactive_or_closed_neighbors_fails_preparation():
         ConservativeSmallCellRedistributionPlan(discretization, metrics, policy)
 
 
-def test_policy_identity_binds_every_stabilization_choice():
+def test_policy_identity_binds_every_stabilization_choice() -> None:
     discretization = _quadrilateral_grid(3, 1)
     baseline = _policy(
         minimum_volume_fraction=0.5,

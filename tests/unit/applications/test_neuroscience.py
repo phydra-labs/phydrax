@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -13,32 +16,37 @@ import phydrax as phx
 from phydrax.applications import neuroscience as ns
 
 
-def _connectivity():
+def _connectivity() -> Any:
     return ns.RegionalConnectivity(
         ("stimulated", "downstream"),
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.2], [1.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.137], [0.211, 0.0]],
     )
 
 
-def _history(time, args):
+def _history(time: Any, args: Any) -> Any:
     del time, args
     return jnp.zeros((2, 2))
 
 
-def _pulse(time, neural, args):
+def _pulse(time: Any, neural: Any, args: Any) -> Any:
     del args
     return (
         jnp.zeros_like(neural).at[0, 0].set(0.3 * jnp.exp(-(((time - 0.5) / 0.2) ** 2)))
     )
 
 
-def _bold_problem(connectivity, coupling=0.6, *, initial_balloon=None):
+def _bold_problem(
+    connectivity: Any, coupling: Any = 0.6, *, initial_balloon: Any = None
+) -> Any:
     return ns.regional_bold_problem(
         connectivity,
         ns.Hopf(a_per_s=-0.4, frequency_hz=0.1, coupling_per_s=coupling),
         _history,
         ns.BalloonWindkessel(),
+        # ty: ignore[invalid-argument-type]
         ns.NeuralBOLDDrive([1.0, 0.0], [0.0, 0.0], gain=0.5),
         t0=0.0,
         t1=3.0,
@@ -47,7 +55,7 @@ def _bold_problem(connectivity, coupling=0.6, *, initial_balloon=None):
     )
 
 
-def _solve(problem, times, **kwargs):
+def _solve(problem: Any, times: Any, **kwargs: Any) -> Any:
     return ns.solve_regional(
         problem,
         save_times=times,
@@ -58,7 +66,7 @@ def _solve(problem, times, **kwargs):
     )
 
 
-def test_directed_mixed_delays_use_exact_nongrid_prehistory_and_declared_units():
+def test_directed_mixed_delays_use_exact_nongrid_prehistory_and_declared_units() -> None:
     weights = np.asarray([[0.0, 2.0, 0.5], [0.3, 0.0, 0.0], [0.0, 0.0, 0.0]])
     delay_ms = np.asarray([[0.0, 137.0, 0.0], [211.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
     connectivity = ns.RegionalConnectivity(
@@ -88,6 +96,7 @@ def test_directed_mixed_delays_use_exact_nongrid_prehistory_and_declared_units()
     ) / 0.2
     expected_i = (-i + (1.0 - i) * jax.nn.sigmoid(10.0 * e - 3.0)) / 0.1
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         problem.initial_right_derivative,
         jnp.stack((expected_e, expected_i), axis=-1),
         rtol=2e-13,
@@ -100,11 +109,15 @@ def test_directed_mixed_delays_use_exact_nongrid_prehistory_and_declared_units()
         seconds, model, lambda time, args: initial + time * slope, t0=0.0, t1=0.4
     )
     np.testing.assert_array_equal(
-        comparison.initial_right_derivative, problem.initial_right_derivative
+        # ty: ignore[unresolved-attribute]
+        comparison.initial_right_derivative,
+        # ty: ignore[unresolved-attribute]
+        problem.initial_right_derivative,
     )
 
 
-def test_instantaneous_hopf_self_coupling_cancels_and_hertz_sets_rotation():
+def test_instantaneous_hopf_self_coupling_cancels_and_hertz_sets_rotation() -> None:
+    # ty: ignore[invalid-argument-type]
     connectivity = ns.RegionalConnectivity(("oscillator",), [[7.0]], [[0.0]])
     problem = ns.regional_problem(
         connectivity,
@@ -119,7 +132,7 @@ def test_instantaneous_hopf_self_coupling_cancels_and_hertz_sets_rotation():
     np.testing.assert_allclose(solved.neural.values[:, 0], expected, rtol=2e-8, atol=2e-8)
 
 
-def test_balloon_equilibrium_and_pulse_recover_without_losing_positive_ratios():
+def test_balloon_equilibrium_and_pulse_recover_without_losing_positive_ratios() -> None:
     model = ns.BalloonWindkessel()
     resting = ns.balloon_equilibrium(1)
     np.testing.assert_allclose(model(resting, jnp.zeros(1)), 0.0, atol=1e-14)
@@ -144,7 +157,7 @@ def test_balloon_equilibrium_and_pulse_recover_without_losing_positive_ratios():
     assert bool(jnp.all(solved.valid & jnp.all(jnp.isfinite(solved.states), axis=(1, 2))))
 
 
-def test_segmented_continuation_preserves_neural_history_and_all_balloon_state():
+def test_segmented_continuation_preserves_neural_history_and_all_balloon_state() -> None:
     initial = jnp.asarray(
         [
             [0.02, jnp.log(1.1), jnp.log(1.02), jnp.log(0.98)],
@@ -177,11 +190,11 @@ def test_segmented_continuation_preserves_neural_history_and_all_balloon_state()
     assert bool(jnp.all(restarted.neural.sample_valid))
 
 
-def test_delayed_bold_parameter_gradient_and_masked_fit_failure_boundary():
+def test_delayed_bold_parameter_gradient_and_masked_fit_failure_boundary() -> None:
     connectivity = _connectivity()
     times = jnp.linspace(0.0, 3.0, 13)
 
-    def predict(coupling, args=None):
+    def predict(coupling: Any, args: Any = None) -> Any:
         del args
         return _solve(
             _bold_problem(connectivity, coupling),
@@ -246,8 +259,9 @@ def test_delayed_bold_parameter_gradient_and_masked_fit_failure_boundary():
     )
 
 
-def test_rejects_invalid_delays_parameters_and_nonphysical_initial_hemodynamics():
+def test_rejects_invalid_delays_parameters_and_nonphysical_initial_hemodynamics() -> None:
     with pytest.raises(ValueError, match="nonnegative"):
+        # ty: ignore[invalid-argument-type]
         ns.RegionalConnectivity(("a",), [[1.0]], [[-0.001]])
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="positive"):
         ns.WilsonCowan(tau_e_s=0.0)
@@ -259,5 +273,11 @@ def test_rejects_invalid_delays_parameters_and_nonphysical_initial_hemodynamics(
         )
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="active datum"):
         ns.BOLDObservation.from_samples(
-            ("a",), [0.0, 1.0], [[jnp.nan], [jnp.nan]], valid=[[False], [False]]
+            ("a",),
+            # ty: ignore[invalid-argument-type]
+            [0.0, 1.0],
+            # ty: ignore[invalid-argument-type]
+            [[jnp.nan], [jnp.nan]],
+            # ty: ignore[invalid-argument-type]
+            valid=[[False], [False]],
         )

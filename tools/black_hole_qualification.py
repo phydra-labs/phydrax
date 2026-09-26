@@ -451,6 +451,7 @@ def _runtime_manifest(valid_at: int, /) -> dict[str, object]:
             for device in devices
         ],
         "precision": {
+            # ty: ignore[unresolved-attribute]
             "jax_enable_x64": bool(jax.config.jax_enable_x64),
             "scientific_profiles": "float64",
             "production_and_native_electromagnetic_controls": "float32",
@@ -485,11 +486,13 @@ def _profile_result(
     normalized_residuals: dict[str, float | None] = {}
     residuals_finite = True
     for key, value in residuals.items():
+        # ty: ignore[invalid-argument-type]
         scalar = float(value)
         finite = math.isfinite(scalar)
         normalized_residuals[key] = scalar if finite else None
         residuals_finite = residuals_finite and finite
     normalized_checks["reported_residuals_finite"] = residuals_finite
+    # ty: ignore[invalid-argument-type]
     normalized_statuses = {key: int(value) for key, value in statuses.items()}
     metadata = _PROFILE_METADATA[name]
     return {
@@ -515,7 +518,7 @@ def _flat_adm_geometry(
     topology_id: str,
     geometry_lineage_id: str,
     dtype: Any = jnp.float64,
-):
+) -> Any:
     from phydrax.metrix._adm_exchange import ADMGridGeometry
 
     identity = jnp.broadcast_to(jnp.eye(3, dtype=dtype), shape + (3, 3))
@@ -893,6 +896,7 @@ def qualify_grrt_interferometry() -> dict[str, object]:
         frequency_unit=HERTZ,
     )
     uv = np.asarray(((0.0, 0.0), (1.5, -0.5)))
+    # ty: ignore[invalid-argument-type]
     direct_sampling = VisibilitySampling(uv, ((0, 1), (0, 1)), frequency, ("A", "B"))
     visibility = direct_stokes_visibilities(image, direct_sampling)
     expected_visibility = 3.5 * np.exp(-2.0j * np.pi * (uv @ position))
@@ -1192,9 +1196,12 @@ def qualify_perturbations_scattering_hawking() -> dict[str, object]:
     hawking_plan = HawkingSpectrumPlan(
         scale,
         (species,),
+        # ty: ignore[invalid-argument-type]
         scattering_frequencies,
         (species.species_id,),
+        # ty: ignore[invalid-argument-type]
         (0,),
+        # ty: ignore[invalid-argument-type]
         (0,),
         mode_ids=("scalar:l0:m0",),
     )
@@ -1222,7 +1229,9 @@ def qualify_perturbations_scattering_hawking() -> dict[str, object]:
         )
     )
     tail = HawkingTailEvidence(
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.0, 0.0),
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.0, 0.0),
         qualified=False,
         derivative_valid=False,
@@ -1831,7 +1840,7 @@ def qualify_coupling() -> dict[str, object]:
     topology_id = "qualification:coupled-two-lane"
     weights = jnp.asarray((1.0 / 6.0, 1.0 / 6.0, 2.0 / 3.0))
 
-    def geometry_at_stage(z4c, address, args):
+    def geometry_at_stage(z4c: Any, address: Any, args: Any) -> Any:
         del args
         dtype = jnp.asarray(z4c).dtype
         identity = jnp.broadcast_to(jnp.eye(3, dtype=dtype), (2, 3, 3))
@@ -1852,7 +1861,7 @@ def qualify_coupling() -> dict[str, object]:
             snapshot_token=address.step_id * 3 + address.stage_id + 1,
         )
 
-    def projection(matter, geometry, address, args):
+    def projection(matter: Any, geometry: Any, address: Any, args: Any) -> Any:
         del address, args
         dtype = jnp.asarray(matter).dtype
         return StressEnergyProjection(
@@ -1871,10 +1880,10 @@ def qualify_coupling() -> dict[str, object]:
             projection_id="qualification:coupled-projection",
         )
 
-    def participant_status():
+    def participant_status() -> Any:
         return CoupledParticipantStatus(0, True, True, True, True, True)
 
-    def stage_address(address):
+    def stage_address(address: Any) -> Any:
         return CoupledStageAddress(
             address.step_start_time,
             address.stage_time,
@@ -1884,7 +1893,7 @@ def qualify_coupling() -> dict[str, object]:
             topology_id=address.topology_id,
         )
 
-    def candidate(base, current, rate, address):
+    def candidate(base: Any, current: Any, rate: Any, address: Any) -> Any:
         euler = current + address.step_size * rate
         return jnp.where(
             address.stage_id == 0,
@@ -1896,7 +1905,14 @@ def qualify_coupling() -> dict[str, object]:
             ),
         )
 
-    def propose_z4c(base, current, geometry, stress_energy, address, args):
+    def propose_z4c(
+        base: Any,
+        current: Any,
+        geometry: Any,
+        stress_energy: Any,
+        address: Any,
+        args: Any,
+    ) -> Any:
         del args
         result = candidate(
             base, current, 2.0 + jnp.mean(stress_energy.energy_density), address
@@ -1917,7 +1933,14 @@ def qualify_coupling() -> dict[str, object]:
             participant_status(),
         )
 
-    def propose_matter(base, current, geometry, stress_energy, address, args):
+    def propose_matter(
+        base: Any,
+        current: Any,
+        geometry: Any,
+        stress_energy: Any,
+        address: Any,
+        args: Any,
+    ) -> Any:
         del args
         curvature = jnp.mean(jnp.abs(geometry.extrinsic_curvature[..., 0, 0]))
         result = candidate(base, current, (3.0 + curvature) * current, address)
@@ -2136,6 +2159,7 @@ def qualify_scaling_restart() -> dict[str, object]:
 
 
 def qualify_production_interchange() -> dict[str, object]:
+    # ty: ignore[unresolved-import]
     from phydrax.interchange._resource import ResourceLimits
 
     from phydrax._execution_plan import (
@@ -2263,6 +2287,7 @@ def qualify_production_interchange() -> dict[str, object]:
         runtime_proposal = runtime.evaluate(runtime_initial)
         method = FixedGridZ4cProductionMethod(runtime)
         initial = method.initialize(runtime_initial)
+        # ty: ignore[invalid-argument-type]
         step = method.step(0, 0.0, initial, 0.01, None)
 
         domain = NumericalRelativityDomainBinding(
@@ -2431,8 +2456,10 @@ def qualify_production_interchange() -> dict[str, object]:
             == requirements.requirements_id,
             "execution_inventory_bound": execution.inventory_id == inventory.inventory_id,
             "execution_group_bound": execution.group == group,
+            # ty: ignore[unresolved-attribute]
             "execution_resource_evidence_bound": execution.resource_evidence.evidence_id
             == resource_evidence.evidence_id,
+            # ty: ignore[unresolved-attribute]
             "prepared_resolved_run_exact": prepared.resolved_run_spec.spec_id
             == production.resolved_run_spec.spec_id,
         },
@@ -2774,7 +2801,7 @@ def qualify_advanced() -> dict[str, object]:
     )
     self_force_residual = _maximum_absolute(self_force.self_force - expected_self_force)
 
-    def evaluate_geometry(parameters):
+    def evaluate_geometry(parameters: Any) -> Any:
         mass, spin = parameters
         discriminant = mass * mass - spin * spin
         valid = (
@@ -2906,6 +2933,7 @@ def qualify_advanced() -> dict[str, object]:
         quadrature_tolerance=2.0e-6,
     )
     scri = BMSScriData(
+        # ty: ignore[invalid-argument-type]
         (0.0, 1.0),
         np.full((2, quadrature.direction_capacity), 2.0),
         np.zeros((2, quadrature.direction_capacity), dtype="complex128"),
@@ -2937,7 +2965,9 @@ def qualify_advanced() -> dict[str, object]:
         snapshot_token=0,
     )
     terminal_surface = SphericalSpectralSurface(
+        # ty: ignore[invalid-argument-type]
         np.asarray(((1.0 + 0.0j,),)),
+        # ty: ignore[invalid-argument-type]
         np.zeros(3),
         "qualification:unqualified-terminal-surface-plan",
     )
@@ -2947,7 +2977,9 @@ def qualify_advanced() -> dict[str, object]:
     )
     completed_history = CompletedSpacetimeHistory(
         event_times,
+        # ty: ignore[invalid-argument-type]
         *axes,
+        # ty: ignore[too-many-positional-arguments]
         history_geometry,
         completed=True,
         completion_id="qualification:completed-flat-history",

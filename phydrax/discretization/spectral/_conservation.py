@@ -460,9 +460,13 @@ class PreparedSpectralConservationDynamics(StrictModule):
         # Sources imply the projected-flux method over a tensor discretization, whose
         # dealiasing evaluation space is therefore tensor as well.
         pseudospectral = self.method.pseudospectral
-        assert pseudospectral is not None
+        if not (pseudospectral is not None):
+            raise RuntimeError("Internal invariant failed: pseudospectral is not None.")
         evaluation = pseudospectral.dealiasing.evaluation
-        assert isinstance(evaluation, TensorSpectralDiscretization)
+        if not (isinstance(evaluation, TensorSpectralDiscretization)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(evaluation, TensorSpectralDiscretization)."
+            )
         points = evaluation.points.reshape(
             evaluation.physical_shape + (len(evaluation.axes),)
         )

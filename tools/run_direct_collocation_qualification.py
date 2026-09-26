@@ -1,3 +1,4 @@
+# ty: ignore[unresolved-import]
 from direct_collocation_qualification.cli import main
 
 

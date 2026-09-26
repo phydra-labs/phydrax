@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -18,7 +20,7 @@ def _nonnormal_matrix() -> jax.Array:
     return jnp.asarray([[-1.0, 8.0, -2.0], [0.0, -2.0, 3.0], [0.0, 0.0, -4.0]])
 
 
-def test_taylor_exponential_matches_dense_reference_and_reuses_preparation():
+def test_taylor_exponential_matches_dense_reference_and_reuses_preparation() -> None:
     matrix = _nonnormal_matrix()
     operator = la.DenseLinearOperator(matrix, operator_id="taylor-nonnormal")
     policy = la.TaylorExponentialPolicy(error_tolerance=1e-10)
@@ -48,14 +50,14 @@ def test_taylor_exponential_matches_dense_reference_and_reuses_preparation():
     )
 
 
-def test_taylor_zero_rhs_jvp_is_full_exponential_action():
+def test_taylor_zero_rhs_jvp_is_full_exponential_action() -> None:
     matrix = _nonnormal_matrix()
     operator = la.DenseLinearOperator(matrix, operator_id="taylor-zero-jvp")
     policy = la.TaylorExponentialPolicy(error_tolerance=1e-11)
     tangent = jnp.asarray([0.5, -1.0, 2.0])
     scale = jnp.asarray(0.3)
 
-    def action(vector):
+    def action(vector: Any) -> Any:
         return la.matrix_exponential_action(
             operator,
             vector,
@@ -73,7 +75,7 @@ def test_taylor_zero_rhs_jvp_is_full_exponential_action():
     )
 
 
-def test_taylor_estimated_planning_requires_key_and_is_replayable():
+def test_taylor_estimated_planning_requires_key_and_is_replayable() -> None:
     matrix = _nonnormal_matrix()
     space = la.ArraySpace((3,), dtype=matrix.dtype)
     operator = la.FunctionLinearOperator(
@@ -105,7 +107,7 @@ def test_taylor_estimated_planning_requires_key_and_is_replayable():
     )
 
 
-def test_taylor_resource_refusal_is_explicit():
+def test_taylor_resource_refusal_is_explicit() -> None:
     matrix = _nonnormal_matrix()
     operator = la.DenseLinearOperator(matrix, operator_id="taylor-resource-refusal")
     policy = la.TaylorExponentialPolicy(
@@ -126,7 +128,7 @@ def test_taylor_resource_refusal_is_explicit():
     assert jnp.all(jnp.isnan(result.value))
 
 
-def test_augmented_exponential_phi_combination_matches_dense_block_reference():
+def test_augmented_exponential_phi_combination_matches_dense_block_reference() -> None:
     matrix = _nonnormal_matrix()
     operator = la.DenseLinearOperator(matrix, operator_id="augmented-phi")
     state = jnp.asarray([1.0, -0.5, 0.25])
@@ -154,7 +156,7 @@ def test_augmented_exponential_phi_combination_matches_dense_block_reference():
     assert jnp.allclose(result.value, expected, rtol=2e-9, atol=2e-10)
 
 
-def test_augmented_combination_zero_scale_and_taylor_route():
+def test_augmented_combination_zero_scale_and_taylor_route() -> None:
     matrix = _nonnormal_matrix()
     operator = la.DenseLinearOperator(matrix, operator_id="augmented-phi-taylor")
     state = jnp.asarray([1.0, -0.5, 0.25])
@@ -188,7 +190,7 @@ def test_augmented_combination_zero_scale_and_taylor_route():
     assert jnp.allclose(positive.value, expected, rtol=2e-7, atol=2e-8)
 
 
-def test_taylor_refresh_complex_scale_and_policy_boundaries():
+def test_taylor_refresh_complex_scale_and_policy_boundaries() -> None:
     matrix = _nonnormal_matrix()
     operator = la.DenseLinearOperator(matrix, operator_id="taylor-refresh")
     policy = la.TaylorExponentialPolicy(error_tolerance=1e-10)
@@ -214,7 +216,7 @@ def test_taylor_refresh_complex_scale_and_policy_boundaries():
         )
 
 
-def test_taylor_rhs_only_differentiates_only_the_right_hand_side():
+def test_taylor_rhs_only_differentiates_only_the_right_hand_side() -> None:
     vector = jnp.asarray([0.5, -1.0, 2.0])
     tangent = jnp.asarray([1.0, 0.25, -0.5])
     scale = jnp.asarray(0.2)
@@ -223,7 +225,7 @@ def test_taylor_rhs_only_differentiates_only_the_right_hand_side():
         differentiation=la.DifferentiationPolicy("rhs-only"),
     )
 
-    def action(parameter, right_hand_side):
+    def action(parameter: Any, right_hand_side: Any) -> Any:
         operator = la.DenseLinearOperator(
             parameter * _nonnormal_matrix(),
             operator_id="taylor-rhs-only",
@@ -252,7 +254,7 @@ def test_taylor_rhs_only_differentiates_only_the_right_hand_side():
     )
 
 
-def test_generated_taylor_thresholds_are_conservative_and_monotone():
+def test_generated_taylor_thresholds_are_conservative_and_monotone() -> None:
     from phydrax.linalg._generated_exponential_taylor_thresholds import (
         TAYLOR_THRESHOLDS,
     )

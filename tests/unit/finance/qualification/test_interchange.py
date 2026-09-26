@@ -50,7 +50,7 @@ def _timestamp(event: int, available: int, vintage: str) -> FinancialTimestamp:
     return FinancialTimestamp(event, event + 1, event + 2, available, vintage, policy)
 
 
-def test_market_records_round_trip_all_identity_bearing_children():
+def test_market_records_round_trip_all_identity_bearing_children() -> None:
     usd = Currency("USD", 2)
     key = QuoteKey("SYNTH-EQUITY-1", "close", venue="SYNTHETIC", currency=usd)
     lineage = DataLineage(
@@ -75,7 +75,7 @@ def test_market_records_round_trip_all_identity_bearing_children():
     assert reframed.batch_id == records.batch_id
 
 
-def test_finance_record_batch_is_primary_key_deterministic():
+def test_finance_record_batch_is_primary_key_deterministic() -> None:
     first = FinanceRecordBatch(
         "market-observation",
         ({"id": "b", "value": 2.0}, {"id": "a", "value": 1.0}),
@@ -90,7 +90,9 @@ def test_finance_record_batch_is_primary_key_deterministic():
     assert [record["id"] for record in first.to_records()] == ["a", "b"]
 
 
-def test_fpml_subset_round_trips_and_unknown_terms_refuse_without_partial_contract():
+def test_fpml_subset_round_trips_and_unknown_terms_refuse_without_partial_contract() -> (
+    None
+):
     imported = import_fpml_contract(_FPML)
     assert imported.accepted
     assert imported.contract_record()["contract_type"] == "fx-forward"

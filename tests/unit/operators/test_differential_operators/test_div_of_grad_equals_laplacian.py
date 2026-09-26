@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -11,13 +14,13 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.differential import div, grad, laplacian
 
 
-def test_div_grad_equals_laplacian_scalar_point():
+def test_div_grad_equals_laplacian_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2
 
     pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
@@ -26,13 +29,13 @@ def test_div_grad_equals_laplacian_scalar_point():
     assert jnp.allclose(out_divgrad, out_lap)
 
 
-def test_div_grad_equals_laplacian_vector_point():
+def test_div_grad_equals_laplacian_vector_point() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
     @geom.Function("x")
-    def f(x):
+    def f(x: Any) -> Any:
         return jnp.array([x[0] ** 2, x[1] ** 2])
 
     pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
@@ -41,14 +44,14 @@ def test_div_grad_equals_laplacian_vector_point():
     assert jnp.allclose(out_divgrad, out_lap)
 
 
-def test_div_grad_equals_laplacian_spacetime(sample_batch):
+def test_div_grad_equals_laplacian_spacetime(sample_batch: Any) -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
-    def f(x, t):
+    def f(x: Any, t: Any) -> Any:
         return x[0] ** 2 + x[1] ** 2 + t
 
     divgrad = div(grad(f, var="x"), var="x")

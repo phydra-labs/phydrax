@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -58,11 +61,11 @@ class RampAdapter(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        equation_form="ode",
-        domain_upper=jnp.inf,
-        voltage_current_gain=0.0,
-        ledger_valid=True,
-    ):
+        equation_form: Any = "ode",
+        domain_upper: Any = jnp.inf,
+        voltage_current_gain: Any = 0.0,
+        ledger_valid: Any = True,
+    ) -> None:
         self.model_id = f"test:ramp:{equation_form}"
         self.equation_form = equation_form
         self.observable_names = (
@@ -75,18 +78,22 @@ class RampAdapter(StrictModule, NonTrainableState):
         self.voltage_current_gain = float(voltage_current_gain)
         self.ledger_valid = bool(ledger_valid)
 
-    def prepare(self, /):
+    def prepare(self, /) -> Any:
         return self.model_id
 
-    def initial_state(self, prepared_model, parameters, initial_condition, /):
+    def initial_state(
+        self, prepared_model: Any, parameters: Any, initial_condition: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         del parameters
         return {"charge": jnp.asarray(initial_condition)}
 
-    def problem(self, prepared_model, initial_state, runtime_inputs, /):
+    def problem(
+        self, prepared_model: Any, initial_state: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
 
-        def drift(time, state, runtime):
+        def drift(time: Any, state: Any, runtime: Any) -> Any:
             return {
                 "charge": jnp.asarray(
                     (runtime.current(time, state["charge"]),),
@@ -103,7 +110,9 @@ class RampAdapter(StrictModule, NonTrainableState):
             problem_id=f"{self.model_id}:problem",
         )
 
-    def observe(self, prepared_model, times_s, states, runtime_inputs, /):
+    def observe(
+        self, prepared_model: Any, times_s: Any, states: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         charge = jnp.asarray(states["charge"])[..., 0]
         current = (
@@ -119,13 +128,15 @@ class RampAdapter(StrictModule, NonTrainableState):
             values, jnp.isfinite(charge) & (charge <= self.domain_upper)
         )
 
-    def ledger(self, prepared_model, native_solution, runtime_inputs, /):
+    def ledger(
+        self, prepared_model: Any, native_solution: Any, runtime_inputs: Any, /
+    ) -> Any:
         assert prepared_model == self.model_id
         del runtime_inputs
         return _ScalarLedger(jnp.asarray(self.ledger_valid))
 
 
-def _candidate(*, dae=False):
+def _candidate(*, dae: Any = False) -> Any:
     model_id = "test:battery:algebraic-voltage" if dae else "test:ramp:ode"
     support = SupportTuple(
         "battery.simulation",
@@ -141,7 +152,7 @@ def _candidate(*, dae=False):
 
 
 @pytest.fixture(autouse=True)
-def _register_synthetic_candidates(monkeypatch):
+def _register_synthetic_candidates(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         _qualification,
         "BATTERY_CANDIDATE_PROFILES",
@@ -159,8 +170,8 @@ class AlgebraicVoltageAdapter(StrictModule, NonTrainableState):
     observable_units: tuple[str, ...] = eqx.field(static=True, default=("V", "C"))
     native_guard: bool = eqx.field(static=True, default=False)
 
-    def prepare(self, /):
-        def residual(time, state, rate, runtime):
+    def prepare(self, /) -> Any:
+        def residual(time: Any, state: Any, rate: Any, runtime: Any) -> Any:
             current = runtime.current(time, state)
             return jnp.stack((rate[0] - current, state[1] - state[0] - 2.0 * current))
 
@@ -171,7 +182,7 @@ class AlgebraicVoltageAdapter(StrictModule, NonTrainableState):
             system_id="test:battery:algebraic-voltage",
         )
 
-    def native_guards(self, prepared_model, /):
+    def native_guards(self, prepared_model: Any, /) -> Any:
         del prepared_model
         if not self.native_guard:
             return ()
@@ -184,12 +195,16 @@ class AlgebraicVoltageAdapter(StrictModule, NonTrainableState):
             ),
         )
 
-    def initial_state(self, prepared_model, parameters, initial_condition, /):
+    def initial_state(
+        self, prepared_model: Any, parameters: Any, initial_condition: Any, /
+    ) -> Any:
         del prepared_model, parameters
         charge = jnp.asarray(initial_condition)
         return jnp.stack((charge, charge))
 
-    def problem(self, prepared_model, initial_state, runtime_inputs, /):
+    def problem(
+        self, prepared_model: Any, initial_state: Any, runtime_inputs: Any, /
+    ) -> Any:
         return DifferentialAlgebraicProblem(
             prepared_model,
             initial_state,
@@ -197,14 +212,18 @@ class AlgebraicVoltageAdapter(StrictModule, NonTrainableState):
             problem_id="test:battery:algebraic-voltage:problem",
         )
 
-    def observe(self, prepared_model, times_s, states, runtime_inputs, /):
+    def observe(
+        self, prepared_model: Any, times_s: Any, states: Any, runtime_inputs: Any, /
+    ) -> Any:
         del prepared_model, times_s, runtime_inputs
         return BatteryModelOutput(
             jnp.stack((states[..., 1], states[..., 0]), axis=-1),
             jnp.all(jnp.isfinite(states), axis=-1),
         )
 
-    def ledger(self, prepared_model, native_solution, runtime_inputs, /):
+    def ledger(
+        self, prepared_model: Any, native_solution: Any, runtime_inputs: Any, /
+    ) -> Any:
         del prepared_model, runtime_inputs
         defect = (
             native_solution.states[:, 1]
@@ -216,13 +235,16 @@ class AlgebraicVoltageAdapter(StrictModule, NonTrainableState):
         )
 
 
-def _dae_experiment(protocol, save_times, *, native_guard=False, adaptive=False):
+def _dae_experiment(
+    protocol: Any, save_times: Any, *, native_guard: Any = False, adaptive: Any = False
+) -> Any:
     adapter = AlgebraicVoltageAdapter(native_guard=native_guard)
     guard_ids = tuple(
         guard.guard_id for guard in adapter.native_guards(adapter.prepare())
     )
     profile, support = _candidate(dae=True)
     return BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         BatteryOutputPlan(("charge_c", "voltage_v", "current_a")),
@@ -238,7 +260,7 @@ def _dae_experiment(protocol, save_times, *, native_guard=False, adaptive=False)
     ).prepare()
 
 
-def _event_protocol(*, node_side="left"):
+def _event_protocol(*, node_side: Any = "left") -> Any:
     return BatteryProtocolPlan(
         (
             CurrentStepPlan(1.0),
@@ -251,9 +273,12 @@ def _event_protocol(*, node_side="left"):
     )
 
 
-def _experiment(protocol, solve_plan, *, model=None, save_times=None):
+def _experiment(
+    protocol: Any, solve_plan: Any, *, model: Any = None, save_times: Any = None
+) -> Any:
     profile, support = _candidate()
     return BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         RampAdapter() if model is None else model,
         protocol,
         BatteryOutputPlan(("voltage_v", "current_a", "temperature_k")),
@@ -268,8 +293,8 @@ def _experiment(protocol, solve_plan, *, model=None, save_times=None):
     )
 
 
-def _explicit_segmented_reference():
-    def first(time, state, args):
+def _explicit_segmented_reference() -> Any:
+    def first(time: Any, state: Any, args: Any) -> Any:
         del time, args
         return jnp.ones_like(state)
 
@@ -287,7 +312,7 @@ def _explicit_segmented_reference():
         dt0=0.8,
     )
 
-    def second(time, state, args):
+    def second(time: Any, state: Any, args: Any) -> Any:
         del time, args
         return -2.0 * jnp.ones_like(state)
 
@@ -307,7 +332,9 @@ def _explicit_segmented_reference():
     return jnp.concatenate((first_solution.states[:, 0], second_solution.states[1:, 0]))
 
 
-def test_adaptive_transition_clipping_matches_segments_and_localizes_later_guard():
+def test_adaptive_transition_clipping_matches_segments_and_localizes_later_guard() -> (
+    None
+):
     protocol = _event_protocol(node_side="left")
     solve_plan = BatteryDiffraxSolvePlan(
         solver=dfx.Tsit5(),
@@ -339,7 +366,7 @@ def test_adaptive_transition_clipping_matches_segments_and_localizes_later_guard
     assert np.all(np.isinf(np.asarray(result.outputs.times_s[5:])))
 
 
-def test_fixed_stepto_matches_guard_and_refuses_unaligned_transition():
+def test_fixed_stepto_matches_guard_and_refuses_unaligned_transition() -> None:
     protocol = _event_protocol()
     fixed = BatteryDiffraxSolvePlan(
         solver=dfx.Tsit5(),
@@ -361,7 +388,7 @@ def test_fixed_stepto_matches_guard_and_refuses_unaligned_transition():
         prepare_battery_experiment(_experiment(protocol, unaligned))
 
 
-def test_fixed_left_boundary_guards_use_global_observation_side():
+def test_fixed_left_boundary_guards_use_global_observation_side() -> None:
     protocol = BatteryProtocolPlan(
         (
             CurrentStepPlan(
@@ -400,8 +427,8 @@ def test_fixed_left_boundary_guards_use_global_observation_side():
 @pytest.mark.parametrize("fixed", (False, True))
 @pytest.mark.parametrize("threshold", (4.0, 4.5))
 def test_ode_initial_equality_or_violation_stops_without_a_positive_crossing(
-    fixed, threshold
-):
+    fixed: Any, threshold: Any
+) -> None:
     protocol = BatteryProtocolPlan(
         (CurrentStepPlan(1.0, stop_guards=(VoltageStopGuard("below"),)),)
     )
@@ -423,6 +450,7 @@ def test_ode_initial_equality_or_violation_stops_without_a_positive_crossing(
         .run(
             (),
             jnp.asarray((4.0,)),
+            # ty: ignore[invalid-argument-type]
             BatteryProtocolValues(protocol, (1.0,), (threshold,)),
         )
     )
@@ -436,7 +464,9 @@ def test_ode_initial_equality_or_violation_stops_without_a_positive_crossing(
 
 
 @pytest.mark.parametrize("threshold", (3.0, 3.5))
-def test_fixed_ode_restart_guard_uses_new_forcing_and_preserves_left_output(threshold):
+def test_fixed_ode_restart_guard_uses_new_forcing_and_preserves_left_output(
+    threshold: Any,
+) -> None:
     protocol = BatteryProtocolPlan(
         (
             CurrentStepPlan(1.0),
@@ -459,6 +489,7 @@ def test_fixed_ode_restart_guard_uses_new_forcing_and_preserves_left_output(thre
         .run(
             (),
             jnp.asarray((4.0,)),
+            # ty: ignore[invalid-argument-type]
             BatteryProtocolValues(protocol, (1.0, -1.0), (threshold,)),
         )
     )
@@ -481,13 +512,14 @@ def test_fixed_ode_restart_guard_uses_new_forcing_and_preserves_left_output(thre
     ),
 )
 def test_dae_transition_preserves_charge_and_reinitializes_voltage_and_rate(
-    node_side, boundary_voltage, boundary_current, adaptive
-):
+    node_side: Any, boundary_voltage: Any, boundary_current: Any, adaptive: Any
+) -> None:
     protocol = BatteryProtocolPlan(
         (CurrentStepPlan(1.0), RestStepPlan(1.0)),
         node_side=node_side,
     )
     prepared = _dae_experiment(protocol, (0.0, 0.5, 1.0, 1.5, 2.0), adaptive=adaptive)
+    # ty: ignore[invalid-argument-type]
     result = prepared.run((), jnp.asarray(4.0), BatteryProtocolValues(protocol, (1.0,)))
     assert bool(result.successful)
     np.testing.assert_allclose(
@@ -512,13 +544,14 @@ def test_dae_transition_preserves_charge_and_reinitializes_voltage_and_rate(
 
 
 @pytest.mark.parametrize("node_side", ("left", "right"))
-def test_dae_linspace_transition_roundoff_preserves_saved_outputs(node_side):
+def test_dae_linspace_transition_roundoff_preserves_saved_outputs(node_side: Any) -> None:
     protocol = BatteryProtocolPlan(
         (CurrentStepPlan(0.1), RestStepPlan(0.1)),
         node_side=node_side,
     )
     save_times = jnp.linspace(0.0, 0.2, 21)
     prepared = _dae_experiment(protocol, save_times)
+    # ty: ignore[invalid-argument-type]
     result = prepared.run((), jnp.asarray(4.0), BatteryProtocolValues(protocol, (1.0,)))
     assert bool(result.successful)
     np.testing.assert_array_equal(result.outputs.times_s, save_times)
@@ -540,7 +573,7 @@ def test_dae_linspace_transition_roundoff_preserves_saved_outputs(node_side):
     )
 
 
-def test_transition_normalization_retains_distinct_nearby_save_nodes():
+def test_transition_normalization_retains_distinct_nearby_save_nodes() -> None:
     protocol = BatteryProtocolPlan((CurrentStepPlan(0.1), RestStepPlan(0.1)))
     boundary = protocol.boundary_times_s[1]
     offset = 64.0 * np.finfo(boundary.dtype).eps * boundary
@@ -556,7 +589,7 @@ def test_transition_normalization_retains_distinct_nearby_save_nodes():
     )
 
 
-def test_dae_terminal_crossing_uses_native_success_with_invalid_suffix():
+def test_dae_terminal_crossing_uses_native_success_with_invalid_suffix() -> None:
     protocol = BatteryProtocolPlan(
         (
             CurrentStepPlan(1.0),
@@ -564,7 +597,10 @@ def test_dae_terminal_crossing_uses_native_success_with_invalid_suffix():
         )
     )
     result = _dae_experiment(protocol, np.arange(0.0, 3.25, 0.25)).run(
-        (), jnp.asarray(4.0), BatteryProtocolValues(protocol, (1.0, -1.0), (2.5,))
+        (),
+        jnp.asarray(4.0),
+        # ty: ignore[invalid-argument-type]
+        BatteryProtocolValues(protocol, (1.0, -1.0), (2.5,)),
     )
     assert bool(result.successful)
     assert bool(result.native_solution.successful)
@@ -579,7 +615,9 @@ def test_dae_terminal_crossing_uses_native_success_with_invalid_suffix():
 
 
 @pytest.mark.parametrize("adaptive", (False, True))
-def test_dae_initial_equality_terminates_without_crossing_derivative_or_steps(adaptive):
+def test_dae_initial_equality_terminates_without_crossing_derivative_or_steps(
+    adaptive: Any,
+) -> None:
     protocol = BatteryProtocolPlan(
         (
             CurrentStepPlan(1.0, stop_guards=(VoltageStopGuard("below"),)),
@@ -587,7 +625,10 @@ def test_dae_initial_equality_terminates_without_crossing_derivative_or_steps(ad
         )
     )
     result = _dae_experiment(protocol, (0.0, 0.5, 1.0, 1.5, 2.0), adaptive=adaptive).run(
-        (), jnp.asarray(4.0), BatteryProtocolValues(protocol, (1.0,), (6.0,))
+        (),
+        jnp.asarray(4.0),
+        # ty: ignore[invalid-argument-type]
+        BatteryProtocolValues(protocol, (1.0,), (6.0,)),
     )
     assert bool(result.successful)
     assert bool(result.termination.terminated)
@@ -603,9 +644,10 @@ def test_dae_initial_equality_terminates_without_crossing_derivative_or_steps(ad
     )
 
 
-def test_dae_model_guard_factory_localizes_a_native_terminal_event():
+def test_dae_model_guard_factory_localizes_a_native_terminal_event() -> None:
     protocol = BatteryProtocolPlan((CurrentStepPlan(2.0),))
     prepared = _dae_experiment(protocol, np.arange(0.0, 2.25, 0.25), native_guard=True)
+    # ty: ignore[invalid-argument-type]
     result = prepared.run((), jnp.asarray(4.0), BatteryProtocolValues(protocol, (1.0,)))
     assert bool(result.successful)
     assert result.termination.reason == prepared.native_guards[0].guard_id
@@ -613,7 +655,7 @@ def test_dae_model_guard_factory_localizes_a_native_terminal_event():
     np.testing.assert_allclose(result.outputs.values[6], (5.5, 7.5, 1.0), atol=1.0e-6)
 
 
-def test_dae_current_jump_equality_stops_after_preserving_the_left_output():
+def test_dae_current_jump_equality_stops_after_preserving_the_left_output() -> None:
     protocol = BatteryProtocolPlan(
         (
             CurrentStepPlan(1.0),
@@ -622,7 +664,10 @@ def test_dae_current_jump_equality_stops_after_preserving_the_left_output():
         node_side="left",
     )
     result = _dae_experiment(protocol, (0.0, 0.5, 1.0, 1.5, 2.0)).run(
-        (), jnp.asarray(4.0), BatteryProtocolValues(protocol, (1.0, -1.0), (3.0,))
+        (),
+        jnp.asarray(4.0),
+        # ty: ignore[invalid-argument-type]
+        BatteryProtocolValues(protocol, (1.0, -1.0), (3.0,)),
     )
     assert bool(result.successful)
     np.testing.assert_array_equal(result.termination.time_s, 1.0)
@@ -633,7 +678,7 @@ def test_dae_current_jump_equality_stops_after_preserving_the_left_output():
     assert not bool(jnp.any(result.outputs.valid[3:]))
 
 
-def test_finite_native_trajectory_fails_when_model_ledger_fails():
+def test_finite_native_trajectory_fails_when_model_ledger_fails() -> None:
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0),))
     result = (
         _experiment(
@@ -643,6 +688,7 @@ def test_finite_native_trajectory_fails_when_model_ledger_fails():
             save_times=(0.0, 0.5, 1.0),
         )
         .prepare()
+        # ty: ignore[invalid-argument-type]
         .run((), jnp.asarray((4.0,)), BatteryProtocolValues(protocol, (1.0,)))
     )
     assert bool(result.native_solution.backend_successful)
@@ -651,7 +697,7 @@ def test_finite_native_trajectory_fails_when_model_ledger_fails():
     assert not bool(result.successful)
 
 
-def test_domain_and_native_failures_are_distinct_fail_closed_statuses():
+def test_domain_and_native_failures_are_distinct_fail_closed_statuses() -> None:
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0), RestStepPlan(2.0)))
     values = BatteryProtocolValues(protocol, jnp.asarray((1.0,)))
     domain_plan = BatteryDiffraxSolvePlan(dt0=0.2)
@@ -676,7 +722,7 @@ def test_domain_and_native_failures_are_distinct_fail_closed_statuses():
     )
 
 
-def test_result_provenance_is_exactly_bound_to_preparation_and_candidate():
+def test_result_provenance_is_exactly_bound_to_preparation_and_candidate() -> None:
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0), RestStepPlan(2.0)))
     prepared = _experiment(
         protocol,
@@ -730,7 +776,7 @@ def test_result_provenance_is_exactly_bound_to_preparation_and_candidate():
     np.testing.assert_allclose(result.outputs.times_s, np.asarray((0.0, 3.0)))
 
 
-def test_unsupported_controller_and_outputs_are_refused_before_execution():
+def test_unsupported_controller_and_outputs_are_refused_before_execution() -> None:
     with pytest.raises(ValueError, match="adaptive controllers or explicit"):
         BatteryDiffraxSolvePlan(
             solver=dfx.Tsit5(),
@@ -740,6 +786,7 @@ def test_unsupported_controller_and_outputs_are_refused_before_execution():
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0),))
     profile, support = _candidate()
     plan = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         RampAdapter(),
         protocol,
         BatteryOutputPlan(("power_w",)),
@@ -752,10 +799,11 @@ def test_unsupported_controller_and_outputs_are_refused_before_execution():
         plan.prepare()
 
 
-def test_failed_active_dae_segment_invalidates_replay_derivatives():
+def test_failed_active_dae_segment_invalidates_replay_derivatives() -> None:
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0),))
     profile, support = _candidate(dae=True)
     prepared = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         AlgebraicVoltageAdapter(),
         protocol,
         BatteryOutputPlan(("charge_c", "voltage_v", "current_a")),
@@ -773,6 +821,7 @@ def test_failed_active_dae_segment_invalidates_replay_derivatives():
         profile,
         support,
     ).prepare()
+    # ty: ignore[invalid-argument-type]
     result = prepared.run((), jnp.asarray(4.0), BatteryProtocolValues(protocol, (1.0,)))
     assert bool(result.native_solution.initialization.valid)
     assert not bool(result.successful)

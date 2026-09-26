@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -21,7 +24,7 @@ from phydrax.applications.numerical_relativity._puncture import (
 from phydrax.metrix._adm_exchange import ADMGridGeometry
 
 
-def _pair(momentum=0.0):
+def _pair(momentum: Any = 0.0) -> Any:
     first = Puncture(
         0.45,
         (-0.6, 0.0, 0.0),
@@ -37,7 +40,7 @@ def _pair(momentum=0.0):
     return first, second
 
 
-def test_minkowski_fields_constraints_and_shared_adm_exchange_contract():
+def test_minkowski_fields_constraints_and_shared_adm_exchange_contract() -> None:
     points = jnp.asarray(((0.2, -0.3, 0.4), (1.0, 2.0, -1.0)))
     field = MinkowskiInitialData()
     data = field(points)
@@ -64,7 +67,7 @@ def test_minkowski_fields_constraints_and_shared_adm_exchange_contract():
     assert jnp.allclose(geometry.inverse_spatial_metric, jnp.eye(3))
 
 
-def test_isotropic_schwarzschild_single_hole_limit_and_adm_mass():
+def test_isotropic_schwarzschild_single_hole_limit_and_adm_mass() -> None:
     mass = 1.2
     field = IsotropicSchwarzschildInitialData(mass)
     point = jnp.asarray((4.0, 0.0, 0.0))
@@ -97,7 +100,7 @@ def test_isotropic_schwarzschild_single_hole_limit_and_adm_mass():
     assert jnp.allclose(charges.linear_momentum, 0.0, atol=1.0e-10)
 
 
-def test_nonspinning_kerr_schild_reduces_to_schwarzschild_kerr_schild():
+def test_nonspinning_kerr_schild_reduces_to_schwarzschild_kerr_schild() -> None:
     mass = 0.8
     radius = 3.0
     data = KerrSchildInitialData(mass)(jnp.asarray((radius, 0.0, 0.0)))
@@ -112,7 +115,7 @@ def test_nonspinning_kerr_schild_reduces_to_schwarzschild_kerr_schild():
     assert jnp.all(jnp.isfinite(data.extrinsic_curvature))
 
 
-def test_brill_lindquist_and_bowen_york_are_exchange_symmetric():
+def test_brill_lindquist_and_bowen_york_are_exchange_symmetric() -> None:
     pair = _pair(momentum=0.04)
     points = jnp.asarray(((0.0, 0.4, 0.2), (1.3, -0.5, 0.7)))
 
@@ -136,7 +139,7 @@ def test_brill_lindquist_and_bowen_york_are_exchange_symmetric():
     assert jnp.allclose(single_brill.spatial_metric, schwarzschild.spatial_metric)
 
 
-def test_two_puncture_tuning_derivative_predicate_is_a_dynamic_boolean_array():
+def test_two_puncture_tuning_derivative_predicate_is_a_dynamic_boolean_array() -> None:
     plan = TwoPunctureHamiltonianPlan(_pair(momentum=0.025), resolution=4)
     evidence = plan.tuning_evidence(jnp.zeros(plan.shape))
     dynamic, _ = eqx.partition(evidence, eqx.is_array)
@@ -147,7 +150,7 @@ def test_two_puncture_tuning_derivative_predicate_is_a_dynamic_boolean_array():
     assert not bool(evidence.derivative_valid)
 
 
-def test_matrix_free_two_puncture_newton_krylov_reduces_residual_and_restarts():
+def test_matrix_free_two_puncture_newton_krylov_reduces_residual_and_restarts() -> None:
     plan = TwoPunctureHamiltonianPlan(
         _pair(momentum=0.025),
         resolution=4,

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -5,12 +7,12 @@ import pytest
 import phydrax as phx
 
 
-def _units():
+def _units() -> Any:
     return phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
 
 
-def _surface(system, evaluator, provider_id):
-    def wrapped(positions, _cell):
+def _surface(system: Any, evaluator: Any, provider_id: Any) -> Any:
+    def wrapped(positions: Any, _cell: Any) -> Any:
         energy, forces = evaluator(jnp.asarray(positions))
         return phx.chemistry.PotentialEnergySurfaceEvaluation(
             energy,
@@ -30,14 +32,17 @@ def _surface(system, evaluator, provider_id):
     )
 
 
-def test_distance_constrained_lagrangian_modes_remove_one_internal_degree():
+def test_distance_constrained_lagrangian_modes_remove_one_internal_degree() -> None:
     units = _units()
     positions = np.asarray([[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]])
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [8, 1, 1],
         positions,
+        # ty: ignore[invalid-argument-type]
         [15.999, 1.008, 1.008],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[2, 3, 5],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -72,14 +77,17 @@ def test_distance_constrained_lagrangian_modes_remove_one_internal_degree():
     assert result.vibration.stationary_point is phx.chemistry.StationaryPointKind.MINIMUM
 
 
-def test_anchored_cartesian_restraint_removes_only_tangent_rigid_modes():
+def test_anchored_cartesian_restraint_removes_only_tangent_rigid_modes() -> None:
     units = _units()
     positions = np.asarray([[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]])
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [8, 1, 1],
         positions,
+        # ty: ignore[invalid-argument-type]
         [15.999, 1.008, 1.008],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[2, 3, 5],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -117,7 +125,7 @@ def test_anchored_cartesian_restraint_removes_only_tangent_rigid_modes():
     assert result.vibration.internal_mode_count == 3
 
 
-def test_named_constraint_constructors_share_zero_residual_convention():
+def test_named_constraint_constructors_share_zero_residual_convention() -> None:
     units = _units()
     positions = np.asarray(
         [
@@ -128,10 +136,13 @@ def test_named_constraint_constructors_share_zero_residual_convention():
         ]
     )
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1, 1],
         positions,
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0, 1.0],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[1, 2, 3, 4],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -162,13 +173,29 @@ def test_named_constraint_constructors_share_zero_residual_convention():
     np.testing.assert_allclose(constraints.residual(positions), 0.0, atol=1.0e-12)
 
 
-def test_climbing_image_neb_finds_double_well_saddle():
+def test_climbing_image_neb_finds_double_well_saddle() -> None:
     units = _units()
     reactant = phx.atomistic.AtomicStructure(
-        [1], [[-1.0, 0.0, 0.0]], [1.0], units.scale, particle_ids=[7]
+        # ty: ignore[invalid-argument-type]
+        [1],
+        # ty: ignore[invalid-argument-type]
+        [[-1.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        units.scale,
+        # ty: ignore[invalid-argument-type]
+        particle_ids=[7],
     )
     product = phx.atomistic.AtomicStructure(
-        [1], [[1.0, 0.0, 0.0]], [1.0], units.scale, particle_ids=[7]
+        # ty: ignore[invalid-argument-type]
+        [1],
+        # ty: ignore[invalid-argument-type]
+        [[1.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        units.scale,
+        # ty: ignore[invalid-argument-type]
+        particle_ids=[7],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
         reactant,
@@ -176,7 +203,7 @@ def test_climbing_image_neb_finds_double_well_saddle():
         molecule_ids=[0],
     )
 
-    def double_well(positions):
+    def double_well(positions: Any) -> Any:
         x, y, z = positions[0]
         energy = (x * x - 1.0) ** 2 + 0.5 * y * y + 0.5 * z * z
         forces = jnp.asarray([[-4.0 * x * (x * x - 1.0), -y, -z]])
@@ -204,11 +231,17 @@ def test_climbing_image_neb_finds_double_well_saddle():
         atol=1.0e-12,
     )
     saddle_vibration = phx.chemistry.VibrationalAnalysisResult(
+        # ty: ignore[invalid-argument-type]
         [-1.0],
+        # ty: ignore[invalid-argument-type]
         [-1.0],
+        # ty: ignore[invalid-argument-type]
         [-100.0],
+        # ty: ignore[invalid-argument-type]
         [True],
+        # ty: ignore[invalid-argument-type]
         [[[1.0], [0.0], [0.0]]],
+        # ty: ignore[invalid-argument-type]
         [1.0],
         external_mode_count=0,
         external_projection_residual=0.0,
@@ -222,15 +255,19 @@ def test_climbing_image_neb_finds_double_well_saddle():
     qualification = phx.chemistry.ReactionPathQualificationResult(
         path,
         saddle_vibration,
+        # ty: ignore[invalid-argument-type]
         [1.0],
         minimum_overlap=0.99,
     )
     assert bool(qualification.successful)
     transition_state = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1],
         path.transition_state_positions,
+        # ty: ignore[invalid-argument-type]
         [1.0],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[7],
     )
     irc = phx.chemistry.IntrinsicReactionCoordinatePlan(
@@ -239,28 +276,39 @@ def test_climbing_image_neb_finds_double_well_saddle():
         step_size=0.05,
         maximum_steps=50,
         force_tolerance=1.0e-8,
+        # ty: ignore[invalid-argument-type]
     ).run(transition_state, [[1.0, 0.0, 0.0]])
     assert bool(irc.successful)
     np.testing.assert_allclose(irc.forward[-1, 0, 0], 1.0, atol=1.0e-12)
     np.testing.assert_allclose(irc.reverse[-1, 0, 0], -1.0, atol=1.0e-12)
 
 
-def test_neb_masks_inactive_nan_padding_and_accepts_padded_endpoints():
+def test_neb_masks_inactive_nan_padding_and_accepts_padded_endpoints() -> None:
     units = _units()
     reactant = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 0],
+        # ty: ignore[invalid-argument-type]
         [[-1.0, 0.0, 0.0], [np.nan, np.nan, np.nan]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 0.0],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[71, 73],
+        # ty: ignore[invalid-argument-type]
         active_mask=[True, False],
     )
     product = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 0],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 0.0, 0.0], [np.nan, np.nan, np.nan]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 0.0],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[71, 73],
+        # ty: ignore[invalid-argument-type]
         active_mask=[True, False],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -269,7 +317,7 @@ def test_neb_masks_inactive_nan_padding_and_accepts_padded_endpoints():
         molecule_ids=[0, -1],
     )
 
-    def double_well(positions):
+    def double_well(positions: Any) -> Any:
         x = positions[0, 0]
         energy = (x * x - 1.0) ** 2
         forces = jnp.zeros_like(positions).at[0, 0].set(-4.0 * x * (x * x - 1.0))
@@ -292,13 +340,17 @@ def test_neb_masks_inactive_nan_padding_and_accepts_padded_endpoints():
     assert np.all(np.isfinite(np.asarray(path.neb_forces)[:, 0]))
 
 
-def test_subtractive_qmmm_energy_and_link_force_pullback_close_exactly():
+def test_subtractive_qmmm_energy_and_link_force_pullback_close_exactly() -> None:
     units = _units()
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[10, 20],
     )
     full_system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -312,7 +364,7 @@ def test_subtractive_qmmm_energy_and_link_force_pullback_close_exactly():
         spin_multiplicity=1,
     ).prepare()
 
-    def quadratic(scale):
+    def quadratic(scale: Any) -> Any:
         return lambda positions: (
             0.5 * scale * jnp.sum(positions**2),
             -scale * positions,
@@ -344,13 +396,17 @@ def test_subtractive_qmmm_energy_and_link_force_pullback_close_exactly():
     np.testing.assert_allclose(result.forces, finite_difference, atol=1.0e-6)
 
 
-def test_electrostatic_embedding_includes_point_charge_force_pullback():
+def test_electrostatic_embedding_includes_point_charge_force_pullback() -> None:
     units = _units()
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[31, 37],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -365,12 +421,12 @@ def test_electrostatic_embedding_includes_point_charge_force_pullback():
         boundary_bonds=[(31, 37)],
     ).prepare()
 
-    def zero_classical(positions):
+    def zero_classical(positions: Any) -> Any:
         return jnp.asarray(0.0), jnp.zeros_like(positions)
 
     classical = _surface(system, zero_classical, "partitioned-mm")
 
-    def embedded(region_positions, embedding):
+    def embedded(region_positions: Any, embedding: Any) -> Any:
         energy = 0.5 * jnp.sum(region_positions**2) + 0.5 * jnp.sum(
             embedding.positions**2
         )

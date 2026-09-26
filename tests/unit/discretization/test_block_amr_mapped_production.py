@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _topology_2d():
+def _topology_2d() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(1),
@@ -31,8 +34,8 @@ def _topology_2d():
     return phx.discretization.VariablePatchTopologyCompiler(plan).initial_topology()
 
 
-def test_high_order_mapped_metrics_close_and_satisfy_gcl():
-    def moving_map(point, time, args):
+def test_high_order_mapped_metrics_close_and_satisfy_gcl() -> None:
+    def moving_map(point: Any, time: Any, args: Any) -> Any:
         del args
         return jnp.asarray(((1.0 + 0.2 * time) * point[0], 3.0 * point[1]))
 
@@ -62,8 +65,8 @@ def test_high_order_mapped_metrics_close_and_satisfy_gcl():
     )
 
 
-def test_canonical_mapped_geometry_rejects_invalid_revision_values():
-    def identity(point, time, args):
+def test_canonical_mapped_geometry_rejects_invalid_revision_values() -> None:
+    def identity(point: Any, time: Any, args: Any) -> Any:
         del time, args
         return point
 
@@ -77,12 +80,12 @@ def test_canonical_mapped_geometry_rejects_invalid_revision_values():
             plan.evaluate(0.0, revision=revision)
 
 
-def test_nonconforming_mortar_uses_one_common_physical_surface():
-    def identity(point, time, args):
+def test_nonconforming_mortar_uses_one_common_physical_surface() -> None:
+    def identity(point: Any, time: Any, args: Any) -> Any:
         del time, args
         return point
 
-    def reverse_y(point, time, args):
+    def reverse_y(point: Any, time: Any, args: Any) -> Any:
         del time, args
         return jnp.asarray((point[0], 1.0 - point[1]))
 
@@ -109,8 +112,8 @@ def test_nonconforming_mortar_uses_one_common_physical_surface():
     )
 
 
-def test_nonconforming_mortar_flux_scatter_is_exactly_conservative():
-    def identity(point, time, args):
+def test_nonconforming_mortar_flux_scatter_is_exactly_conservative() -> None:
+    def identity(point: Any, time: Any, args: Any) -> Any:
         del time, args
         return point
 

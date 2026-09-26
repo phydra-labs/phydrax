@@ -108,7 +108,8 @@ def _physical_acceptance(
         return jnp.all(step.successful | ~step.attempted) & jnp.any(step.attempted)
     layout = kernel.lane_layout
     # Kernel preparation enables lane_parameters only for a non-None lane_layout.
-    assert layout is not None
+    if not (layout is not None):
+        raise RuntimeError("Internal invariant failed: layout is not None.")
     lanes = kernel_state.attempt_cursor.shape
     if case_shape != lanes or layout.kind == "item":
         raise ValueError(

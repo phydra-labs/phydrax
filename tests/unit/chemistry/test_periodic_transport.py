@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -24,7 +27,7 @@ _E = 1.602176634e-19
 _KB = 1.380649e-23
 
 
-def _two_level_kubo(shift=0.0):
+def _two_level_kubo(shift: Any = 0.0) -> Any:
     gap = 1.5 * _E
     temperature = 300.0
     velocity = 2.0e5
@@ -47,7 +50,7 @@ def _two_level_kubo(shift=0.0):
     )
 
 
-def test_kubo_separates_drude_and_regular_response_with_passivity_and_f_sum():
+def test_kubo_separates_drude_and_regular_response_with_passivity_and_f_sum() -> None:
     plan = _two_level_kubo()
     raw = plan.raw_transitions()
     gap_frequency = 1.5 * _E / 1.0545718176461565e-34
@@ -73,7 +76,7 @@ def test_kubo_separates_drude_and_regular_response_with_passivity_and_f_sum():
         )
 
 
-def test_kubo_is_energy_shift_invariant_and_drude_is_degenerate_gauge_invariant():
+def test_kubo_is_energy_shift_invariant_and_drude_is_degenerate_gauge_invariant() -> None:
     unshifted = _two_level_kubo().raw_transitions()
     shifted = _two_level_kubo(4.0 * _E).raw_transitions()
     assert jnp.allclose(unshifted.transition_factors, shifted.transition_factors)
@@ -93,15 +96,25 @@ def test_kubo_is_energy_shift_invariant_and_drude_is_degenerate_gauge_invariant(
         cell_volume_m3=1.0,
     )
     original = PeriodicKuboPlan(
-        energies, velocity, jnp.ones(1), rule, **common
+        energies,
+        velocity,
+        jnp.ones(1),
+        rule,
+        # ty: ignore[invalid-argument-type]
+        **common,
     ).raw_transitions()
     changed = PeriodicKuboPlan(
-        energies, rotated, jnp.ones(1), rule, **common
+        energies,
+        rotated,
+        jnp.ones(1),
+        rule,
+        # ty: ignore[invalid-argument-type]
+        **common,
     ).raw_transitions()
     assert jnp.allclose(original.drude_weight, changed.drude_weight)
 
 
-def test_collinear_spin_response_requires_commutator_closure():
+def test_collinear_spin_response_requires_commutator_closure() -> None:
     energies = jnp.asarray([[0.0, 2.0 * _E]])
     conserved = conserved_collinear_spin_evidence(
         energies,
@@ -121,7 +134,7 @@ def test_collinear_spin_response_requires_commutator_closure():
         require_conserved_collinear_spin(mixed)
 
 
-def _boltzmann_plan(tau, shift=0.0, *, rank_deficient=False):
+def _boltzmann_plan(tau: Any, shift: Any = 0.0, *, rank_deficient: Any = False) -> Any:
     energies = jnp.asarray(
         [
             [-0.05 * _E + shift, 0.08 * _E + shift],
@@ -147,7 +160,7 @@ def _boltzmann_plan(tau, shift=0.0, *, rank_deficient=False):
     )
 
 
-def test_constant_tau_boltzmann_scales_transport_and_obeys_onsager():
+def test_constant_tau_boltzmann_scales_transport_and_obeys_onsager() -> None:
     base = _boltzmann_plan(1.0e-14).evaluate()
     doubled = _boltzmann_plan(2.0e-14).evaluate()
 
@@ -166,7 +179,7 @@ def test_constant_tau_boltzmann_scales_transport_and_obeys_onsager():
     assert not base.evidence.relaxation_inferred_from_linewidth
 
 
-def test_boltzmann_is_energy_shift_invariant_and_refuses_missing_velocity_rank():
+def test_boltzmann_is_energy_shift_invariant_and_refuses_missing_velocity_rank() -> None:
     base = _boltzmann_plan(1.0e-14).evaluate()
     shifted = _boltzmann_plan(1.0e-14, shift=3.0 * _E).evaluate()
 

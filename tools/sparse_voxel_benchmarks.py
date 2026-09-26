@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -12,14 +13,14 @@ import numpy as np
 import phydrax as phx
 
 
-def _measure(function, *arguments):
+def _measure(function: Any, *arguments: Any) -> Any:
     started = time.perf_counter()
     value = function(*arguments)
     jax.block_until_ready(value)
     return value, time.perf_counter() - started
 
 
-def _case(depth: int, kind: str):
+def _case(depth: int, kind: str) -> Any:
     resolution = 1 << depth
     coordinates = np.stack(
         np.meshgrid(

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,7 +15,7 @@ import phydrax as phx
 _TARGET = 5.0
 
 
-def _population(final_states):
+def _population(final_states: Any) -> Any:
     finals = jnp.asarray(final_states)
     population_size = finals.shape[0]
     states = jnp.stack(
@@ -32,11 +35,11 @@ def _population(final_states):
     )
 
 
-def _initial_exponential(key, population_size):
+def _initial_exponential(key: Any, population_size: Any) -> Any:
     return _population(jr.exponential(key, (population_size,)))
 
 
-def _conditional_exponential_branch(population, request):
+def _conditional_exponential_branch(population: Any, request: Any) -> Any:
     innovations = jax.vmap(jr.exponential)(request.branch_keys)
     conditional_finals = _TARGET + request.level + innovations
     states = population.states.at[request.killed_indices, 1, 0].set(conditional_finals)
@@ -51,7 +54,7 @@ def _conditional_exponential_branch(population, request):
     )
 
 
-def test_adaptive_splitting_estimates_exponential_tail_and_tracks_genealogy():
+def test_adaptive_splitting_estimates_exponential_tail_and_tracks_genealogy() -> None:
     event = phx.stochastic.ThresholdCrossingEvent(
         lambda time, state: state[0],
         _TARGET,
@@ -90,7 +93,7 @@ def test_adaptive_splitting_estimates_exponential_tail_and_tracks_genealogy():
     assert jnp.all(branches[~killed] == -1)
 
 
-def test_adaptive_splitting_replicates_report_empirical_standard_error():
+def test_adaptive_splitting_replicates_report_empirical_standard_error() -> None:
     event = phx.stochastic.ThresholdCrossingEvent(
         lambda time, state: state[0],
         _TARGET,
@@ -121,7 +124,7 @@ def test_adaptive_splitting_replicates_report_empirical_standard_error():
     )
 
 
-def test_adaptive_splitting_reports_tied_population_extinction():
+def test_adaptive_splitting_reports_tied_population_extinction() -> None:
     event = phx.stochastic.ThresholdCrossingEvent(
         lambda time, state: state[0],
         1.0,
@@ -133,17 +136,18 @@ def test_adaptive_splitting_reports_tied_population_extinction():
         max_rounds=4,
     )
 
-    def initial_sampler(key, population_size):
+    def initial_sampler(key: Any, population_size: Any) -> Any:
         del key
         return _population(jnp.zeros((population_size,)))
 
-    def unreachable_branch(population, request):
+    def unreachable_branch(population: Any, request: Any) -> None:
         raise AssertionError("An extinct population must not request branching.")
 
     result = phx.integration.adaptive_multilevel_splitting(
         event,
         plan,
         initial_sampler=initial_sampler,
+        # ty: ignore[invalid-argument-type]
         branch_sampler=unreachable_branch,
         key=jr.key(53),
     )

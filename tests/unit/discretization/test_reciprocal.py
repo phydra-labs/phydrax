@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -11,7 +13,9 @@ from phydrax.discretization import (
 
 
 @pytest.mark.parametrize("rank,shape", [(1, (5,)), (2, (3, 4)), (3, (2, 3, 4))])
-def test_rank_aware_mesh_has_unique_points_and_normalized_weights(rank, shape):
+def test_rank_aware_mesh_has_unique_points_and_normalized_weights(
+    rank: Any, shape: Any
+) -> None:
     cell = PeriodicCell(np.eye(rank))
     mesh = ReciprocalMeshPlan.monkhorst_pack(cell, shape)
 
@@ -21,7 +25,8 @@ def test_rank_aware_mesh_has_unique_points_and_normalized_weights(rank, shape):
     assert np.unique(np.round(wrapped, 14), axis=0).shape[0] == wrapped.shape[0]
 
 
-def test_regular_connectivity_closes_oriented_wrapped_plaquettes():
+def test_regular_connectivity_closes_oriented_wrapped_plaquettes() -> None:
+    # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[2.0, 0.0], [0.5, 1.5]])
     mesh = ReciprocalMeshPlan.monkhorst_pack(cell, (3, 4))
     prepared = ReciprocalConnectivityPlan.regular(mesh).prepare()
@@ -41,10 +46,13 @@ def test_regular_connectivity_closes_oriented_wrapped_plaquettes():
     np.testing.assert_allclose(displacements[reverse], -displacements)
 
 
-def test_path_and_mesh_refuse_cell_identity_mismatch():
+def test_path_and_mesh_refuse_cell_identity_mismatch() -> None:
+    # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[1.0]])
+    # ty: ignore[invalid-argument-type]
     other = PeriodicCell([[2.0]])
     mesh = ReciprocalMeshPlan.monkhorst_pack(cell, (4,))
+    # ty: ignore[invalid-argument-type]
     path = ReciprocalPathPlan(cell, [[0.0], [0.5]])
 
     with pytest.raises(ValueError, match="different PeriodicCell"):
@@ -53,7 +61,7 @@ def test_path_and_mesh_refuse_cell_identity_mismatch():
         path.require_cell(other)
 
 
-def test_reciprocal_capacities_refuse_before_grid_allocation():
+def test_reciprocal_capacities_refuse_before_grid_allocation() -> None:
     cell = PeriodicCell(np.eye(3))
     with pytest.raises(ReciprocalResourceError, match="maximum_points"):
         ReciprocalMeshPlan.monkhorst_pack(cell, (20, 20, 20), maximum_points=100)

@@ -1,4 +1,5 @@
 import sys
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -9,7 +10,7 @@ import phydrax as phx
 opt = phx.optim
 
 
-def _problem():
+def _problem() -> Any:
     return opt.MinimizationProblem(
         lambda value, target: jnp.sum((value - target) ** 2),
         bounds=opt.Bounds(0.0, 1.0),
@@ -25,7 +26,7 @@ def _problem():
     )
 
 
-def _termination():
+def _termination() -> Any:
     return opt.OptimizationTermination(
         absolute_optimality=1e-6,
         relative_optimality=0.0,
@@ -33,7 +34,7 @@ def _termination():
     )
 
 
-def _compilation(target=None):
+def _compilation(target: Any = None) -> Any:
     target_ = jnp.asarray([0.25, 0.75]) if target is None else target
     return opt.compile_structured_minimization(
         _problem(),
@@ -42,7 +43,7 @@ def _compilation(target=None):
     )
 
 
-def test_structured_template_refresh_preserves_topology_and_changes_binding():
+def test_structured_template_refresh_preserves_topology_and_changes_binding() -> None:
     compilation = _compilation()
     prepared = compilation.prepared
     refreshed = opt.refresh_structured_nonlinear(
@@ -60,7 +61,7 @@ def test_structured_template_refresh_preserves_topology_and_changes_binding():
         )
 
 
-def test_structured_dense_method_returns_portable_warm_start():
+def test_structured_dense_method_returns_portable_warm_start() -> None:
     compilation = _compilation()
     method = opt.PrimalDualInteriorPoint(
         mode="dense-filter",
@@ -81,7 +82,7 @@ def test_structured_dense_method_returns_portable_warm_start():
     assert result.optimization.certificate is not None
 
 
-def test_sparse_augmented_method_uses_exact_structured_derivatives():
+def test_sparse_augmented_method_uses_exact_structured_derivatives() -> None:
     compilation = _compilation()
     method = opt.PrimalDualInteriorPoint(mode="sparse-augmented")
     result = opt.solve_structured_minimization(
@@ -99,7 +100,7 @@ def test_sparse_augmented_method_uses_exact_structured_derivatives():
     )
 
 
-def test_structured_pool_is_input_ordered_and_exactly_once():
+def test_structured_pool_is_input_ordered_and_exactly_once() -> None:
     compilation = _compilation()
     method = opt.PrimalDualInteriorPoint(mode="sparse-augmented")
     initial = jnp.asarray(
@@ -122,7 +123,7 @@ def test_structured_pool_is_input_ordered_and_exactly_once():
     assert all(bool(result.successful) for result in pooled.results)
 
 
-def test_kkt_plan_reports_executed_dense_form_and_reuses_factorization():
+def test_kkt_plan_reports_executed_dense_form_and_reuses_factorization() -> None:
     plan = opt.plan_kkt(2, 1)
     assert plan.form == "dense-augmented"
     factor = opt.factor_kkt(
@@ -144,7 +145,7 @@ def test_kkt_plan_reports_executed_dense_form_and_reuses_factorization():
     assert float(second.residual_norm) <= 1e-10
 
 
-def test_spineax_provider_is_explicit_and_reports_unreliable_zero_inertia():
+def test_spineax_provider_is_explicit_and_reports_unreliable_zero_inertia() -> None:
     capabilities = phx.linalg.sparse_provider_capabilities("spineax-cudss")
     assert capabilities.factorization == "ldlt"
     assert capabilities.numeric_refactorization
@@ -168,7 +169,7 @@ def test_spineax_provider_is_explicit_and_reports_unreliable_zero_inertia():
         )
 
 
-def test_structured_sensitivity_and_continuation_use_certified_kkt_state():
+def test_structured_sensitivity_and_continuation_use_certified_kkt_state() -> None:
     compilation = _compilation()
     result = opt.solve_structured_minimization(
         compilation,
@@ -196,7 +197,7 @@ def test_structured_sensitivity_and_continuation_use_certified_kkt_state():
     assert jnp.linalg.norm(seed.problem.residual(seed.state, 0.0, None)) < 1e-5
 
 
-def test_structured_state_design_recovers_all_at_once_kkt_solution():
+def test_structured_state_design_recovers_all_at_once_kkt_solution() -> None:
     problem = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: jnp.sum((state - 1.0) ** 2 + design**2),
@@ -221,7 +222,7 @@ def test_structured_state_design_recovers_all_at_once_kkt_solution():
     assert jnp.allclose(solved.design, jnp.asarray([0.5]), atol=2e-3)
 
 
-def test_structured_state_design_lowers_declared_vector_constraints():
+def test_structured_state_design_lowers_declared_vector_constraints() -> None:
     constraint = opt.StateDesignConstraint(
         lambda state, design, scale: jnp.stack((state[0] + design[0], scale * design[0])),
         lower=jnp.asarray((1.0, -jnp.inf)),
@@ -271,8 +272,8 @@ def test_structured_state_design_lowers_declared_vector_constraints():
     ],
 )
 def test_bound_form_certificate_splits_two_sided_net_duals_but_rejects_one_sided_wrong_signs(
-    lower, upper, point, multiplier, valid
-):
+    lower: Any, upper: Any, point: Any, multiplier: Any, valid: Any
+) -> None:
     coordinates = jnp.asarray([point])
     constraints = lambda value, _: value
     space = phx.linalg.ArraySpace((1,), dtype=coordinates.dtype)
@@ -289,9 +290,13 @@ def test_bound_form_certificate_splits_two_sided_net_duals_but_rejects_one_sided
         lambda value, _: -multiplier * value[0],
         constraints,
         jacobian,
+        # ty: ignore[invalid-argument-type]
         variable_lower=[-jnp.inf],
+        # ty: ignore[invalid-argument-type]
         variable_upper=[jnp.inf],
+        # ty: ignore[invalid-argument-type]
         constraint_lower=[lower],
+        # ty: ignore[invalid-argument-type]
         constraint_upper=[upper],
         constraint_sources=("physical-range",),
         program_id="bound-form-dual-certificate",
@@ -313,7 +318,7 @@ def test_bound_form_certificate_splits_two_sided_net_duals_but_rejects_one_sided
         assert certificate.dual_feasibility > 0.0
 
 
-def test_dense_structured_route_rejects_unconsumed_dual_warm_start():
+def test_dense_structured_route_rejects_unconsumed_dual_warm_start() -> None:
     compilation = _compilation()
     dense = opt.PrimalDualInteriorPoint(mode="dense-filter", max_dense_dimension=32)
     solved = opt.solve_structured_minimization(
@@ -332,7 +337,7 @@ def test_dense_structured_route_rejects_unconsumed_dual_warm_start():
         )
 
 
-def test_structured_sensitivity_rejects_same_template_different_numeric_binding():
+def test_structured_sensitivity_rejects_same_template_different_numeric_binding() -> None:
     compilation = _compilation()
     solved = opt.solve_structured_minimization(
         compilation,
@@ -361,7 +366,7 @@ def test_structured_sensitivity_rejects_same_template_different_numeric_binding(
         )
 
 
-def test_sparse_structured_ipm_honors_relative_tolerance_and_evaluation_limit():
+def test_sparse_structured_ipm_honors_relative_tolerance_and_evaluation_limit() -> None:
     compilation = _compilation()
     method = opt.PrimalDualInteriorPoint(mode="sparse-augmented")
     relative = opt.solve_structured_minimization(
@@ -391,7 +396,7 @@ def test_sparse_structured_ipm_honors_relative_tolerance_and_evaluation_limit():
     assert int(exhausted.structured.work.backtracking_evaluations) == 0
 
 
-def test_sparse_structured_ipm_counts_each_attempted_line_search_trial():
+def test_sparse_structured_ipm_counts_each_attempted_line_search_trial() -> None:
     compilation = _compilation()
     result = opt.solve_structured_minimization(
         compilation,

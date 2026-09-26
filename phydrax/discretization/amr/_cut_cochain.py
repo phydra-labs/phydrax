@@ -77,7 +77,10 @@ class CutCellCochainPlan(StrictModule, NonTrainableState):
         )
         connectivity = self.complex.mesh.connectivity
         # Cut-complex meshes are built by CellMesh.from_polyhedra.
-        assert isinstance(connectivity, PolyhedralConnectivity)
+        if not (isinstance(connectivity, PolyhedralConnectivity)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(connectivity, PolyhedralConnectivity)."
+            )
         coordinates = np.asarray(self.complex.mesh.coordinates, dtype=np.float64)
         edges = np.asarray(connectivity.edges, dtype=np.int32)
         edge_centers = np.mean(coordinates[edges], axis=1)

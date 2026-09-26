@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _hydrodynamics():
+def _hydrodynamics() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),
@@ -34,7 +37,7 @@ def _hydrodynamics():
     return hydro, continuation
 
 
-def _body(*, moving=True, modal=False, drag=0.0):
+def _body(*, moving: Any = True, modal: Any = False, drag: Any = 0.0) -> Any:
     markers = jnp.asarray(
         (
             (-0.1, 0.0, 0.0),
@@ -54,14 +57,17 @@ def _body(*, moving=True, modal=False, drag=0.0):
         moving=moving,
         viscous_drag=drag,
         modal_basis=basis,
+        # ty: ignore[invalid-argument-type]
         modal_mass=None if not modal else (1.0,),
+        # ty: ignore[invalid-argument-type]
         modal_stiffness=None if not modal else (2.0,),
+        # ty: ignore[invalid-argument-type]
         modal_damping=None if not modal else (0.1,),
         tolerance=1.0e-6,
     )
 
 
-def test_mapped_marker_transfer_is_adjoint():
+def test_mapped_marker_transfer_is_adjoint() -> None:
     hydro, continuation = _hydrodynamics()
     view = hydro.view(continuation.state)
     body_plan = _body(moving=False)
@@ -75,7 +81,7 @@ def test_mapped_marker_transfer_is_adjoint():
     assert jnp.abs(evidence.adjoint_defect) <= 1.0e-6
 
 
-def test_fixed_and_moving_rigid_body_constraints_close():
+def test_fixed_and_moving_rigid_body_constraints_close() -> None:
     hydro, continuation = _hydrodynamics()
     view = hydro.view(continuation.state)
     for moving in (False, True):
@@ -98,7 +104,7 @@ def test_fixed_and_moving_rigid_body_constraints_close():
         assert jnp.isfinite(evidence.viscous_dissipation)
 
 
-def test_modal_hydroelastic_state_advances_with_finite_work():
+def test_modal_hydroelastic_state_advances_with_finite_work() -> None:
     hydro, continuation = _hydrodynamics()
     body_plan = _body(moving=True, modal=True)
     body = body_plan.initial_state(position=(2.0, 2.0, -0.5))

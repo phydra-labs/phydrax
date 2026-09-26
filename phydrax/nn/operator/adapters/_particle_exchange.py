@@ -164,8 +164,7 @@ class PairwiseExchangeBindingPlan(StrictModule, NonTrainableState):
         kind = parse(kind, PairwiseExchangeKind, "exchange_kind")
         if not artifact or not source or not target or not query:
             raise ValueError("Pairwise exchange binding identities must be non-empty.")
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown particle accumulation policy.")
+        accumulation = parse(accumulation, ParticleAccumulation, "accumulation")
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("conservation_tolerance must be finite and nonnegative.")
         self.feature_schema = feature_schema

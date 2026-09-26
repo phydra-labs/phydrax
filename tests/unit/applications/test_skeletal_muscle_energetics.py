@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +18,7 @@ from phydrax.applications.skeletal_muscle.energetics import (
 )
 
 
-def _plan(mass=(0.5, 1.0)):
+def _plan(mass: Any = (0.5, 1.0)) -> Any:
     return UchidaUmberger2010Plan(
         UchidaUmberger2010Parameters(
             jnp.asarray(mass),
@@ -27,7 +30,7 @@ def _plan(mass=(0.5, 1.0)):
     )
 
 
-def _scalar_plan(*, minimum_heat_rate=1.0):
+def _scalar_plan(*, minimum_heat_rate: Any = 1.0) -> Any:
     return UchidaUmberger2010Plan(
         UchidaUmberger2010Parameters(
             jnp.asarray((1.0,)),
@@ -40,7 +43,7 @@ def _scalar_plan(*, minimum_heat_rate=1.0):
     )
 
 
-def test_zero_activity_uses_declared_heat_floor_and_mass_scaling():
+def test_zero_activity_uses_declared_heat_floor_and_mass_scaling() -> None:
     plan = _plan()
     zeros = jnp.zeros(2)
     result = plan.evaluate(
@@ -58,10 +61,10 @@ def test_zero_activity_uses_declared_heat_floor_and_mass_scaling():
     assert bool(jnp.all(result.evidence.heat_floor_active))
 
 
-def test_zero_excitation_has_a_finite_gradient_with_nonzero_activation():
+def test_zero_excitation_has_a_finite_gradient_with_nonzero_activation() -> None:
     plan = _scalar_plan()
 
-    def power(excitation):
+    def power(excitation: Any) -> Any:
         return plan.evaluate(
             jnp.asarray((excitation,)),
             jnp.asarray((0.4,)),
@@ -83,7 +86,7 @@ def test_zero_excitation_has_a_finite_gradient_with_nonzero_activation():
     assert not bool(result.evidence.branch_smooth)
 
 
-def test_shortening_work_and_derived_lengthening_correction_are_explicit():
+def test_shortening_work_and_derived_lengthening_correction_are_explicit() -> None:
     plan = _plan()
     excitation = jnp.asarray((0.8, 0.8))
     activation = jnp.asarray((0.7, 0.7))
@@ -129,7 +132,7 @@ def test_shortening_work_and_derived_lengthening_correction_are_explicit():
     assert corrected_energy[1] == 0.0
 
 
-def test_energy_integral_jit_and_local_parameter_derivative():
+def test_energy_integral_jit_and_local_parameter_derivative() -> None:
     plan = _plan()
     excitation = jnp.asarray((0.75, 0.65))
     activation = jnp.asarray((0.6, 0.55))
@@ -180,26 +183,28 @@ def test_energy_integral_jit_and_local_parameter_derivative():
         ((0.0, 1.0), ((1.0,), (-1.0,)), "finite and non-negative"),
     ),
 )
-def test_energy_integral_rejects_invalid_physical_inputs(time, power, message):
+def test_energy_integral_rejects_invalid_physical_inputs(
+    time: Any, power: Any, message: Any
+) -> None:
     compiled_integral = eqx.filter_jit(integrate_metabolic_energy_joule)
     with pytest.raises((ValueError, RuntimeError), match=message):
         invalid = compiled_integral(jnp.asarray(time), jnp.asarray(power))
         jax.block_until_ready(invalid)
 
 
-def test_branch_smooth_rejects_every_piecewise_surface():
+def test_branch_smooth_rejects_every_piecewise_surface() -> None:
     plan = _scalar_plan()
 
     def evaluate(
         *,
-        excitation=0.8,
-        activation=0.7,
-        force=10.0,
-        force_length=0.9,
-        length=0.095,
-        velocity=-0.01,
-        selected_plan=plan,
-    ):
+        excitation: Any = 0.8,
+        activation: Any = 0.7,
+        force: Any = 10.0,
+        force_length: Any = 0.9,
+        length: Any = 0.095,
+        velocity: Any = -0.01,
+        selected_plan: Any = plan,
+    ) -> Any:
         return selected_plan.evaluate(
             jnp.asarray((excitation,)),
             jnp.asarray((activation,)),
@@ -249,7 +254,7 @@ def test_branch_smooth_rejects_every_piecewise_surface():
     assert all(not bool(result.evidence.branch_smooth) for result in surfaces)
 
 
-def test_invalid_physical_input_fails_evidence_without_fabricated_success():
+def test_invalid_physical_input_fails_evidence_without_fabricated_success() -> None:
     plan = _plan()
     result = plan.evaluate(
         jnp.asarray((1.2, 0.5)),

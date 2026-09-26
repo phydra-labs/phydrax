@@ -4,6 +4,8 @@
 
 """Advance one atomic nondistributed reactive CFD-DEM macro window."""
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -116,7 +118,7 @@ boundary = phx.equations.ParticleTransportBoundary(
 )
 
 
-def sample(fluid_state):
+def sample(fluid_state: Any) -> Any:
     return phx.solver.ReactiveFluidFields(
         jnp.zeros((1, 2)),
         jnp.ones((1,)),
@@ -127,7 +129,9 @@ def sample(fluid_state):
     )
 
 
-def update(fluid, momentum, energy, species_source, step_size):
+def update(
+    fluid: Any, momentum: Any, energy: Any, species_source: Any, step_size: Any
+) -> Any:
     del momentum, step_size
     return fluid[0] + energy, fluid[1] + species_source
 

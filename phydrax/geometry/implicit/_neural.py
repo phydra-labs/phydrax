@@ -365,7 +365,10 @@ class _NeuralImplicitKernel(GeometryKernel):
         error = self.certificate.evaluation_error
         lipschitz = self.certificate.lipschitz_upper_bound
         # The neural certifier always records both bounds on the kernel certificate.
-        assert error is not None and lipschitz is not None
+        if not (error is not None and lipschitz is not None):
+            raise RuntimeError(
+                "Internal invariant failed: error is not None and lipschitz is not None."
+            )
         interior = _evaluate_network(network, self.interior_points, dimension)
         exterior = _evaluate_network(network, self.exterior_points, dimension)
         clearance = _evaluate_network(network, self.clearance_points, dimension)

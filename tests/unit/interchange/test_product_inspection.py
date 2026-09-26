@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -10,7 +13,7 @@ from phydrax.applications.two_phase_flow._io import two_phase_inspection_frames
 from phydrax.equations._flip_inspection import flip_inspection_frames
 
 
-def _two_phase_case():
+def _two_phase_case() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),
@@ -40,7 +43,7 @@ def _two_phase_case():
     )
 
 
-def test_two_phase_host_inspection_keeps_candidate_and_rollback_distinct():
+def test_two_phase_host_inspection_keeps_candidate_and_rollback_distinct() -> None:
     two_phase, candidate_state, accepted_state = _two_phase_case()
     rejected = phx.solver.FixedStepResult(
         candidate_state,
@@ -89,7 +92,7 @@ def test_two_phase_host_inspection_keeps_candidate_and_rollback_distinct():
     )
 
 
-def _flip_case():
+def _flip_case() -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(8) for _ in range(2)),
         axis_names=("x", "y"),
@@ -119,7 +122,7 @@ def _flip_case():
     return finite_volume, particles, active, compiled, state
 
 
-def test_flip_host_inspection_preserves_capacity_masks_and_face_layouts():
+def test_flip_host_inspection_preserves_capacity_masks_and_face_layouts() -> None:
     finite_volume, particles, active, compiled, state = _flip_case()
     result = compiled.step_detailed(state, jnp.asarray(1.0e-4))
 

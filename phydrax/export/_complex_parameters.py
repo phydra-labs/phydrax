@@ -482,7 +482,8 @@ def _import_complex_linear(
     if layer_bias_real is not None:
         layer_bias_imag = layer.bias_imag
         # Construction sets both bias components or neither.
-        assert layer_bias_imag is not None
+        if not (layer_bias_imag is not None):
+            raise RuntimeError("Internal invariant failed: layer_bias_imag is not None.")
         bias_real, bias_imag = _import_pair(
             entries[f"{prefix}bias"],
             layer_bias_real,
@@ -531,7 +532,8 @@ def _import_low_rank(
     if layer_bias_real is not None:
         layer_bias_imag = layer.bias_imag
         # Construction sets both bias components or neither.
-        assert layer_bias_imag is not None
+        if not (layer_bias_imag is not None):
+            raise RuntimeError("Internal invariant failed: layer_bias_imag is not None.")
         bias_real, bias_imag = _import_pair(
             entries[f"{prefix}bias"],
             layer_bias_real,

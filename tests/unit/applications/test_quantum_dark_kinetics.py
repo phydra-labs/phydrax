@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -28,7 +31,7 @@ from phydrax.metrix import (
 )
 
 
-def _units_and_frame():
+def _units_and_frame() -> Any:
     scale = RelativityScaleContract(DimensionalScaleContract.si(), 1, 1, 1, 1)
     units = RelativisticUnitContract(
         scale, RelativityConvention(metric_signature="mostly_minus")
@@ -71,7 +74,7 @@ def _units_and_frame():
     return units, frame
 
 
-def _collision(time_unit_id, statistics=(1,)):
+def _collision(time_unit_id: Any, statistics: Any = (1,)) -> Any:
     return UehlingUhlenbeckPlan(
         jnp.asarray(statistics, dtype=jnp.int8),
         jnp.ones((len(statistics), 1)),
@@ -85,7 +88,7 @@ def _collision(time_unit_id, statistics=(1,)):
     )
 
 
-def _plan(*, coupling=True, threshold=0.5):
+def _plan(*, coupling: Any = True, threshold: Any = 0.5) -> Any:
     units, frame = _units_and_frame()
     species = (
         DarkSectorSpeciesPlan(
@@ -117,7 +120,7 @@ def _plan(*, coupling=True, threshold=0.5):
     )
 
 
-def test_state_has_explicit_support_units_frame_and_separate_condensate():
+def test_state_has_explicit_support_units_frame_and_separate_condensate() -> None:
     plan = _plan()
     state = plan.initialize(
         jnp.asarray([[[0.4], [0.0]]]),
@@ -136,7 +139,7 @@ def test_state_has_explicit_support_units_frame_and_separate_condensate():
     assert state.species_plan_ids == (plan.species[0].species_plan_id,)
 
 
-def test_qualified_condensate_transition_preserves_number_and_is_reported():
+def test_qualified_condensate_transition_preserves_number_and_is_reported() -> None:
     plan = _plan()
     state = plan.initialize(
         jnp.asarray([[[0.8]]]),
@@ -155,7 +158,7 @@ def test_qualified_condensate_transition_preserves_number_and_is_reported():
     assert result.evidence.qualification_id == "condensate-reference-evidence"
 
 
-def test_condensation_without_qualified_coupling_is_refused_and_rolled_back():
+def test_condensation_without_qualified_coupling_is_refused_and_rolled_back() -> None:
     plan = _plan(coupling=False)
     state = plan.initialize(
         jnp.asarray([[[0.8]]]),
@@ -170,7 +173,7 @@ def test_condensation_without_qualified_coupling_is_refused_and_rolled_back():
     np.testing.assert_array_equal(result.accepted_state.occupancy, state.occupancy)
 
 
-def test_equilibrium_helper_keeps_be_fd_and_classical_conventions_distinct():
+def test_equilibrium_helper_keeps_be_fd_and_classical_conventions_distinct() -> None:
     units, _ = _units_and_frame()
     energy = jnp.asarray(((2.0,), (2.0,), (2.0,)))
     values = equilibrium_occupancy(

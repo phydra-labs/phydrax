@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -9,14 +12,14 @@ import numpy as np
 import phydrax as phx
 
 
-def _cell_grid(points, *, dimension=1):
+def _cell_grid(points: Any, *, dimension: Any = 1) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(points) for _ in range(dimension)),
         axis_names=tuple("xyz"[:dimension]),
     ).prepare(jnp.asarray([[0.0] * dimension, [1.0] * dimension]))
 
 
-def test_cell_restriction_is_conservative_and_both_transfers_preserve_constants():
+def test_cell_restriction_is_conservative_and_both_transfers_preserve_constants() -> None:
     fine = _cell_grid(16, dimension=2)
     coarse = _cell_grid(8, dimension=2)
     transfer = phx.discretization.StructuredTransferPlan(fine, coarse)
@@ -29,6 +32,7 @@ def test_cell_restriction_is_conservative_and_both_transfers_preserve_constants(
     prolonged_constant = prolongation.mv(jnp.ones(coarse.shape))
 
     assert transfer.report.passed
+    # ty: ignore[unsupported-operator]
     assert transfer.report.conservation_residual < 1e-12
     np.testing.assert_allclose(
         jnp.sum(fine.quadrature_weights * field),
@@ -39,7 +43,7 @@ def test_cell_restriction_is_conservative_and_both_transfers_preserve_constants(
     np.testing.assert_allclose(prolonged_constant, 1.0, rtol=0.0, atol=1e-14)
 
 
-def test_nodal_transfer_injects_nested_nodes_and_linearly_interpolates():
+def test_nodal_transfer_injects_nested_nodes_and_linearly_interpolates() -> None:
     fine = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(17),),
         axis_names=("x",),
@@ -50,7 +54,9 @@ def test_nodal_transfer_injects_nested_nodes_and_linearly_interpolates():
     ).prepare(jnp.asarray([[0.0], [1.0]]))
     transfer = phx.discretization.StructuredTransferPlan(fine, coarse)
     restriction, prolongation = transfer.prepare(
+        # ty: ignore[invalid-argument-type]
         fine.field_space("fine").vector_space,
+        # ty: ignore[invalid-argument-type]
         coarse.field_space("coarse").vector_space,
     )
     fine_linear = 2.0 * fine.axes[0].nodes - 0.3
@@ -70,11 +76,14 @@ def test_nodal_transfer_injects_nested_nodes_and_linearly_interpolates():
     )
 
 
-def _prepared_multigrid(points, *, dimension=1, coefficient=1.0):
+def _prepared_multigrid(
+    points: Any, *, dimension: Any = 1, coefficient: Any = 1.0
+) -> Any:
     grid = _cell_grid(points, dimension=dimension)
     boundaries = {axis: ("dirichlet", "dirichlet") for axis in grid.axis_names}
     diffusion = phx.discretization.ConservativeDiffusionPlan(
         grid,
+        # ty: ignore[invalid-argument-type]
         boundaries=boundaries,
     ).prepare(coefficient)
     return phx.discretization.StructuredMultigridPlan(
@@ -85,7 +94,7 @@ def _prepared_multigrid(points, *, dimension=1, coefficient=1.0):
     ).prepare()
 
 
-def test_structured_v_cycle_has_resolution_independent_convergence_factor():
+def test_structured_v_cycle_has_resolution_independent_convergence_factor() -> None:
     factors = []
     for points in (32, 64, 128):
         multigrid = _prepared_multigrid(points)
@@ -105,7 +114,9 @@ def test_structured_v_cycle_has_resolution_independent_convergence_factor():
     assert max(factors) < 0.2
 
 
-def test_variable_coefficient_two_dimensional_hierarchy_is_jittable_and_contracts_residual():
+def test_variable_coefficient_two_dimensional_hierarchy_is_jittable_and_contracts_residual() -> (
+    None
+):
     grid = _cell_grid(32, dimension=2)
     x = grid.axes[0].nodes[:, None]
     coefficient = jnp.where(x < 0.5, 1.0, 20.0)
@@ -113,6 +124,7 @@ def test_variable_coefficient_two_dimensional_hierarchy_is_jittable_and_contract
     boundaries = {axis: ("dirichlet", "dirichlet") for axis in grid.axis_names}
     diffusion = phx.discretization.ConservativeDiffusionPlan(
         grid,
+        # ty: ignore[invalid-argument-type]
         boundaries=boundaries,
     ).prepare(coefficient)
     multigrid = phx.discretization.StructuredMultigridPlan(
@@ -132,7 +144,7 @@ def test_variable_coefficient_two_dimensional_hierarchy_is_jittable_and_contract
     assert after < 0.35 * before
 
 
-def test_all_neumann_coarse_pseudoinverse_handles_compatible_nullspace_rhs():
+def test_all_neumann_coarse_pseudoinverse_handles_compatible_nullspace_rhs() -> None:
     grid = _cell_grid(64)
     diffusion = phx.discretization.ConservativeDiffusionPlan(grid).prepare(1.0)
     multigrid = phx.discretization.StructuredMultigridPlan(

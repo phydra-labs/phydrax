@@ -242,8 +242,7 @@ def _validate_graph_classification_case_arrays(
     *,
     require_boolean: bool = False,
 ) -> tuple[Array, Array]:
-    if kind not in ("nodes", "edges", "globals"):
-        raise ValueError("component_kind must be 'nodes', 'edges', or 'globals'.")
+    kind = parse(kind, GraphComponentKind, "kind")
     cases = _classification_case_arrays(
         values,
         domain.size,
@@ -288,8 +287,7 @@ def _validate_graph_trajectory_classification_case_arrays(
     *,
     require_boolean: bool = False,
 ) -> tuple[Array, Array, Array, Array]:
-    if kind not in ("nodes", "edges", "globals"):
-        raise ValueError("component_kind must be 'nodes', 'edges', or 'globals'.")
+    kind = parse(kind, GraphComponentKind, "kind")
     cases = _classification_case_arrays(
         values,
         domain.size,

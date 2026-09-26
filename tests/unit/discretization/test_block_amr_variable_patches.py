@@ -2,20 +2,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _grid(*, periodic=False):
+def _grid(*, periodic: Any = False) -> Any:
     return phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=periodic),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def _plan(*, periodic=False):
+def _plan(*, periodic: Any = False) -> Any:
     wide = phx.discretization.PatchShapeSignature((4,), halo_width=1)
     narrow = phx.discretization.PatchShapeSignature((2,), halo_width=1)
     return phx.discretization.VariablePatchHierarchyPlan(
@@ -43,7 +46,7 @@ def _plan(*, periodic=False):
     )
 
 
-def _tags(plan, *, first=(), second=()):
+def _tags(plan: Any, *, first: Any = (), second: Any = ()) -> Any:
     level = plan.levels[0]
     wide = jnp.zeros(
         (level.buckets[0].lane_capacity,) + level.buckets[0].signature.envelope_shape,
@@ -60,7 +63,7 @@ def _tags(plan, *, first=(), second=()):
     return ((wide, narrow),)
 
 
-def test_variable_patch_compiler_preserves_logical_identity_across_bucket_lanes():
+def test_variable_patch_compiler_preserves_logical_identity_across_bucket_lanes() -> None:
     plan = _plan()
     compiler = phx.discretization.VariablePatchTopologyCompiler(plan)
     initial = compiler.initial_topology()
@@ -81,7 +84,7 @@ def test_variable_patch_compiler_preserves_logical_identity_across_bucket_lanes(
     assert result.topology.locate(1, (4,)) is None
 
 
-def test_variable_patch_compiler_rejects_inactive_and_envelope_padding_tags():
+def test_variable_patch_compiler_rejects_inactive_and_envelope_padding_tags() -> None:
     plan = _plan()
     compiler = phx.discretization.VariablePatchTopologyCompiler(plan)
     initial = compiler.initial_topology()
@@ -89,7 +92,7 @@ def test_variable_patch_compiler_rejects_inactive_and_envelope_padding_tags():
         compiler.compile(initial, _tags(plan, second=((0, 0),)))
 
 
-def test_variable_patch_compiler_checks_nonzero_parent_nesting_coordinates():
+def test_variable_patch_compiler_checks_nonzero_parent_nesting_coordinates() -> None:
     plan = _plan()
     compiler = phx.discretization.VariablePatchTopologyCompiler(
         plan,
@@ -104,7 +107,7 @@ def test_variable_patch_compiler_checks_nonzero_parent_nesting_coordinates():
     assert result.topology.epoch.epoch_id == initial.epoch.epoch_id
 
 
-def test_variable_patch_field_masks_inactive_lanes_and_padding():
+def test_variable_patch_field_masks_inactive_lanes_and_padding() -> None:
     plan = _plan()
     topology = phx.discretization.VariablePatchTopologyCompiler(plan).initial_topology()
     metadata = topology.levels[0]
@@ -120,7 +123,7 @@ def test_variable_patch_field_masks_inactive_lanes_and_padding():
     assert jnp.all(narrow == 0.0)
 
 
-def _state(topology, *, coarse_offset=0.0):
+def _state(topology: Any, *, coarse_offset: Any = 0.0) -> Any:
     level_values = []
     for level, metadata in enumerate(topology.levels):
         bucket_values = []
@@ -143,7 +146,7 @@ def _state(topology, *, coarse_offset=0.0):
     return phx.discretization.VariablePatchHierarchyState(topology, level_values)
 
 
-def test_variable_patch_fill_patch_reads_same_level_across_unequal_lanes():
+def test_variable_patch_fill_patch_reads_same_level_across_unequal_lanes() -> None:
     topology = phx.discretization.VariablePatchTopologyCompiler(
         _plan()
     ).initial_topology()
@@ -159,7 +162,7 @@ def test_variable_patch_fill_patch_reads_same_level_across_unequal_lanes():
     assert request.masks[0][0, 0]
 
 
-def test_variable_patch_fill_patch_interpolates_coarse_bucket_values():
+def test_variable_patch_fill_patch_interpolates_coarse_bucket_values() -> None:
     plan = _plan()
     compiler = phx.discretization.VariablePatchTopologyCompiler(plan)
     initial = compiler.initial_topology()
@@ -181,7 +184,7 @@ def test_variable_patch_fill_patch_interpolates_coarse_bucket_values():
     assert workspace.values[1][0, 3] == 8.0
 
 
-def test_variable_patch_topology_rejects_direct_unaligned_fine_metadata():
+def test_variable_patch_topology_rejects_direct_unaligned_fine_metadata() -> None:
     plan = _plan()
     initial = phx.discretization.VariablePatchTopologyCompiler(plan).initial_topology()
     invalid_fine = phx.discretization.VariablePatchLevelMetadata(
@@ -199,7 +202,7 @@ def test_variable_patch_topology_rejects_direct_unaligned_fine_metadata():
         )
 
 
-def test_variable_patch_fill_patch_keeps_envelope_padding_inert():
+def test_variable_patch_fill_patch_keeps_envelope_padding_inert() -> None:
     wide = phx.discretization.PatchShapeSignature((4,), halo_width=1)
     plan = phx.discretization.VariablePatchHierarchyPlan(
         _grid(),
@@ -228,7 +231,7 @@ def test_variable_patch_fill_patch_keeps_envelope_padding_inert():
     )
 
 
-def test_variable_patch_fill_patch_preserves_tensor_component_shape():
+def test_variable_patch_fill_patch_preserves_tensor_component_shape() -> None:
     topology = phx.discretization.VariablePatchTopologyCompiler(
         _plan()
     ).initial_topology()
@@ -254,7 +257,7 @@ def test_variable_patch_fill_patch_preserves_tensor_component_shape():
     assert jnp.array_equal(workspace.values[0][0, 5], fields[0].values[0][1, 0])
 
 
-def test_variable_patch_topology_id_ignores_bucket_lane_placement():
+def test_variable_patch_topology_id_ignores_bucket_lane_placement() -> None:
     four = phx.discretization.PatchShapeSignature((4,), halo_width=1)
     six = phx.discretization.PatchShapeSignature((6,), halo_width=1)
     plan = phx.discretization.VariablePatchHierarchyPlan(
@@ -300,7 +303,7 @@ def test_variable_patch_topology_id_ignores_bucket_lane_placement():
     assert first.layout_id != second.layout_id
 
 
-def test_variable_patch_compiler_ignores_stale_deeper_tags_during_coarsening():
+def test_variable_patch_compiler_ignores_stale_deeper_tags_during_coarsening() -> None:
     signature = phx.discretization.PatchShapeSignature((4,), halo_width=1)
     plan = phx.discretization.VariablePatchHierarchyPlan(
         _grid(),
@@ -355,7 +358,7 @@ def test_variable_patch_compiler_ignores_stale_deeper_tags_during_coarsening():
     assert not result.topology.levels[2].active_boxes()
 
 
-def test_clustering_policy_splits_sparse_connected_component():
+def test_clustering_policy_splits_sparse_connected_component() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),

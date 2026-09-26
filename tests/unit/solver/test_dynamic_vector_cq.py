@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -19,7 +21,7 @@ from phydrax.solver._dynamic_vector_cq import (
 )
 
 
-def _node_family(parameter: jax.Array, action: str):
+def _node_family(parameter: jax.Array, action: str) -> Any:
     base = jnp.asarray(
         [[parameter + 0.7, 0.3 + 0.2j], [0.1 - 0.4j, parameter + 1.1]],
         dtype=jnp.complex128,
@@ -31,7 +33,7 @@ def _node_family(parameter: jax.Array, action: str):
     return prepare(LinearSystem(DenseLinearOperator(base)))
 
 
-def test_vector_cq_transpose_and_adjoint_are_dual_to_forward_history_map():
+def test_vector_cq_transpose_and_adjoint_are_dual_to_forward_history_map() -> None:
     with jax.enable_x64():
         options = dict(
             node_family_id="test-vector-resolvent",
@@ -39,10 +41,22 @@ def test_vector_cq_transpose_and_adjoint_are_dual_to_forward_history_map():
             contour_policy=ConvolutionQuadratureContourPolicy(tolerance=1.0e-14),
         )
         elasticity = prepare_dynamic_elasticity_fem_bem_cq_3d(
-            _node_family, 2, 0.1, 5, **options
+            # ty: ignore[invalid-argument-type]
+            _node_family,
+            2,
+            0.1,
+            5,
+            # ty: ignore[invalid-argument-type]
+            **options,
         )
         maxwell = prepare_dynamic_maxwell_fem_bem_cq_3d(
-            _node_family, 2, 0.1, 5, **options
+            # ty: ignore[invalid-argument-type]
+            _node_family,
+            2,
+            0.1,
+            5,
+            # ty: ignore[invalid-argument-type]
+            **options,
         )
         source = jnp.asarray(
             [[1.0, 0.2j], [-0.3, 0.5], [0.4j, -0.1], [0.0, 0.7], [0.6, -0.2j]],

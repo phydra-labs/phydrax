@@ -2,7 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import warnings
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -30,7 +32,7 @@ from phydrax.operators.differential._hooks import (
 )
 
 
-def _as_scalar(x):
+def _as_scalar(x: Any) -> Any:
     arr = jnp.asarray(x)
     if arr.ndim == 0:
         return arr
@@ -41,7 +43,7 @@ def _as_scalar(x):
 
 def _align_expected_tx_to_out_dims(
     expected_xt: jax.Array,
-    out,
+    out: Any,
     /,
     *,
     x_axis: str,
@@ -72,7 +74,7 @@ def _align_expected_tx_to_out_dims(
     )
 
 
-def _axis_for_label_in_coord_batch(batch, label: str) -> str:
+def _axis_for_label_in_coord_batch(batch: Any, label: str) -> str:
     if label in batch.coord_axes_by_label:
         axes = batch.coord_axes_by_label[label]
         if len(axes) != 1:
@@ -94,7 +96,7 @@ class ScalarLatentModel(_AbstractBaseModel):
         self.in_size = "scalar"
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         x = _as_scalar(x)
         return jnp.stack([x, jnp.array(1.0)], axis=-1)
 
@@ -109,12 +111,12 @@ class MonomialScalarLatentModel(_AbstractBaseModel):
         self.out_size = 1
         self.power = int(power)
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         x = _as_scalar(x)
         return jnp.asarray([x**self.power], dtype="float64")
 
 
-def test_domain_model_blockwise_pointsbatch_singleton_blocks():
+def test_domain_model_blockwise_pointsbatch_singleton_blocks() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -143,7 +145,7 @@ def test_domain_model_blockwise_pointsbatch_singleton_blocks():
     assert jnp.allclose(jnp.asarray(out.data), expected)
 
 
-def test_domain_model_warns_on_blockwise_fallback_for_paired_blocks():
+def test_domain_model_warns_on_blockwise_fallback_for_paired_blocks() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -167,7 +169,7 @@ def test_domain_model_warns_on_blockwise_fallback_for_paired_blocks():
     assert jnp.allclose(jnp.asarray(out.data), expected)
 
 
-def test_latent_derivative_path_matches_exact_values():
+def test_latent_derivative_path_matches_exact_values() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -220,7 +222,7 @@ def test_latent_derivative_path_matches_exact_values():
     assert jnp.allclose(jnp.asarray(out_lap.data), expected_lap, atol=1e-6)
 
 
-def test_latent_derivative_path_flat_topology_matches_exact_values():
+def test_latent_derivative_path_flat_topology_matches_exact_values() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -251,7 +253,7 @@ def test_latent_derivative_path_flat_topology_matches_exact_values():
     assert jnp.allclose(jnp.asarray(out_dt.data), expected_dt, atol=1e-6)
 
 
-def test_latent_backend_ad_does_not_use_jet(monkeypatch):
+def test_latent_backend_ad_does_not_use_jet(monkeypatch: Any) -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -263,7 +265,7 @@ def test_latent_backend_ad_does_not_use_jet(monkeypatch):
     du_dt = dt_n(u, var="t", order=2, backend="ad")
     dxx = laplacian(u, var="x", backend="ad")
 
-    def _jet_fail(*args, **kwargs):
+    def _jet_fail(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("jet_dn should not be used for backend='ad'.")
 
     monkeypatch.setattr(differential_domain_ops, "jet_dn", _jet_fail)
@@ -274,7 +276,7 @@ def test_latent_backend_ad_does_not_use_jet(monkeypatch):
     assert jnp.isfinite(jnp.asarray(out_dxx))
 
 
-def test_latent_derivative_path_ignores_iter_kwarg():
+def test_latent_derivative_path_ignores_iter_kwarg() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -301,7 +303,7 @@ def test_latent_derivative_path_ignores_iter_kwarg():
     assert jnp.allclose(jnp.asarray(out), expected, atol=1e-6)
 
 
-def test_enforced_dirichlet_preserves_latent_derivative_fast_path():
+def test_enforced_dirichlet_preserves_latent_derivative_fast_path() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -333,7 +335,7 @@ def test_enforced_dirichlet_preserves_latent_derivative_fast_path():
     assert jnp.allclose(jnp.asarray(out), jnp.asarray(expected), atol=1e-6)
 
 
-def test_latent_derivative_path_warns_on_auto_fallback(monkeypatch):
+def test_latent_derivative_path_warns_on_auto_fallback(monkeypatch: Any) -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -357,7 +359,7 @@ def test_latent_derivative_path_warns_on_auto_fallback(monkeypatch):
         _ = du_dt.func(jnp.asarray([0.25]), 0.4)
 
 
-def test_latent_derivative_path_respects_error_fallback(monkeypatch):
+def test_latent_derivative_path_respects_error_fallback(monkeypatch: Any) -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -381,11 +383,11 @@ def test_latent_derivative_path_respects_error_fallback(monkeypatch):
         _ = du_dt.func(jnp.asarray([0.25]), 0.4)
 
 
-def test_binary_expression_derivative_hook_composes():
+def test_binary_expression_derivative_hook_composes() -> None:
     domain = Interval1d(0.0, 1.0)
 
     @domain.Function("x")
-    def base(x):
+    def base(x: Any) -> Any:
         return x[0]
 
     def _base_hook(
@@ -397,7 +399,7 @@ def test_binary_expression_derivative_hook_composes():
         backend: str,
         basis: str,
         periodic: bool,
-    ):
+    ) -> Any:
         del mode, basis, periodic
         if backend not in ("ad", "jet"):
             return None
@@ -423,7 +425,7 @@ def test_binary_expression_derivative_hook_composes():
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_boundary_gate_style_blend_preserves_hook():
+def test_boundary_gate_style_blend_preserves_hook() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -444,7 +446,7 @@ def test_boundary_gate_style_blend_preserves_hook():
     assert out.shape == ()
 
 
-def test_coord_separable_laplacian_uses_fwdfwd_path(monkeypatch):
+def test_coord_separable_laplacian_uses_fwdfwd_path(monkeypatch: Any) -> None:
     domain = Interval1d(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -455,7 +457,7 @@ def test_coord_separable_laplacian_uses_fwdfwd_path(monkeypatch):
     u = domain.Model("x")(model)
     lap = laplacian(u, var="x", backend="ad")
 
-    def _latent_fast_should_not_run(*args, **kwargs):
+    def _latent_fast_should_not_run(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("coord-separable laplacian should bypass latent fast path.")
 
     monkeypatch.setattr(
@@ -469,7 +471,7 @@ def test_coord_separable_laplacian_uses_fwdfwd_path(monkeypatch):
     assert jnp.allclose(out, 2.0, atol=1e-6)
 
 
-def _cube_batch():
+def _cube_batch() -> Any:
     domain = (
         phx.domain.ScalarInterval(0.0, 1.0, label="a")
         @ phx.domain.ScalarInterval(1.0, 2.0, label="b")
@@ -486,14 +488,14 @@ def _cube_batch():
     return domain, batch, axes, values
 
 
-def _blockwise(**layout):
+def _blockwise(**layout: Any) -> Any:
     return phx.domain.ModelBinding.blockwise("structured", pass_key=False, **layout)
 
 
-def test_blockwise_equal_extents_keep_dependency_axes_and_channels():
+def test_blockwise_equal_extents_keep_dependency_axes_and_channels() -> None:
     domain, batch, axes, (a, b, c) = _cube_batch()
 
-    def model(x):
+    def model(x: Any) -> Any:
         xa, xb, xc = x
         grid = xa[:, None, None] + 10.0 * xb[None, :, None] + 100.0 * xc[None, None, :]
         return jnp.stack((grid, 2.0 * grid, 3.0 * grid), axis=-1)
@@ -506,10 +508,10 @@ def test_blockwise_equal_extents_keep_dependency_axes_and_channels():
     assert jnp.allclose(jnp.asarray(out.data), expected)
 
 
-def test_blockwise_feature_width_equal_to_extent_is_not_a_batch_axis():
+def test_blockwise_feature_width_equal_to_extent_is_not_a_batch_axis() -> None:
     domain, batch, axes, (a, b, c) = _cube_batch()
 
-    def summary(x):
+    def summary(x: Any) -> Any:
         xa, xb, xc = x
         return jnp.stack((jnp.sum(xa), jnp.sum(xb), jnp.sum(xc)))
 
@@ -526,10 +528,10 @@ def test_blockwise_feature_width_equal_to_extent_is_not_a_batch_axis():
     )
 
 
-def test_blockwise_scalar_reduction_broadcasts_over_every_dependency_axis():
+def test_blockwise_scalar_reduction_broadcasts_over_every_dependency_axis() -> None:
     domain, batch, axes, (a, b, c) = _cube_batch()
 
-    def total(x):
+    def total(x: Any) -> Any:
         xa, xb, xc = x
         return jnp.sum(xa) + jnp.sum(xb) * jnp.sum(xc)
 
@@ -542,10 +544,10 @@ def test_blockwise_scalar_reduction_broadcasts_over_every_dependency_axis():
     assert jnp.allclose(jnp.asarray(out.data), jnp.full((3, 3, 3), expected))
 
 
-def test_blockwise_subset_layout_assigns_reduced_axes_by_declaration():
+def test_blockwise_subset_layout_assigns_reduced_axes_by_declaration() -> None:
     domain, batch, axes, (a, b, c) = _cube_batch()
 
-    def reduce_b(x):
+    def reduce_b(x: Any) -> Any:
         xa, xb, xc = x
         return xc[:, None] * jnp.sum(xb) + xa[None, :]
 
@@ -563,10 +565,10 @@ def test_blockwise_subset_layout_assigns_reduced_axes_by_declaration():
     )
 
 
-def test_blockwise_rank_mismatch_raises_instead_of_matching_sizes():
+def test_blockwise_rank_mismatch_raises_instead_of_matching_sizes() -> None:
     domain, batch, _, _ = _cube_batch()
 
-    def drop_c(x):
+    def drop_c(x: Any) -> Any:
         xa, xb, _ = x
         return xa[:, None] * xb[None, :]
 
@@ -586,10 +588,10 @@ def test_blockwise_rank_mismatch_raises_instead_of_matching_sizes():
         subset(batch)
 
 
-def test_blockwise_axis_array_output_preserves_explicit_unbound_channel():
+def test_blockwise_axis_array_output_preserves_explicit_unbound_channel() -> None:
     domain, batch, axes, (a, b, c) = _cube_batch()
 
-    def channels(x):
+    def channels(x: Any) -> Any:
         xa, xb, xc = x
         return phx.axes.AxisArray(
             jnp.stack((jnp.mean(xa), jnp.mean(xb), jnp.mean(xc))), dims=(None,)
@@ -606,7 +608,7 @@ def test_blockwise_axis_array_output_preserves_explicit_unbound_channel():
     with pytest.raises(TypeError, match="output_layout='axis_array'"):
         domain.Model("a", "b", "c", binding=_blockwise())(channels)(batch)
 
-    def foreign_axis(x):
+    def foreign_axis(x: Any) -> Any:
         return phx.axes.AxisArray(jnp.zeros((3,)), dims=("channel",))
 
     with pytest.raises(ValueError, match="named dims must be dependency batch axes"):
@@ -615,7 +617,7 @@ def test_blockwise_axis_array_output_preserves_explicit_unbound_channel():
         )(batch)
 
 
-def test_blockwise_output_layout_declarations_are_validated():
+def test_blockwise_output_layout_declarations_are_validated() -> None:
     with pytest.raises(ValueError, match="output_layout"):
         _blockwise(output_layout="inferred")
     with pytest.raises(ValueError, match="dependency_subset"):
@@ -634,7 +636,7 @@ def test_blockwise_output_layout_declarations_are_validated():
     # Invocation: the labels are checked before the model runs.
     calls = []
 
-    def model(*blocks, key=None):
+    def model(*blocks: Any, key: Any = None) -> Any:
         calls.append(blocks)
         return jnp.sum(blocks[0])
 
@@ -643,7 +645,7 @@ def test_blockwise_output_layout_declarations_are_validated():
     assert calls == []
 
 
-def test_reduced_blockwise_layout_refuses_pointwise_evaluation():
+def test_reduced_blockwise_layout_refuses_pointwise_evaluation() -> None:
     domain, _, _, _ = _cube_batch()
     u = domain.Model("a", "b", binding=_blockwise(output_layout="dependency_subset"))(
         lambda x: jnp.sum(x[0]) + jnp.sum(x[1])

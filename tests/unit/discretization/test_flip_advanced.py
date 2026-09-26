@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -10,7 +13,7 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._sharp_measures import exact_sharp_geometry
 
 
-def _mac(count=8):
+def _mac(count: Any = 8) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(count) for _ in range(2)),
         axis_names=("x", "y"),
@@ -20,7 +23,7 @@ def _mac(count=8):
     return grid, finite_volume, mac
 
 
-def test_particle_level_set_capillarity_and_ghost_projection():
+def test_particle_level_set_capillarity_and_ghost_projection() -> None:
     grid, finite_volume, mac = _mac()
     position = jnp.asarray([[0.4, 0.4], [0.5, 0.4], [0.4, 0.5], [0.5, 0.5]])
     geometry = phx.discretization.flip.ParticleLevelSetPlan(grid, 0.15).evaluate(
@@ -45,7 +48,7 @@ def test_particle_level_set_capillarity_and_ghost_projection():
     assert result.projection.air_pressure_defect == 0.0
 
 
-def test_nonperiodic_level_set_faces_do_not_compare_opposite_boundaries():
+def test_nonperiodic_level_set_faces_do_not_compare_opposite_boundaries() -> None:
     grid, _, _ = _mac(count=4)
     geometry = phx.discretization.flip.ParticleLevelSetPlan(grid, 0.1).evaluate(
         jnp.asarray(((0.05, 0.5),)),
@@ -58,7 +61,7 @@ def test_nonperiodic_level_set_faces_do_not_compare_opposite_boundaries():
     )
 
 
-def test_cut_cell_and_variational_viscosity_are_finite_and_dissipative():
+def test_cut_cell_and_variational_viscosity_are_finite_and_dissipative() -> None:
     grid, finite_volume, mac = _mac()
     position = jnp.asarray([[0.35, 0.35], [0.55, 0.35], [0.35, 0.55], [0.55, 0.55]])
     interface = phx.discretization.flip.ParticleLevelSetPlan(grid, 0.2).evaluate(
@@ -102,7 +105,7 @@ def test_cut_cell_and_variational_viscosity_are_finite_and_dissipative():
     assert result.energy_increase < 1e-8
 
 
-def test_flip_reseeding_preserves_mass_and_momentum():
+def test_flip_reseeding_preserves_mass_and_momentum() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(6), jnp.ones((6,)), ambient_dimension=2
     ).prepare()
@@ -135,7 +138,7 @@ def test_flip_reseeding_preserves_mass_and_momentum():
     np.testing.assert_allclose(result.momentum_defect, 0.0, atol=1e-12)
 
 
-def test_flip_reseeding_merges_the_complete_cell_excess():
+def test_flip_reseeding_merges_the_complete_cell_excess() -> None:
     count = 10
     support = phx.discretization.ParticleSetPlan(
         jnp.arange(count),
@@ -164,17 +167,17 @@ def test_flip_reseeding_merges_the_complete_cell_excess():
     assert int(jnp.sum(result.accepted_population.active)) <= 4
 
 
-def test_flip_solid_collision_reports_wall_work_without_penetration():
+def test_flip_solid_collision_reports_wall_work_without_penetration() -> None:
     particles = phx.discretization.flip.FLIPParticleState(
         jnp.asarray([[0.2, 0.5]]),
         jnp.asarray([[-1.0, 0.0]]),
     )
 
-    def plane(points, time, args):
+    def plane(points: Any, time: Any, args: Any) -> Any:
         del time, args
         return points[..., 0] - 0.1
 
-    def moving_wall(points, time, args):
+    def moving_wall(points: Any, time: Any, args: Any) -> Any:
         del time, args
         return jnp.broadcast_to(jnp.asarray([0.2, 0.0]), points.shape)
 

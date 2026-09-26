@@ -6,6 +6,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -15,7 +16,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _timed(function, arguments, iterations):
+def _timed(function: Any, arguments: Any, iterations: Any) -> Any:
     start = time.perf_counter()
     value = function(*arguments)
     jax.block_until_ready(value)

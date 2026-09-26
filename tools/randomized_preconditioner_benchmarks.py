@@ -8,6 +8,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +16,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _properties():
+def _properties() -> Any:
     return phx.linalg.OperatorProperties(
         self_adjoint=True,
         positive_semidefinite=True,

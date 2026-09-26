@@ -2,13 +2,16 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def test_radius_query_graph_builds_weighted_bipartite_geometry():
+def test_radius_query_graph_builds_weighted_bipartite_geometry() -> None:
     source = jnp.array([[0.0], [1.0], [3.0]])
     target = jnp.array([[0.2], [2.6]])
 
@@ -37,7 +40,7 @@ def test_radius_query_graph_builds_weighted_bipartite_geometry():
     )
 
 
-def test_radius_query_graph_uses_periodic_minimum_image():
+def test_radius_query_graph_uses_periodic_minimum_image() -> None:
     bundle = phx.graph.radius_query_graph(
         jnp.array([[0.9]]),
         jnp.array([[0.1]]),
@@ -51,7 +54,7 @@ def test_radius_query_graph_uses_periodic_minimum_image():
     assert jnp.allclose(bundle.graph.edges["distance"], jnp.array([[0.2]]), atol=1e-7)
 
 
-def test_knn_query_graph_and_cached_layout_replay():
+def test_knn_query_graph_and_cached_layout_replay() -> None:
     source = jnp.array([[0.0], [2.0], [5.0]])
     target = jnp.array([[1.0]])
     bundle = phx.graph.knn_query_graph(source, target, k=2, weight_kind=None)
@@ -70,7 +73,7 @@ def test_knn_query_graph_and_cached_layout_replay():
     assert jnp.allclose(rebuilt.graph.edges["relative"], jnp.array([[2.0], [0.0]]))
 
 
-def test_query_graph_components_select_source_target_and_edges():
+def test_query_graph_components_select_source_target_and_edges() -> None:
     bundle = phx.graph.radius_query_graph(
         jnp.array([[0.0], [1.0]]),
         jnp.array([[0.5]]),
@@ -93,10 +96,11 @@ def test_query_graph_components_select_source_target_and_edges():
     )
     assert jnp.allclose(target_batch["graph"]["features"].data[:, 0], jnp.array([0.0]))
     assert jnp.allclose(edge_batch["graph"]["distance"].data[:, 0], jnp.array([0.5, 0.5]))
+    # ty: ignore[unresolved-attribute]
     assert targets.mass.value == 1.0
 
 
-def test_graph_neural_operator_aggregates_query_sources_to_targets():
+def test_graph_neural_operator_aggregates_query_sources_to_targets() -> None:
     bundle = phx.graph.radius_query_graph(
         jnp.array([[0.0], [1.0]]),
         jnp.array([[0.5]]),
@@ -115,7 +119,7 @@ def test_graph_neural_operator_aggregates_query_sources_to_targets():
     assert jnp.allclose(out.nodes["gno"][:, 0], jnp.array([0.0, 0.0, 4.0]))
 
 
-def test_graph_neural_operator_wraps_as_graph_model_on_query_targets():
+def test_graph_neural_operator_wraps_as_graph_model_on_query_targets() -> None:
     bundle = phx.graph.radius_query_graph(
         jnp.array([[0.0], [1.0]]),
         jnp.array([[0.5]]),
@@ -130,7 +134,7 @@ def test_graph_neural_operator_wraps_as_graph_model_on_query_targets():
     )
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return node.get("features")[0]
 
     model = domain.GraphModel(
@@ -149,7 +153,7 @@ def test_graph_neural_operator_wraps_as_graph_model_on_query_targets():
     assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([4.0]))
 
 
-def test_batched_knn_query_graph_is_case_local_and_mask_aware():
+def test_batched_knn_query_graph_is_case_local_and_mask_aware() -> None:
     source = jnp.array(
         [
             [[0.0], [1.0], [2.0]],
@@ -190,11 +194,11 @@ def test_batched_knn_query_graph_is_case_local_and_mask_aware():
     )
 
 
-def test_batched_query_graph_is_jittable_and_differentiable():
+def test_batched_query_graph_is_jittable_and_differentiable() -> None:
     source = jnp.array([[[0.0], [0.5], [1.0]]])
     target = jnp.array([[[0.2], [0.8]]])
 
-    def distances(source_points, target_points):
+    def distances(source_points: Any, target_points: Any) -> Any:
         graph = phx.graph.batched_knn_query_graph(
             source_points,
             target_points,
@@ -212,7 +216,7 @@ def test_batched_query_graph_is_jittable_and_differentiable():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_query_neighbors_have_stable_ties_and_periodic_minimum_image():
+def test_query_neighbors_have_stable_ties_and_periodic_minimum_image() -> None:
     neighborhood = phx.graph.query_neighbors(
         jnp.array([[0.25], [0.75]]),
         jnp.array([[0.0]]),
@@ -228,7 +232,7 @@ def test_query_neighbors_have_stable_ties_and_periodic_minimum_image():
     )
 
 
-def test_query_neighbors_support_morton_execution_and_geometry_gradients():
+def test_query_neighbors_support_morton_execution_and_geometry_gradients() -> None:
     plan = phx.discretization.spatial.MortonNeighborQueryPlan(
         phx.discretization.spatial.MortonAddressPlan(
             (0.0,),
@@ -243,7 +247,7 @@ def test_query_neighbors_support_morton_execution_and_geometry_gradients():
         target_top_nodes=1,
     )
 
-    def distances(target):
+    def distances(target: Any) -> Any:
         return phx.graph.query_neighbors(
             jnp.array([[0.25], [0.75]]),
             target,
@@ -263,7 +267,7 @@ def test_query_neighbors_support_morton_execution_and_geometry_gradients():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_batched_homogeneous_knn_graph_excludes_self_edges():
+def test_batched_homogeneous_knn_graph_excludes_self_edges() -> None:
     graph = phx.graph.batched_knn_graph(
         jnp.array([[[0.0], [1.0], [3.0]], [[10.0], [11.0], [13.0]]]),
         k=1,
@@ -277,7 +281,7 @@ def test_batched_homogeneous_knn_graph_excludes_self_edges():
     assert jnp.all(graph.senders[3:] >= 3)
 
 
-def test_chunked_homogeneous_query_preserves_self_identity():
+def test_chunked_homogeneous_query_preserves_self_identity() -> None:
     points = jnp.array([[0.0], [1.0], [3.0], [6.0]])
     neighborhood = phx.graph.query_neighbors(
         points,

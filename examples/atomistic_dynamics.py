@@ -13,10 +13,14 @@ import phydrax as phx
 units = phx.atomistic.AtomisticUnitSystem.reduced()
 cell = phx.discretization.PeriodicCell(4.0 * jnp.eye(3))
 system = phx.atomistic.AtomisticSystemPlan(
+    # ty: ignore[invalid-argument-type]
     [100, 101, 102, 103],
+    # ty: ignore[invalid-argument-type]
     [1, 1, 1, 1],
+    # ty: ignore[invalid-argument-type]
     [1.0, 1.0, 1.0, 1.0],
     units,
+    # ty: ignore[invalid-argument-type]
     atom_type_ids=[0, 0, 0, 0],
     cell=cell,
 ).prepare()
@@ -27,6 +31,7 @@ neighborhood = phx.discretization.VerletParticleNeighborhoodPlan(
     base_neighborhood, 1.5, 0.2
 ).prepare(system.particles)
 potential = phx.atomistic.AtomisticPotentialProgram(
+    # ty: ignore[invalid-argument-type]
     [phx.atomistic.LennardJonesPotential([0.2], [0.8], 1.5, switch_distance=1.3)]
 ).prepare(system)
 dynamics = phx.atomistic.AtomisticDynamicsPlan(

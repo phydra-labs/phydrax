@@ -1,10 +1,12 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _operator_inference_data():
+def _operator_inference_data() -> Any:
     time = jnp.linspace(0.0, 1.0, 24, dtype=jnp.float64)
     states = jnp.stack((jnp.sin(5.0 * time), jnp.cos(3.0 * time)), axis=-1)[None, ...]
     inputs = jnp.sin(2.0 * time)[None, :, None]
@@ -38,7 +40,7 @@ def _operator_inference_data():
     return data
 
 
-def test_operator_inference_uses_only_c_a_b_and_symmetric_h_blocks():
+def test_operator_inference_uses_only_c_a_b_and_symmetric_h_blocks() -> None:
     data = _operator_inference_data()
     library = phx.dynamics.identification.OperatorInferenceFeatureLibrary(
         data.state_layout,
@@ -67,7 +69,7 @@ def test_operator_inference_uses_only_c_a_b_and_symmetric_h_blocks():
     np.testing.assert_allclose(prediction, data.derivatives, atol=2e-5)
 
 
-def test_reduced_trajectory_projection_preserves_offset_and_derivatives():
+def test_reduced_trajectory_projection_preserves_offset_and_derivatives() -> None:
     data = _operator_inference_data()
     full = phx.linalg.ArraySpace((2,), dtype=jnp.float64, space_id="opinf-full")
     basis = phx.rom.ReducedBasisArtifact(
@@ -93,6 +95,7 @@ def test_reduced_trajectory_projection_preserves_offset_and_derivatives():
     )
 
     np.testing.assert_allclose(projected.states, data.states - offset)
+    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(projected.derivatives, data.derivatives)
 
     library = phx.dynamics.identification.OperatorInferenceFeatureLibrary(

@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Finite-support Bayesian/maximum-entropy ensemble refinement.
+r"""Finite-support Bayesian/maximum-entropy ensemble refinement.
 
 The reference weights in this module retain their declared provenance. Only a
 ``physical-equilibrium`` support can contribute physical-equilibrium evidence;

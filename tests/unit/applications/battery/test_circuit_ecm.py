@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -45,8 +48,8 @@ from phydrax.nonlinear import NonlinearTermination
 from phydrax.solver import BDFMethod, DAEAdaptivePolicy, DAESolvePolicy, solve_dae
 
 
-def _parameters():
-    def law(value, quantity, unit):
+def _parameters() -> Any:
+    def law(value: Any, quantity: Any, unit: Any) -> Any:
         return ConstantPropertyLaw(
             value,
             (0.0, 1.0),
@@ -71,7 +74,7 @@ def _parameters():
     )
 
 
-def _runtime(parameters, current=2.0):
+def _runtime(parameters: Any, current: Any = 2.0) -> Any:
     protocol = BatteryProtocolPlan((CurrentStepPlan(0.2),))
     values = BatteryProtocolValues(protocol, jnp.asarray((current,)))
     return BatteryRuntimeInputs(
@@ -83,7 +86,9 @@ def _runtime(parameters, current=2.0):
     )
 
 
-def _solve(*, boundary=None, polarization=0.2, adaptive=False):
+def _solve(
+    *, boundary: Any = None, polarization: Any = 0.2, adaptive: Any = False
+) -> Any:
     adapter = CircuitConnectedEcmAdapter(CircuitConnectedEcmPlan(1, boundary=boundary))
     prepared, parameters = adapter.prepare(), _parameters()
     initial = CircuitConnectedEcmInitialCondition(
@@ -126,7 +131,7 @@ def _solve(*, boundary=None, polarization=0.2, adaptive=False):
     return adapter, prepared, parameters, runtime, solution
 
 
-def test_sampled_ledger_quadrature_is_quadratic_exact_on_terminal_prefix():
+def test_sampled_ledger_quadrature_is_quadratic_exact_on_terminal_prefix() -> None:
     times = jnp.asarray((0.0, 0.1, 0.4, 1.0, jnp.nan, jnp.nan))
     valid = jnp.asarray((True, True, True, True, False, False))
     values = jnp.where(valid, times**2, jnp.nan)
@@ -145,7 +150,7 @@ def test_sampled_ledger_quadrature_is_quadratic_exact_on_terminal_prefix():
     )
 
 
-def test_charging_initialization_and_one_node_thermal_parity():
+def test_charging_initialization_and_one_node_thermal_parity() -> None:
     adapter, prepared, p, runtime, solution = _solve()
     assert bool(jnp.all(solution.successful))
     view = prepared.state_view(solution.states)
@@ -187,7 +192,7 @@ def test_charging_initialization_and_one_node_thermal_parity():
     assert bool(ledger.maximum_thermal_defect_w <= thermal_tolerance)
 
 
-def test_voltage_clamp_conservation_and_load_current_are_circuit_owned():
+def test_voltage_clamp_conservation_and_load_current_are_circuit_owned() -> None:
     voltage_boundary = CircuitElement(
         IndependentVoltageSourceLaw(4.0), element_id="test-voltage"
     )
@@ -223,7 +228,7 @@ def test_voltage_clamp_conservation_and_load_current_are_circuit_owned():
     assert bool(adapter.ledger(prepared, solution, runtime).successful)
 
 
-def test_finite_thermal_rate_defect_fails_model_ledger():
+def test_finite_thermal_rate_defect_fails_model_ledger() -> None:
     adapter, prepared, _, runtime, solution = _solve()
     assert bool(adapter.ledger(prepared, solution, runtime).successful)
     rates = solution.state_rates.at[-1, prepared.cell_stop - 2].add(0.1)
@@ -233,7 +238,7 @@ def test_finite_thermal_rate_defect_fails_model_ledger():
     np.testing.assert_allclose(ledger.maximum_thermal_defect_w, 10.0, atol=1e-7)
 
 
-def test_physical_initial_state_outside_support_is_refused():
+def test_physical_initial_state_outside_support_is_refused() -> None:
     adapter = CircuitConnectedEcmAdapter(CircuitConnectedEcmPlan(1))
     with pytest.raises(Exception, match="outside property support"):
         adapter.initial_state(
@@ -243,11 +248,14 @@ def test_physical_initial_state_outside_support_is_refused():
         )
 
 
-def test_masked_property_hole_has_interior_guard_and_refuses_initialization():
+def test_masked_property_hole_has_interior_guard_and_refuses_initialization() -> None:
     p = _parameters()
     ocv = TabulatedPropertyLaw(
+        # ty: ignore[invalid-argument-type]
         (0.0, 0.3, 0.5, 0.7, 1.0),
+        # ty: ignore[invalid-argument-type]
         (3.7,) * 5,
+        # ty: ignore[invalid-argument-type]
         source_mask=(True, True, False, True, True),
         quantity="reference-open-circuit-voltage",
         coordinate="state_of_charge",
@@ -262,6 +270,7 @@ def test_masked_property_hole_has_interior_guard_and_refuses_initialization():
         prepared, p, CircuitConnectedEcmInitialCondition(200.0, 300.0, relaxed=True)
     )
     upper_guard = adapter.native_guards(prepared)[1]
+    # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(upper_guard.guard(0.0, supported, _runtime(p)), 0.1 - 1e-8)
     with pytest.raises(Exception, match="outside property support"):
         adapter.initial_state(
@@ -269,7 +278,7 @@ def test_masked_property_hole_has_interior_guard_and_refuses_initialization():
         )
 
 
-def test_current_rest_restart_preserves_physics_and_one_sided_heat_integrals():
+def test_current_rest_restart_preserves_physics_and_one_sided_heat_integrals() -> None:
     adapter = CircuitConnectedEcmAdapter(CircuitConnectedEcmPlan(1))
     guard_ids = tuple(
         guard.guard_id for guard in adapter.native_guards(adapter.prepare())
@@ -278,6 +287,7 @@ def test_current_rest_restart_preserves_physics_and_one_sided_heat_integrals():
         (CurrentStepPlan(0.1), RestStepPlan(0.1)), node_side="left"
     )
     experiment = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         BatteryOutputPlan(("charge_c", "current_a", "voltage_v")),
@@ -318,7 +328,7 @@ def test_current_rest_restart_preserves_physics_and_one_sided_heat_integrals():
     )
 
 
-def test_terminal_guard_leaves_inactive_segment_physics_unevaluated():
+def test_terminal_guard_leaves_inactive_segment_physics_unevaluated() -> None:
     adapter = CircuitConnectedEcmAdapter(CircuitConnectedEcmPlan(1))
     guards = tuple(guard.guard_id for guard in adapter.native_guards(adapter.prepare()))
     protocol = BatteryProtocolPlan(
@@ -328,6 +338,7 @@ def test_terminal_guard_leaves_inactive_segment_physics_unevaluated():
         )
     )
     experiment = BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         BatteryOutputPlan(("voltage_v", "charge_c")),

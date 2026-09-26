@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_geometry3d_from_dem_basic():
+def test_geometry3d_from_dem_basic() -> None:
     # DEM grid: z = sin(x) * cos(y)
     ny, nx = 30, 36
     x = np.linspace(-2.0, 2.0, nx)

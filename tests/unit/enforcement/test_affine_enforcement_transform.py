@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 import phydrax as phx
@@ -5,15 +7,15 @@ from phydrax.domain import Boundary, Interval1d
 from phydrax.enforcement import EnforcementProgram, EnforcementSpec
 
 
-def test_cross_field_point_jet_requires_certified_lifting():
+def test_cross_field_point_jet_requires_certified_lifting() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0]
 
     @geom.Function("x")
-    def v(x):
+    def v(x: Any) -> Any:
         return 2.0 * x[0]
 
     boundary = geom.component({"x": Boundary()})

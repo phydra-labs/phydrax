@@ -15,7 +15,7 @@ from tools.high_dimensional_pde_benchmarks import (
 )
 
 
-def test_high_dimensional_reference_benchmark_schema_and_replay():
+def test_high_dimensional_reference_benchmark_schema_and_replay() -> None:
     first = run_high_dimensional_reference_benchmarks(
         (4, 12), num_samples=2048, repeats=1, seed=12
     )
@@ -36,7 +36,7 @@ def test_high_dimensional_reference_benchmark_schema_and_replay():
         assert left["passed"] == right["passed"]
 
 
-def test_high_dimensional_method_matrix_runs_with_common_result_schema():
+def test_high_dimensional_method_matrix_runs_with_common_result_schema() -> None:
     result = run_high_dimensional_method_benchmarks(
         (4, 12),
         num_samples=2048,
@@ -84,7 +84,7 @@ def test_high_dimensional_method_matrix_runs_with_common_result_schema():
     assert all(record["num_samples"] == 128 for record in score_records)
 
 
-def test_neural_stochastic_method_benchmarks_train_declared_solution_objects():
+def test_neural_stochastic_method_benchmarks_train_declared_solution_objects() -> None:
     result = run_high_dimensional_method_benchmarks(
         (10,),
         num_samples=256,
@@ -129,7 +129,7 @@ def test_neural_stochastic_method_benchmarks_train_declared_solution_objects():
     assert all(record["total_wall_ms"] > 0.0 for record in training_records.values())
 
 
-def test_reference_gradients_and_laplacian_match_autodiff():
+def test_reference_gradients_and_laplacian_match_autodiff() -> None:
     state = jnp.linspace(-1.0, 1.0, 9)
 
     assert jnp.allclose(
@@ -145,7 +145,7 @@ def test_reference_gradients_and_laplacian_match_autodiff():
     assert jnp.allclose(quartic_laplacian(state), jnp.trace(hessian))
 
 
-def test_reference_value_and_score_shapes():
+def test_reference_value_and_score_shapes() -> None:
     states = jnp.ones((7, 16))
     times = jnp.linspace(0.0, 0.75, 7)
 

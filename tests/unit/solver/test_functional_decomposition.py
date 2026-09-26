@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +17,7 @@ import phydrax as phx
 import phydrax.solver.functional_decomposition._checkpoint as decomposition_checkpoint
 
 
-def _fixed_penalty(condition, *, count=8):
+def _fixed_penalty(condition: Any, *, count: Any = 8) -> Any:
     component = condition.on
     batch = component.sample(phx.domain.PointSampling(count), key=jr.key(0))
     realization = phx.integration.from_samples(
@@ -27,7 +30,7 @@ def _fixed_penalty(condition, *, count=8):
     )
 
 
-def _broken_pair_problem():
+def _broken_pair_problem() -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(domain, "x", 2)
     family = phx.domain.LocalFieldFamily(
@@ -51,11 +54,11 @@ def _broken_pair_problem():
     return phx.solver.FunctionalDecompositionProblem.broken(family, (scoped,))
 
 
-def _values(result):
+def _values(result: Any) -> Any:
     return tuple(float(field.func.value) for field in result.family.fields)
 
 
-def test_joint_partition_of_unity_trains_canonical_local_parameters():
+def test_joint_partition_of_unity_trains_canonical_local_parameters() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(domain, "x", 1)
     patch = cover.patches[0]
@@ -101,16 +104,18 @@ class _PoleTerm(phx.terms.AbstractScalarTerm):
     fields: tuple[str, ...] = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
-    def __init__(self, field_name):
+    def __init__(self, field_name: Any) -> None:
         self.fields = (field_name,)
         self.label = None
 
-    def loss(self, functions, /, *, key=None, iter_=None, **kwargs):
+    def loss(
+        self, functions: Any, /, *, key: Any = None, iter_: Any = None, **kwargs: Any
+    ) -> Any:
         del key, iter_, kwargs
         return (functions[self.fields[0]].func.value - 1.0) ** -2
 
 
-def test_block_local_update_rejects_nonfinite_candidate_and_optimizer_state():
+def test_block_local_update_rejects_nonfinite_candidate_and_optimizer_state() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(domain, "x", 1)
     patch = cover.patches[0]
@@ -139,7 +144,9 @@ def test_block_local_update_rejects_nonfinite_candidate_and_optimizer_state():
     with pytest.raises(FloatingPointError, match="rejected as non-finite"):
         phx.solver.solve_functional_decomposition(prepared, optax.sgd(-0.5), jit=False)
     nonfinite_state_optimizer = optax.GradientTransformation(
+        # ty: ignore[invalid-argument-type]
         lambda parameters: jnp.asarray(0.0),
+        # ty: ignore[invalid-argument-type]
         lambda gradients, optimizer_state, params=None: (
             jax.tree.map(jnp.zeros_like, gradients),
             jnp.asarray(jnp.inf),
@@ -151,7 +158,7 @@ def test_block_local_update_rejects_nonfinite_candidate_and_optimizer_state():
         )
 
 
-def test_jacobi_uses_one_snapshot_while_gauss_seidel_uses_latest_patch():
+def test_jacobi_uses_one_snapshot_while_gauss_seidel_uses_latest_patch() -> None:
     problem = _broken_pair_problem()
     jacobi = phx.solver.prepare_functional_decomposition(
         problem,
@@ -187,7 +194,7 @@ def test_jacobi_uses_one_snapshot_while_gauss_seidel_uses_latest_patch():
     assert gauss_seidel_result.state.local_steps == (1, 1)
 
 
-def test_block_decomposition_host_control_stops_after_committed_sweep():
+def test_block_decomposition_host_control_stops_after_committed_sweep() -> None:
     prepared = phx.solver.prepare_functional_decomposition(
         _broken_pair_problem(),
         phx.solver.FunctionalDecompositionPlan(
@@ -196,7 +203,7 @@ def test_block_decomposition_host_control_stops_after_committed_sweep():
     )
     phases = []
 
-    def phase(event):
+    def phase(event: Any) -> Any:
         return int(event.record.coordinates.phase)
 
     session = phx.execution.IterationSession(
@@ -228,7 +235,9 @@ def test_block_decomposition_host_control_stops_after_committed_sweep():
     assert result.iteration_session_state.stop_requested
 
 
-def test_checkpoint_resume_matches_uninterrupted_block_training(tmp_path, monkeypatch):
+def test_checkpoint_resume_matches_uninterrupted_block_training(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     problem = _broken_pair_problem()
     prepared = phx.solver.prepare_functional_decomposition(
         problem,
@@ -260,7 +269,7 @@ def test_checkpoint_resume_matches_uninterrupted_block_training(tmp_path, monkey
     state_path = next(checkpoint_directory.glob("state-*.eqx"))
     deserialize = decomposition_checkpoint.eqx.tree_deserialise_leaves
 
-    def replace_path_after_open(state_stream, *args, **kwargs):
+    def replace_path_after_open(state_stream: Any, *args: Any, **kwargs: Any) -> Any:
         replacement = checkpoint_directory / "replacement.eqx"
         replacement.write_bytes(b"replacement")
         replacement.replace(state_path)
@@ -306,7 +315,7 @@ def test_checkpoint_resume_matches_uninterrupted_block_training(tmp_path, monkey
     )
 
 
-def test_schwarz_strategy_requires_pair_terms_and_reports_interface_defect():
+def test_schwarz_strategy_requires_pair_terms_and_reports_interface_defect() -> None:
     problem = _broken_pair_problem()
     prepared = phx.solver.prepare_functional_decomposition(
         problem,
@@ -330,7 +339,7 @@ def test_schwarz_strategy_requires_pair_terms_and_reports_interface_defect():
     assert result.evidence.maximum_pair_loss < 4.0
 
 
-def test_coarse_correction_freezes_base_and_trains_assembled_fine_field():
+def test_coarse_correction_freezes_base_and_trains_assembled_fine_field() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     base = domain.Parameter(1.0)
     base_term = _fixed_penalty(
@@ -366,5 +375,6 @@ def test_coarse_correction_freezes_base_and_trains_assembled_fine_field():
     )
     final = correction.finalize(trained)
 
+    # ty: ignore[unresolved-attribute]
     assert float(base_solver.functions["u"].func.value) == 1.0
     assert float(final.loss(key=jr.key(3))) < float(base_solver.loss(key=jr.key(3)))

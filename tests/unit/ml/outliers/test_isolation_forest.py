@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,7 +19,7 @@ from phydrax.ml.outliers import (
 )
 
 
-def _features():
+def _features() -> Any:
     return jnp.array(
         [
             [-2.0, -0.3],
@@ -30,7 +33,9 @@ def _features():
     )
 
 
-def test_isolation_forest_requires_key_has_exact_tree_capacity_and_is_deterministic():
+def test_isolation_forest_requires_key_has_exact_tree_capacity_and_is_deterministic() -> (
+    None
+):
     features = _features()
     recipe = IsolationForestRecipe(n_estimators=5, max_depth=3, contamination=0.2)
 
@@ -51,12 +56,19 @@ def test_isolation_forest_requires_key_has_exact_tree_capacity_and_is_determinis
     assert model.thresholds.shape == (5, node_capacity)
     assert model.splittable.shape == (5, node_capacity)
     assert model.leaf_mass.shape == (5, node_capacity)
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(model.feature_indices, repeated_model.feature_indices)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.thresholds, repeated_model.thresholds)
+    # ty: ignore[unresolved-attribute]
     assert jnp.array_equal(model.splittable, repeated_model.splittable)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(model.leaf_mass, repeated_model.leaf_mass)
     same_changed_topology = jnp.array_equal(
-        model.feature_indices, changed_model.feature_indices
+        model.feature_indices,
+        # ty: ignore[unresolved-attribute]
+        changed_model.feature_indices,
+        # ty: ignore[unresolved-attribute]
     ) & jnp.allclose(model.thresholds, changed_model.thresholds)
     assert not same_changed_topology
     assert first.diagnostics.iterations == recipe.max_depth
@@ -67,13 +79,14 @@ def test_isolation_forest_requires_key_has_exact_tree_capacity_and_is_determinis
     assert "exactly 2^(max_depth+1)-1" in " ".join(contract.conditions)
 
 
-def test_hard_isolation_forest_is_exactly_stopped_and_relaxed_model_is_smooth():
+def test_hard_isolation_forest_is_exactly_stopped_and_relaxed_model_is_smooth() -> None:
     features = _features()
     hard = (
         IsolationForestRecipe(n_estimators=7, max_depth=3, contamination=0.2)
         .fit_batch(MLBatch(features), key=jax.random.key(10))
         .as_trainable()
     )
+    # ty: ignore[unresolved-attribute]
     smooth = hard.relaxed(temperature=0.5)
     points = jnp.array([[-0.2, 0.1], [0.8, -0.3], [4.0, 3.5]])
     hard_scores = hard(points)
@@ -126,7 +139,9 @@ def test_hard_isolation_forest_is_exactly_stopped_and_relaxed_model_is_smooth():
     assert jax.vmap(smooth)(points).shape == (3,)
 
 
-def test_isolation_forest_preserves_case_axes_masks_weights_and_frozen_execution():
+def test_isolation_forest_preserves_case_axes_masks_weights_and_frozen_execution() -> (
+    None
+):
     base = _features()
     features = jnp.stack((base, base * jnp.array([1.1, 0.9])), axis=0)
     targets = jnp.stack(
@@ -150,7 +165,9 @@ def test_isolation_forest_preserves_case_axes_masks_weights_and_frozen_execution
     model = result.as_trainable()
     queries = features[:, :3] + 0.05
 
+    # ty: ignore[unresolved-attribute]
     assert model.case_shape == (2,)
+    # ty: ignore[unresolved-attribute]
     assert model.feature_indices.shape == (2, 3, 7)
     assert model(queries).shape == (2, 3)
     assert model(jnp.array([0.1, -0.2])).shape == (2,)
@@ -158,7 +175,7 @@ def test_isolation_forest_preserves_case_axes_masks_weights_and_frozen_execution
     assert jnp.array_equal(result.diagnostics.effective_samples, jnp.array([5, 5]))
 
 
-def test_isolation_forest_rejects_complex_ordering_and_invalid_capacity():
+def test_isolation_forest_rejects_complex_ordering_and_invalid_capacity() -> None:
     features = _features()
     complex_features = features.astype(jnp.complex64) + 0.1j
     recipe = IsolationForestRecipe(n_estimators=2, max_depth=2, contamination=0.2)
@@ -172,10 +189,11 @@ def test_isolation_forest_rejects_complex_ordering_and_invalid_capacity():
     with pytest.raises(TypeError, match="undefined for complex"):
         model(jnp.array([0.2 + 0.1j, -0.3 + 0.2j]))
     with pytest.raises(TypeError, match="requires real"):
+        # ty: ignore[unresolved-attribute]
         model.relaxed()(jnp.array([0.2 + 0.1j, -0.3 + 0.2j]))
 
 
-def test_isolation_forest_rejects_sparse_features_explicitly():
+def test_isolation_forest_rejects_sparse_features_explicitly() -> None:
     features = _features()
     sparse = SparseFeatures(
         features,
@@ -189,7 +207,7 @@ def test_isolation_forest_rejects_sparse_features_explicitly():
         )
 
 
-def test_isolation_forest_insufficient_data_is_an_invalid_status_value():
+def test_isolation_forest_insufficient_data_is_an_invalid_status_value() -> None:
     mask = jnp.array([True, False, False, False, False, False, False])
     result = IsolationForestRecipe(
         n_estimators=2, max_depth=2, contamination=0.2

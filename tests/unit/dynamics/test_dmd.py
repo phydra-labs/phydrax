@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _linear_trajectory(*, controlled: bool):
+def _linear_trajectory(*, controlled: bool) -> Any:
     generator = np.random.default_rng(2026)
     cases = 12
     capacity = 7
@@ -41,7 +44,7 @@ def _linear_trajectory(*, controlled: bool):
     return data, state_matrix, input_matrix
 
 
-def test_exact_dmd_recovers_linear_map_and_executes_as_system():
+def test_exact_dmd_recovers_linear_map_and_executes_as_system() -> None:
     data, expected, _ = _linear_trajectory(controlled=False)
 
     result = phx.dynamics.identification.fit_dmd(data, mode="exact")
@@ -60,7 +63,7 @@ def test_exact_dmd_recovers_linear_map_and_executes_as_system():
     )
 
 
-def test_controlled_dmd_recovers_state_and_input_matrices():
+def test_controlled_dmd_recovers_state_and_input_matrices() -> None:
     data, expected_state, expected_input = _linear_trajectory(controlled=True)
 
     result = phx.dynamics.identification.fit_dmd(data, rank=3)
@@ -82,7 +85,7 @@ def test_controlled_dmd_recovers_state_and_input_matrices():
     np.testing.assert_allclose(np.asarray(predicted), expected, atol=1e-11)
 
 
-def test_continuous_dmd_eigenvalue_conversion_rejects_irregular_spacing():
+def test_continuous_dmd_eigenvalue_conversion_rejects_irregular_spacing() -> None:
     states = jnp.asarray([[1.0], [0.8], [0.6], [0.4]])
     data = phx.dynamics.TrajectoryData(
         jnp.asarray([0.0, 0.2, 0.7, 1.0]),
@@ -95,7 +98,7 @@ def test_continuous_dmd_eigenvalue_conversion_rejects_irregular_spacing():
         phx.dynamics.identification.fit_dmd(data, continuous_eigenvalues=True)
 
 
-def test_edmd_recovers_quadratic_map_and_decoder():
+def test_edmd_recovers_quadratic_map_and_decoder() -> None:
     generator = np.random.default_rng(18)
     cases = 20
     capacity = 5
@@ -133,7 +136,7 @@ def test_edmd_recovers_quadratic_map_and_decoder():
     assert bool(rollout.successful)
 
 
-def test_edmd_insufficient_samples_has_failed_status_and_validity():
+def test_edmd_insufficient_samples_has_failed_status_and_validity() -> None:
     layout = phx.dynamics.StateLayout((1,), component_names=("x",))
     data = phx.dynamics.TrajectoryData(
         jnp.asarray([0.0, 1.0]),

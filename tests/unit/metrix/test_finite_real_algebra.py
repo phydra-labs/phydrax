@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_complex_and_quaternion_tables_have_exact_declared_laws():
+def test_complex_and_quaternion_tables_have_exact_declared_laws() -> None:
     complex_algebra = phx.metrix.algebra.ComplexAlgebraSpec()
     quaternion = phx.metrix.algebra.QuaternionAlgebraSpec()
     complex_product = complex_algebra.prepare_product(backend="sparse")
@@ -34,7 +34,7 @@ def test_complex_and_quaternion_tables_have_exact_declared_laws():
     assert quaternion.properties.proven("division_algebra")
 
 
-def test_octonion_bracketing_and_cayley_dickson_property_loss_are_explicit():
+def test_octonion_bracketing_and_cayley_dickson_property_loss_are_explicit() -> None:
     octonion = phx.metrix.algebra.OctonionAlgebraSpec()
     product = octonion.prepare_product(backend="sparse")
     basis = jnp.eye(8)
@@ -54,7 +54,7 @@ def test_octonion_bracketing_and_cayley_dickson_property_loss_are_explicit():
     assert sedenion.properties.proven("has_zero_divisors")
 
 
-def test_multicomplex_zero_divisor_is_not_quaternion_multiplication():
+def test_multicomplex_zero_divisor_is_not_quaternion_multiplication() -> None:
     algebra = phx.metrix.algebra.MulticomplexAlgebraSpec(2)
     product = algebra.prepare_product(backend="sparse")
     left = jnp.asarray([1.0, 0.0, 0.0, 1.0])
@@ -70,7 +70,7 @@ def test_multicomplex_zero_divisor_is_not_quaternion_multiplication():
     assert restored.spec_id == algebra.spec_id
 
 
-def test_sparse_dense_lowered_and_differentiated_products_agree():
+def test_sparse_dense_lowered_and_differentiated_products_agree() -> None:
     algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
     sparse = algebra.prepare_product(backend="sparse")
     dense = algebra.prepare_product(backend="dense")
@@ -93,7 +93,7 @@ def test_sparse_dense_lowered_and_differentiated_products_agree():
     assert bool(report.passed)
 
 
-def test_lowered_algebra_product_preserves_nonfinal_coordinate_axis():
+def test_lowered_algebra_product_preserves_nonfinal_coordinate_axis() -> None:
     algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
     layout = phx.metrix.algebra.AlgebraElementLayout(algebra, algebra_axis=0)
     product = phx.metrix.algebra.AlgebraProductPlan(
@@ -121,7 +121,7 @@ def test_lowered_algebra_product_preserves_nonfinal_coordinate_axis():
     assert jnp.allclose(output, product(left, right))
 
 
-def test_custom_rational_table_and_resource_failures_are_exact():
+def test_custom_rational_table_and_resource_failures_are_exact() -> None:
     budget = phx.metrix.algebra.AlgebraResourceBudget(maximum_coordinates=2)
     algebra = phx.metrix.algebra.FiniteRealAlgebraSpec(
         "dual-number",
@@ -146,7 +146,7 @@ def test_custom_rational_table_and_resource_failures_are_exact():
         phx.metrix.algebra.CayleyDicksonAlgebraSpec(2, budget=budget)
 
 
-def test_clifford_provider_implements_finite_algebra_protocol():
+def test_clifford_provider_implements_finite_algebra_protocol() -> None:
     clifford = phx.metrix.clifford.CliffordAlgebraSpec((1, 1, 1))
     provider = phx.metrix.clifford.CliffordFiniteAlgebraProvider(clifford)
     product = provider.prepare_product()

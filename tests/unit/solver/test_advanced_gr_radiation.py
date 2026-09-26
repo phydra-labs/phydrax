@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -66,11 +69,13 @@ from phydrax.solver._resistive_grrmhd_runtime import (
 from phydrax.units import KILOGRAM
 
 
-def _contracts():
+def _contracts() -> Any:
     return RelativityScaleContract.geometric(KILOGRAM), RelativityConvention.canonical()
 
 
-def _geometry(scale, convention, shape=(), *, topology_id="single-cell"):
+def _geometry(
+    scale: Any, convention: Any, shape: Any = (), *, topology_id: Any = "single-cell"
+) -> Any:
     identity = jnp.broadcast_to(jnp.eye(3), shape + (3, 3))
     return ADMGridGeometry(
         jnp.ones(shape),
@@ -90,7 +95,7 @@ def _geometry(scale, convention, shape=(), *, topology_id="single-cell"):
     )
 
 
-def test_periodic_gr_m1_preserves_uniform_stream_and_closes_balance_ledger():
+def test_periodic_gr_m1_preserves_uniform_stream_and_closes_balance_ledger() -> None:
     scale, convention = _contracts()
     system = GRGrayM1RadiationSystem(scale, convention)
     grid = phx.discretization.TensorGridPlan(
@@ -120,7 +125,9 @@ def test_periodic_gr_m1_preserves_uniform_stream_and_closes_balance_ledger():
     assert bool(result.attempted_ledger.qualified)
 
 
-def test_m1_vacuum_boundary_removes_incoming_flux_and_reflective_boundary_flips_it():
+def test_m1_vacuum_boundary_removes_incoming_flux_and_reflective_boundary_flips_it() -> (
+    None
+):
     scale, convention = _contracts()
     system = GRGrayM1RadiationSystem(scale, convention)
     geometry = _geometry(scale, convention)
@@ -141,7 +148,7 @@ def test_m1_vacuum_boundary_removes_incoming_flux_and_reflective_boundary_flips_
     assert bool(clipped_valid & transmitted_valid & mirrored_valid)
 
 
-def test_force_free_transition_is_hysteretic_and_balances_restoration_energy():
+def test_force_free_transition_is_hysteretic_and_balances_restoration_energy() -> None:
     scale, convention = _contracts()
     geometry = _geometry(scale, convention)
     eos = GammaLawEOS(scale, 4.0 / 3.0, minimum_density=1.0e-12)
@@ -181,7 +188,9 @@ def test_force_free_transition_is_hysteretic_and_balances_restoration_energy():
     assert float(jnp.abs(restored.ledger.reservoir_energy_change)) > 0.0
 
 
-def test_polarized_absorption_and_faraday_rotation_feed_back_exact_four_momentum():
+def test_polarized_absorption_and_faraday_rotation_feed_back_exact_four_momentum() -> (
+    None
+):
     scale, convention = _contracts()
     geometry = _geometry(scale, convention)
     plan = GRPolarizedRadiationFeedbackPlan(scale, convention, jnp.asarray((1.0, 1.0)))
@@ -210,7 +219,9 @@ def test_polarized_absorption_and_faraday_rotation_feed_back_exact_four_momentum
     assert bool(result.stress_energy.valid)
 
 
-def test_multigroup_and_neutrino_uniform_transport_preserve_all_groups_and_lepton_fraction():
+def test_multigroup_and_neutrino_uniform_transport_preserve_all_groups_and_lepton_fraction() -> (
+    None
+):
     scale, convention = _contracts()
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4, periodic=True),),
@@ -238,7 +249,7 @@ def test_multigroup_and_neutrino_uniform_transport_preserve_all_groups_and_lepto
         scale, convention, jnp.asarray((1.0, 2.0, 4.0))
     )
 
-    def transport_for(system):
+    def transport_for(system: Any) -> Any:
         return FixedGridGRMultigroupM1SSPRK3Plan(
             system,
             tuple(
@@ -339,7 +350,7 @@ def test_multigroup_and_neutrino_uniform_transport_preserve_all_groups_and_lepto
     )
 
 
-def _coupled_grrmhd_fixture(*, conductivity=0.0):
+def _coupled_grrmhd_fixture(*, conductivity: Any = 0.0) -> Any:
     scale, convention = _contracts()
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4, periodic=True),),
@@ -395,7 +406,7 @@ def _coupled_grrmhd_fixture(*, conductivity=0.0):
     )
 
 
-def test_uniform_grrmhd_imex_step_preserves_equilibrium_and_all_ledgers():
+def test_uniform_grrmhd_imex_step_preserves_equilibrium_and_all_ledgers() -> None:
     base, _, conserved, radiation, magnetic_flux, stages = _coupled_grrmhd_fixture()
     state = base.initialize(
         conserved,
@@ -420,7 +431,9 @@ def test_uniform_grrmhd_imex_step_preserves_equilibrium_and_all_ledgers():
     )
 
 
-def test_uniform_implicit_four_force_accepts_absorption_and_preserves_total_energy():
+def test_uniform_implicit_four_force_accepts_absorption_and_preserves_total_energy() -> (
+    None
+):
     base, _, conserved, radiation, _, stages = _coupled_grrmhd_fixture()
     interaction = GRGrayRadiationInteractionPlan(
         base.radiation_transport.system,
@@ -445,7 +458,7 @@ def test_uniform_implicit_four_force_accepts_absorption_and_preserves_total_ener
     assert not bool(result.derivative_valid)
 
 
-def test_grrmhd_production_adapter_commits_only_the_accepted_fixed_step():
+def test_grrmhd_production_adapter_commits_only_the_accepted_fixed_step() -> None:
     base, _, conserved, radiation, magnetic_flux, stages = _coupled_grrmhd_fixture()
     runtime_state = base.initialize(
         conserved,
@@ -456,6 +469,7 @@ def test_grrmhd_production_adapter_commits_only_the_accepted_fixed_step():
     method = FixedGridGRRMHDProductionMethod(base, fixed_step_size=1.0e-5)
     state = method.initialize(runtime_state)
     arguments = GRRMHDProductionArguments(stages, None, 0.0)
+    # ty: ignore[invalid-argument-type]
     result = method.step(0, 0.0, state, 1.0e-5, arguments)
 
     assert bool(result.successful)
@@ -463,7 +477,7 @@ def test_grrmhd_production_adapter_commits_only_the_accepted_fixed_step():
     assert float(result.accepted_state.runtime_state.time) == 1.0e-5
 
 
-def test_grrmhd_z4c_adapter_combines_material_and_radiation_stress_at_one_stage():
+def test_grrmhd_z4c_adapter_combines_material_and_radiation_stress_at_one_stage() -> None:
     base, _, conserved, radiation, magnetic_flux, stages = _coupled_grrmhd_fixture()
     state = base.initialize(
         conserved,
@@ -494,7 +508,9 @@ def test_grrmhd_z4c_adapter_combines_material_and_radiation_stress_at_one_stage(
     assert bool(jnp.all(projection.energy_density > 0.0))
 
 
-def test_zero_conductivity_resistive_step_leaves_electric_field_and_charge_unchanged():
+def test_zero_conductivity_resistive_step_leaves_electric_field_and_charge_unchanged() -> (
+    None
+):
     _, resistive, conserved, radiation, magnetic_flux, stages = _coupled_grrmhd_fixture(
         conductivity=0.0
     )

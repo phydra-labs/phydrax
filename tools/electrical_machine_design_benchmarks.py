@@ -13,6 +13,7 @@ partial derivative holds each sample's current fixed.
 import argparse
 import json
 import platform
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -30,7 +31,7 @@ from phydrax.applications.electrical_machines import (
 from phydrax.optim import Bounds, OptimizationTermination
 
 
-def _evidence(scan):
+def _evidence(scan: Any) -> Any:
     contour_defects = [
         abs(float(field.contour_torque - field.torque))
         for field in scan.fields
@@ -51,7 +52,7 @@ def _evidence(scan):
     }
 
 
-def main():
+def main() -> Any:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sectors", type=int, nargs="+", default=(16, 32))
     parser.add_argument("--samples", type=int, default=4)
@@ -60,6 +61,7 @@ def main():
     options = parser.parse_args()
     if options.samples < 1 or options.repeats < 1 or options.optimization_steps < 1:
         parser.error("samples, repeats, and optimization steps must be positive")
+    # ty: ignore[unresolved-attribute]
     if not jax.config.jax_enable_x64:
         parser.error("this certification benchmark requires JAX_ENABLE_X64=1")
     rows = []
@@ -93,10 +95,16 @@ def main():
         )
         reluctance_design = initial.at[1].set(0.0)
         reluctance_positive = solve_planar_machine(
-            machine, (-8.0, 0.0), design=reluctance_design
+            machine,
+            # ty: ignore[invalid-argument-type]
+            (-8.0, 0.0),
+            design=reluctance_design,
         )
         reluctance_negative = solve_planar_machine(
-            machine, (8.0, 0.0), design=reluctance_design
+            machine,
+            # ty: ignore[invalid-argument-type]
+            (8.0, 0.0),
+            design=reluctance_design,
         )
         reluctance_scale = max(
             abs(float(reluctance_positive.torque)),
@@ -148,9 +156,12 @@ def main():
         rotor_relative_permeability=1.0,
         stator_relative_permeability=1.0,
     )
+    # ty: ignore[invalid-argument-type]
     plus = solve_planar_machine(reference_model, (-4.0, 0.0))
+    # ty: ignore[invalid-argument-type]
     minus = solve_planar_machine(reference_model, (4.0, 0.0))
     odd = 0.5 * (plus.torque - minus.torque)
+    # ty: ignore[unsupported-operator]
     contour_odd = 0.5 * (plus.contour_torque - minus.contour_torque)
     a, b, outer = 0.04, 0.05, 0.065
     field_per_mu = (
@@ -224,11 +235,14 @@ def main():
         all(row["field_and_torque_accepted"] for row in rotating_rows)
         and all(row["fixed_topology_across_angles"] for row in rotating_rows)
         and all(
+            # ty: ignore[unsupported-operator]
             row["resolved_energy_finite_difference_defect_nm"] < 1e-5
             for row in rotating_rows
         )
         and all(
-            row["reluctance_current_even_relative_defect"] < 1e-8 for row in rotating_rows
+            # ty: ignore[unsupported-operator]
+            row["reluctance_current_even_relative_defect"] < 1e-8
+            for row in rotating_rows
         )
         and reference_accepted
         and reference_error < 0.035
@@ -240,6 +254,7 @@ def main():
             {
                 "platform": platform.platform(),
                 "jax_backend": jax.default_backend(),
+                # ty: ignore[unresolved-attribute]
                 "jax_enable_x64": bool(jax.config.jax_enable_x64),
                 "fidelity": (
                     "2D prescribed-angle linear isotropic magnetostatics; no "

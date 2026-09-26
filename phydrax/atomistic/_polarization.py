@@ -1096,7 +1096,8 @@ def _operator_result(
     if cell is not None:
         # _periodic_cell only returns a cell when the operator plan is periodic.
         periodic_plan = operator.plan.periodic_plan
-        assert periodic_plan is not None
+        if not (periodic_plan is not None):
+            raise RuntimeError("Internal invariant failed: periodic_plan is not None.")
         zeros_charge = jnp.zeros_like(operator.multipoles.charges)
         zeros_quadrupole = jnp.zeros_like(operator.multipoles.quadrupoles)
         permanent_reciprocal = _reciprocal_field(
@@ -1181,7 +1182,8 @@ def _action(
     if cell is not None:
         # _periodic_cell only returns a cell when the operator plan is periodic.
         periodic_plan = operator.plan.periodic_plan
-        assert periodic_plan is not None
+        if not (periodic_plan is not None):
+            raise RuntimeError("Internal invariant failed: periodic_plan is not None.")
         u_field = u_field + _reciprocal_field(
             periodic_plan,
             positions,

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -194,7 +195,7 @@ def _cohort_cases() -> tuple[CardiovascularTruthCase, ...]:
     return (*complete, invalid)
 
 
-def test_fixed_topology_cohort_split_and_preprocessing_are_leakage_safe():
+def test_fixed_topology_cohort_split_and_preprocessing_are_leakage_safe() -> None:
     cases = _cohort_cases()
     batched = batch_fixed_topology_cohort(cases)
 
@@ -214,7 +215,9 @@ def test_fixed_topology_cohort_split_and_preprocessing_are_leakage_safe():
     train_cases = {case.case_id: case for case in cases}
     expected_input_mean = jnp.mean(
         jnp.stack(
+            # ty: ignore[invalid-argument-type]
             [
+                # ty: ignore[unresolved-attribute]
                 train_cases[case_id].operator_batch.input("parameter_field").values
                 for case_id in first.train_ids
             ]
@@ -268,7 +271,7 @@ def test_fixed_topology_cohort_split_and_preprocessing_are_leakage_safe():
         )
 
 
-def test_canonical_random_field_has_covariance_and_exact_replay():
+def test_canonical_random_field_has_covariance_and_exact_replay() -> None:
     coordinates = CanonicalCardiacCoordinates(
         jnp.asarray(
             [
@@ -312,7 +315,7 @@ def test_canonical_random_field_has_covariance_and_exact_replay():
     assert jnp.allclose(field.covariance.matrix, field.covariance.matrix.T)
 
 
-def _qualified_geometry():
+def _qualified_geometry() -> Any:
     reference = FixedTopologyReferenceGeometry(
         jnp.asarray(
             [
@@ -346,7 +349,9 @@ def _qualified_geometry():
     return reference, candidate, evidence
 
 
-def test_calibrated_surrogate_refuses_ood_and_native_reanalysis_is_only_authority():
+def test_calibrated_surrogate_refuses_ood_and_native_reanalysis_is_only_authority() -> (
+    None
+):
     cases = _cohort_cases()
     split = split_cardiovascular_cohort(
         cases, OODSplitPolicy(("rare-geometry",), seed=19)
@@ -532,6 +537,7 @@ def test_calibrated_surrogate_refuses_ood_and_native_reanalysis_is_only_authorit
             ),
             route=CardiovascularSerialExecution(),
         )
+        # ty: ignore[invalid-argument-type]
         receipts.append(receipt_adapter(route.route_id, execution, domain_result))
 
     def native_candidate(receipt_count: int = 4) -> NativeReanalysisCandidate:
@@ -548,11 +554,15 @@ def test_calibrated_surrogate_refuses_ood_and_native_reanalysis_is_only_authorit
     assert accepted.accepted
     assert accepted.final_native_reanalysis
     assert jnp.array_equal(
+        # ty: ignore[not-subscriptable]
         accepted.accepted_fields[quantity.name],
         hemodynamics.macroscopic.gauge_pressure_kpa,
     )
     assert not jnp.array_equal(
-        accepted.accepted_fields[quantity.name], proposal.predicted_state
+        # ty: ignore[not-subscriptable]
+        accepted.accepted_fields[quantity.name],
+        # ty: ignore[invalid-argument-type]
+        proposal.predicted_state,
     )
 
     incomplete = run_full_native_reanalysis(

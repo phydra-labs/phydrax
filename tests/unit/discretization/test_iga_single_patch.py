@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 from phydrax.discretization import iga
 
 
-def _geometry(grid: iga.BSplineGrid):
+def _geometry(grid: iga.BSplineGrid) -> Any:
     coordinates = grid.greville_abscissae
     xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
     return iga.NURBSGeometryState(
@@ -19,7 +21,7 @@ def _geometry(grid: iga.BSplineGrid):
     )
 
 
-def _prepared(*, degree: int = 2):
+def _prepared(*, degree: int = 2) -> Any:
     grid = iga.BSplineGrid.open_uniform(
         degree,
         1,
@@ -36,7 +38,7 @@ def _prepared(*, degree: int = 2):
     return grid, plan, plan.prepare(numeric_version="unit-square")
 
 
-def test_single_patch_topology_runtime_and_trace_constraint():
+def test_single_patch_topology_runtime_and_trace_constraint() -> None:
     grid, plan, prepared = _prepared()
 
     assert prepared.basis.control_shape == (
@@ -66,7 +68,7 @@ def test_single_patch_topology_runtime_and_trace_constraint():
     np.testing.assert_allclose(correction, 0.0)
 
 
-def test_anisotropic_isoparametric_axes_prepare():
+def test_anisotropic_isoparametric_axes_prepare() -> None:
     quadratic = iga.BSplineGrid.open_uniform(2, 1)
     cubic = iga.BSplineGrid.open_uniform(3, 1)
     xx, yy = jnp.meshgrid(
@@ -88,6 +90,7 @@ def test_anisotropic_isoparametric_axes_prepare():
     prepared = plan.prepare(numeric_version="anisotropic")
 
     assert plan.basis.degrees == (2, 3)
+    # ty: ignore[unresolved-attribute]
     assert prepared.field_spaces[0].layout.value_shape == (
         quadratic.coefficient_count,
         cubic.coefficient_count,

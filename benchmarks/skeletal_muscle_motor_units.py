@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -20,13 +22,13 @@ from phydrax.applications.skeletal_muscle.motor_units import (
 )
 
 
-def _synchronize(value) -> None:
+def _synchronize(value: Any) -> None:
     for leaf in jax.tree.leaves(value):
         if isinstance(leaf, jax.Array):
             leaf.block_until_ready()
 
 
-def _case(batch_size: int, rollout_steps: int, repetitions: int):
+def _case(batch_size: int, rollout_steps: int, repetitions: int) -> Any:
     runtime = PotvinFuglevand2017Plan().prepare()
     source = runtime.initialize()
     duration = jnp.broadcast_to(
@@ -37,7 +39,7 @@ def _case(batch_size: int, rollout_steps: int, repetitions: int):
     )
     excitation = jnp.full((batch_size,), 40.125, dtype=capacity.dtype)
 
-    def one_step(duration_value, capacity_value, drive):
+    def one_step(duration_value: Any, capacity_value: Any, drive: Any) -> Any:
         state = PotvinFuglevand2017State(duration_value, capacity_value)
         candidate = runtime.candidate(state, drive, 0.1)
         accepted = candidate.commit()
@@ -62,8 +64,8 @@ def _case(batch_size: int, rollout_steps: int, repetitions: int):
     _synchronize(result)
     execution_ms = 1000.0 * (time.perf_counter() - start) / repetitions
 
-    def rollout(initial):
-        def step(state, _):
+    def rollout(initial: Any) -> Any:
+        def step(state: Any, _: Any) -> Any:
             next_duration, next_capacity, total_force, successful, _ = action(
                 state[0], state[1], excitation
             )
@@ -101,7 +103,7 @@ def _case(batch_size: int, rollout_steps: int, repetitions: int):
         "all_successful": bool(jnp.all(result[3]) & jnp.all(history[1])),
     }
 
-def _gradient_case(repetitions: int):
+def _gradient_case(repetitions: int) -> Any:
     runtime = PotvinFuglevand2017Plan().prepare()
     source = runtime.initialize()
     state = PotvinFuglevand2017State(
@@ -110,7 +112,7 @@ def _gradient_case(repetitions: int):
     )
     scale = runtime.parameters.adaptation_scale
 
-    def objective(value):
+    def objective(value: Any) -> Any:
         selected = eqx.tree_at(
             lambda model: model.parameters.adaptation_scale,
             runtime,
@@ -118,7 +120,7 @@ def _gradient_case(repetitions: int):
         )
         return selected.evaluate(state, 20.125).total_force
 
-    def derivatives(value):
+    def derivatives(value: Any) -> Any:
         primal, tangent = jax.jvp(objective, (value,), (jnp.ones_like(value),))
         reverse_primal, pullback = jax.vjp(objective, value)
         reverse = pullback(jnp.ones_like(reverse_primal))[0]

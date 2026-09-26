@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._dtype_names import inexact_result_type
+from ..typing import parse
 from ._stencil import apply_gather_stencil, GatherStencil
 from ._types import (
     BoundsMode,
@@ -96,8 +97,7 @@ def _piecewise_geometry(
     *,
     bounds: BoundsMode,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
-    if bounds not in ("clip", "error", "extrapolate", "fill"):
-        raise ValueError("bounds must be 'clip', 'error', 'extrapolate', or 'fill'.")
+    bounds = parse(bounds, BoundsMode, "bounds")
     nodes_, query_ = _nodes_and_query(nodes, query)
     outside = (query_ < nodes_[0]) | (query_ > nodes_[-1])
     if bounds == "error":
@@ -192,8 +192,7 @@ def nearest_stencil(
     bounds: BoundsMode = "clip",
     tie_policy: NearestTiePolicy = "lower",
 ) -> GatherStencil:
-    if tie_policy not in ("lower", "round_even", "upper"):
-        raise ValueError("tie_policy must be 'lower', 'round_even', or 'upper'.")
+    tie_policy = parse(tie_policy, NearestTiePolicy, "tie_policy")
     nodes_, query_, lower, upper, _fraction, support = _piecewise_geometry(
         nodes, query, bounds=bounds
     )

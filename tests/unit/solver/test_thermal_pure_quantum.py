@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -32,7 +35,7 @@ from phydrax.solver._thermal_pure_quantum import (
 )
 
 
-def _diagonal_fermion_operators():
+def _diagonal_fermion_operators() -> Any:
     order = FermionModeOrder(("a", "b"))
     spaces = tuple(LocalSpacePlan.fermion(label, label) for label in order.labels)
     create = np.asarray(((0.0, 0.0), (1.0, 0.0)))
@@ -76,7 +79,11 @@ def _diagonal_fermion_operators():
     return hamiltonian, observable
 
 
-def _plan(beta, maximum_retained_bytes=100_000, maximum_workspace_bytes=100_000):
+def _plan(
+    beta: Any,
+    maximum_retained_bytes: Any = 100_000,
+    maximum_workspace_bytes: Any = 100_000,
+) -> Any:
     return ThermalPureQuantumPlan(
         beta,
         probe_count=3,
@@ -92,7 +99,7 @@ def _plan(beta, maximum_retained_bytes=100_000, maximum_workspace_bytes=100_000)
     )
 
 
-def test_tpq_beta_zero_trace_and_semantic_prng_replay_are_exact():
+def test_tpq_beta_zero_trace_and_semantic_prng_replay_are_exact() -> None:
     hamiltonian, _ = _diagonal_fermion_operators()
     identity = IdentityLinearOperator(hamiltonian.source)
     prepared = prepare_thermal_pure_quantum(_plan(0.0), hamiltonian)
@@ -105,7 +112,7 @@ def test_tpq_beta_zero_trace_and_semantic_prng_replay_are_exact():
     assert bool(first.valid)
 
 
-def test_tpq_uses_ratio_of_probe_sums_for_canonical_observable():
+def test_tpq_uses_ratio_of_probe_sums_for_canonical_observable() -> None:
     hamiltonian, number_a = _diagonal_fermion_operators()
     beta = 0.7
     result = thermal_pure_quantum(
@@ -125,7 +132,7 @@ def test_tpq_uses_ratio_of_probe_sums_for_canonical_observable():
     np.testing.assert_allclose(result.observable_estimates, ratio_of_sums)
 
 
-def test_tpq_preparation_refuses_retained_or_krylov_workspace():
+def test_tpq_preparation_refuses_retained_or_krylov_workspace() -> None:
     hamiltonian, _ = _diagonal_fermion_operators()
     with pytest.raises(ValueError, match="maximum_retained_bytes"):
         prepare_thermal_pure_quantum(_plan(0.0, maximum_retained_bytes=1), hamiltonian)

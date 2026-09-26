@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,7 +15,7 @@ import phydrax as phx
 la = phx.linalg
 
 
-def _positive_definite_properties():
+def _positive_definite_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -24,7 +27,7 @@ def _positive_definite_properties():
     )
 
 
-def _status_policy(equilibration, *, refinement_steps=3):
+def _status_policy(equilibration: Any, *, refinement_steps: Any = 3) -> Any:
     return la.ResilientSolvePolicy(
         la.LinearSolvePolicy(
             la.DenseLU(),
@@ -39,7 +42,7 @@ def _status_policy(equilibration, *, refinement_steps=3):
     )
 
 
-def test_two_sided_scaled_operator_matches_dense_actions_and_congruence_claims():
+def test_two_sided_scaled_operator_matches_dense_actions_and_congruence_claims() -> None:
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])
     base = la.DenseLinearOperator(matrix, properties=_positive_definite_properties())
     left = jnp.asarray([2.0, 0.5])
@@ -70,7 +73,7 @@ def test_two_sided_scaled_operator_matches_dense_actions_and_congruence_claims()
     )
 
 
-def test_ruiz_equilibration_reduces_condition_and_refines_original_residual():
+def test_ruiz_equilibration_reduces_condition_and_refines_original_residual() -> None:
     matrix = jnp.asarray([[1e-6, 2e-3], [3e2, 4e6]])
     operator = la.DenseLinearOperator(matrix, operator_id="ill-scaled-system")
     problem = la.LinearSystem(operator, problem_id="ill-scaled-problem")
@@ -122,7 +125,7 @@ def test_ruiz_equilibration_reduces_condition_and_refines_original_residual():
     )
 
 
-def test_symmetric_ruiz_preserves_certificates_for_native_pcg():
+def test_symmetric_ruiz_preserves_certificates_for_native_pcg() -> None:
     matrix = jnp.asarray([[1e-6, 1e-3], [1e-3, 2e3]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -150,7 +153,7 @@ def test_symmetric_ruiz_preserves_certificates_for_native_pcg():
     assert jnp.allclose(result.value, jnp.linalg.solve(matrix, jnp.asarray([1.0, 2.0])))
 
 
-def test_explicit_equilibration_supports_a_matrix_free_base():
+def test_explicit_equilibration_supports_a_matrix_free_base() -> None:
     matrix = jnp.asarray([[4.0, 1.0], [2.0, 3.0]])
     space = la.ArraySpace((2,), dtype=jnp.float64)
     operator = la.FunctionLinearOperator(
@@ -185,7 +188,7 @@ def test_explicit_equilibration_supports_a_matrix_free_base():
     assert jnp.allclose(result.value, jnp.linalg.solve(matrix, rhs), atol=1e-11)
 
 
-def test_explicit_equilibration_transforms_declared_nullspaces_and_certificate():
+def test_explicit_equilibration_transforms_declared_nullspaces_and_certificate() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     matrix = jnp.asarray([[1.0, -1.0], [-1.0, 1.0]])
     operator = la.DenseLinearOperator(
@@ -250,7 +253,7 @@ def test_explicit_equilibration_transforms_declared_nullspaces_and_certificate()
     assert jnp.allclose(matrix @ result.value, rhs, atol=1e-10)
 
 
-def test_resilient_one_shot_solve_has_the_dense_mathematical_derivative():
+def test_resilient_one_shot_solve_has_the_dense_mathematical_derivative() -> None:
     rhs = jnp.asarray([1.0, -2.0])
     policy = la.ResilientSolvePolicy(
         la.LinearSolvePolicy(
@@ -262,12 +265,12 @@ def test_resilient_one_shot_solve_has_the_dense_mathematical_derivative():
         failure=la.FailurePolicy("status"),
     )
 
-    def resilient(diagonal):
+    def resilient(diagonal: Any) -> Any:
         matrix = jnp.asarray([[diagonal[0], 0.25], [0.5, diagonal[1]]])
         problem = la.LinearSystem(la.DenseLinearOperator(matrix))
         return jnp.sum(la.solve_resilient(problem, rhs, policy).value)
 
-    def dense(diagonal):
+    def dense(diagonal: Any) -> Any:
         matrix = jnp.asarray([[diagonal[0], 0.25], [0.5, diagonal[1]]])
         return jnp.sum(jnp.linalg.solve(matrix, rhs))
 
@@ -278,7 +281,7 @@ def test_resilient_one_shot_solve_has_the_dense_mathematical_derivative():
     assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-11)
 
 
-def test_resilient_planning_rejects_unavailable_materialization_and_workspace():
+def test_resilient_planning_rejects_unavailable_materialization_and_workspace() -> None:
     matrix = jnp.eye(3)
     space = la.ArraySpace((3,), dtype=jnp.float64)
     matrix_free = la.FunctionLinearOperator(

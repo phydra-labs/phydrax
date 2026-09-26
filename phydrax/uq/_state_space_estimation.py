@@ -17,7 +17,7 @@ from jaxtyping import PyTree
 from .._strict import StrictModule
 from ..optim import DifferentialEvolutionSearch
 from ..stochastic._state_space import StateSpaceProblem
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._bayesian_optimization import GaussianProcessBayesianOptimization
 from ._bellman import BellmanFilterResult
 from ._ensemble_filter import EnsembleFilterResult
@@ -191,12 +191,8 @@ class StateSpaceExperiment(StrictModule):
             raise TypeError("likelihood must be callable or None.")
         if not isinstance(transform_safe, bool):
             raise TypeError("transform_safe must be a bool.")
-        if exact_method not in ("auto", "kalman", "finite-state"):
-            raise ValueError("exact_method must be 'auto', 'kalman', or 'finite-state'.")
-        if temporal_method not in ("auto", "sequential", "parallel"):
-            raise ValueError(
-                "temporal_method must be 'auto', 'sequential', or 'parallel'."
-            )
+        exact_method = parse(exact_method, ExactStateSpaceMethod, "exact_method")
+        temporal_method = parse(temporal_method, KalmanExecutionMethod, "temporal_method")
         regularization = float(covariance_regularization)
         if not np.isfinite(regularization) or regularization < 0.0:
             raise ValueError("covariance_regularization must be finite and nonnegative.")

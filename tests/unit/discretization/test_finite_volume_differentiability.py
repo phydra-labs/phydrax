@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _periodic_problem(count=16, *, smooth_epsilon=0.0):
+def _periodic_problem(count: Any = 16, *, smooth_epsilon: Any = 0.0) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
         axis_names=("x",),
@@ -42,7 +45,7 @@ def _periodic_problem(count=16, *, smooth_epsilon=0.0):
     ), grid
 
 
-def test_state_jvp_matches_centered_directional_difference():
+def test_state_jvp_matches_centered_directional_difference() -> None:
     compiled, grid = _periodic_problem()
     x = grid.structured_axes[0].interval_centers
     state = jnp.sin(2.0 * jnp.pi * x)[..., None]
@@ -58,7 +61,7 @@ def test_state_jvp_matches_centered_directional_difference():
     np.testing.assert_allclose(jvp, finite_difference, rtol=2e-9, atol=2e-9)
 
 
-def test_smooth_wave_speed_has_finite_parameter_gradient():
+def test_smooth_wave_speed_has_finite_parameter_gradient() -> None:
     compiled, grid = _periodic_problem(smooth_epsilon=1e-3)
     state = jnp.sin(2.0 * jnp.pi * grid.structured_axes[0].interval_centers)[..., None]
 
@@ -73,7 +76,7 @@ def test_smooth_wave_speed_has_finite_parameter_gradient():
     )
 
 
-def test_boundary_control_gradient_flows_through_exterior_state():
+def test_boundary_control_gradient_flows_through_exterior_state() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(10),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -110,6 +113,7 @@ def test_boundary_control_gradient_flows_through_exterior_state():
     gradient = jax.grad(
         lambda inflow: jnp.sum(
             discretization.cell_volumes[..., None]
+            # ty: ignore[invalid-argument-type]
             * compiled(0.0, state, {"inflow": inflow})
         )
     )(jnp.asarray(0.4))
@@ -117,7 +121,7 @@ def test_boundary_control_gradient_flows_through_exterior_state():
     np.testing.assert_allclose(gradient, 1.0, rtol=1e-12)
 
 
-def test_mapped_cell_volume_is_differentiable_at_fixed_topology():
+def test_mapped_cell_volume_is_differentiable_at_fixed_topology() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),
@@ -127,7 +131,7 @@ def test_mapped_cell_volume_is_differentiable_at_fixed_topology():
     ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
     reference = phx.discretization.FiniteVolumePlan(grid).prepare()
 
-    def total_volume(scale):
+    def total_volume(scale: Any) -> Any:
         geometry = phx.discretization.evaluate_mapped_finite_volume_geometry(
             reference,
             lambda point: jnp.stack((scale * point[0], point[1])),
@@ -140,7 +144,7 @@ def test_mapped_cell_volume_is_differentiable_at_fixed_topology():
     np.testing.assert_allclose(tangent, 1.0, rtol=1e-12)
 
 
-def test_hard_limiter_reports_frozen_decision_semantics():
+def test_hard_limiter_reports_frozen_decision_semantics() -> None:
     reconstruction = phx.discretization.MUSCLReconstruction(
         phx.discretization.SuperbeeLimiter()
     )
@@ -150,7 +154,7 @@ def test_hard_limiter_reports_frozen_decision_semantics():
     )
 
 
-def test_branch_policy_owners_reject_members_outside_their_subset():
+def test_branch_policy_owners_reject_members_outside_their_subset() -> None:
     policy = phx.BranchDifferentiationPolicy
     with pytest.raises(ValueError, match="FiniteVolumeMethodPlan supports"):
         phx.discretization.FiniteVolumeMethodPlan(
@@ -165,14 +169,15 @@ def test_branch_policy_owners_reject_members_outside_their_subset():
     with pytest.raises(ValueError, match="EntropyFilterPlan supports"):
         phx.equations.fem.EntropyFilterPlan(differentiability=policy.SMOOTH)
     with pytest.raises(TypeError, match="BranchDifferentiationPolicy"):
+        # ty: ignore[invalid-argument-type]
         phx.discretization.PseudospectralMethodPlan(differentiability="branchwise")
 
 
-def test_explicit_stabilization_policy_selects_sensor_derivative():
+def test_explicit_stabilization_policy_selects_sensor_derivative() -> None:
     values = jnp.asarray((0.0, 1.0, 0.0, 1.0))
     measure = jnp.ones((4,))
 
-    def sensor_gradient(differentiability):
+    def sensor_gradient(differentiability: Any) -> Any:
         plan = phx.discretization.ExplicitStabilizationPlan(
             0.25, differentiability=differentiability, periodic=True
         )

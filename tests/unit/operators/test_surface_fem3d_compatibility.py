@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -7,20 +9,22 @@ import phydrax as phx
 _TETRA_FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32)
 
 
-def _tetra_vertices(shift=(0.0, 0.0, 0.0), scale=1.0):
+def _tetra_vertices(shift: Any = (0.0, 0.0, 0.0), scale: Any = 1.0) -> Any:
     base = jnp.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     )
     return scale * base + jnp.asarray(shift)
 
 
-def _two_component_region(*, second_faces=_TETRA_FACES, shift=(3.0, 0.0, 0.0), scale=1.0):
+def _two_component_region(
+    *, second_faces: Any = _TETRA_FACES, shift: Any = (3.0, 0.0, 0.0), scale: Any = 1.0
+) -> Any:
     vertices = jnp.concatenate((_tetra_vertices(), _tetra_vertices(shift, scale)))
     faces = jnp.concatenate((_TETRA_FACES, second_faces + 4))
     return phx.geometry.MeshRegion(vertices, faces)
 
 
-def _fast_policy():
+def _fast_policy() -> Any:
     return phx.operators.LaplaceSingleLayerDP0GalerkinPolicy3D(
         singular_order=3,
         near_ratio=1.0,
@@ -29,7 +33,7 @@ def _fast_policy():
     )
 
 
-def test_triangle_topology_retains_face_components_and_region_mesh_order():
+def test_triangle_topology_retains_face_components_and_region_mesh_order() -> None:
     region = _two_component_region()
     mesh = region.triangle_mesh
 
@@ -41,7 +45,7 @@ def test_triangle_topology_retains_face_components_and_region_mesh_order():
     assert jnp.array_equal(mesh.faces, region.faces)
 
 
-def test_surface_binding_uses_one_dp0_dof_per_face_and_invalidates_by_binding():
+def test_surface_binding_uses_one_dp0_dof_per_face_and_invalidates_by_binding() -> None:
     region = _two_component_region()
     prepared = phx.operators.prepare_laplace_single_layer_dp0_3d(
         region,
@@ -69,7 +73,7 @@ def test_surface_binding_uses_one_dp0_dof_per_face_and_invalidates_by_binding():
     )
 
 
-def test_surface_binding_rejects_inward_or_unseparated_components():
+def test_surface_binding_rejects_inward_or_unseparated_components() -> None:
     inward = _TETRA_FACES[:, [0, 2, 1]]
     inward_region = _two_component_region(
         second_faces=inward,

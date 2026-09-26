@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _quadrilateral_grid(nx=4, ny=4):
+def _quadrilateral_grid(nx: Any = 4, ny: Any = 4) -> Any:
     vertices = np.asarray(
         [(i / nx, j / ny) for j in range(ny + 1) for i in range(nx + 1)]
     )
@@ -25,7 +28,7 @@ def _quadrilateral_grid(nx=4, ny=4):
     return vertices, np.asarray(quadrilaterals, dtype=np.int32)
 
 
-def _scalar_system(velocity):
+def _scalar_system(velocity: Any) -> Any:
     speed = tuple(float(value) for value in velocity)
     return phx.equations.ScalarConservationSystem(
         len(speed),
@@ -39,7 +42,9 @@ def _scalar_system(velocity):
     )
 
 
-def _compiled_dynamics(system, reconstruction_factory, *, precision=None):
+def _compiled_dynamics(
+    system: Any, reconstruction_factory: Any, *, precision: Any = None
+) -> Any:
     vertices, quadrilaterals = _quadrilateral_grid()
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
         vertices,
@@ -65,7 +70,7 @@ def _compiled_dynamics(system, reconstruction_factory, *, precision=None):
     ).dynamics
 
 
-def test_backward_euler_solves_affine_advection_and_refreshes_symbolic_plan():
+def test_backward_euler_solves_affine_advection_and_refreshes_symbolic_plan() -> None:
     system = _scalar_system((0.4, -0.3))
     dynamics = _compiled_dynamics(
         system,
@@ -114,7 +119,7 @@ def test_backward_euler_solves_affine_advection_and_refreshes_symbolic_plan():
     )
 
 
-def test_backward_euler_residual_jvp_and_vjp_are_adjoint():
+def test_backward_euler_residual_jvp_and_vjp_are_adjoint() -> None:
     system = _scalar_system((0.4, -0.3))
     dynamics = _compiled_dynamics(
         system,
@@ -129,7 +134,7 @@ def test_backward_euler_residual_jvp_and_vjp_are_adjoint():
     direction = jnp.sin(jnp.arange(previous.size)).reshape(previous.shape)
     cotangent = jnp.cos(jnp.arange(previous.size)).reshape(previous.shape)
 
-    def residual(state):
+    def residual(state: Any) -> Any:
         return plan.residual_operator(state, prepared.stage)
 
     _, tangent = jax.jvp(residual, (previous,), (direction,))
@@ -143,7 +148,7 @@ def test_backward_euler_residual_jvp_and_vjp_are_adjoint():
     )
 
 
-def test_backward_euler_compressible_state_is_admissible_and_float32_explicit():
+def test_backward_euler_compressible_state_is_admissible_and_float32_explicit() -> None:
     system = phx.equations.EulerSystem(2)
     precision = phx.discretization.FiniteVolumePrecisionPolicy("float32")
     dynamics = _compiled_dynamics(
@@ -172,7 +177,7 @@ def test_backward_euler_compressible_state_is_admissible_and_float32_explicit():
     assert jnp.all(system.admissible(result.state))
 
 
-def test_backward_euler_advances_nonuniform_compressible_flow():
+def test_backward_euler_advances_nonuniform_compressible_flow() -> None:
     system = phx.equations.EulerSystem(2)
     dynamics = _compiled_dynamics(
         system,
@@ -205,7 +210,7 @@ def test_backward_euler_advances_nonuniform_compressible_flow():
     assert jnp.all(system.admissible(result.state))
 
 
-def test_backward_euler_plan_identity_includes_nonlinear_termination():
+def test_backward_euler_plan_identity_includes_nonlinear_termination() -> None:
     system = _scalar_system((0.4, -0.3))
     dynamics = _compiled_dynamics(
         system,
@@ -269,7 +274,7 @@ def test_backward_euler_plan_identity_includes_nonlinear_termination():
     assert changed_tolerance.plan_id != baseline.plan_id
 
 
-def test_backward_euler_refresh_rejects_broadcastable_previous_state_shape():
+def test_backward_euler_refresh_rejects_broadcastable_previous_state_shape() -> None:
     system = _scalar_system((0.4, -0.3))
     dynamics = _compiled_dynamics(
         system,

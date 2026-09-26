@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import hashlib
 import json
@@ -13,7 +15,7 @@ from _runtime import capture_environment, measure_lower_and_compile, measure_rep
 import phydrax as phx
 
 
-def _geometry(cell_count):
+def _geometry(cell_count: Any) -> Any:
     rho = np.linspace(0.0, 0.95, cell_count + 1)
     theta = 2.0 * np.pi * np.arange(16) / 16
     contours = np.empty((cell_count + 1, 16, 2))
@@ -34,7 +36,7 @@ def _geometry(cell_count):
     )
 
 
-def _activation(nuclide_count):
+def _activation(nuclide_count: Any) -> Any:
     payload = b"synthetic-activation-benchmark"
     reference = phx.qualification.ReferenceArtifactManifest(
         "synthetic-activation-benchmark",
@@ -84,7 +86,7 @@ def _activation(nuclide_count):
     ).prepare()
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cells", type=int, default=64)
     parser.add_argument("--nuclides", type=int, default=16)
@@ -111,7 +113,7 @@ def main():
         jnp.zeros(args.cells), jnp.zeros(args.cells), jnp.zeros(args.cells)
     )
 
-    def transport_step(density_scale):
+    def transport_step(density_scale: Any) -> Any:
         scaled = phx.applications.tokamak.TokamakCoreState(
             density_scale * state.electron_density_m3,
             state.electron_thermal_energy_j,
@@ -158,7 +160,7 @@ def main():
         jnp.concatenate((jnp.zeros(args.nuclides - 1), jnp.ones(1)))
     )
 
-    def activation_step(duration):
+    def activation_step(duration: Any) -> Any:
         result = activation.step(inventory, jnp.asarray([0.0]), duration)
         return result.accepted.amounts_mol, result.exponential_error, result.successful
 

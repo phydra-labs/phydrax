@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _mesh():
+def _mesh() -> Any:
     return phx.geometry.TriangleMesh(
         jnp.asarray(
             (
@@ -24,7 +27,7 @@ def _mesh():
     )
 
 
-def test_zero_field_london_state_is_zero_and_divergence_free():
+def test_zero_field_london_state_is_zero_and_divergence_free() -> None:
     plan = phx.applications.superconductivity.ThinFilmLondonPlan(
         _mesh(), pearl_length=0.2, tolerance=1.0e-8
     )
@@ -36,7 +39,7 @@ def test_zero_field_london_state_is_zero_and_divergence_free():
     np.testing.assert_allclose(result.total_energy, 0.0, atol=1e-12)
 
 
-def test_london_constraints_and_inductance_are_reciprocal():
+def test_london_constraints_and_inductance_are_reciprocal() -> None:
     constraint = jnp.asarray(((1.0, -1.0, 0.0, 0.0, 0.0),))
     plan = phx.applications.superconductivity.ThinFilmLondonPlan(
         _mesh(),

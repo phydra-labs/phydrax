@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -11,20 +12,20 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _block(value) -> None:
+def _block(value: Any) -> None:
     for leaf in jax.tree.leaves(value):
         if isinstance(leaf, jax.Array):
             leaf.block_until_ready()
 
 
-def _measure(function, *arguments):
+def _measure(function: Any, *arguments: Any) -> Any:
     started = time.perf_counter()
     value = function(*arguments)
     _block(value)
     return value, time.perf_counter() - started
 
 
-def _positions(count: int, distribution: str):
+def _positions(count: int, distribution: str) -> Any:
     key = jax.random.key(1000 + count)
     if distribution == "uniform":
         return 0.05 + 0.9 * jax.random.uniform(key, (count, 3))
@@ -32,7 +33,7 @@ def _positions(count: int, distribution: str):
     return jnp.clip(cluster, 0.05, 0.95)
 
 
-def _reference(positions, masses, softening):
+def _reference(positions: Any, masses: Any, softening: Any) -> Any:
     displacement = positions[None, :, :] - positions[:, None, :]
     squared = jnp.sum(displacement**2, axis=-1) + softening**2
     mask = ~jnp.eye(positions.shape[0], dtype="bool")
@@ -46,7 +47,7 @@ def _reference(positions, masses, softening):
     )
 
 
-def _case(count: int, distribution: str):
+def _case(count: int, distribution: str) -> Any:
     positions = _positions(count, distribution)
     masses = jnp.full((count,), 1.0 / count)
     depth = min(10, max(2, int(jnp.ceil(jnp.log2(count) / 3.0)) + 2))

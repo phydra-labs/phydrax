@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,12 +17,12 @@ from phydrax.uq._diagnostics import mcmc_diagnostics
 
 def _result(
     *,
-    rhat=(1.0, 1.0),
-    bulk_ess=(800.0, 700.0),
-    tail_ess=(750.0, 650.0),
-    divergent=None,
-    trajectory_expansions=None,
-):
+    rhat: Any = (1.0, 1.0),
+    bulk_ess: Any = (800.0, 700.0),
+    tail_ess: Any = (750.0, 650.0),
+    divergent: Any = None,
+    trajectory_expansions: Any = None,
+) -> Any:
     chains, draws = 2, 12
     samples = {"layer": {"weight": jnp.zeros((chains, draws, 2))}}
     space = phx.uq.ParameterSpace(
@@ -69,7 +71,7 @@ def _result(
     )
 
 
-def test_convergence_report_passes_and_serializes_complete_summary():
+def test_convergence_report_passes_and_serializes_complete_summary() -> None:
     result = _result()
     report = result.convergence_report()
 
@@ -84,7 +86,7 @@ def test_convergence_report_passes_and_serializes_complete_summary():
     report.raise_for_failure()
 
 
-def test_convergence_report_identifies_nested_rhat_and_ess_failures():
+def test_convergence_report_identifies_nested_rhat_and_ess_failures() -> None:
     result = _result(
         rhat=(1.0, 1.08),
         bulk_ess=(800.0, 30.0),
@@ -106,7 +108,7 @@ def test_convergence_report_identifies_nested_rhat_and_ess_failures():
     assert caught.value.report is report
 
 
-def test_convergence_report_gates_divergences_and_tree_saturation_independently():
+def test_convergence_report_gates_divergences_and_tree_saturation_independently() -> None:
     divergent = jnp.zeros((2, 12), dtype="bool").at[1, 3].set(True)
     expansions = jnp.zeros((2, 12), dtype=jnp.int32).at[0, 5].set(4)
     result = _result(divergent=divergent, trajectory_expansions=expansions)
@@ -123,7 +125,7 @@ def test_convergence_report_gates_divergences_and_tree_saturation_independently(
     assert permissive.divergence_count == 1
 
 
-def test_convergence_report_rejects_invalid_thresholds_and_nonfinite_metrics():
+def test_convergence_report_rejects_invalid_thresholds_and_nonfinite_metrics() -> None:
     with pytest.raises(ValueError, match="max_rhat"):
         phx.uq.MCMCConvergenceThresholds(max_rhat=0.99)
     with pytest.raises(ValueError, match="min_bulk_ess"):
@@ -135,13 +137,13 @@ def test_convergence_report_rejects_invalid_thresholds_and_nonfinite_metrics():
     assert report.rhat_failures == ("['layer']['weight'][1]",)
 
 
-def test_reports_detect_shifted_chains_and_autocorrelated_draws():
+def test_reports_detect_shifted_chains_and_autocorrelated_draws() -> None:
     chains, draws = 4, 256
     noise = jr.normal(jr.key(10), (chains, draws))
     shifted = noise + 2.0 * jnp.arange(chains)[:, None]
     innovations = jr.normal(jr.key(11), (chains, draws))
 
-    def ar1(values):
+    def ar1(values: Any) -> Any:
         _, draws_ = jax.lax.scan(
             lambda previous, innovation: (
                 0.995 * previous + innovation,
@@ -154,7 +156,7 @@ def test_reports_detect_shifted_chains_and_autocorrelated_draws():
 
     autocorrelated = jax.vmap(ar1)(innovations)
 
-    def report(samples, thresholds):
+    def report(samples: Any, thresholds: Any) -> Any:
         diagnostics = mcmc_diagnostics(
             {"coefficient": samples},
             acceptance_rate=jnp.full((chains, draws), 0.8),

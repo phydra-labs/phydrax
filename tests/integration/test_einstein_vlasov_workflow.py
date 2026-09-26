@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -35,7 +38,7 @@ from phydrax.metrix import RelativityConvention
 from phydrax.units import KILOGRAM
 
 
-def test_constraint_admission_stage_exact_coupling_and_atomic_commit_workflow():
+def test_constraint_admission_stage_exact_coupling_and_atomic_commit_workflow() -> None:
     shape = (5, 5, 5)
     grid = FixedGridGeometry(shape, (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), periodic=True)
     transfer_grid = phx.discretization.TensorGridPlan(
@@ -70,7 +73,7 @@ def test_constraint_admission_stage_exact_coupling_and_atomic_commit_workflow():
     spatial_coordinates = jnp.moveaxis(grid.coordinates, 0, -1)
     coordinates = jnp.concatenate((jnp.zeros(shape + (1,)), spatial_coordinates), axis=-1)
 
-    def frame_provider(geometry, time, scale_factor):
+    def frame_provider(geometry: Any, time: Any, scale_factor: Any) -> Any:
         return LocalRelativisticFramePlan.from_adm(
             geometry,
             units,
@@ -112,7 +115,9 @@ def test_constraint_admission_stage_exact_coupling_and_atomic_commit_workflow():
         maximum_consecutive_failures=2,
     )
 
-    def constraint_solver(z4c, particle_state, projection, geometry):
+    def constraint_solver(
+        z4c: Any, particle_state: Any, projection: Any, geometry: Any
+    ) -> Any:
         del particle_state, projection, geometry
         return EinsteinVlasovConstraintSolveResult(
             z4c,

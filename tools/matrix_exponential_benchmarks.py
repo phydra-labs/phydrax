@@ -14,6 +14,7 @@ import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -28,7 +29,7 @@ from benchmarks._runtime import (
 )
 
 
-def _measure(function, argument, *, repetitions: int) -> tuple[jax.Array, dict]:
+def _measure(function: Any, argument: Any, *, repetitions: int) -> tuple[jax.Array, dict]:
     compiled_function = jax.jit(function)
     compiled, compilation = measure_lower_and_compile(
         lambda: compiled_function.lower(argument),
@@ -84,14 +85,14 @@ def benchmark_case(*, size: int, repetitions: int) -> dict:
         )
     )
 
-    def taylor_action(vector):
+    def taylor_action(vector: Any) -> Any:
         return phx.linalg.matrix_exponential_action(
             prepared,
             vector,
             scale,
         ).value
 
-    def arnoldi_action(vector):
+    def arnoldi_action(vector: Any) -> Any:
         return phx.linalg.matrix_exponential_action(
             operator,
             vector,

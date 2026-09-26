@@ -1,10 +1,12 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
 import phydrax as phx
 
 
-def _scope(dimension, ids=(1,)):
+def _scope(dimension: Any, ids: Any = (1,)) -> Any:
     return phx.meshing.MeshingScope(
         "geometry",
         "r1",
@@ -15,7 +17,7 @@ def _scope(dimension, ids=(1,)):
     )
 
 
-def test_size_controls_validate_physical_bounds():
+def test_size_controls_validate_physical_bounds() -> None:
     scope = _scope(2)
     control = phx.meshing.UniformSizeControl(
         scope,
@@ -24,6 +26,7 @@ def test_size_controls_validate_physical_bounds():
         maximum_size=0.2,
         maximum_growth_rate=1.25,
     )
+    # ty: ignore[unsupported-operator]
     assert control.minimum_size <= control.target_size <= control.maximum_size
     with pytest.raises(ValueError):
         phx.meshing.UniformSizeControl(
@@ -34,7 +37,7 @@ def test_size_controls_validate_physical_bounds():
         )
 
 
-def test_layer_and_periodic_controls_are_revision_bound():
+def test_layer_and_periodic_controls_are_revision_bound() -> None:
     surface = _scope(2)
     target_surface = _scope(2, ids=(2,))
     volume = _scope(3)
@@ -57,7 +60,7 @@ def test_layer_and_periodic_controls_are_revision_bound():
         phx.meshing.PeriodicConstraint(surface, surface, singular)
 
 
-def test_size_resolution_rejects_hard_conflicts_and_enforces_gradation():
+def test_size_resolution_rejects_hard_conflicts_and_enforces_gradation() -> None:
     scope = phx.meshing.MeshingScope(
         "mesh",
         "r1",
@@ -88,7 +91,7 @@ def test_size_resolution_rejects_hard_conflicts_and_enforces_gradation():
     assert np.all(np.asarray(field.values) > 0.0)
 
 
-def test_metric_normalization_clamps_size_and_anisotropy():
+def test_metric_normalization_clamps_size_and_anisotropy() -> None:
     scope = phx.meshing.MeshingScope(
         "mesh",
         "r1",

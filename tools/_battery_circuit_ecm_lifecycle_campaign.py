@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -41,7 +43,7 @@ _INPUTS = {
 }
 
 
-def _experiment(times, *, native, terminal=False):
+def _experiment(times: Any, *, native: Any, terminal: Any = False) -> Any:
     protocol = battery.BatteryProtocolPlan(
         (
             battery.CurrentStepPlan(
@@ -79,6 +81,7 @@ def _experiment(times, *, native, terminal=False):
             400.0, 300.0, relaxed=True
         )
     prepared = battery.BatteryExperimentPlan(
+        # ty: ignore[invalid-argument-type]
         adapter,
         protocol,
         battery.BatteryOutputPlan(_OUTPUTS),
@@ -89,7 +92,7 @@ def _experiment(times, *, native, terminal=False):
     ).prepare()
     parameters = _parameters()
 
-    def run(amplitude):
+    def run(amplitude: Any) -> Any:
         values = battery.BatteryProtocolValues(
             protocol,
             jnp.reshape(amplitude, (1,)),
@@ -100,7 +103,7 @@ def _experiment(times, *, native, terminal=False):
     return prepared, run
 
 
-def prepare_campaign(sample_times_s):
+def prepare_campaign(sample_times_s: Any) -> Any:
     times = np.asarray(tuple(sample_times_s), dtype="float64")
     expected = np.linspace(0.0, 2.0, 201)
     if times.shape != expected.shape or not np.allclose(
@@ -121,10 +124,10 @@ def prepare_campaign(sample_times_s):
     step = jnp.asarray(1e-4)
     weights = jnp.asarray((0.2, -0.3, 0.1, 0.4, -0.2))
 
-    def selected(current):
+    def selected(current: Any) -> Any:
         return native(current).outputs.values[-1] / jnp.asarray(_SCALES)
 
-    def execute():
+    def execute() -> Any:
         base, minus, plus = (
             native(amplitude),
             native(amplitude - step),
@@ -158,7 +161,7 @@ def prepare_campaign(sample_times_s):
     )
 
 
-def _same_topology(left, right):
+def _same_topology(left: Any, right: Any) -> Any:
     if not np.array_equal(
         left.native_solution.replay.segment_active,
         right.native_solution.replay.segment_active,
@@ -188,7 +191,7 @@ def _same_topology(left, right):
     return True
 
 
-def _event_failures(result):
+def _event_failures(result: Any) -> Any:
     termination = result.termination
     time = float(termination.time_s)
     failures = int(not bool(result.successful)) + int(not bool(termination.terminated))
@@ -223,7 +226,7 @@ def _event_failures(result):
     return failures + int(count != 1)
 
 
-def raw_output(spec, executed, campaign_directory):
+def raw_output(spec: Any, executed: Any, campaign_directory: Any) -> Any:
     del spec, campaign_directory
     jax.block_until_ready(executed)
     base, standalone, coarse, fine, minus, plus, tangent, reverse, difference = executed
@@ -276,6 +279,7 @@ def raw_output(spec, executed, campaign_directory):
             "event-contract-failures": _event_failures(coarse) + _event_failures(fine),
         },
         "circuit:fixed-path-jvp-vjp": {
+            # ty: ignore[invalid-argument-type, unsupported-operator]
             "duality-error": abs(projection - float(reverse)) / max(1.0, abs(projection))
             if finite
             else None,
@@ -307,7 +311,7 @@ def raw_output(spec, executed, campaign_directory):
     return {"metrics": metrics, "observations": observations}
 
 
-def campaign_entry():
+def campaign_entry() -> Any:
     cases = tuple(
         CampaignCase(case, tuple(sorted(_INPUTS.items())), metrics)
         for case, metrics in CIRCUIT_ECM_ADVANCED_METRICS.items()

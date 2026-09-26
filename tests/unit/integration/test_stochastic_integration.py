@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
@@ -9,34 +11,36 @@ from phydrax.domain import BatchEvaluator
 
 
 class _EndpointSensitiveNormal(phx.uq.AbstractDistribution):
-    def sample(self, key, sample_shape=()):
+    def sample(self, key: Any, sample_shape: Any = ()) -> Any:
         return jr.normal(key, tuple(sample_shape))
 
-    def icdf(self, value):
+    def icdf(self, value: Any) -> Any:
         return jsp.special.ndtri(jnp.asarray(value))
 
-    def log_prob(self, value):
+    def log_prob(self, value: Any) -> Any:
         values = jnp.asarray(value)
         return -0.5 * values**2 - 0.5 * jnp.log(2.0 * jnp.pi)
 
     @property
-    def mean(self):
+    def mean(self) -> Any:
         return jnp.asarray(0.0)
 
     @property
-    def variance(self):
+    def variance(self) -> Any:
         return jnp.asarray(1.0)
 
     @property
-    def support(self):
+    def support(self) -> Any:
         return None
 
-    def contains(self, value):
+    def contains(self, value: Any) -> Any:
         return jnp.isfinite(jnp.asarray(value))
 
 
 class _KeyConsumingBatchIntegrand(BatchEvaluator):
-    def __call_batch__(self, batch, /, *, key=jr.key(0), **kwargs):
+    def __call_batch__(
+        self, batch: Any, /, *, key: Any = jr.key(0), **kwargs: Any
+    ) -> Any:
         del kwargs
         reference = batch["z"]
         value = jr.uniform(key)
@@ -46,7 +50,9 @@ class _KeyConsumingBatchIntegrand(BatchEvaluator):
 
 
 class _AlternatingBatchIntegrand(BatchEvaluator):
-    def __call_batch__(self, batch, /, *, key=jr.key(0), **kwargs):
+    def __call_batch__(
+        self, batch: Any, /, *, key: Any = jr.key(0), **kwargs: Any
+    ) -> Any:
         del key, kwargs
         reference = batch["x"]
         index = jnp.arange(reference.data.shape[0])
@@ -54,13 +60,13 @@ class _AlternatingBatchIntegrand(BatchEvaluator):
         return cx.AxisArray(values, dims=reference.dims)
 
 
-def _uniform_problem():
+def _uniform_problem() -> Any:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     target = phx.integration.over(domain.component())
     return domain, target
 
 
-def test_iid_monte_carlo_reports_sampling_standard_error():
+def test_iid_monte_carlo_reports_sampling_standard_error() -> None:
     domain, target = _uniform_problem()
     function = domain.Function("x")(lambda x: x**2)
 
@@ -73,11 +79,12 @@ def test_iid_monte_carlo_reports_sampling_standard_error():
 
     assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0 / 3.0, atol=2e-2)
     assert estimate.error_kind == "iid-standard-error"
+    # ty: ignore[unsupported-operator]
     assert estimate.error_estimate > 0.0
     assert estimate.diagnostics.num_independent_replicates == 1
 
 
-def test_antithetic_error_uses_independent_pairs():
+def test_antithetic_error_uses_independent_pairs() -> None:
     domain, target = _uniform_problem()
     function = domain.Function("x")(lambda x: x)
     plan = phx.integration.MonteCarloPlan(512, design=phx.integration.AntitheticDesign())
@@ -90,7 +97,7 @@ def test_antithetic_error_uses_independent_pairs():
     assert estimate.diagnostics.pair_covariance < 0.0
 
 
-def test_latin_hypercube_does_not_claim_iid_uncertainty():
+def test_latin_hypercube_does_not_claim_iid_uncertainty() -> None:
     domain, target = _uniform_problem()
     function = domain.Function("x")(lambda x: x**2)
     plan = phx.integration.MonteCarloPlan(
@@ -105,7 +112,7 @@ def test_latin_hypercube_does_not_claim_iid_uncertainty():
     assert estimate.diagnostics.standard_error is None
 
 
-def test_qmc_uncertainty_requires_independent_randomized_replicates():
+def test_qmc_uncertainty_requires_independent_randomized_replicates() -> None:
     domain, target = _uniform_problem()
     function = domain.Function("x")(lambda x: x**2)
     deterministic = phx.integration.integrate(
@@ -125,11 +132,12 @@ def test_qmc_uncertainty_requires_independent_randomized_replicates():
     assert deterministic.diagnostics.standard_error is None
     assert jnp.allclose(jnp.asarray(randomized.value.data), 1.0 / 3.0, atol=2e-4)
     assert randomized.error_kind == "randomized-qmc-replicate-error"
+    # ty: ignore[unsupported-operator]
     assert randomized.error_estimate >= 0.0
     assert randomized.diagnostics.replicate_estimates.shape == (4,)
 
 
-def test_importance_sampling_reports_raw_weight_diagnostics():
+def test_importance_sampling_reports_raw_weight_diagnostics() -> None:
     probability = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
     function = probability.Function("z")(lambda z: z**2)
     plan = phx.integration.ImportanceSamplingPlan(8192, phx.uq.Normal(1.0, 2.0))
@@ -143,12 +151,13 @@ def test_importance_sampling_reports_raw_weight_diagnostics():
 
     assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0, atol=5e-2)
     assert estimate.error_kind == "weighted-iid-standard-error"
+    # ty: ignore[unsupported-operator]
     assert estimate.error_estimate > 0.0
     assert estimate.diagnostics.weights.weight_ess > 0.0
     assert jnp.allclose(estimate.diagnostics.normalizer_estimate, 1.0, atol=5e-2)
 
 
-def test_importance_sampling_reports_proposal_support_failure():
+def test_importance_sampling_reports_proposal_support_failure() -> None:
     probability = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
     plan = phx.integration.ImportanceSamplingPlan(256, phx.uq.Uniform(-1.0, 1.0))
 
@@ -165,7 +174,7 @@ def test_importance_sampling_reports_proposal_support_failure():
     assert not estimate.successful
 
 
-def test_external_weighted_samples_do_not_invent_independence():
+def test_external_weighted_samples_do_not_invent_independence() -> None:
     samples = jnp.asarray([1.0, 2.0, 3.0])
     log_weights = jnp.log(jnp.asarray([1.0, 2.0, 1.0]))
     target = phx.integration.weighted(samples, log_weights)
@@ -178,7 +187,7 @@ def test_external_weighted_samples_do_not_invent_independence():
     assert jnp.allclose(estimate.diagnostics.weights.weight_ess, 8.0 / 3.0)
 
 
-def test_control_variate_coefficients_fit_on_disjoint_iid_pilot():
+def test_control_variate_coefficients_fit_on_disjoint_iid_pilot() -> None:
     domain, target = _uniform_problem()
     function = domain.Function("x")(lambda x: 3.0 * x + 2.0)
     control = domain.Function("x")(lambda x: x)
@@ -190,11 +199,12 @@ def test_control_variate_coefficients_fit_on_disjoint_iid_pilot():
     estimate = phx.integration.integrate(function, target, plan, key=jr.key(7))
 
     assert jnp.allclose(jnp.asarray(estimate.value.data), 3.5, atol=1e-10)
+    # ty: ignore[unsupported-operator]
     assert estimate.error_estimate < 1e-10
     assert estimate.num_evaluations == 960
 
 
-def test_explicit_stratification_preserves_physical_measure():
+def test_explicit_stratification_preserves_physical_measure() -> None:
     square = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -223,7 +233,7 @@ def test_explicit_stratification_preserves_physical_measure():
     assert jnp.all(estimate.diagnostics.samples_per_stratum > 0)
 
 
-def test_direct_monte_carlo_excludes_fixed_component_labels():
+def test_direct_monte_carlo_excludes_fixed_component_labels() -> None:
     space = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     time = phx.domain.TimeInterval(0.0, 2.0)
     domain = phx.domain.ProductDomain(space, time)
@@ -240,7 +250,7 @@ def test_direct_monte_carlo_excludes_fixed_component_labels():
     assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0, atol=1e-12)
 
 
-def test_antithetic_zero_density_reports_invalid_normalization_mass():
+def test_antithetic_zero_density_reports_invalid_normalization_mass() -> None:
     domain, base = _uniform_problem()
     target = phx.integration.normalized_density(
         base,
@@ -259,7 +269,7 @@ def test_antithetic_zero_density_reports_invalid_normalization_mass():
     assert not estimate.successful
 
 
-def test_stratified_zero_density_reports_invalid_normalization_mass():
+def test_stratified_zero_density_reports_invalid_normalization_mass() -> None:
     square = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -291,7 +301,7 @@ def test_stratified_zero_density_reports_invalid_normalization_mass():
     assert not estimate.successful
 
 
-def test_weighted_samples_reject_degenerate_weights_and_nonfinite_values():
+def test_weighted_samples_reject_degenerate_weights_and_nonfinite_values() -> None:
     invalid_weights = phx.integration.weighted(
         jnp.arange(4.0),
         jnp.full((4,), -jnp.inf),
@@ -319,7 +329,7 @@ def test_weighted_samples_reject_degenerate_weights_and_nonfinite_values():
     assert not value_estimate.successful
 
 
-def test_antithetic_errors_require_independent_replicate_pairs():
+def test_antithetic_errors_require_independent_replicate_pairs() -> None:
     domain, target = _uniform_problem()
     function = domain.Function("x")(lambda x: x**2)
     one_pair = phx.integration.integrate(
@@ -350,7 +360,7 @@ def test_antithetic_errors_require_independent_replicate_pairs():
         assert estimate.diagnostics.standard_error is None
 
 
-def test_antithetic_sampling_rejects_boundary_component_selectors():
+def test_antithetic_sampling_rejects_boundary_component_selectors() -> None:
     domain, _ = _uniform_problem()
     target = phx.integration.over(domain.component({"x": phx.domain.Boundary()}))
     plan = phx.integration.MonteCarloPlan(
@@ -362,7 +372,7 @@ def test_antithetic_sampling_rejects_boundary_component_selectors():
         phx.integration.materialize(target, plan, key=jr.key(17))
 
 
-def test_randomized_probability_sampling_and_evaluation_use_independent_keys():
+def test_randomized_probability_sampling_and_evaluation_use_independent_keys() -> None:
     distribution = _EndpointSensitiveNormal()
     probability = phx.domain.ProbabilityDomain(distribution, label="z")
     target = phx.integration.expectation(probability)
@@ -387,7 +397,7 @@ def test_randomized_probability_sampling_and_evaluation_use_independent_keys():
     )
 
 
-def test_antithetic_sampling_rejects_partial_coupled_target_axes():
+def test_antithetic_sampling_rejects_partial_coupled_target_axes() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
     domain = phx.domain.ProductDomain(x, y)
@@ -401,7 +411,7 @@ def test_antithetic_sampling_rejects_partial_coupled_target_axes():
         phx.integration.materialize(target, plan, key=jr.key(19))
 
 
-def test_raw_weighted_scalar_integrand_broadcasts_over_samples():
+def test_raw_weighted_scalar_integrand_broadcasts_over_samples() -> None:
     target = phx.integration.weighted(
         jnp.arange(5.0),
         jnp.log(jnp.asarray([1.0, 2.0, 3.0, 2.0, 1.0])),
@@ -414,7 +424,7 @@ def test_raw_weighted_scalar_integrand_broadcasts_over_samples():
     assert estimate.num_evaluations == 5
 
 
-def test_dependent_weighted_diagnostics_hide_both_standard_errors():
+def test_dependent_weighted_diagnostics_hide_both_standard_errors() -> None:
     target = phx.integration.weighted(
         jnp.asarray([1.0, 2.0, 4.0]),
         jnp.log(jnp.asarray([1.0, 2.0, 1.0])),
@@ -429,7 +439,7 @@ def test_dependent_weighted_diagnostics_hide_both_standard_errors():
 
 
 @pytest.mark.parametrize("sequence", ("sobol", "halton"))
-def test_deterministic_qmc_uses_open_probability_quantiles(sequence):
+def test_deterministic_qmc_uses_open_probability_quantiles(sequence: Any) -> None:
     probability = phx.domain.ProbabilityDomain(
         _EndpointSensitiveNormal(),
         label="z",
@@ -454,7 +464,7 @@ def test_deterministic_qmc_uses_open_probability_quantiles(sequence):
     assert jnp.all(jnp.isfinite(jnp.asarray(estimate.value.data)))
 
 
-def test_identical_unbounded_importance_proposal_passes_support_probes():
+def test_identical_unbounded_importance_proposal_passes_support_probes() -> None:
     distribution = _EndpointSensitiveNormal()
     probability = phx.domain.ProbabilityDomain(distribution, label="z")
     target = phx.integration.expectation(probability)
@@ -466,7 +476,7 @@ def test_identical_unbounded_importance_proposal_passes_support_probes():
     assert estimate.status == int(phx.integration.IntegrationStatus.CONVERGED)
 
 
-def test_importance_sampling_requires_an_explicit_random_key():
+def test_importance_sampling_requires_an_explicit_random_key() -> None:
     probability = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
     target = phx.integration.expectation(probability)
     plan = phx.integration.ImportanceSamplingPlan(16, phx.uq.Normal(0.0, 1.0))
@@ -475,7 +485,7 @@ def test_importance_sampling_requires_an_explicit_random_key():
         phx.integration.materialize(target, plan)
 
 
-def test_large_measure_monte_carlo_rejects_overflowed_standard_error():
+def test_large_measure_monte_carlo_rejects_overflowed_standard_error() -> None:
     upper = float(jnp.finfo(jnp.float64).max / 4.0)
     domain = phx.domain.ScalarInterval(0.0, upper, label="x")
     target = phx.integration.over(domain.component())
@@ -494,7 +504,7 @@ def test_large_measure_monte_carlo_rejects_overflowed_standard_error():
     assert not estimate.successful
 
 
-def test_raw_weighted_reduction_rejects_log_weight_overflow():
+def test_raw_weighted_reduction_rejects_log_weight_overflow() -> None:
     target = phx.integration.weighted(
         jnp.ones((4,)),
         jnp.full((4,), 1000.0),
@@ -510,7 +520,7 @@ def test_raw_weighted_reduction_rejects_log_weight_overflow():
     assert not estimate.successful
 
 
-def test_direct_sobol_materialization_enforces_declared_count_policy():
+def test_direct_sobol_materialization_enforces_declared_count_policy() -> None:
     restricted = phx.sampling.RandomizedQMCDesign(
         sequence="sobol",
         allow_arbitrary_count=False,

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def _grid_2d(points=17):
+def _grid_2d(points: Any = 17) -> Any:
     return phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(points),
@@ -21,24 +24,24 @@ def _grid_2d(points=17):
     ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
 
 
-def _affine_map(reference):
+def _affine_map(reference: Any) -> Any:
     xi, eta = reference
     return jnp.asarray((2.0 * xi + 0.2 * eta, 0.1 * xi + 1.5 * eta))
 
 
-def _warped_map(reference):
+def _warped_map(reference: Any) -> Any:
     xi, eta = reference
     warp = jnp.sin(jnp.pi * xi) * jnp.sin(jnp.pi * eta)
     return jnp.asarray((xi + 0.05 * warp, eta + 0.03 * warp))
 
 
-def _warped_map_3d(reference):
+def _warped_map_3d(reference: Any) -> Any:
     xi, eta, zeta = reference
     warp = jnp.sin(jnp.pi * xi) * jnp.sin(jnp.pi * eta) * jnp.sin(jnp.pi * zeta)
     return jnp.asarray((xi + 0.02 * warp, eta - 0.015 * warp, zeta + 0.01 * warp))
 
 
-def test_affine_mapped_gradient_integral_and_face_geometry_are_exact():
+def test_affine_mapped_gradient_integral_and_face_geometry_are_exact() -> None:
     grid = _grid_2d()
     mapped = phx.discretization.MappedTensorGridPlan(
         grid,
@@ -67,7 +70,9 @@ def test_affine_mapped_gradient_integral_and_face_geometry_are_exact():
     assert mapped.face_measures[1].shape == (17, 16)
 
 
-def test_warped_two_dimensional_metrics_preserve_free_stream_and_metric_identity():
+def test_warped_two_dimensional_metrics_preserve_free_stream_and_metric_identity() -> (
+    None
+):
     mapped = phx.discretization.MappedTensorGridPlan(
         _grid_2d(21),
         _warped_map,
@@ -84,7 +89,7 @@ def test_warped_two_dimensional_metrics_preserve_free_stream_and_metric_identity
     np.testing.assert_allclose(divergence, 0.0, rtol=0.0, atol=5e-10)
 
 
-def test_three_dimensional_curl_metrics_satisfy_discrete_identity():
+def test_three_dimensional_curl_metrics_satisfy_discrete_identity() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(13),
@@ -104,7 +109,7 @@ def test_three_dimensional_curl_metrics_satisfy_discrete_identity():
     assert mapped.metric_report.minimum_jacobian > 0.8
 
 
-def test_identity_map_diffusion_matches_physical_polynomial_laplacian():
+def test_identity_map_diffusion_matches_physical_polynomial_laplacian() -> None:
     grid = _grid_2d(17)
     mapped = phx.discretization.MappedTensorGridPlan(
         grid,
@@ -122,7 +127,7 @@ def test_identity_map_diffusion_matches_physical_polynomial_laplacian():
     assert operator.conservation_report.constant_state_residual < 1e-10
 
 
-def test_mapped_state_actions_remain_differentiable_at_fixed_geometry():
+def test_mapped_state_actions_remain_differentiable_at_fixed_geometry() -> None:
     mapped = phx.discretization.MappedTensorGridPlan(
         _grid_2d(13),
         _warped_map,
@@ -138,7 +143,7 @@ def test_mapped_state_actions_remain_differentiable_at_fixed_geometry():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_orientation_reversing_map_is_rejected_before_operator_use():
+def test_orientation_reversing_map_is_rejected_before_operator_use() -> None:
     with pytest.raises(eqx.EquinoxRuntimeError, match="Jacobian"):
         phx.discretization.MappedTensorGridPlan(
             _grid_2d(),

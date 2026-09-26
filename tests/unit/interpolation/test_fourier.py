@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +17,9 @@ from phydrax._spectral._nonuniform_fourier import (
 )
 
 
-def test_direct_fourier_interpolation_uses_physical_axis_geometry_and_periodicity():
+def test_direct_fourier_interpolation_uses_physical_axis_geometry_and_periodicity() -> (
+    None
+):
     count = 9
     origin = 2.5
     period = 3.0
@@ -49,7 +53,7 @@ def test_direct_fourier_interpolation_uses_physical_axis_geometry_and_periodicit
     assert jnp.allclose(result.values[0], result.values[2], rtol=1e-12, atol=1e-12)
 
 
-def test_fourier_interpolation_preserves_batch_query_and_tensor_payload_axes():
+def test_fourier_interpolation_preserves_batch_query_and_tensor_payload_axes() -> None:
     batch_size = 2
     source_shape = (5, 6)
     payload_shape = (2, 3)
@@ -81,8 +85,8 @@ def test_fourier_interpolation_preserves_batch_query_and_tensor_payload_axes():
 
 @pytest.mark.parametrize("source_shape", ((7,), (8,), (7, 6), (6, 5), (4, 5, 6)))
 def test_chunked_interpolation_matches_direct_for_broadband_complex_values(
-    source_shape,
-):
+    source_shape: Any,
+) -> None:
     dimensions = len(source_shape)
     values = jax.random.normal(
         jax.random.key(20 + dimensions),
@@ -108,7 +112,7 @@ def test_chunked_interpolation_matches_direct_for_broadband_complex_values(
     assert jnp.allclose(chunked.values, direct.values, rtol=2e-8, atol=2e-8)
 
 
-def test_direct_and_chunked_reconstruct_real_values_at_even_source_nodes():
+def test_direct_and_chunked_reconstruct_real_values_at_even_source_nodes() -> None:
     source_shape = (8, 6)
     values = jax.random.normal(jax.random.key(42), source_shape + (3,))
     q0, q1 = jnp.meshgrid(
@@ -132,7 +136,7 @@ def test_direct_and_chunked_reconstruct_real_values_at_even_source_nodes():
     assert jnp.allclose(chunked, values, rtol=2e-8, atol=2e-8)
 
 
-def test_fourier_point_evaluation_jit_and_coordinate_gradients_agree():
+def test_fourier_point_evaluation_jit_and_coordinate_gradients_agree() -> None:
     source_size = 9
     nodes = jnp.arange(source_size, dtype="float64") / source_size
     values = jnp.stack(
@@ -144,7 +148,7 @@ def test_fourier_point_evaluation_jit_and_coordinate_gradients_agree():
     )
     query = jnp.asarray([[0.13], [0.41], [0.82]])
 
-    def loss(points, chunk_size):
+    def loss(points: Any, chunk_size: Any) -> Any:
         output = fourier_interpolate(
             values,
             points,
@@ -165,7 +169,7 @@ def test_fourier_point_evaluation_jit_and_coordinate_gradients_agree():
     assert jnp.allclose(chunked_gradient, direct_gradient, rtol=2e-7, atol=2e-7)
 
 
-def test_direct_fourier_interpolation_supports_scalar_queries_and_four_axes():
+def test_direct_fourier_interpolation_supports_scalar_queries_and_four_axes() -> None:
     values = jnp.ones((3, 3, 3, 3))
     query = jnp.asarray([0.12, 0.23, 0.34, 0.45])
 
@@ -182,7 +186,7 @@ def test_direct_fourier_interpolation_supports_scalar_queries_and_four_axes():
     assert jnp.allclose(result.values, 1.0)
 
 
-def test_fourier_interpolation_rejects_invalid_chunk_capacity():
+def test_fourier_interpolation_rejects_invalid_chunk_capacity() -> None:
     values = jnp.ones((5, 1))
     query = jnp.asarray([[0.2]])
 
@@ -202,7 +206,7 @@ def test_fourier_interpolation_rejects_invalid_chunk_capacity():
         )
 
 
-def test_chunked_nonuniform_fourier_defines_empty_point_results():
+def test_chunked_nonuniform_fourier_defines_empty_point_results() -> None:
     points = jnp.zeros((0, 2))
     coefficients = jnp.ones((3, 4), dtype=jnp.complex64)
     type2 = PreparedNonuniformFourier(
@@ -220,7 +224,7 @@ def test_chunked_nonuniform_fourier_defines_empty_point_results():
     assert jnp.array_equal(reconstructed, jnp.zeros_like(reconstructed))
 
 
-def test_nonuniform_fourier_preserves_complex_phase_for_real_inputs():
+def test_nonuniform_fourier_preserves_complex_phase_for_real_inputs() -> None:
     # Coordinates are angular phases: each mode k contributes exp(i k x).
     points = jnp.asarray([[0.5 * jnp.pi]])
 
@@ -239,17 +243,20 @@ def test_nonuniform_fourier_preserves_complex_phase_for_real_inputs():
 @pytest.mark.parametrize(
     "constructor",
     (
+        # ty: ignore[invalid-argument-type]
         lambda: NonuniformFourierPlan((3.5,), 2),
+        # ty: ignore[invalid-argument-type]
         lambda: NonuniformFourierPlan((3,), 2, chunk_size=2.5),
+        # ty: ignore[invalid-argument-type]
         lambda: NonuniformFourierPlan((3,), 1.5),
     ),
 )
-def test_nonuniform_fourier_topology_requires_exact_integers(constructor):
+def test_nonuniform_fourier_topology_requires_exact_integers(constructor: Any) -> None:
     with pytest.raises(TypeError, match="integer"):
         constructor()
 
 
-def test_fourier_interpolation_rejects_nonuniform_periodic_nodes():
+def test_fourier_interpolation_rejects_nonuniform_periodic_nodes() -> None:
     with pytest.raises(eqx.EquinoxRuntimeError, match="uniformly spaced"):
         fourier_interpolate(
             jnp.ones((4, 1)),

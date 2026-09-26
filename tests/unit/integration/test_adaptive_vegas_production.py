@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
@@ -18,7 +21,7 @@ from phydrax.integration._vegas import (
 )
 
 
-def test_vegas_calibrates_peaked_integral_and_freezes_production_grid():
+def test_vegas_calibrates_peaked_integral_and_freezes_production_grid() -> None:
     plan = VegasPlan(
         jnp.asarray([0.0, 0.0]),
         jnp.asarray([1.0, 1.0]),
@@ -29,7 +32,7 @@ def test_vegas_calibrates_peaked_integral_and_freezes_production_grid():
         production_samples=4096,
     )
 
-    def integrand(points):
+    def integrand(points: Any) -> Any:
         peak = jnp.exp(-120.0 * (points[:, 0] - 0.27) ** 2)
         return peak * (1.0 + points[:, 1])
 
@@ -55,10 +58,12 @@ def test_vegas_calibrates_peaked_integral_and_freezes_production_grid():
     assert result.iteration_estimates.shape == (plan.production_iterations,)
 
 
-def test_vegas_plan_enforces_fixed_evaluation_guard():
+def test_vegas_plan_enforces_fixed_evaluation_guard() -> None:
     with pytest.raises(ValueError, match="max_evaluations"):
         VegasPlan(
+            # ty: ignore[invalid-argument-type]
             [0.0],
+            # ty: ignore[invalid-argument-type]
             [1.0],
             bins=8,
             adaptation_iterations=4,
@@ -69,7 +74,7 @@ def test_vegas_plan_enforces_fixed_evaluation_guard():
         )
 
 
-def test_frozen_vegas_rejects_points_outside_the_unit_cube():
+def test_frozen_vegas_rejects_points_outside_the_unit_cube() -> None:
     evidence = VegasPreparationEvidence(
         iteration_estimates=jnp.zeros((1,)),
         marginal_weights=jnp.ones((1, 2)),

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -14,7 +17,7 @@ SIGMA_Y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype="complex128")
 SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 
-def _pauli_fields():
+def _pauli_fields() -> Any:
     time = phx.domain.TimeInterval(0.0, 1.0)
     return (
         time,
@@ -24,7 +27,7 @@ def _pauli_fields():
     )
 
 
-def test_pauli_commutation_and_anticommutation_relations():
+def test_pauli_commutation_and_anticommutation_relations() -> None:
     _time, sigma_x, sigma_y, sigma_z = _pauli_fields()
 
     commutator = phx.operators.commutator(sigma_x, sigma_y)
@@ -36,7 +39,7 @@ def test_pauli_commutation_and_anticommutation_relations():
     assert jnp.allclose(phx.operators.hermiticity_residual(bracket).func(), 0.0)
 
 
-def test_commutator_lie_and_leibniz_identities():
+def test_commutator_lie_and_leibniz_identities() -> None:
     _time, a, b, c = _pauli_fields()
     jacobi = (
         phx.operators.commutator(a, phx.operators.commutator(b, c))
@@ -56,7 +59,7 @@ def test_commutator_lie_and_leibniz_identities():
     assert jnp.allclose(phx.operators.commutator(a, a).func(), jnp.zeros((2, 2)))
 
 
-def test_density_structure_residuals():
+def test_density_structure_residuals() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     density = time.Function()(0.5 * (jnp.eye(2) + SIGMA_X))
 
@@ -64,11 +67,11 @@ def test_density_structure_residuals():
     assert jnp.allclose(phx.operators.unit_trace_residual(density).func(), 0.0)
 
 
-def test_quantum_bracket_is_jittable_and_parameter_differentiable():
+def test_quantum_bracket_is_jittable_and_parameter_differentiable() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     sigma_y = time.Function()(SIGMA_Y)
 
-    def bracket_entry(theta):
+    def bracket_entry(theta: Any) -> Any:
         operator = time.Function()(theta * SIGMA_X)
         value = phx.operators.quantum_bracket(operator, sigma_y).func()
         return jnp.real(value[0, 0])
@@ -76,7 +79,7 @@ def test_quantum_bracket_is_jittable_and_parameter_differentiable():
     assert jnp.allclose(jax.jit(jax.grad(bracket_entry))(1.7), 2.0, atol=1e-12)
 
 
-def test_quantum_algebra_validates_shapes_and_hbar():
+def test_quantum_algebra_validates_shapes_and_hbar() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     square = time.Function()(jnp.eye(2))
     rectangular = time.Function()(jnp.ones((2, 3)))
@@ -94,7 +97,7 @@ def test_quantum_algebra_validates_shapes_and_hbar():
         phx.operators.quantum_bracket(square, square, hbar=jnp.ones((2,)))
 
 
-def test_quantum_bracket_rejects_nonpositive_or_nonfinite_scalar_arrays():
+def test_quantum_bracket_rejects_nonpositive_or_nonfinite_scalar_arrays() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     square = time.Function()(jnp.eye(2))
 

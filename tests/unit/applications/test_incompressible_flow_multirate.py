@@ -2,12 +2,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _operators():
+def _operators() -> Any:
     return phx.applications.incompressible_flow.IncompressibleFlowOperators(
         lambda velocity, time, args: jnp.zeros_like(velocity),
         lambda rhs, gamma, time, args: rhs / gamma,
@@ -17,7 +20,7 @@ def _operators():
     )
 
 
-def test_pressure_correction_eliminates_identity_divergence():
+def test_pressure_correction_eliminates_identity_divergence() -> None:
     flow = phx.applications.incompressible_flow
     state = flow.IncompressibleFlowState(jnp.asarray([1.0, 2.0]), jnp.zeros((2,)))
     updated, diagnostics = flow.pressure_correction_step(
@@ -34,7 +37,7 @@ def test_pressure_correction_eliminates_identity_divergence():
     assert diagnostics.successful
 
 
-def test_oifs_history_combination_preserves_normalized_partial_sum():
+def test_oifs_history_combination_preserves_normalized_partial_sum() -> None:
     flow = phx.applications.incompressible_flow
     history = (jnp.asarray([1.0]), jnp.asarray([3.0]), jnp.asarray([5.0]))
     coefficients = jnp.asarray([1.0, 2.0, 1.0])
@@ -44,7 +47,7 @@ def test_oifs_history_combination_preserves_normalized_partial_sum():
     assert jnp.allclose(combined, jnp.asarray([3.0]))
 
 
-def test_multirate_trace_history_predicts_linear_trace():
+def test_multirate_trace_history_predicts_linear_trace() -> None:
     history = phx.solver.DGTraceHistory.empty(3, (1,), jnp.float64)
     history = history.update(jnp.asarray([1.0]), 0.0)
     history = history.update(jnp.asarray([3.0]), 1.0)
@@ -52,7 +55,7 @@ def test_multirate_trace_history_predicts_linear_trace():
     assert jnp.allclose(history.predict(2.0), jnp.asarray([5.0]), atol=1.0e-12)
 
 
-def test_multirate_interface_flux_is_exactly_conservative():
+def test_multirate_interface_flux_is_exactly_conservative() -> None:
     result = phx.solver.conservative_multirate_flux(
         jnp.asarray([2.0]),
         jnp.asarray([1.0]),
@@ -64,7 +67,7 @@ def test_multirate_interface_flux_is_exactly_conservative():
     assert result.conservation_defect == 0.0
 
 
-def test_power_of_two_multirate_tick_schedule():
+def test_power_of_two_multirate_tick_schedule() -> None:
     plan = phx.solver.DGMultirateTracePlan(jnp.asarray([[0, 2], [1, 2]], dtype=jnp.int32))
 
     assert plan.ticks_per_macro_step == 4

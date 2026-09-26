@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from itertools import product
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -11,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _problem(scattering_order):
+def _problem(scattering_order: Any) -> Any:
     space = phx.discretization.SphericalSpectralPlan(4).prepare()
     theta, phi = jnp.meshgrid(
         space.transform.theta,
@@ -49,7 +51,7 @@ def _problem(scattering_order):
     return space, plan, layer, space.project(values)
 
 
-def test_order_one_scattering_preserves_orientation_average_and_layout():
+def test_order_one_scattering_preserves_orientation_average_and_layout() -> None:
     _, _, layer, coefficients = _problem(1)
     scattering = phx.nn.operator.architectures.SphericalWaveletScattering(layer)
 
@@ -72,7 +74,7 @@ def test_order_one_scattering_preserves_orientation_average_and_layout():
     )
 
 
-def test_second_order_is_recursive_wavelet_modulus_and_masks_inadmissible_paths():
+def test_second_order_is_recursive_wavelet_modulus_and_masks_inadmissible_paths() -> None:
     space, plan, layer, coefficients = _problem(2)
     scattering = phx.nn.operator.architectures.SphericalWaveletScattering(layer)
 
@@ -123,7 +125,7 @@ def test_second_order_is_recursive_wavelet_modulus_and_masks_inadmissible_paths(
         )
 
 
-def test_recursive_scattering_retains_z_rotation_invariance_and_stability():
+def test_recursive_scattering_retains_z_rotation_invariance_and_stability() -> None:
     space, plan, layer, coefficients = _problem(2)
     scattering = phx.nn.operator.architectures.SphericalWaveletScattering(layer)
     rotation = phx.discretization.spectral.SphericalRotationPlan(space).prepare()

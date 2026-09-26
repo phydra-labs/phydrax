@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _topology():
+def _topology() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(1),
@@ -32,7 +35,7 @@ def _topology():
     return phx.discretization.VariablePatchTopologyCompiler(plan).initial_topology()
 
 
-def _complex():
+def _complex() -> Any:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: (points[:, 0] - 0.3) * (points[:, 0] - 0.7),
         "two-dimensional-slab",
@@ -53,7 +56,7 @@ def _complex():
     ).prepare()
 
 
-def test_two_dimensional_subcell_geometry_keeps_disconnected_components():
+def test_two_dimensional_subcell_geometry_keeps_disconnected_components() -> None:
     complex_ = _complex()
 
     assert complex_.evidence.valid
@@ -69,7 +72,7 @@ def test_two_dimensional_subcell_geometry_keeps_disconnected_components():
     np.testing.assert_allclose(centers, (0.17, 0.83), atol=2.0e-6)
 
 
-def test_two_dimensional_cut_capacity_is_enforced_per_cell_face():
+def test_two_dimensional_cut_capacity_is_enforced_per_cell_face() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: (points[:, 0] - 0.3) * (points[:, 0] - 0.7),
         "locally-overfull-slab",
@@ -92,7 +95,7 @@ def test_two_dimensional_cut_capacity_is_enforced_per_cell_face():
         plan.prepare()
 
 
-def test_two_dimensional_embedded_capacity_is_enforced_per_cell():
+def test_two_dimensional_embedded_capacity_is_enforced_per_cell() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: (points[:, 0] - 0.3) * (points[:, 0] - 0.7),
         "locally-overfull-embedded-slab",
@@ -115,7 +118,7 @@ def test_two_dimensional_embedded_capacity_is_enforced_per_cell():
         plan.prepare()
 
 
-def test_two_dimensional_multivalued_fv_preserves_uniform_wall_state():
+def test_two_dimensional_multivalued_fv_preserves_uniform_wall_state() -> None:
     complex_ = _complex()
     system = phx.equations.EulerSystem(2)
     primitive = jnp.asarray((1.0, 0.0, 0.0, 1.0))

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -24,19 +25,19 @@ class AnalyticScalingOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, scale: float, /):
+    def __init__(self, scale: float, /) -> None:
         self.scale = jnp.asarray(scale)
         self.in_size = 1
         self.out_size = 1
 
-    def __call_operator_batch__(self, batch, /, *, key=None):
+    def __call_operator_batch__(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         values = batch.input("state").values
         if values is None:
             raise ValueError("AnalyticScalingOperator requires sampled input values.")
         return self.scale * values
 
-    def __call__(self, batch, /, *, key=None):
+    def __call__(self, batch: Any, /, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 

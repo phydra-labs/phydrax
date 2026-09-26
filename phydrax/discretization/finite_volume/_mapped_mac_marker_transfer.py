@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._lagrangian_marker import LagrangianMarkerDiscretization
 from ._incompressible import FaceVelocity
 from ._mac_ale import PreparedMappedMACGeometry
@@ -89,8 +90,7 @@ class MappedMACMarkerTransferPlan(StrictModule, NonTrainableState):
             )
         if not np.isfinite(limit) or limit <= 1.0:
             raise ValueError("condition_limit must be finite and greater than one.")
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown marker accumulation policy.")
+        accumulation = parse(accumulation, MACMarkerAccumulation, "accumulation")
         self.geometry = geometry
         self.markers = markers
         self.route_width = width

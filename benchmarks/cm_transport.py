@@ -12,6 +12,8 @@ resource observations, never scientific qualification or release evidence.
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -44,7 +46,7 @@ _E = 1.602176634e-19
 _KB = 1.380649e-23
 
 
-def _periodic_inputs(k_points: int, bands: int):
+def _periodic_inputs(k_points: int, bands: int) -> Any:
     coordinate = np.linspace(-0.5, 0.5, k_points, endpoint=False)
     centers = (np.arange(bands) - 0.5 * (bands - 1)) * 0.35 * _E
     energies = centers[None, :] + 0.08 * _E * np.cos(2.0 * np.pi * coordinate[:, None])
@@ -65,7 +67,7 @@ def _periodic_inputs(k_points: int, bands: int):
     return energies, velocity, weights
 
 
-def _independent_f_sum(energies, velocity, weights, temperature, volume):
+def _independent_f_sum(energies: Any, velocity: Any, weights: Any, temperature: Any, volume: Any) -> Any:
     occupations = 1.0 / (1.0 + np.exp(energies / (_KB * temperature)))
     derivative = occupations * (1.0 - occupations) / (_KB * temperature)
     dimension = velocity.shape[-1]
@@ -97,7 +99,7 @@ def run_case(
     disorder_realizations: int,
     warmup: int,
     repeats: int,
-):
+) -> Any:
     started = time.perf_counter()
     energies, velocity, weights = _periodic_inputs(k_points, bands)
     volume, temperature = 1.0e-28, 300.0

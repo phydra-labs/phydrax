@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -30,7 +31,7 @@ ARTIFACTS = (
 )
 
 
-def _write(directory: Path, name: str, metrics: dict, passed: bool):
+def _write(directory: Path, name: str, metrics: dict, passed: bool) -> Any:
     payload = {
         "maturity": "experimental",
         "capability": name,
@@ -46,15 +47,15 @@ def _write(directory: Path, name: str, metrics: dict, passed: bool):
 
 
 def _compile(
-    material,
-    parameters,
+    material: Any,
+    parameters: Any,
     *,
-    dimension=2,
-    assignment=None,
-    schedule=None,
-    nodal_fields=None,
-    nodal_storage=None,
-):
+    dimension: Any = 2,
+    assignment: Any = None,
+    schedule: Any = None,
+    nodal_fields: Any = None,
+    nodal_storage: Any = None,
+) -> Any:
     grid_points = 10 if dimension == 2 else 6
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -97,7 +98,7 @@ def _compile(
     return compiled, arguments, state
 
 
-def _schedule_metrics():
+def _schedule_metrics() -> Any:
     material = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(2)
     parameters = phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(
         2.0, 8.0
@@ -132,7 +133,7 @@ def _schedule_metrics():
     return values, passed
 
 
-def _adaptive_metrics():
+def _adaptive_metrics() -> Any:
     material = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(2)
     parameters = phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(
         2.0, 8.0
@@ -165,7 +166,7 @@ def _adaptive_metrics():
     return metrics, metrics["completed"] and parity < 1e-10
 
 
-def _material_metrics():
+def _material_metrics() -> Any:
     neo = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
     plane = phx.applications.solid_mechanics.PlaneStressMPMConstitutivePlan(neo)
     neo_parameters = (
@@ -224,7 +225,7 @@ def _material_metrics():
     return (plane_metrics, plane_passed), (plastic_metrics, plastic_passed)
 
 
-def _domain_metrics():
+def _domain_metrics() -> Any:
     widths = jnp.full((4, 2), 0.025)
     gimp = phx.discretization.UniformGIMPSplatAssignment(
         widths, maximum_half_width_cells=0.75
@@ -275,7 +276,7 @@ def _domain_metrics():
     )
 
 
-def _contact_field_metrics():
+def _contact_field_metrics() -> Any:
     geometry = phx.geometry.Circle((0.0, 0.0), 0.5).compile()
     contact = phx.discretization.RigidMPMContactPlan(
         geometry,
@@ -328,7 +329,7 @@ def _contact_field_metrics():
     )
 
 
-def _storage_metrics():
+def _storage_metrics() -> Any:
     neo = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(2)
     parameters = phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(
         2.0, 8.0
@@ -377,7 +378,7 @@ def _storage_metrics():
     ), (sparse_metrics, parity == 0.0)
 
 
-def _implicit_metrics():
+def _implicit_metrics() -> Any:
     material = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(2)
     parameters = phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(
         2.0, 8.0
@@ -396,7 +397,7 @@ def _implicit_metrics():
     return metrics, metrics["successful"] and metrics["residual_norm"] < 1e-8
 
 
-def _fracture_metrics():
+def _fracture_metrics() -> Any:
     material = phx.applications.solid_mechanics.PhaseFieldNeoHookeanMPMConstitutivePlan(2)
     parameters = phx.applications.solid_mechanics.MPMPhaseFieldParameters(
         phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(2.0, 8.0),
@@ -441,7 +442,7 @@ def _fracture_metrics():
     )
 
 
-def run(output: Path):
+def run(output: Path) -> None:
     results = {}
     schedule, ok = _schedule_metrics()
     results["schedules"] = _write(output, "schedules", schedule, ok)
@@ -470,7 +471,7 @@ def run(output: Path):
         raise SystemExit(1)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Qualify advanced MPM capabilities.")
     parser.add_argument("--output", type=Path, default=Path("benchmarks"))
     arguments = parser.parse_args()

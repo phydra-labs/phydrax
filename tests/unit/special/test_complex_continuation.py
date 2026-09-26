@@ -10,7 +10,7 @@ import scipy.special
 import phydrax as phx
 
 
-def test_airy_complex_continuation_satisfies_ode_and_preserves_dtype():
+def test_airy_complex_continuation_satisfies_ode_and_preserves_dtype() -> None:
     z = jnp.asarray(0.4 + 0.7j, dtype=jnp.complex64)
     ai, aip, bi, bip = phx.special.airy(z)
     second_ai = jax.jvp(
@@ -25,7 +25,7 @@ def test_airy_complex_continuation_satisfies_ode_and_preserves_dtype():
     assert jnp.allclose(ai * bip - aip * bi, 1.0 / jnp.pi, rtol=2e-4)
 
 
-def test_bessel_complex_wronskian_recurrence_and_order_derivatives():
+def test_bessel_complex_wronskian_recurrence_and_order_derivatives() -> None:
     order = jnp.asarray(0.7)
     z = jnp.asarray(1.2 + 0.4j)
     jv = phx.special.jv(order, z)
@@ -53,7 +53,9 @@ def test_bessel_complex_wronskian_recurrence_and_order_derivatives():
     )
 
 
-def test_negative_integer_complex_jv_uses_reflection_limit_and_finite_derivative():
+def test_negative_integer_complex_jv_uses_reflection_limit_and_finite_derivative() -> (
+    None
+):
     orders = np.asarray([-1.0, -2.0, -3.0])
     argument = 1.2 + 0.4j
     actual = np.asarray(phx.special.jv(jnp.asarray(orders), argument))
@@ -80,7 +82,7 @@ def test_negative_integer_complex_jv_uses_reflection_limit_and_finite_derivative
     np.testing.assert_allclose(derivative, reference, rtol=2e-7, atol=2e-9)
 
 
-def test_modified_bessel_complex_connection_and_integer_order_limit():
+def test_modified_bessel_complex_connection_and_integer_order_limit() -> None:
     z = jnp.asarray(1.1 + 0.2j)
     order = jnp.asarray(0.4)
     iv = phx.special.iv(order, z)
@@ -93,7 +95,7 @@ def test_modified_bessel_complex_connection_and_integer_order_limit():
     assert jnp.allclose(phx.special.kve(order, z), jnp.exp(z) * kv)
 
 
-def test_carlson_legendre_jacobi_and_dawson_complex_identities():
+def test_carlson_legendre_jacobi_and_dawson_complex_identities() -> None:
     value = jnp.asarray(0.8 + 0.3j)
     assert jnp.allclose(
         phx.special.elliprf(value, value, value), 1.0 / jnp.sqrt(value), rtol=2e-5
@@ -114,7 +116,7 @@ def test_carlson_legendre_jacobi_and_dawson_complex_identities():
     assert jnp.allclose(derivative, 1.0 - 2.0 * z * dawson, rtol=2e-4, atol=2e-5)
 
 
-def test_principal_log_signed_zero_lips_are_explicit():
+def test_principal_log_signed_zero_lips_are_explicit() -> None:
     upper = phx.special.principal_log(jnp.asarray(complex(-1.0, 0.0)))
     lower = phx.special.principal_log(jnp.asarray(complex(-1.0, -0.0)))
     assert jnp.imag(upper) > 0.0

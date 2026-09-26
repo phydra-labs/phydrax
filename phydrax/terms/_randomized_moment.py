@@ -29,7 +29,7 @@ from ..integration import (
 )
 from ..integration._api import _requires_random_key
 from ..integration._execution import resolve_integration
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._integrated import checked_estimate_field, validate_condition_source
 from ._randomized_quadratic import event_inner, randomized_squared_mean
 
@@ -119,8 +119,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         count = int(num_realizations)
         if count < 2:
             raise ValueError("num_realizations must be at least two.")
-        if loss_mode not in ("u_statistic", "independent_product", "plug_in"):
-            raise ValueError("Unknown randomized moment loss_mode.")
+        loss_mode = parse(loss_mode, RandomizedResidualLossMode, "loss_mode")
         coefficient = jnp.asarray(scale, dtype=jnp.float64)
         if coefficient.shape != ():
             raise ValueError("Term scale must be a scalar.")

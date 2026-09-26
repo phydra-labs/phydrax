@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 import time
@@ -20,7 +22,7 @@ from phydrax.applications.skeletal_muscle.motor_units import (
 )
 
 
-def _case(unit_count: int, capacity: int, repetitions: int):
+def _case(unit_count: int, capacity: int, repetitions: int) -> Any:
     prepared = FuglevandWinterPatla1993Plan(
         unit_count,
         event_capacity_per_unit=capacity,

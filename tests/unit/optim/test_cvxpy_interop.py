@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -9,15 +12,15 @@ import pytest
 import phydrax as phx
 
 
-def _clarabel_policy():
+def _clarabel_policy() -> Any:
     return phx.optim.ConvexSolvePolicy(phx.optim.ClarabelInteriorPoint(presolve=False))
 
 
-def _solve(binding):
+def _solve(binding: Any) -> Any:
     return phx.optim.solve_convex_program(binding.prepare(_clarabel_policy())).result
 
 
-def test_cvxpy_sparse_import_parameter_refresh_and_inverse_maps():
+def test_cvxpy_sparse_import_parameter_refresh_and_inverse_maps() -> None:
     cp = pytest.importorskip("cvxpy")
     parameter = cp.Parameter(nonneg=True, value=1.0)
     x = cp.Variable(2)
@@ -35,7 +38,7 @@ def test_cvxpy_sparse_import_parameter_refresh_and_inverse_maps():
     assert refreshed.numeric_binding_id != binding.numeric_binding_id
 
 
-def test_cvxpy_export_rejects_mismatched_result_binding():
+def test_cvxpy_export_rejects_mismatched_result_binding() -> None:
     cp = pytest.importorskip("cvxpy")
     x = cp.Variable(boolean=True)
     problem = cp.Problem(cp.Minimize(x), [x >= 0])
@@ -43,7 +46,7 @@ def test_cvxpy_export_rejects_mismatched_result_binding():
         phx.optim.import_cvxpy_problem(problem)
 
 
-def test_cvxpy_solution_restores_primal_and_constraint_duals():
+def test_cvxpy_solution_restores_primal_and_constraint_duals() -> None:
     cp = pytest.importorskip("cvxpy")
     pytest.importorskip("clarabel")
     x = cp.Variable(2)
@@ -60,7 +63,7 @@ def test_cvxpy_solution_restores_primal_and_constraint_duals():
     assert jnp.allclose(jnp.asarray(x.value), jnp.asarray([1.0, 0.0]), atol=1e-6)
 
 
-def test_cvxpy_solution_rejects_nonoptimal_result_without_mutation():
+def test_cvxpy_solution_rejects_nonoptimal_result_without_mutation() -> None:
     cp = pytest.importorskip("cvxpy")
     pytest.importorskip("clarabel")
     x = cp.Variable(2)
@@ -83,7 +86,7 @@ def test_cvxpy_solution_rejects_nonoptimal_result_without_mutation():
     assert problem.status is None
 
 
-def test_cvxpy_solution_rejects_pre_refresh_result_before_mutation():
+def test_cvxpy_solution_rejects_pre_refresh_result_before_mutation() -> None:
     cp = pytest.importorskip("cvxpy")
     pytest.importorskip("clarabel")
     parameter = cp.Parameter(nonneg=True, value=1.0)
@@ -107,7 +110,7 @@ def test_cvxpy_solution_rejects_pre_refresh_result_before_mutation():
     assert jnp.allclose(jnp.sum(jnp.asarray(x.value)), 2.0, atol=1e-6)
 
 
-def test_cvxpy_solution_rejects_result_from_different_identical_problem():
+def test_cvxpy_solution_rejects_result_from_different_identical_problem() -> None:
     cp = pytest.importorskip("cvxpy")
     pytest.importorskip("clarabel")
     x = cp.Variable(2)

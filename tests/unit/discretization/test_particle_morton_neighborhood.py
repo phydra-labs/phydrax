@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _particles(ids, dimension=1, *, active_mask=None):
+def _particles(ids: Any, dimension: Any = 1, *, active_mask: Any = None) -> Any:
     count = len(ids)
     masses = np.ones((count,))
     if active_mask is not None:
@@ -22,7 +25,7 @@ def _particles(ids, dimension=1, *, active_mask=None):
     ).prepare()
 
 
-def _stable_pairs(state):
+def _stable_pairs(state: Any) -> Any:
     valid = np.asarray(state.pair_relation.valid, dtype="bool")
     left = np.asarray(state.pair_relation.left_particle_ids)[valid]
     right = np.asarray(state.pair_relation.right_particle_ids)[valid]
@@ -31,6 +34,7 @@ def _stable_pairs(state):
 
 def test_morton_neighborhood_prepares_native_resources_and_stable_pairs() -> None:
     particles = _particles([40, 10, 30, 20])
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     prepared = phx.discretization.MortonTreeParticleNeighborhoodPlan(
         0.3,
@@ -56,7 +60,9 @@ def test_morton_neighborhood_prepares_native_resources_and_stable_pairs() -> Non
 def test_morton_neighborhood_matches_cell_list_with_periodic_masks() -> None:
     particles = _particles([0, 1, 2, 3], dimension=2)
     box = phx.discretization.ParticleBox(
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         periodic_axes=(True, False),
     )
@@ -89,6 +95,7 @@ def test_morton_neighborhood_matches_cell_list_with_periodic_masks() -> None:
 
 def test_morton_neighborhood_pair_overflow_fails_closed() -> None:
     particles = _particles(range(4))
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     prepared = phx.discretization.MortonTreeParticleNeighborhoodPlan(
         0.5,
@@ -108,6 +115,7 @@ def test_morton_neighborhood_pair_overflow_fails_closed() -> None:
 
 def test_morton_neighborhood_build_is_filter_jittable() -> None:
     particles = _particles(range(8))
+    # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     prepared = phx.discretization.MortonTreeParticleNeighborhoodPlan(
         0.3,

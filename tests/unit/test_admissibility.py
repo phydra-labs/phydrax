@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,7 +15,7 @@ import phydrax as phx
 from phydrax._admissibility import guard_derivative_validity
 
 
-def test_admissibility_normalizes_nonfinite_and_composes_reasons():
+def test_admissibility_normalizes_nonfinite_and_composes_reasons() -> None:
     header = phx.AdmissibilityHeader(
         jnp.asarray((0.25, -0.1, jnp.nan)),
         jnp.asarray(
@@ -33,9 +36,9 @@ def test_admissibility_normalizes_nonfinite_and_composes_reasons():
     assert not bool(header.globally_eligible)
 
 
-def test_admissibility_is_jittable_and_transition_is_diagnostic_only():
+def test_admissibility_is_jittable_and_transition_is_diagnostic_only() -> None:
     @jax.jit
-    def evaluate(margin):
+    def evaluate(margin: Any) -> Any:
         return phx.AdmissibilityHeader(
             margin,
             phx.reason_bits_where(
@@ -61,7 +64,7 @@ def test_admissibility_is_jittable_and_transition_is_diagnostic_only():
     assert request.target_model_id == "kinetic"
 
 
-def test_combined_admissibility_preserves_worst_margin_and_reason_union():
+def test_combined_admissibility_preserves_worst_margin_and_reason_union() -> None:
     first = phx.AdmissibilityHeader(
         jnp.asarray((0.5, 0.2)),
         jnp.zeros((2,), dtype=jnp.uint32),
@@ -87,7 +90,9 @@ def test_combined_admissibility_preserves_worst_margin_and_reason_union():
     )
 
 
-def test_derivative_validity_guard_preserves_primal_and_poisons_both_orientations():
+def test_derivative_validity_guard_preserves_primal_and_poisons_both_orientations() -> (
+    None
+):
     value = jnp.asarray((1.0, -2.0))
     primal, valid_tangent = jax.jvp(
         lambda argument: guard_derivative_validity(argument, jnp.asarray(True)),
@@ -109,7 +114,7 @@ def test_derivative_validity_guard_preserves_primal_and_poisons_both_orientation
     assert jnp.all(jnp.isnan(invalid_reverse))
 
 
-def test_derivative_validity_guard_error_mode_rejects_transformed_use():
+def test_derivative_validity_guard_error_mode_rejects_transformed_use() -> None:
     value = jnp.asarray((1.0, -2.0))
     with pytest.raises(eqx.EquinoxRuntimeError, match="invalid test derivative"):
         _, tangent = jax.jvp(

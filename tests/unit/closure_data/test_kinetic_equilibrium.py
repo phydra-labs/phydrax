@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -50,13 +52,15 @@ class _AffineDualModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, in_size: int = 4, out_size: int = 2, *, offset: float = 0.0):
+    def __init__(
+        self, in_size: int = 4, out_size: int = 2, *, offset: float = 0.0
+    ) -> None:
         self.weight = jnp.zeros((out_size, in_size), dtype=jnp.float64)
         self.bias = jnp.full((out_size,), offset, dtype=jnp.float64)
         self.in_size = in_size
         self.out_size = out_size
 
-    def __call__(self, values, /, *, key=None):
+    def __call__(self, values: Any, /, *, key: Any = None) -> Any:
         del key
         return self.weight @ values + self.bias
 
@@ -119,7 +123,7 @@ def _manifest(
     )
 
 
-def _aligned_inputs():
+def _aligned_inputs() -> Any:
     schema = _schema()
     equilibrium = PositiveEnergyEquilibriumPlan(d2v17_quadrature())
     conserved_values = (
@@ -175,7 +179,7 @@ def _aligned_inputs():
     return schema, equilibrium, conserved, oracle, pairs, manifest, partition, normalizer
 
 
-def _prepared_dataset():
+def _prepared_dataset() -> Any:
     inputs = _aligned_inputs()
     dataset = prepare_energy_equilibrium_dataset(
         inputs[4], inputs[5], inputs[6], inputs[7]
@@ -183,7 +187,7 @@ def _prepared_dataset():
     return (*inputs, dataset)
 
 
-def _binding_plan():
+def _binding_plan() -> Any:
     schema, equilibrium, *_, dataset = _prepared_dataset()
     material = _material()
     support = EnergyEquilibriumSupportEnvelope(
@@ -227,7 +231,7 @@ def _binding_plan():
     return plan, semantic, dataset
 
 
-def test_aligned_pairs_prepare_leakage_safe_splits_and_train_only_statistics():
+def test_aligned_pairs_prepare_leakage_safe_splits_and_train_only_statistics() -> None:
     (
         _,
         _,
@@ -298,7 +302,9 @@ def test_aligned_pairs_prepare_leakage_safe_splits_and_train_only_statistics():
     assert not train_only.test_pairs
 
 
-def test_pair_manifest_partition_and_normalizer_identity_mismatches_are_rejected():
+def test_pair_manifest_partition_and_normalizer_identity_mismatches_are_rejected() -> (
+    None
+):
     schema, equilibrium, conserved, oracle, pairs, manifest, partition, normalizer = (
         _aligned_inputs()
     )
@@ -393,7 +399,7 @@ def test_pair_manifest_partition_and_normalizer_identity_mismatches_are_rejected
         )
 
 
-def test_binding_rejects_revision_model_and_owned_dependency_mismatches():
+def test_binding_rejects_revision_model_and_owned_dependency_mismatches() -> None:
     plan, semantic, dataset = _binding_plan()
     model = _AffineDualModel()
     stale_revision = energy_equilibrium_numeric_revision(
@@ -456,7 +462,7 @@ def test_binding_rejects_revision_model_and_owned_dependency_mismatches():
             )
 
 
-def test_explicit_and_frozen_predictions_retain_primitive_support_evidence():
+def test_explicit_and_frozen_predictions_retain_primitive_support_evidence() -> None:
     plan, semantic, _ = _binding_plan()
     model = eqx.tree_at(
         lambda value: value.weight,
@@ -522,7 +528,9 @@ def test_explicit_and_frozen_predictions_retain_primitive_support_evidence():
         jax.block_until_ready(prepared.predict_dual(unsupported))
 
 
-def test_learned_energy_artifact_round_trip_restores_exact_frozen_output(tmp_path):
+def test_learned_energy_artifact_round_trip_restores_exact_frozen_output(
+    tmp_path: Any,
+) -> None:
     plan, _, _ = _binding_plan()
     model = Linear(
         in_size=4,
@@ -559,7 +567,9 @@ def test_learned_energy_artifact_round_trip_restores_exact_frozen_output(tmp_pat
     )
 
 
-def test_learned_energy_artifact_writer_refuses_stale_owned_identities(tmp_path):
+def test_learned_energy_artifact_writer_refuses_stale_owned_identities(
+    tmp_path: Any,
+) -> None:
     plan, _, _ = _binding_plan()
     model = _AffineDualModel()
     binding = plan.prepare(

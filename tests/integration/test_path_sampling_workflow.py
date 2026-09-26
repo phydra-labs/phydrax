@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -38,12 +40,12 @@ from phydrax.stochastic.path_sampling import (
 
 
 def _kernel(*, fail: bool = False) -> FunctionalDynamicsKernel:
-    def transition(source, destination, direction):
+    def transition(source: Any, destination: Any, direction: Any) -> Any:
         del direction
         displacement = jnp.abs(destination - source)
         return jnp.where(jnp.all(jnp.abs(displacement - 1.0) < 1.0e-6), 0.0, -jnp.inf)
 
-    def step(key, state, direction):
+    def step(key: Any, state: Any, direction: Any) -> Any:
         del key
         valid = jnp.asarray(not fail)
         return DynamicsStep(
@@ -87,7 +89,7 @@ def _network() -> InterfaceNetworkPlan:
     )
 
 
-def test_tps_rejected_move_restart_preserves_exact_lineage(tmp_path) -> None:
+def test_tps_rejected_move_restart_preserves_exact_lineage(tmp_path: Any) -> None:
     kernel = _kernel(fail=True)
     prepared = prepare_tps(
         TPSPlan(
@@ -130,7 +132,7 @@ def test_tps_rejected_move_restart_preserves_exact_lineage(tmp_path) -> None:
 
 
 def test_tis_and_retis_prepared_workflows_preserve_interface_assignments(
-    tmp_path,
+    tmp_path: Any,
 ) -> None:
     kernel = _kernel()
     action = DeterministicPathAction(kernel)

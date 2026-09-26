@@ -1422,7 +1422,8 @@ def _hybrid_one(
             )
             if prepared_schedule is not None:
                 tape = inner[9]
-                assert tape is not None
+                if not (tape is not None):
+                    raise RuntimeError("Internal invariant failed: tape is not None.")
                 active = active & (~tape.terminal) & (~tape.capacity_exceeded)
             return active
 
@@ -2090,7 +2091,8 @@ def _hybrid_one(
     terminal = jnp.isfinite(final_carry[7])
     if prepared_schedule is not None:
         terminal_tape = final_carry[9]
-        assert terminal_tape is not None
+        if not (terminal_tape is not None):
+            raise RuntimeError("Internal invariant failed: terminal_tape is not None.")
         terminal_slot = jnp.maximum(terminal_tape.event_count - 1, 0)
         terminal_state = terminal_tape.states_after[terminal_slot]
         at_or_after_terminal = terminal & (
@@ -2428,7 +2430,10 @@ def solve_jump_differential(
     if prepared_schedule is None:
         deterministic_events = None
     else:
-        assert deterministic_tape is not None
+        if not (deterministic_tape is not None):
+            raise RuntimeError(
+                "Internal invariant failed: deterministic_tape is not None."
+            )
         deterministic_events = _batched_schedule_result(
             deterministic_tape,
             prepared_schedule,

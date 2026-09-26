@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -23,7 +26,7 @@ from phydrax.ml.kernel_methods import (
 from phydrax.uq import GaussianProcessLikelihoodState
 
 
-def _data():
+def _data() -> Any:
     features = jnp.array(
         [[-1.4, -0.3], [-0.7, 0.8], [0.1, -0.6], [0.8, 0.5], [1.6, -0.2]]
     )
@@ -34,14 +37,14 @@ def _data():
     return features, targets, labels, weights, query
 
 
-def _assert_finite(values):
+def _assert_finite(values: Any) -> None:
     if isinstance(values, tuple):
         assert all(jnp.all(jnp.isfinite(value)) for value in values)
     else:
         assert jnp.all(jnp.isfinite(values))
 
 
-def _assert_prediction_parameter_gradient(model, query):
+def _assert_prediction_parameter_gradient(model: Any, query: Any) -> None:
     gradient = eqx.filter_grad(
         lambda current: jnp.sum(jnp.square(jnp.real(current(query))))
     )(model)
@@ -50,11 +53,11 @@ def _assert_prediction_parameter_gradient(model, query):
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)
 
 
-def test_ls_svm_exercises_every_declared_fit_and_prediction_gradient():
+def test_ls_svm_exercises_every_declared_fit_and_prediction_gradient() -> None:
     features, _, labels, weights, query = _data()
     base = LeastSquaresSVMRecipe(SquaredExponentialKernel(length_scale=0.9), alpha=0.25)
 
-    def fit_loss(x, sample_weight, alpha, length_scale):
+    def fit_loss(x: Any, sample_weight: Any, alpha: Any, length_scale: Any) -> Any:
         recipe = eqx.tree_at(
             lambda current: (current.alpha, current.kernel.length_scale),
             base,
@@ -86,7 +89,7 @@ def test_ls_svm_exercises_every_declared_fit_and_prediction_gradient():
     _assert_prediction_parameter_gradient(result.as_trainable(), query)
 
 
-def test_projected_svc_and_one_class_exercise_conditional_fit_gradients():
+def test_projected_svc_and_one_class_exercise_conditional_fit_gradients() -> None:
     features, _, labels, weights, query = _data()
     svc_base = SupportVectorClassifierRecipe(
         SquaredExponentialKernel(length_scale=1.1),
@@ -95,7 +98,9 @@ def test_projected_svc_and_one_class_exercise_conditional_fit_gradients():
         learning_rate=0.025,
     )
 
-    def svc_loss(x, sample_weight, c, learning_rate, length_scale):
+    def svc_loss(
+        x: Any, sample_weight: Any, c: Any, learning_rate: Any, length_scale: Any
+    ) -> Any:
         recipe = eqx.tree_at(
             lambda current: (
                 current.c,
@@ -140,7 +145,9 @@ def test_projected_svc_and_one_class_exercise_conditional_fit_gradients():
         learning_rate=0.025,
     )
 
-    def one_class_loss(x, sample_weight, nu, learning_rate, length_scale):
+    def one_class_loss(
+        x: Any, sample_weight: Any, nu: Any, learning_rate: Any, length_scale: Any
+    ) -> Any:
         recipe = eqx.tree_at(
             lambda current: (
                 current.nu,
@@ -177,7 +184,7 @@ def test_projected_svc_and_one_class_exercise_conditional_fit_gradients():
     _assert_prediction_parameter_gradient(one_result.as_trainable(), query)
 
 
-def test_svr_exercises_almost_everywhere_fit_and_prediction_gradients():
+def test_svr_exercises_almost_everywhere_fit_and_prediction_gradients() -> None:
     features, targets, _, weights, query = _data()
     base = SupportVectorRegressorRecipe(
         SquaredExponentialKernel(length_scale=0.85),
@@ -187,7 +194,15 @@ def test_svr_exercises_almost_everywhere_fit_and_prediction_gradients():
         learning_rate=0.01,
     )
 
-    def fit_loss(x, y, sample_weight, c, epsilon, learning_rate, length_scale):
+    def fit_loss(
+        x: Any,
+        y: Any,
+        sample_weight: Any,
+        c: Any,
+        epsilon: Any,
+        learning_rate: Any,
+        length_scale: Any,
+    ) -> Any:
         recipe = eqx.tree_at(
             lambda current: (
                 current.c,
@@ -229,7 +244,7 @@ def test_svr_exercises_almost_everywhere_fit_and_prediction_gradients():
     _assert_prediction_parameter_gradient(result.as_trainable(), query)
 
 
-def test_spectral_and_random_maps_exercise_declared_fit_gradients():
+def test_spectral_and_random_maps_exercise_declared_fit_gradients() -> None:
     features, _, _, weights, query = _data()
     kpca_base = KernelPCARecipe(
         SquaredExponentialKernel(length_scale=0.95),
@@ -237,7 +252,7 @@ def test_spectral_and_random_maps_exercise_declared_fit_gradients():
         eigenvalue_floor=1e-7,
     )
 
-    def kpca_loss(x, sample_weight, floor, length_scale):
+    def kpca_loss(x: Any, sample_weight: Any, floor: Any, length_scale: Any) -> Any:
         recipe = eqx.tree_at(
             lambda current: (
                 current.eigenvalue_floor,
@@ -278,7 +293,7 @@ def test_spectral_and_random_maps_exercise_declared_fit_gradients():
         eigenvalue_floor=1e-7,
     )
 
-    def nystrom_loss(x, floor, length_scale):
+    def nystrom_loss(x: Any, floor: Any, length_scale: Any) -> Any:
         recipe = eqx.tree_at(
             lambda current: (
                 current.eigenvalue_floor,
@@ -309,7 +324,7 @@ def test_spectral_and_random_maps_exercise_declared_fit_gradients():
 
     key = jax.random.key(17)
 
-    def rff_loss(length_scale):
+    def rff_loss(length_scale: Any) -> Any:
         model = (
             RandomFourierFeaturesRecipe(
                 SquaredExponentialKernel(length_scale=length_scale), n_components=12
@@ -330,7 +345,7 @@ def test_spectral_and_random_maps_exercise_declared_fit_gradients():
     _assert_prediction_parameter_gradient(rff_result.as_trainable(), query)
 
 
-def test_generic_gp_classifier_fit_gradients_status_and_complex_contract():
+def test_generic_gp_classifier_fit_gradients_status_and_complex_contract() -> None:
     features, _, labels, weights, query = _data()
     state = GaussianProcessLikelihoodState(
         kernel=SquaredExponentialKernel(length_scale=0.9),
@@ -341,7 +356,14 @@ def test_generic_gp_classifier_fit_gradients_status_and_complex_contract():
         state, class_count=2, iterations=2, curvature_floor=1e-5
     )
 
-    def fit_loss(x, sample_weight, length_scale, noise_scale, jitter, floor):
+    def fit_loss(
+        x: Any,
+        sample_weight: Any,
+        length_scale: Any,
+        noise_scale: Any,
+        jitter: Any,
+        floor: Any,
+    ) -> Any:
         recipe = eqx.tree_at(
             lambda current: (
                 current.state.kernel.length_scale,
@@ -360,6 +382,7 @@ def test_generic_gp_classifier_fit_gradients_status_and_complex_contract():
     gradients = jax.grad(fit_loss, argnums=(0, 1, 2, 3, 4, 5))(
         features,
         weights,
+        # ty: ignore[unresolved-attribute]
         base.state.kernel.length_scale,
         base.state.noise_scale,
         base.state.jitter,
@@ -393,7 +416,7 @@ def test_generic_gp_classifier_fit_gradients_status_and_complex_contract():
     assert nonfinite.status == ML_NONFINITE
 
 
-def test_real_svm_families_reject_complex_kernel_expansions():
+def test_real_svm_families_reject_complex_kernel_expansions() -> None:
     features, targets, labels, _, _ = _data()
     complex_kernel = lambda left, right: jnp.asarray(
         jnp.vdot(left, right) + 1.0, dtype=jnp.complex64
@@ -410,7 +433,7 @@ def test_real_svm_families_reject_complex_kernel_expansions():
         OneClassSVMRecipe(complex_kernel, iterations=2).fit_batch(MLBatch(features))
 
 
-def test_case_batched_nystrom_rejects_one_global_out_of_sample_kernel():
+def test_case_batched_nystrom_rejects_one_global_out_of_sample_kernel() -> None:
     features, _, _, _, _ = _data()
     cases = jnp.stack((features, features + 0.2), axis=0)
     model = (
@@ -420,4 +443,5 @@ def test_case_batched_nystrom_rejects_one_global_out_of_sample_kernel():
     )
 
     with pytest.raises(ValueError, match="does not define one global kernel"):
+        # ty: ignore[unresolved-attribute]
         model.as_kernel()

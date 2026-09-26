@@ -40,7 +40,10 @@ if TYPE_CHECKING:
 def _surface_connectivity(mesh: CellMesh, /) -> PolygonalConnectivity:
     connectivity = mesh.connectivity
     # Surface meshes are validated as two-dimensional, which builds polygonal connectivity.
-    assert isinstance(connectivity, PolygonalConnectivity)
+    if not (isinstance(connectivity, PolygonalConnectivity)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(connectivity, PolygonalConnectivity)."
+        )
     return connectivity
 
 

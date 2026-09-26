@@ -16,7 +16,7 @@ def _make_graph() -> vx.GraphIR:
     )
 
 
-def test_graph_network_shapes():
+def test_graph_network_shapes() -> None:
     graph = _make_graph()
 
     net = vx.GraphNetwork(
@@ -31,7 +31,7 @@ def test_graph_network_shapes():
     assert out.globals.shape == (1, 1)
 
 
-def test_graph_network_jit_runs():
+def test_graph_network_jit_runs() -> None:
     graph = _make_graph()
     net = vx.GraphNetwork(
         update_edge_fn=lambda e, s, r, g: e + s + r,
@@ -45,7 +45,7 @@ def test_graph_network_jit_runs():
     assert out.globals.shape == (1, 1)
 
 
-def test_graph_network_masks_padding_before_updates_and_reductions():
+def test_graph_network_masks_padding_before_updates_and_reductions() -> None:
     unpadded = vx.GraphIR(
         nodes=jnp.asarray([[1.0], [2.0]]),
         edges=jnp.asarray([[0.5]]),
@@ -86,7 +86,7 @@ def test_graph_network_masks_padding_before_updates_and_reductions():
     assert jnp.array_equal(actual.globals[1:], jnp.zeros((1, 1)))
 
 
-def test_interaction_network_runs():
+def test_interaction_network_runs() -> None:
     graph = _make_graph()
     net = vx.InteractionNetwork(
         update_edge_fn=lambda e, s, r: e + s + r,
@@ -98,7 +98,7 @@ def test_interaction_network_runs():
     assert out.edges.shape == (3, 1)
 
 
-def test_relation_network_runs():
+def test_relation_network_runs() -> None:
     graph = _make_graph()
     net = vx.RelationNetwork(
         update_edge_fn=lambda s, r: s + r,
@@ -110,7 +110,7 @@ def test_relation_network_runs():
     assert out.globals.shape == (1, 1)
 
 
-def test_relation_network_jit_runs():
+def test_relation_network_jit_runs() -> None:
     graph = _make_graph()
     net = vx.RelationNetwork(
         update_edge_fn=lambda s, r: s + r,
@@ -122,7 +122,7 @@ def test_relation_network_jit_runs():
     assert out.globals.shape == (1, 1)
 
 
-def test_deepsets_runs():
+def test_deepsets_runs() -> None:
     graph = _make_graph()
     net = vx.DeepSets(
         update_node_fn=lambda n, g: n + g,
@@ -134,7 +134,7 @@ def test_deepsets_runs():
     assert out.globals.shape == (1, 1)
 
 
-def test_deepsets_jit_runs():
+def test_deepsets_jit_runs() -> None:
     graph = _make_graph()
     net = vx.DeepSets(
         update_node_fn=lambda n, g: n + g,
@@ -146,7 +146,7 @@ def test_deepsets_jit_runs():
     assert out.globals.shape == (1, 1)
 
 
-def test_graphnet_gat_runs():
+def test_graphnet_gat_runs() -> None:
     graph = _make_graph()
     net = vx.GraphNetGAT(
         update_edge_fn=lambda e, s, r, g: e + s + r,
@@ -162,7 +162,7 @@ def test_graphnet_gat_runs():
     assert out.globals.shape == (1, 1)
 
 
-def test_graphnet_gat_jit_runs():
+def test_graphnet_gat_jit_runs() -> None:
     graph = _make_graph()
     net = vx.GraphNetGAT(
         update_edge_fn=lambda e, s, r, g: e + s + r,
@@ -178,7 +178,7 @@ def test_graphnet_gat_jit_runs():
     assert out.globals.shape == (1, 1)
 
 
-def test_gat_runs():
+def test_gat_runs() -> None:
     graph = vx.GraphIR(
         nodes=jnp.array([[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]]),
         edges=jnp.array([[0.5], [0.5], [0.5]]),
@@ -198,7 +198,7 @@ def test_gat_runs():
     assert out.nodes.shape == (3, 2)
 
 
-def test_gat_jit_runs():
+def test_gat_jit_runs() -> None:
     graph = vx.GraphIR(
         nodes=jnp.array([[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]]),
         edges=jnp.array([[0.5], [0.5], [0.5]]),
@@ -218,7 +218,7 @@ def test_gat_jit_runs():
     assert out.nodes.shape == (3, 2)
 
 
-def test_graph_convolution_runs():
+def test_graph_convolution_runs() -> None:
     graph = _make_graph()
     net = vx.GraphConvolution(
         update_node_fn=lambda n: n + 1.0,
@@ -230,7 +230,7 @@ def test_graph_convolution_runs():
     assert out.nodes.shape == (3, 1)
 
 
-def test_graph_convolution_jit_runs():
+def test_graph_convolution_jit_runs() -> None:
     graph = _make_graph()
     net = vx.GraphConvolution(
         update_node_fn=lambda n: n + 1.0,
@@ -242,7 +242,7 @@ def test_graph_convolution_jit_runs():
     assert out.nodes.shape == (3, 1)
 
 
-def test_graph_map_features_runs():
+def test_graph_map_features_runs() -> None:
     graph = _make_graph()
     mapper = vx.graph_map_features(
         embed_node_fn=lambda n: n + 1.0,
@@ -255,7 +255,7 @@ def test_graph_map_features_runs():
     assert float(out.globals[0, 0]) == -1.0
 
 
-def test_graph_map_features_jit_runs():
+def test_graph_map_features_jit_runs() -> None:
     graph = _make_graph()
     mapper = vx.graph_map_features(
         embed_node_fn=lambda n: n + 1.0,

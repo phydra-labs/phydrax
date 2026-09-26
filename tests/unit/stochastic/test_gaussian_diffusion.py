@@ -7,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def test_diagonal_normal_law_preserves_sample_batch_and_event_axes():
+def test_diagonal_normal_law_preserves_sample_batch_and_event_axes() -> None:
     law = phx.uq.DiagonalNormalLaw(
         jnp.asarray([[0.0, 1.0], [2.0, 3.0]]),
         jnp.asarray([0.5, 2.0]),
@@ -25,7 +25,7 @@ def test_diagonal_normal_law_preserves_sample_batch_and_event_axes():
     assert jnp.all(law.contains(value))
 
 
-def test_diagonal_normal_score_matches_log_density_gradient():
+def test_diagonal_normal_score_matches_log_density_gradient() -> None:
     law = phx.uq.DiagonalNormalLaw(
         jnp.asarray([0.3, -0.2]),
         jnp.asarray([0.7, 1.4]),
@@ -43,7 +43,7 @@ def test_diagonal_normal_score_matches_log_density_gradient():
         )
 
 
-def test_variance_preserving_transition_and_score_identities():
+def test_variance_preserving_transition_and_score_identities() -> None:
     process = phx.stochastic.VariancePreservingDiffusion(
         2,
         beta_minimum=0.2,
@@ -83,7 +83,7 @@ def test_variance_preserving_transition_and_score_identities():
     assert reference.residual_signal_scale > 0.0
 
 
-def test_variance_exploding_variance_is_additive_and_has_exact_rate():
+def test_variance_exploding_variance_is_additive_and_has_exact_rate() -> None:
     process = phx.stochastic.VarianceExplodingDiffusion(
         3,
         initial_scale=0.02,
@@ -107,7 +107,7 @@ def test_variance_exploding_variance_is_additive_and_has_exact_rate():
     assert reference.residual_signal_scale == 1.0
 
 
-def test_gaussian_diffusion_rejects_invalid_intervals_and_parameters():
+def test_gaussian_diffusion_rejects_invalid_intervals_and_parameters() -> None:
     process = phx.stochastic.VariancePreservingDiffusion(1)
     with pytest.raises((ValueError, RuntimeError), match="t1 > t0"):
         process.transition_scale(0.2, 0.2)

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _hierarchy():
+def _hierarchy() -> Any:
     low = phx.fidelity.FidelityLevelSpec(
         "low",
         problem_id="manufactured",
@@ -35,7 +38,7 @@ def _hierarchy():
     )
 
 
-def _dataset():
+def _dataset() -> Any:
     hierarchy = _hierarchy()
     cases = tuple(
         phx.fidelity.FidelityCaseSpec(
@@ -62,7 +65,7 @@ def _dataset():
     return phx.fidelity.FidelityDataset(hierarchy, cases, evaluations)
 
 
-def test_fidelity_hierarchy_dataset_split_and_archive(tmp_path):
+def test_fidelity_hierarchy_dataset_split_and_archive(tmp_path: Any) -> None:
     hierarchy = _hierarchy()
     assert hierarchy.is_linear
     assert hierarchy.linear_path().level_ids == ("low", "high")
@@ -118,7 +121,7 @@ def test_fidelity_hierarchy_dataset_split_and_archive(tmp_path):
         )
 
 
-def test_fidelity_hierarchy_rejects_ambiguous_and_disconnected_models():
+def test_fidelity_hierarchy_rejects_ambiguous_and_disconnected_models() -> None:
     hierarchy = _hierarchy()
     extra = phx.fidelity.FidelityLevelSpec(
         "other",
@@ -136,14 +139,14 @@ def test_fidelity_hierarchy_rejects_ambiguous_and_disconnected_models():
         )
 
 
-def test_native_fidelity_sampler_runs_finest_level_mlmc():
+def test_native_fidelity_sampler_runs_finest_level_mlmc() -> None:
     path = _hierarchy().linear_path()
 
-    def sample_inputs(indices, key):
+    def sample_inputs(indices: Any, key: Any) -> Any:
         keys = jax.vmap(lambda index: jr.fold_in(key, index))(indices)
         return jax.vmap(jr.normal)(keys)
 
-    def evaluate_level(level, inputs):
+    def evaluate_level(level: Any, inputs: Any) -> Any:
         values = inputs * inputs + (0.5 if level.level_id == "low" else 0.0)
         return phx.integration.FidelityBatchEvaluation(
             values,

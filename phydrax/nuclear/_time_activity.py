@@ -203,7 +203,8 @@ class TimeActivitySeries:
                 "The activity asset references must include the transition data artifact."
             )
         metadata = self.asset.metadata
-        assert metadata is not None
+        if not (metadata is not None):
+            raise RuntimeError("Internal invariant failed: metadata is not None.")
         if metadata.get("radionuclide_id") != self.transition.parent.nuclide_id:
             raise ValueError(
                 "Time-activity asset radionuclide identity must match the transition."
@@ -366,7 +367,8 @@ class TimeActivityIntegrationResult:
     @property
     def valid_mask(self) -> np.ndarray:
         mask = self.asset.field.valid_mask
-        assert mask is not None
+        if not (mask is not None):
+            raise RuntimeError("Internal invariant failed: mask is not None.")
         return mask
 
     @property
@@ -472,7 +474,8 @@ class TimeActivityIntegrationPlan:
         source_reference_unit = _REFERENCE_UNIT[activity_kind]
         scale = float(conversion_factor(field_.quantity.unit, source_reference_unit))
         valid_mask = field_.valid_mask
-        assert valid_mask is not None
+        if not (valid_mask is not None):
+            raise RuntimeError("Internal invariant failed: valid_mask is not None.")
         evaluation = self.prepare(series.time_dimension).evaluate(
             np.asarray(field_.values) * scale,
             valid_mask,

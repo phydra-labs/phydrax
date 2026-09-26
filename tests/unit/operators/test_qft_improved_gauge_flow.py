@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -16,7 +19,7 @@ from phydrax.operators.path_integral._improved_gauge import (
 )
 
 
-def _action_and_links():
+def _action_and_links() -> Any:
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     boundary = prepare_cell_boundary_paths(topology)
     space = MatrixGaugeLinkSpace(topology, SpecialUnitaryGroup(2))
@@ -31,7 +34,7 @@ def _action_and_links():
     return action, links
 
 
-def test_local_loop_action_is_the_exact_incident_subset_of_full_action():
+def test_local_loop_action_is_the_exact_incident_subset_of_full_action() -> None:
     action, links = _action_and_links()
     contributions = action.loop_contributions(links)
 
@@ -42,7 +45,7 @@ def test_local_loop_action_is_the_exact_incident_subset_of_full_action():
     assert jnp.allclose(action.canonical_action(action.link_space.identity()), 0.0)
 
 
-def test_group_gradient_flow_preserves_membership_and_descends_action():
+def test_group_gradient_flow_preserves_membership_and_descends_action() -> None:
     action, links = _action_and_links()
     flow = GaugeGradientFlowPlan(
         action,

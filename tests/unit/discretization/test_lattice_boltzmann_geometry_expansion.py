@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -22,7 +25,7 @@ from phydrax.discretization.lattice_boltzmann._geometry_sensitivity import (
 )
 
 
-def _discretization(shape=(8, 8)):
+def _discretization(shape: Any = (8, 8)) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(n, periodic=True) for n in shape),
         axis_names=("x", "y"),
@@ -32,7 +35,7 @@ def _discretization(shape=(8, 8)):
     ).prepare()
 
 
-def _prepare_amr(plan, *, kinematic_viscosity=0.05):
+def _prepare_amr(plan: Any, *, kinematic_viscosity: Any = 0.05) -> Any:
     precision = phx.discretization.LatticeBoltzmannPrecisionPolicy()
     scalings = [phx.discretization.LatticeBoltzmannScaling(1.0, 1.0, 1.0)]
     for index, transfer in enumerate(plan.transfers):
@@ -51,7 +54,7 @@ def _prepare_amr(plan, *, kinematic_viscosity=0.05):
     return plan.prepare(precision, scalings), rates, tuple(scalings)
 
 
-def test_geometry_epoch_and_population_transfer_are_conservative():
+def test_geometry_epoch_and_population_transfer_are_conservative() -> None:
     discretization = _discretization()
     source_snapshot = phx.discretization.LatticeBoltzmannGeometrySnapshot.all_fluid(
         discretization
@@ -79,7 +82,7 @@ def test_geometry_epoch_and_population_transfer_are_conservative():
     assert jnp.all(jnp.isfinite(result.populations))
 
 
-def test_amr_restriction_and_prolongation_preserve_moments():
+def test_amr_restriction_and_prolongation_preserve_moments() -> None:
     lattice = phx.discretization.D2Q9()
     transfer = LatticeBoltzmannAMRTransferPlan(lattice)
     fine = jnp.broadcast_to(jnp.asarray(lattice.weights), (8, 8, 9))
@@ -93,7 +96,7 @@ def test_amr_restriction_and_prolongation_preserve_moments():
     np.testing.assert_allclose(prolonged, fine, atol=1e-14)
 
 
-def test_ratio_two_amr_subcycles_only_active_fine_blocks():
+def test_ratio_two_amr_subcycles_only_active_fine_blocks() -> None:
     lattice = phx.discretization.D2Q9()
     transfer = LatticeBoltzmannAMRTransferPlan(lattice)
     plan = phx.discretization.LatticeBoltzmannAMRPlan(transfer)
@@ -161,7 +164,7 @@ def test_ratio_two_amr_subcycles_only_active_fine_blocks():
     np.testing.assert_array_equal(failed.accepted_state.level_populations[1], fine)
 
 
-def test_ratio_three_three_level_amr_recurses_with_static_substeps():
+def test_ratio_three_three_level_amr_recurses_with_static_substeps() -> None:
     lattice = phx.discretization.D2Q9()
     transfer = LatticeBoltzmannAMRTransferPlan(lattice, refinement_ratio=3)
     plan = phx.discretization.LatticeBoltzmannAMRPlan(
@@ -200,7 +203,7 @@ def test_ratio_three_three_level_amr_recurses_with_static_substeps():
         np.testing.assert_allclose(actual, expected, atol=1.0e-14)
 
 
-def test_collision_aware_amr_transfer_roundtrips_nonequilibrium_and_half_time():
+def test_collision_aware_amr_transfer_roundtrips_nonequilibrium_and_half_time() -> None:
     lattice = phx.discretization.D2Q9()
     transfer = phx.discretization.LatticeBoltzmannAMRTransferPlan(lattice)
     precision = phx.discretization.LatticeBoltzmannPrecisionPolicy()
@@ -310,7 +313,7 @@ def test_collision_aware_amr_transfer_roundtrips_nonequilibrium_and_half_time():
     np.testing.assert_array_equal(failed.accepted_state.level_populations[1], fine)
 
 
-def test_fixed_branch_geometry_jvp_has_explicit_validity():
+def test_fixed_branch_geometry_jvp_has_explicit_validity() -> None:
     policy = LatticeBoltzmannGeometrySensitivityPolicy(
         mode=phx.BranchDifferentiationPolicy.BRANCHWISE
     )
@@ -341,16 +344,17 @@ def test_fixed_branch_geometry_jvp_has_explicit_validity():
     assert contract.conditions == ("executed-branch",)
 
 
-def test_geometry_sensitivity_policy_rejects_unsupported_branch_policies():
+def test_geometry_sensitivity_policy_rejects_unsupported_branch_policies() -> None:
     with pytest.raises(ValueError, match="LatticeBoltzmannGeometrySensitivityPolicy"):
         LatticeBoltzmannGeometrySensitivityPolicy(
             mode=phx.BranchDifferentiationPolicy.FROZEN_DECISION
         )
     with pytest.raises(TypeError, match="BranchDifferentiationPolicy"):
+        # ty: ignore[invalid-argument-type]
         LatticeBoltzmannGeometrySensitivityPolicy(mode="branchwise")
 
 
-def test_immersed_direct_forcing_balances_body_load_and_target_velocity():
+def test_immersed_direct_forcing_balances_body_load_and_target_velocity() -> None:
     discretization = _discretization()
     plan = phx.discretization.ImmersedBoundaryForcingPlan(
         discretization,
@@ -377,8 +381,8 @@ def test_immersed_direct_forcing_balances_body_load_and_target_velocity():
     )
 
 
-def test_multiblock_exchange_is_same_step_and_orientation_reciprocal():
-    def block(bounds):
+def test_multiblock_exchange_is_same_step_and_orientation_reciprocal() -> None:
+    def block(bounds: Any) -> Any:
         grid = phx.discretization.TensorGridPlan(
             (
                 phx.discretization.UniformCellAxisSpec(4),
@@ -431,7 +435,7 @@ def test_multiblock_exchange_is_same_step_and_orientation_reciprocal():
     )
 
 
-def test_identity_mapped_lattice_preserves_a_constant_free_stream():
+def test_identity_mapped_lattice_preserves_a_constant_free_stream() -> None:
     count = 8
     cell_grid = phx.discretization.TensorGridPlan(
         (
@@ -477,10 +481,10 @@ def test_identity_mapped_lattice_preserves_a_constant_free_stream():
     np.testing.assert_array_equal(result.populations, populations)
 
 
-def test_moving_sdf_refreshes_links_and_stages_topology_at_accepted_step():
+def test_moving_sdf_refreshes_links_and_stages_topology_at_accepted_step() -> None:
     discretization = _discretization((16, 16))
 
-    def translating_circle(time, coordinates, parameters):
+    def translating_circle(time: Any, coordinates: Any, parameters: Any) -> Any:
         del parameters
         center = jnp.asarray((0.5 + time, 0.5))
         return jnp.sqrt(jnp.sum((coordinates - center) ** 2, axis=-1)) - 0.2
@@ -517,7 +521,7 @@ def test_moving_sdf_refreshes_links_and_stages_topology_at_accepted_step():
     assert committed.transfer_evidence.passed
 
 
-def test_compiled_geometry_bridge_produces_certified_curved_link_metadata():
+def test_compiled_geometry_bridge_produces_certified_curved_link_metadata() -> None:
     discretization = _discretization((32, 32))
     geometry = phx.geometry.Circle((0.5, 0.5), 0.2).compile()
     prepared = phx.discretization.prepare_lattice_boltzmann_link_geometry(
@@ -557,7 +561,9 @@ def test_compiled_geometry_bridge_produces_certified_curved_link_metadata():
     )
 
 
-def test_parabolic_and_womersley_profiles_have_declared_centerline_and_wall_values():
+def test_parabolic_and_womersley_profiles_have_declared_centerline_and_wall_values() -> (
+    None
+):
     coordinates = jnp.asarray(
         (
             (0.0, 0.0),

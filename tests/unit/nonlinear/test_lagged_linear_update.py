@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,7 +11,7 @@ import phydrax.nonlinear as nl
 jax.config.update("jax_enable_x64", True)
 
 
-def _gmres_policy(*, max_steps=64, restart=8):
+def _gmres_policy(*, max_steps: Any = 64, restart: Any = 8) -> Any:
     return la.LinearSolvePolicy(
         la.GMRES(restart=restart),
         tolerance=la.TolerancePolicy(
@@ -20,7 +22,7 @@ def _gmres_policy(*, max_steps=64, restart=8):
     )
 
 
-def _termination(*, maximum_steps=50):
+def _termination(*, maximum_steps: Any = 50) -> Any:
     return nl.NonlinearTermination(
         absolute_residual=1e-10,
         relative_residual=0.0,
@@ -32,7 +34,9 @@ def _termination(*, maximum_steps=50):
     )
 
 
-def _scaled_operator(space, scale, *, operator_id="scaled-lagged"):
+def _scaled_operator(
+    space: Any, scale: Any, *, operator_id: Any = "scaled-lagged"
+) -> Any:
     return la.FunctionLinearOperator(
         lambda direction: scale * direction,
         source=space,
@@ -41,7 +45,7 @@ def _scaled_operator(space, scale, *, operator_id="scaled-lagged"):
     )
 
 
-def test_lagged_linear_update_applies_prepared_physical_correction():
+def test_lagged_linear_update_applies_prepared_physical_correction() -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
     target = jnp.asarray([2.0, -1.0, 4.0])
     problem = nl.NonlinearSystemProblem(
@@ -80,7 +84,7 @@ def test_lagged_linear_update_applies_prepared_physical_correction():
     assert refreshed.internal_state.numeric_version == 1
 
 
-def test_lagged_linear_update_refresh_preserves_symbolic_identity():
+def test_lagged_linear_update_refresh_preserves_symbolic_identity() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
@@ -112,7 +116,7 @@ def test_lagged_linear_update_refresh_preserves_symbolic_identity():
     assert refreshed.internal_state.numeric_version == 1
 
 
-def test_lagged_linear_update_rejects_changed_operator_identity():
+def test_lagged_linear_update_rejects_changed_operator_identity() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state - 1.0,
@@ -144,7 +148,7 @@ def test_lagged_linear_update_rejects_changed_operator_identity():
         )
 
 
-def test_lagged_linear_update_fails_closed_on_budget_and_domain_rejection():
+def test_lagged_linear_update_fails_closed_on_budget_and_domain_rejection() -> None:
     space = la.ArraySpace((), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state + 1.0,
@@ -180,7 +184,7 @@ def test_lagged_linear_update_fails_closed_on_budget_and_domain_rejection():
     assert jnp.array_equal(rejected.residual, jnp.asarray(2.0))
 
 
-def test_lagged_linear_update_validates_configuration_and_spaces():
+def test_lagged_linear_update_validates_configuration_and_spaces() -> None:
     with pytest.raises(TypeError, match="operator_function"):
         nl.LaggedLinearSolveUpdate(object())
     with pytest.raises(ValueError, match="damping"):
@@ -219,7 +223,7 @@ def test_lagged_linear_update_validates_configuration_and_spaces():
         )
 
 
-def test_lagged_linear_root_matches_newton_under_jit_and_vmap():
+def test_lagged_linear_root_matches_newton_under_jit_and_vmap() -> None:
     space = la.ArraySpace((), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
@@ -248,7 +252,7 @@ def test_lagged_linear_root_matches_newton_under_jit_and_vmap():
         args=target,
     )
 
-    def primal(argument):
+    def primal(argument: Any) -> Any:
         return method.solve(
             problem,
             jnp.asarray(1.0),

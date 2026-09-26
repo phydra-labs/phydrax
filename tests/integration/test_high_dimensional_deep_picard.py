@@ -14,12 +14,12 @@ from phydrax.stochastic._feynman_kac import FeynmanKacSamplingPlan
 class _LinearHJBValue(eqx.Module):
     time_coefficient: jnp.ndarray = phx.parameter_field()
 
-    def __call__(self, time, state, *, key=None):
+    def __call__(self, time: Any, state: Any, *, key: Any = None) -> Any:
         del key
         return jnp.asarray([jnp.mean(state) + self.time_coefficient * (1.0 - time)])
 
 
-def test_dimension_100_quadratic_hjb_deep_picard_smoke():
+def test_dimension_100_quadratic_hjb_deep_picard_smoke() -> None:
     dimension = 100
     times = jnp.asarray([0.0, 1.0])
     placeholder = BSDEPathBatch(

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -10,7 +12,7 @@ from phydrax.nn.operator import (
 )
 
 
-def test_axis_dependency_reach_composes_sequentially_and_in_parallel():
+def test_axis_dependency_reach_composes_sequentially_and_in_parallel() -> None:
     left = AxisDependencyReach(1, 3)
     right = AxisDependencyReach(4, 2)
 
@@ -20,7 +22,7 @@ def test_axis_dependency_reach_composes_sequentially_and_in_parallel():
         AxisDependencyReach(-1, 0)
 
 
-def test_dependency_support_algebra_propagates_evidence_global_and_unknown():
+def test_dependency_support_algebra_propagates_evidence_global_and_unknown() -> None:
     first = OperatorDependencySupport.finite(
         (AxisDependencyReach(1, 2), AxisDependencyReach(3, 4)),
         evidence="exact",
@@ -46,7 +48,7 @@ def test_dependency_support_algebra_propagates_evidence_global_and_unknown():
     assert first.parallel(OperatorDependencySupport.unknown(2)).kind == "unknown"
 
 
-def test_dependency_scale_is_explicit_and_periodic_reach_saturates():
+def test_dependency_scale_is_explicit_and_periodic_reach_saturates() -> None:
     support = OperatorDependencySupport.finite(
         (AxisDependencyReach(2, 2), AxisDependencyReach(1, 1))
     ).rescaled((0.25, 2.0))
@@ -62,7 +64,7 @@ def test_dependency_scale_is_explicit_and_periodic_reach_saturates():
         support.sequential(OperatorDependencySupport.pointwise(2, scale=(1.0, 1.0)))
 
 
-def test_measure_convolution_authors_dilated_directional_reach():
+def test_measure_convolution_authors_dilated_directional_reach() -> None:
     layer = phx.nn.layers.MeasureNormalizedConvND(
         spatial_ndim=2,
         in_channels=1,
@@ -92,11 +94,13 @@ def test_measure_convolution_authors_dilated_directional_reach():
     assert bound.evidence == "conservative"
 
 
-def test_operator_dependency_support_prefers_instance_provider_and_defaults_unknown():
+def test_operator_dependency_support_prefers_instance_provider_and_defaults_unknown() -> (
+    None
+):
     expected = OperatorDependencySupport.pointwise(1)
 
     class AuthoredProvider:
-        def dependency_support(self, axes=None, /):
+        def dependency_support(self, axes: Any = None, /) -> Any:
             assert axes is None
             return expected
 
@@ -110,7 +114,7 @@ def test_operator_dependency_support_prefers_instance_provider_and_defaults_unkn
     assert unknown.evidence == "conservative"
 
 
-def test_periodic_operator_instances_classify_their_authored_dependency():
+def test_periodic_operator_instances_classify_their_authored_dependency() -> None:
     finite_cno = phx.nn.operator.architectures.CNO(
         spatial_ndim=1,
         width=3,

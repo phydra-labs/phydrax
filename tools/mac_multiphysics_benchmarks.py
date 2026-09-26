@@ -8,6 +8,7 @@ import argparse
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -31,7 +32,7 @@ class MACMultiphysicsBenchmarkRecord:
     passed: bool
 
 
-def _grid(count, *, periodic):
+def _grid(count: Any, *, periodic: Any) -> Any:
     return phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=periodic)
@@ -41,7 +42,7 @@ def _grid(count, *, periodic):
     ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
 
 
-def run_mac_multiphysics_benchmark(*, count=6):
+def run_mac_multiphysics_benchmark(*, count: Any = 6) -> Any:
     grid = _grid(count, periodic=True)
     finite_volume = phx.discretization.FiniteVolumePlan(grid).prepare()
     operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
@@ -199,7 +200,7 @@ def run_mac_multiphysics_benchmark(*, count=6):
     )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
     parser.add_argument("--smoke", action="store_true")

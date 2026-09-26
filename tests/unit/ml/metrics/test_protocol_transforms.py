@@ -9,7 +9,7 @@ import pytest
 from phydrax.ml import metrics
 
 
-def test_metric_results_are_jittable_pytrees_with_stable_status_arrays():
+def test_metric_results_are_jittable_pytrees_with_stable_status_arrays() -> None:
     target = jnp.array([1.0, 2.0, 3.0])
     prediction = jnp.array([0.0, 2.0, 4.0])
     compiled = jax.jit(metrics.mean_squared_error)(target, prediction)
@@ -21,7 +21,7 @@ def test_metric_results_are_jittable_pytrees_with_stable_status_arrays():
     assert int(compiled.status) == metrics.METRIC_SUCCESS
 
 
-def test_vmap_and_grad_preserve_metric_case_contracts():
+def test_vmap_and_grad_preserve_metric_case_contracts() -> None:
     target = jnp.array([1.0, 2.0, 3.0])
     predictions = jnp.array([[1.0, 2.0, 3.0], [0.0, 2.0, 4.0], [2.0, 2.0, 2.0]])
     mapped = jax.vmap(lambda value: metrics.mean_squared_error(target, value).value)(
@@ -41,7 +41,7 @@ def test_vmap_and_grad_preserve_metric_case_contracts():
     assert jnp.allclose(gradient, 2.0 * (predictions[1] - target) / 3.0)
 
 
-def test_float_precision_is_preserved_by_weighted_metrics():
+def test_float_precision_is_preserved_by_weighted_metrics() -> None:
     target32 = jnp.array([1.0, 2.0], dtype=jnp.float32)
     target64 = jnp.array([1.0, 2.0], dtype=jnp.float64)
     result32 = metrics.mean_squared_error(target32, target32 + 1.0)
@@ -51,7 +51,7 @@ def test_float_precision_is_preserved_by_weighted_metrics():
     assert result64.value.dtype == jnp.float64
 
 
-def test_function_scorer_has_explicit_direction_and_prediction_first_order():
+def test_function_scorer_has_explicit_direction_and_prediction_first_order() -> None:
     scorer = metrics.FunctionScorer(
         metrics.mean_squared_error,
         name="negative_mse",
@@ -75,7 +75,7 @@ def test_function_scorer_has_explicit_direction_and_prediction_first_order():
         scorer.greater_is_better = True
 
 
-def test_function_scorer_preserves_arbitrary_structured_metric_output():
+def test_function_scorer_preserves_arbitrary_structured_metric_output() -> None:
     scorer = metrics.FunctionScorer(
         metrics.expected_calibration_error,
         name="ece",
@@ -94,7 +94,7 @@ def test_function_scorer_preserves_arbitrary_structured_metric_output():
     assert int(result.status) == metrics.METRIC_SUCCESS
 
 
-def test_function_scorer_is_usable_inside_jit_without_string_dispatch():
+def test_function_scorer_is_usable_inside_jit_without_string_dispatch() -> None:
     scorer = metrics.FunctionScorer(
         metrics.mean_absolute_error,
         name="mae",
@@ -107,7 +107,7 @@ def test_function_scorer_is_usable_inside_jit_without_string_dispatch():
     assert jnp.allclose(compiled_value, 1.0)
 
 
-def test_all_public_edge_statuses_are_jax_integer_scalars():
+def test_all_public_edge_statuses_are_jax_integer_scalars() -> None:
     success = metrics.mean_absolute_error(jnp.ones(2), jnp.ones(2))
     empty = metrics.mean_absolute_error(
         jnp.ones(2), jnp.ones(2), mask=jnp.zeros(2, dtype="bool")
@@ -151,8 +151,9 @@ def test_all_public_edge_statuses_are_jax_integer_scalars():
     )
 
 
-def test_abstract_scorer_protocol_is_abstract_and_call_delegates_to_score():
+def test_abstract_scorer_protocol_is_abstract_and_call_delegates_to_score() -> None:
     with pytest.raises(TypeError, match="abstract"):
+        # ty: ignore[call-non-callable, missing-argument]
         metrics.AbstractScorer()
 
     scorer = metrics.FunctionScorer(
@@ -170,7 +171,7 @@ def test_abstract_scorer_protocol_is_abstract_and_call_delegates_to_score():
     assert jnp.allclose(incorrect.value, 0.0)
 
 
-def test_scorer_direction_is_metadata_not_an_implicit_sign_change():
+def test_scorer_direction_is_metadata_not_an_implicit_sign_change() -> None:
     scorer = metrics.FunctionScorer(
         metrics.mean_squared_error,
         name="mse",
@@ -186,7 +187,7 @@ def test_scorer_direction_is_metadata_not_an_implicit_sign_change():
     assert float(worse.value) > float(perfect.value)
 
 
-def test_function_scorer_validates_and_freezes_metric_configuration():
+def test_function_scorer_validates_and_freezes_metric_configuration() -> None:
     scorer = metrics.FunctionScorer(
         metrics.pinball_loss,
         name="lower_quartile",
@@ -200,11 +201,13 @@ def test_function_scorer_validates_and_freezes_metric_configuration():
     assert scorer.metric_kwargs == (("quantile", 0.25),)
     assert jnp.allclose(result.value, 0.625)
     with pytest.raises(TypeError, match="callable"):
+        # ty: ignore[invalid-argument-type]
         metrics.FunctionScorer(1, greater_is_better=False)
     with pytest.raises(TypeError, match="keys"):
         metrics.FunctionScorer(
             metrics.mean_squared_error,
             greater_is_better=False,
+            # ty: ignore[invalid-argument-type]
             metric_kwargs={1: 2},
         )
     with pytest.raises(TypeError, match="immutable"):
@@ -217,13 +220,14 @@ def test_function_scorer_validates_and_freezes_metric_configuration():
         metrics.FunctionScorer(
             metrics.mean_squared_error,
             greater_is_better=False,
+            # ty: ignore[invalid-argument-type]
             response_method="unknown",
         )
     with pytest.raises(AttributeError):
         scorer.metric_kwargs = ()
 
 
-def test_structured_precision_recall_result_is_jittable():
+def test_structured_precision_recall_result_is_jittable() -> None:
     target = jnp.array([0, 1, 1])
     probability = jnp.array([[0.8, 0.2], [0.3, 0.7], [0.4, 0.6]])
     compiled = jax.jit(

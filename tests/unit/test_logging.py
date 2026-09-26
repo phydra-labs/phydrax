@@ -81,7 +81,9 @@ def test_json_sink_emits_canonical_privacy_bounded_event() -> None:
     }
     assert event["nonfinite_fields"] == ["fields.loss"]
     assert event["omitted_fields"] == ["fields.payload"]
+    # ty: ignore[invalid-argument-type]
     assert set(event["source"]) == {"function", "line", "module"}
+    # ty: ignore[unsupported-operator]
     assert "path" not in event["source"]
     assert buffer.getvalue().count("\n") == 1
 
@@ -125,6 +127,7 @@ def test_async_tasks_keep_independent_context() -> None:
     finally:
         pxlogging.remove_sink(handler_id)
 
+    # ty: ignore[not-subscriptable]
     contexts = {event["context"]["run_id"] for event in _read_events(buffer)}
     assert contexts == {"run-a", "run-b"}
 
@@ -192,7 +195,9 @@ def test_event_collections_are_bounded() -> None:
         pxlogging.remove_sink(handler_id)
 
     event = _read_events(buffer)[0]
+    # ty: ignore[not-subscriptable]
     assert len(event["fields"]["values"]) < 1_000
+    # ty: ignore[unsupported-operator]
     assert "fields.values.*" in event["omitted_fields"]
 
 
@@ -214,7 +219,9 @@ def test_training_iteration_kind_emits_canonical_logging_event() -> None:
 
     event = _read_events(buffer)[0]
     assert event["event"] == "training.started"
+    # ty: ignore[not-subscriptable]
     assert event["fields"]["iteration_kind"] == "run_start"
+    # ty: ignore[not-subscriptable]
     assert event["fields"]["metrics"] == [{"name": "loss", "value": 1.25}]
 
 

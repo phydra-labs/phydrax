@@ -1,5 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -7,14 +10,14 @@ import pytest
 import phydrax as phx
 
 
-def _state():
+def _state() -> Any:
     return phx.uq.GaussianProcessLikelihoodState(
         kernel=phx.kernels.SquaredExponentialKernel(length_scale=0.4),
         noise_scale=0.05,
     )
 
 
-def test_lanczos_cg_and_gauss_seidel_fixed_capacity_evidence():
+def test_lanczos_cg_and_gauss_seidel_fixed_capacity_evidence() -> None:
     points = jnp.linspace(0.0, 1.0, 6)[:, None]
     residual = jnp.asarray([1.0, -0.2, 0.3, 0.1, -0.4, 0.2])
     policies = (
@@ -33,7 +36,7 @@ def test_lanczos_cg_and_gauss_seidel_fixed_capacity_evidence():
         assert resolved.operator.source.size == 4
 
 
-def test_fixed_gauss_seidel_order_resolves_under_filtered_jit():
+def test_fixed_gauss_seidel_order_resolves_under_filtered_jit() -> None:
     points = jnp.linspace(0.0, 1.0, 5)[:, None]
     observations = jnp.sin(points[:, 0])
     residual = observations - 0.1
@@ -44,7 +47,7 @@ def test_fixed_gauss_seidel_order_resolves_under_filtered_jit():
     )
 
     @eqx.filter_jit
-    def selected(current_policy):
+    def selected(current_policy: Any) -> Any:
         resolved = current_policy.resolve(
             points,
             state=_state(),
@@ -55,7 +58,7 @@ def test_fixed_gauss_seidel_order_resolves_under_filtered_jit():
     assert jnp.array_equal(selected(policy), jnp.asarray([2, 0, 4]))
 
 
-def test_residual_dependent_factor_fails_but_condition_path_resolves_actions():
+def test_residual_dependent_factor_fails_but_condition_path_resolves_actions() -> None:
     points = jnp.linspace(0.0, 1.0, 5)[:, None]
     discrepancy = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
         points, jnp.sin(points[:, 0])

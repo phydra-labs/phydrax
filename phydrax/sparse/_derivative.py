@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, assert_never
 
 import equinox as eqx
 import jax
@@ -33,7 +33,7 @@ from ..linalg._spaces import (
     _has_diagonal_pairing,
     _has_euclidean_pairing,
 )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._coloring import (
     native_coloring,
     SparseColoring,
@@ -192,8 +192,7 @@ class SparseDerivativePlan(StrictModule):
             raise TypeError("properties must be OperatorProperties.")
         if not isinstance(precision, SparseDerivativePrecisionPolicy):
             raise TypeError("precision must be a SparseDerivativePrecisionPolicy.")
-        if derivative_kind not in ("jacobian", "hessian"):
-            raise ValueError(f"Unknown sparse derivative kind {derivative_kind!r}.")
+        derivative_kind = parse(derivative_kind, SparseDerivativeKind, "derivative_kind")
         if derivative_kind == "hessian":
             if not isinstance(hessian_contract, SparseHessianContract):
                 raise TypeError("Hessian plans require a SparseHessianContract.")
@@ -760,8 +759,7 @@ def _compile_sparse_derivative(
     coordinate_identity: Any,
     plan_id: str | None,
 ) -> SparseDerivativePlan:
-    if compiler not in ("auto", "native"):
-        raise ValueError(f"Unknown sparse derivative compiler {compiler!r}.")
+    compiler = parse(compiler, SparseDerivativeCompiler, "compiler")
     chunk = None if chunk_size is None else int(chunk_size)
     if chunk is not None and chunk < 1:
         raise ValueError("chunk_size must be positive or None.")
@@ -929,32 +927,38 @@ def _evaluate_compressed(
 
     mode = coloring.mode
     if derivative_kind == "jacobian":
-        if mode == "fwd":
-            _, action = jax.linearize(
-                lambda value: function(value, arguments), coordinates
-            )
-        elif mode == "rev":
-            _, pullback = jax.vjp(lambda value: function(value, arguments), coordinates)
-            action = lambda seed: pullback(seed)[0]
-        else:
-            raise ValueError(f"Invalid Jacobian mode {mode!r}.")
+        jacobian_mode = parse(mode, SparseJacobianMode, "coloring.mode")
+        match jacobian_mode:
+            case "fwd":
+                _, action = jax.linearize(
+                    lambda value: function(value, arguments), coordinates
+                )
+            case "rev":
+                _, pullback = jax.vjp(
+                    lambda value: function(value, arguments), coordinates
+                )
+                action = lambda seed: pullback(seed)[0]
+            case unsupported:
+                assert_never(unsupported)
     else:
         scalar_function = lambda value: function(value, arguments)
-        if mode == "fwd_over_rev":
-            _, action = jax.linearize(jax.grad(scalar_function), coordinates)
-        elif mode == "rev_over_rev":
-            _, pullback = jax.vjp(jax.grad(scalar_function), coordinates)
-            action = lambda seed: pullback(seed)[0]
-        elif mode == "rev_over_fwd":
-            action = lambda seed: jax.grad(
-                lambda value: jax.jvp(
-                    scalar_function,
-                    (value,),
-                    (seed,),
-                )[1]
-            )(coordinates)
-        else:
-            raise ValueError(f"Invalid Hessian mode {mode!r}.")
+        hessian_mode = parse(mode, SparseHessianMode, "coloring.mode")
+        match hessian_mode:
+            case "fwd_over_rev":
+                _, action = jax.linearize(jax.grad(scalar_function), coordinates)
+            case "rev_over_rev":
+                _, pullback = jax.vjp(jax.grad(scalar_function), coordinates)
+                action = lambda seed: pullback(seed)[0]
+            case "rev_over_fwd":
+                action = lambda seed: jax.grad(
+                    lambda value: jax.jvp(
+                        scalar_function,
+                        (value,),
+                        (seed,),
+                    )[1]
+                )(coordinates)
+            case unsupported:
+                assert_never(unsupported)
 
     seed_dtype = (
         coordinates.dtype
@@ -1004,14 +1008,10 @@ def _validate_reused_coloring(
     symmetric: bool,
     /,
 ) -> None:
-    if derivative_kind == "jacobian" and coloring.mode not in ("fwd", "rev"):
-        raise ValueError("A Jacobian plan requires a Jacobian coloring mode.")
-    if derivative_kind == "hessian" and coloring.mode not in (
-        "fwd_over_rev",
-        "rev_over_fwd",
-        "rev_over_rev",
-    ):
-        raise ValueError("A Hessian plan requires a Hessian coloring mode.")
+    if derivative_kind == "jacobian":
+        parse(coloring.mode, SparseJacobianMode, "coloring.mode")
+    if derivative_kind == "hessian":
+        parse(coloring.mode, SparseHessianMode, "coloring.mode")
     if mode is not None and coloring.mode != mode:
         raise ValueError("Reused coloring mode does not match the requested mode.")
     if symmetric and not coloring.pattern.symmetric:

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 import numpy as np
 import pytest
@@ -38,7 +39,7 @@ def _provenance(name: str) -> phx.nuclear.NuclearDataProvenance:
     )
 
 
-def _coefficient_unit():
+def _coefficient_unit() -> Any:
     return phx.units.derived_unit(
         "m2/kg",
         ((phx.units.METER, 2), (phx.units.KILOGRAM, -1)),
@@ -48,8 +49,8 @@ def _coefficient_unit():
 def _table(
     *,
     provenance: phx.nuclear.NuclearDataProvenance | None = None,
-    interpolation=phx.equations.DiagnosticPhotonInterpolationPolicy.LINEAR,
-):
+    interpolation: Any = phx.equations.DiagnosticPhotonInterpolationPolicy.LINEAR,
+) -> Any:
     grid = phx.equations.PhotonEnergyGrid(np.asarray([1.0e-16, 2.0e-16, 4.0e-16]))
     return phx.equations.DiagnosticPhotonCoefficientTable(
         phx.equations.DiagnosticPhotonCoefficientRole.MASS_ATTENUATION,
@@ -62,7 +63,7 @@ def _table(
     )
 
 
-def test_photon_energy_grid_requires_positive_strictly_increasing_joules():
+def test_photon_energy_grid_requires_positive_strictly_increasing_joules() -> None:
     grid = phx.equations.PhotonEnergyGrid(np.asarray([1.0e-16, 2.0e-16, 4.0e-16]))
 
     np.testing.assert_array_equal(
@@ -75,7 +76,7 @@ def test_photon_energy_grid_requires_positive_strictly_increasing_joules():
         phx.equations.PhotonEnergyGrid(np.asarray([2.0e-16, 1.0e-16]))
 
 
-def test_diagnostic_coefficient_table_rejects_invalid_values_and_units():
+def test_diagnostic_coefficient_table_rejects_invalid_values_and_units() -> None:
     grid = phx.equations.PhotonEnergyGrid(np.asarray([1.0e-16, 2.0e-16]))
     provenance = _provenance("invalid-table")
     arguments = (
@@ -118,7 +119,7 @@ def test_diagnostic_coefficient_table_rejects_invalid_values_and_units():
         )
 
 
-def test_ordered_material_evaluation_interpolates_without_extrapolation():
+def test_ordered_material_evaluation_interpolates_without_extrapolation() -> None:
     table = _table()
     evaluation = table.evaluate(
         np.asarray([1.5e-16, 2.0e-16, 5.0e-16]),
@@ -139,7 +140,7 @@ def test_ordered_material_evaluation_interpolates_without_extrapolation():
         table.evaluate(np.asarray([2.0e-16]), ("bone", "water"))
 
 
-def test_log_log_interpolation_uses_logarithmic_energy_and_value_coordinates():
+def test_log_log_interpolation_uses_logarithmic_energy_and_value_coordinates() -> None:
     grid = phx.equations.PhotonEnergyGrid(np.asarray([1.0, 4.0]))
     table = phx.equations.DiagnosticPhotonCoefficientTable(
         phx.equations.DiagnosticPhotonCoefficientRole.MASS_ENERGY_ABSORPTION,
@@ -157,7 +158,7 @@ def test_log_log_interpolation_uses_logarithmic_energy_and_value_coordinates():
     np.testing.assert_allclose(evaluation.evidence.upper_weights, np.asarray([0.5]))
 
 
-def test_evaluation_refuses_an_explicit_mismatched_provenance_pin():
+def test_evaluation_refuses_an_explicit_mismatched_provenance_pin() -> None:
     table = _table(provenance=_provenance("authoritative"))
 
     with pytest.raises(ValueError, match="provenance"):
@@ -168,7 +169,7 @@ def test_evaluation_refuses_an_explicit_mismatched_provenance_pin():
         )
 
 
-def test_diagnostic_coefficients_are_separate_from_thermal_radiation_means():
+def test_diagnostic_coefficients_are_separate_from_thermal_radiation_means() -> None:
     table = _table()
     evaluation = table.evaluate(np.asarray([2.0e-16]), ("water", "bone"))
 

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -16,22 +19,22 @@ from phydrax.operators.differential._hooks import blend_with_gate
 class _ScaledSquare(StrictModule, phx.ParameterOwner):
     scale: jax.Array
 
-    def __call__(self, x, /):
+    def __call__(self, x: Any, /) -> Any:
         return self.scale * x[0] ** 2
 
 
 _DOMAIN = Interval1d(0.0, 1.0)
 
 
-def _trainable(scale: float, /):
+def _trainable(scale: float, /) -> Any:
     return _DOMAIN.Function("x")(_ScaledSquare(jnp.asarray(scale)))
 
 
-def _sum(u, /):
+def _sum(u: Any, /) -> Any:
     return u + _DOMAIN.Function("x")(lambda x: jnp.sin(x[0]))
 
 
-def _gated_blend(u, /):
+def _gated_blend(u: Any, /) -> Any:
     # Its derivative rule differentiates the operands even when they are trainable.
     return blend_with_gate(
         u,
@@ -44,7 +47,7 @@ _COMPOSITES = pytest.mark.parametrize("build", [_sum, _gated_blend], ids=["sum",
 
 
 @_COMPOSITES
-def test_composite_derivatives_follow_updated_parameters(build):
+def test_composite_derivatives_follow_updated_parameters(build: Any) -> None:
     parameters, state, fixed = phx.partition_parameters(build(_trainable(1.0)))
     trained = phx.combine_parameters(
         jax.tree_util.tree_map(lambda p: 3.0 * p, parameters), state, fixed
@@ -64,7 +67,7 @@ def test_composite_derivatives_follow_updated_parameters(build):
 
 
 @_COMPOSITES
-def test_composite_holds_each_parameter_once_and_no_rule_copies(build):
+def test_composite_holds_each_parameter_once_and_no_rule_copies(build: Any) -> None:
     u = _trainable(2.0)
     (scale,) = jax.tree_util.tree_leaves(phx.partition_parameters(u)[0])
     leaves = jax.tree_util.tree_leaves(build(u))
@@ -74,7 +77,7 @@ def test_composite_holds_each_parameter_once_and_no_rule_copies(build):
 
 
 @_COMPOSITES
-def test_trained_composite_passes_training_preflight(build):
+def test_trained_composite_passes_training_preflight(build: Any) -> None:
     parameters, state, fixed = phx.partition_parameters(build(_trainable(1.0)))
     trained = phx.combine_parameters(
         jax.tree_util.tree_map(lambda p: p + 0.5, parameters), state, fixed

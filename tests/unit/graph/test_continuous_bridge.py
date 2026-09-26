@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
 
 
-def _uniform_interval_bridge(segment_count, chart):
+def _uniform_interval_bridge(segment_count: Any, chart: Any) -> Any:
     incidence = (
         jnp.zeros((segment_count + 1, segment_count))
         .at[jnp.arange(segment_count), jnp.arange(segment_count)]
@@ -54,7 +57,7 @@ def _uniform_interval_bridge(segment_count, chart):
     )
 
 
-def test_continuous_cochain_projection_converges_under_uniform_refinement():
+def test_continuous_cochain_projection_converges_under_uniform_refinement() -> None:
     chart = phx.metrix.CoordinateChart("refinement_line", ("x",))
     scalar = phx.metrix.DifferentialForm(
         lambda point: jnp.exp(point[0]),
@@ -86,7 +89,7 @@ def test_continuous_cochain_projection_converges_under_uniform_refinement():
     assert bool(stokes_reports[-1].valid)
 
 
-def test_oriented_segment_bridge_commutes_with_exterior_derivative():
+def test_oriented_segment_bridge_commutes_with_exterior_derivative() -> None:
     complex = phx.graph.cochain_complex_from_incidences(
         (2, 1),
         (jnp.array([[-1.0], [1.0]]),),
@@ -133,7 +136,7 @@ def test_oriented_segment_bridge_commutes_with_exterior_derivative():
     assert report.maximum_residual < 1e-12
 
 
-def test_zero_cell_parameterization_enforces_point_value_semantics():
+def test_zero_cell_parameterization_enforces_point_value_semantics() -> None:
     with pytest.raises(ValueError, match="Zero-cell sampling"):
         phx.graph.OrientedCellParameterization(
             0,

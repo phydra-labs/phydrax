@@ -3,6 +3,8 @@
 #
 
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -22,7 +24,7 @@ from phydrax.operators.differential import partial_t, partial_x, partial_y
 from phydrax.operators.integral import integral
 
 
-def _as_scalar(x):
+def _as_scalar(x: Any) -> Any:
     arr = jnp.asarray(x)
     if arr.ndim == 0:
         return arr
@@ -39,7 +41,7 @@ class XYLatentModel(_AbstractBaseModel):
         self.in_size = 2
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         x = jnp.asarray(x)
         return jnp.stack([x[0] + x[1], jnp.array(1.0)], axis=-1)
 
@@ -52,7 +54,7 @@ class ScalarLatentModel(_AbstractBaseModel):
         self.in_size = "scalar"
         self.out_size = 2
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         x = _as_scalar(x)
         return jnp.stack([x, jnp.array(1.0)], axis=-1)
 
@@ -65,7 +67,7 @@ class ConstantXYLatentModel(_AbstractBaseModel):
         self.in_size = 2
         self.out_size = 1
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         return jnp.array([1.0])
 
 
@@ -79,13 +81,13 @@ class ScalarOffsetLatentModel(_AbstractBaseModel):
         self.out_size = 1
         self.offset = float(offset)
 
-    def __call__(self, x, /, *, key=jr.key(0)):
+    def __call__(self, x: Any, /, *, key: Any = jr.key(0)) -> Any:
         x = _as_scalar(x)
         return jnp.array([x + self.offset])
 
 
-def _latent_function(domain, model):
-    def f(x, p, t, *, key=jr.key(0)):
+def _latent_function(domain: Any, model: Any) -> Any:
+    def f(x: Any, p: Any, t: Any, *, key: Any = jr.key(0)) -> Any:
         return model({"x": x, "p": p, "t": t}, key=key)
 
     return DomainFunction(domain=domain, deps=("x", "p", "t"), func=f)
@@ -107,14 +109,14 @@ def _squeeze_field_for_compare(
     return data, tuple(dims)
 
 
-def _assert_field_allclose(field, expected, *, atol=1e-6):
+def _assert_field_allclose(field: Any, expected: Any, *, atol: Any = 1e-6) -> None:
     lhs, lhs_dims = _squeeze_field_for_compare(field)
     rhs, rhs_dims = _squeeze_field_for_compare(expected)
     assert lhs_dims == rhs_dims
     assert jnp.allclose(lhs, rhs, atol=atol)
 
 
-def _assert_array_allclose(actual, expected, *, atol=1e-6):
+def _assert_array_allclose(actual: Any, expected: Any, *, atol: Any = 1e-6) -> None:
     a = jnp.asarray(actual)
     b = jnp.asarray(expected)
     if a.ndim > 0 and a.shape[-1] == 1:
@@ -135,7 +137,7 @@ def _scalar_field_from_dense(field: cx.AxisArray, axis: str) -> cx.AxisArray:
     return cx.AxisArray(data, dims=(axis,))
 
 
-def test_latent_contraction_product_domain_partials():
+def test_latent_contraction_product_domain_partials() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -165,7 +167,9 @@ def test_latent_contraction_product_domain_partials():
     t_axis = sep.dense_structure.axis_for("t")
     x_axes = sep.coord_axes_by_label["x"]
 
+    # ty: ignore[invalid-argument-type]
     p_field = _scalar_field_from_dense(sep.points["p"], p_axis)
+    # ty: ignore[invalid-argument-type]
     t_field = _scalar_field_from_dense(sep.points["t"], t_axis)
     x0_data = jnp.asarray(sep.points["x"][0].data)
     x1_data = jnp.asarray(sep.points["x"][1].data)
@@ -199,7 +203,7 @@ def test_latent_contraction_product_domain_partials():
     _assert_array_allclose(eval_jit(du_dt, sep), expected_dt.data)
 
 
-def test_latent_contraction_product_domain_integral_over_x():
+def test_latent_contraction_product_domain_integral_over_x() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -230,7 +234,9 @@ def test_latent_contraction_product_domain_integral_over_x():
     out = integral(u, realization)
     p_axis = sep.dense_structure.axis_for("p")
     t_axis = sep.dense_structure.axis_for("t")
+    # ty: ignore[invalid-argument-type]
     p_field = _scalar_field_from_dense(sep.points["p"], p_axis)
+    # ty: ignore[invalid-argument-type]
     t_field = _scalar_field_from_dense(sep.points["t"], t_axis)
     area = jnp.asarray(geom.volume, dtype="float64")
     expected = area * (p_field + 1.0) * (t_field + 2.0)
@@ -240,7 +246,7 @@ def test_latent_contraction_product_domain_integral_over_x():
     _assert_array_allclose(eval_jit(sep), expected.data)
 
 
-def test_latent_contraction_product_domain_paired_dense_block():
+def test_latent_contraction_product_domain_paired_dense_block() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -268,7 +274,9 @@ def test_latent_contraction_product_domain_paired_dense_block():
 
     axis = sep.dense_structure.axis_for("p")
     x_axes = sep.coord_axes_by_label["x"]
+    # ty: ignore[invalid-argument-type]
     p_field = _scalar_field_from_dense(sep.points["p"], axis)
+    # ty: ignore[invalid-argument-type]
     t_field = _scalar_field_from_dense(sep.points["t"], axis)
     x0 = cx.AxisArray(sep.points["x"][0].data, dims=(x_axes[0],))
     x1 = cx.AxisArray(sep.points["x"][1].data, dims=(x_axes[1],))
@@ -279,7 +287,7 @@ def test_latent_contraction_product_domain_paired_dense_block():
     _assert_array_allclose(eval_jit(sep), expected.data)
 
 
-def test_latent_contraction_multi_coord_separable_labels():
+def test_latent_contraction_multi_coord_separable_labels() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )

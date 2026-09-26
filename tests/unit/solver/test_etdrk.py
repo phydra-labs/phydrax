@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.scipy.linalg as jsp_linalg
@@ -5,7 +7,7 @@ import jax.scipy.linalg as jsp_linalg
 import phydrax as phx
 
 
-def test_phi3_action_handles_zero_and_diagonal_arguments():
+def test_phi3_action_handles_zero_and_diagonal_arguments() -> None:
     operator = phx.linalg.DiagonalLinearOperator(jnp.asarray([-2.0]))
     vector = jnp.asarray([3.0])
     step = 0.2
@@ -36,7 +38,7 @@ def test_phi3_action_handles_zero_and_diagonal_arguments():
     assert jnp.allclose(dense, expected_dense, rtol=1e-10, atol=1e-10)
 
 
-def _semilinear_logistic(rate=-1.5):
+def _semilinear_logistic(rate: Any = -1.5) -> Any:
     operator = phx.linalg.DiagonalLinearOperator(jnp.asarray([rate]))
     return phx.solver.SemilinearDrift(
         operator,
@@ -47,7 +49,7 @@ def _semilinear_logistic(rate=-1.5):
     )
 
 
-def _integrate_terminal(order, steps):
+def _integrate_terminal(order: Any, steps: Any) -> Any:
     method = phx.solver.ETDRKMethod(order)
     drift = _semilinear_logistic()
     times = jnp.linspace(0.0, 0.5, steps + 1)
@@ -59,7 +61,7 @@ def _integrate_terminal(order, steps):
     ).states[-1, 0]
 
 
-def test_etdrk_orders_converge_and_step_is_jittable():
+def test_etdrk_orders_converge_and_step_is_jittable() -> None:
     reference = _integrate_terminal(4, 512)
     error2_coarse = jnp.abs(_integrate_terminal(2, 8) - reference)
     error2_fine = jnp.abs(_integrate_terminal(2, 16) - reference)
@@ -77,7 +79,7 @@ def test_etdrk_orders_converge_and_step_is_jittable():
     assert jnp.allclose(eager, compiled, rtol=1e-12, atol=1e-12)
 
 
-def test_prepared_etdrk_binds_full_drift_identity_and_shared_transition():
+def test_prepared_etdrk_binds_full_drift_identity_and_shared_transition() -> None:
     method = phx.solver.ETDRKMethod(4)
     drift = _semilinear_logistic()
     changed = phx.solver.SemilinearDrift(
@@ -105,7 +107,7 @@ def test_prepared_etdrk_binds_full_drift_identity_and_shared_transition():
         jnp.asarray([0.0, 0.1]),
     )
 
-    def transition(state):
+    def transition(state: Any) -> Any:
         return prepared.step(
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0.0),
@@ -135,7 +137,7 @@ def test_prepared_etdrk_binds_full_drift_identity_and_shared_transition():
     assert jnp.all(jnp.isfinite(tangent))
 
 
-def test_prepared_etdrk_projects_roundoff_but_rejects_nonhermitian_boundary():
+def test_prepared_etdrk_projects_roundoff_but_rejects_nonhermitian_boundary() -> None:
     discretization = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(4),)
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
@@ -161,8 +163,10 @@ def test_prepared_etdrk_projects_roundoff_but_rejects_nonhermitian_boundary():
     )
     initial = discretization.project(jnp.cos(2.0 * jnp.pi * discretization.axes[0].nodes))
     roundoff = initial.at[1].add(jnp.asarray(1e-7j, dtype=initial.dtype))
+    # ty: ignore[invalid-argument-type]
     corrected = prepared.step(0, 0.0, roundoff, 0.1, None)
     invalid = initial.at[1].add(jnp.asarray(1e-2j, dtype=initial.dtype))
+    # ty: ignore[invalid-argument-type]
     rejected = prepared.step(0, 0.0, invalid, 0.1, None)
 
     assert bool(corrected.successful)

@@ -61,12 +61,12 @@ class _ConstantModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
 
-    def __init__(self, center):
+    def __init__(self, center: Any) -> None:
         self.center = jnp.asarray(center)
         self.in_size = 1
         self.out_size = "scalar"
 
-    def __call__(self, x: Any, /, *, key: Any = None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         values = jnp.asarray(x)
         center = jnp.reshape(
@@ -80,11 +80,11 @@ class _MeanRecipe(AbstractRecipe):
     offset: jax.Array
     differentiable: bool = eqx.field(static=True)
 
-    def __init__(self, offset=0.0, *, differentiable=True):
+    def __init__(self, offset: Any = 0.0, *, differentiable: Any = True) -> None:
         self.offset = jnp.asarray(offset)
         self.differentiable = bool(differentiable)
 
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         if key is None:
             raise ValueError("test recipe requires an explicit key")
         targets = batch.require_targets()
@@ -149,23 +149,23 @@ class _ResponseClassifierModel(AbstractArrayModel):
     in_size: int = 1
     out_size: int = 2
 
-    def decision_function(self, x, /):
+    def decision_function(self, x: Any, /) -> Any:
         return jnp.asarray(x)[..., 0]
 
-    def predict_proba(self, x, /):
+    def predict_proba(self, x: Any, /) -> Any:
         positive = jax.nn.sigmoid(self.decision_function(x))
         return jnp.stack((1.0 - positive, positive), axis=-1)
 
-    def predict(self, x, /):
+    def predict(self, x: Any, /) -> Any:
         return (self.decision_function(x) >= 0.0).astype(jnp.int32)
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return self.decision_function(x)
 
 
 class _ResponseClassifierRecipe(AbstractRecipe):
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del batch, key
         return FitResult(
             _ResponseClassifierModel(),
@@ -183,14 +183,18 @@ class _MetricResult(StrictModule):
     status: jax.Array
     effective_weight: jax.Array
 
-    def __init__(self, value, *, valid, status, effective_weight):
+    def __init__(
+        self, value: Any, *, valid: Any, status: Any, effective_weight: Any
+    ) -> None:
         self.value = jnp.asarray(value)
         self.valid = jnp.asarray(valid, dtype="bool")
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.effective_weight = jnp.asarray(effective_weight)
 
 
-def _structured_metric(targets, predictions, *, sample_weight, mask):
+def _structured_metric(
+    targets: Any, predictions: Any, *, sample_weight: Any, mask: Any
+) -> Any:
     predictions = jnp.asarray(predictions)
     targets = jnp.asarray(targets)
     active = jnp.asarray(mask, dtype="bool")
@@ -218,13 +222,13 @@ _structured_scorer = FunctionScorer(
 )
 
 
-def _batch(targets):
+def _batch(targets: Any) -> Any:
     targets = jnp.asarray(targets, dtype="float64")
     features = jnp.arange(targets.size, dtype="float64").reshape(targets.shape + (1,))
     return MLBatch(features, targets)
 
 
-def _split(batch, pairs, *, sample_indices=None):
+def _split(batch: Any, pairs: Any, *, sample_indices: Any = None) -> Any:
     folds = tuple(
         FoldRecord(
             train,
@@ -247,7 +251,9 @@ def _split(batch, pairs, *, sample_indices=None):
     )
 
 
-def test_cross_validation_refits_on_training_only_and_aggregates_structured_scores():
+def test_cross_validation_refits_on_training_only_and_aggregates_structured_scores() -> (
+    None
+):
     batch = _batch(jnp.arange(9.0))
     splits = KFoldPlan(3, shuffle=False).split(batch, key=jr.key(1))
     result = cross_validate(
@@ -289,7 +295,7 @@ def test_cross_validation_refits_on_training_only_and_aggregates_structured_scor
     assert bool(result.valid)
 
 
-def test_out_of_fold_assembly_preserves_partial_universe_and_vector_outputs():
+def test_out_of_fold_assembly_preserves_partial_universe_and_vector_outputs() -> None:
     batch = _batch(jnp.arange(12.0).reshape(2, 6))
     splits = _split(
         batch,
@@ -335,7 +341,7 @@ def test_out_of_fold_assembly_preserves_partial_universe_and_vector_outputs():
         )
 
 
-def test_out_of_fold_assembly_rejects_non_exact_validation_covers():
+def test_out_of_fold_assembly_rejects_non_exact_validation_covers() -> None:
     batch = _batch(jnp.arange(6.0))
     duplicate = _split(
         batch,
@@ -363,7 +369,7 @@ def test_out_of_fold_assembly_rejects_non_exact_validation_covers():
             assemble_out_of_fold_predictions(result, batch)
 
 
-def test_out_of_fold_assembly_rejects_group_leakage_and_cut_groups():
+def test_out_of_fold_assembly_rejects_group_leakage_and_cut_groups() -> None:
     groups = jnp.asarray([0, 0, 1, 1, 2, 2])
     batch = MLBatch(
         jnp.arange(6.0).reshape(6, 1),
@@ -415,7 +421,7 @@ def test_out_of_fold_assembly_rejects_group_leakage_and_cut_groups():
         assemble_out_of_fold_predictions(case_result, case_batch)
 
 
-def test_out_of_fold_assembly_rejects_incompatible_fold_prediction_arrays():
+def test_out_of_fold_assembly_rejects_incompatible_fold_prediction_arrays() -> None:
     batch = _batch(jnp.arange(12.0).reshape(2, 6))
     splits = KFoldPlan(2, shuffle=False).split(batch, key=jr.key(19))
     result = cross_validate(
@@ -450,7 +456,7 @@ def test_out_of_fold_assembly_rejects_incompatible_fold_prediction_arrays():
             assemble_out_of_fold_predictions(changed_result, batch)
 
 
-def test_grid_random_and_successive_halving_are_deterministic_and_exact():
+def test_grid_random_and_successive_halving_are_deterministic_and_exact() -> None:
     batch = _batch(jnp.zeros(12))
     splits = KFoldPlan(4, shuffle=True).split(batch, key=jr.key(3))
     parameters = {"offset": (-2.0, 0.0, 2.0)}
@@ -470,6 +476,7 @@ def test_grid_random_and_successive_halving_are_deterministic_and_exact():
     ).run(_MeanRecipe, batch, splits, _structured_scorer, key=jr.key(6))
 
     assert grid.best_candidate.as_kwargs()["offset"] == 0.0
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(grid.best_fit.as_trainable().center, 0.0)
     assert tuple(
         item.candidate.candidate_id for item in random_first.evaluations
@@ -489,7 +496,7 @@ def test_grid_random_and_successive_halving_are_deterministic_and_exact():
     )
 
 
-def test_nested_search_never_exposes_outer_holdouts_to_inner_fits():
+def test_nested_search_never_exposes_outer_holdouts_to_inner_fits() -> None:
     batch = _batch(jnp.zeros(12))
     nested_plan = NestedSplitPlan(KFoldPlan(3, shuffle=True), KFoldPlan(2, shuffle=True))
     result = nested_cross_validate(
@@ -524,11 +531,11 @@ def test_nested_search_never_exposes_outer_holdouts_to_inner_fits():
     assert bool(result.valid)
 
 
-def test_fixed_fold_objective_is_differentiable_but_choices_are_stopped():
+def test_fixed_fold_objective_is_differentiable_but_choices_are_stopped() -> None:
     batch = _batch(jnp.linspace(-1.0, 1.0, 8))
     splits = KFoldPlan(2, shuffle=False).split(batch, key=jr.key(9))
 
-    def objective(offset):
+    def objective(offset: Any) -> Any:
         result = cross_validate(
             _MeanRecipe(offset),
             batch,
@@ -563,7 +570,7 @@ def test_fixed_fold_objective_is_differentiable_but_choices_are_stopped():
         )
 
 
-def test_cross_validation_dispatches_explicit_classifier_responses():
+def test_cross_validation_dispatches_explicit_classifier_responses() -> None:
     batch = MLBatch(
         jnp.asarray([[-2.0], [-1.0], [1.0], [2.0]]),
         jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
@@ -608,7 +615,7 @@ def test_cross_validation_dispatches_explicit_classifier_responses():
     assert all(fold.predictions.ndim == 1 for fold in decision.folds)
 
 
-def test_cross_validation_rejects_implicit_scorers_and_learned_recipe_state():
+def test_cross_validation_rejects_implicit_scorers_and_learned_recipe_state() -> None:
     batch = _batch(jnp.linspace(-1.0, 1.0, 6))
     splits = KFoldPlan(2, shuffle=False).split(batch, key=jr.key(34))
     with pytest.raises(TypeError, match="FunctionScorer"):
@@ -635,6 +642,7 @@ def test_cross_validation_rejects_implicit_scorers_and_learned_recipe_state():
     previous = IncrementalPCA(1).fit_batch(batch).as_trainable()
     with pytest.raises(ValueError, match="fresh-fit"):
         cross_validate(
+            # ty: ignore[invalid-argument-type]
             IncrementalPCA(1, previous=previous),
             batch,
             splits,

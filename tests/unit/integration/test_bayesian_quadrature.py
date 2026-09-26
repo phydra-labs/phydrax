@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,14 +12,14 @@ import phydrax.axes as cx
 
 def _problem(
     *,
-    dtype=jnp.float64,
-    count=12,
-    length_scale=0.8,
-    kernel_scale=None,
-    observation_noise=0.0,
-    solve_regularization=1.0e-10,
-    target_id="normal-expectation",
-):
+    dtype: Any = jnp.float64,
+    count: Any = 12,
+    length_scale: Any = 0.8,
+    kernel_scale: Any = None,
+    observation_noise: Any = 0.0,
+    solve_regularization: Any = 1.0e-10,
+    target_id: Any = "normal-expectation",
+) -> Any:
     location = jnp.asarray(0.3, dtype=dtype)
     scale = jnp.asarray(1.1, dtype=dtype)
     probability = phx.domain.ProbabilityDomain(phx.uq.Normal(location, scale), label="z")
@@ -37,7 +39,7 @@ def _problem(
     return probability, target, kernel_mean, plan
 
 
-def test_gaussian_kernel_mean_matches_analytic_scalar_formulas():
+def test_gaussian_kernel_mean_matches_analytic_scalar_formulas() -> None:
     _, _, kernel_mean, _ = _problem(length_scale=0.7, solve_regularization=0.0)
     points = jnp.asarray([-1.0, 0.25, 1.5], dtype=jnp.float64)
     variance = jnp.asarray(1.1**2, dtype=points.dtype)
@@ -54,7 +56,7 @@ def test_gaussian_kernel_mean_matches_analytic_scalar_formulas():
     )
 
 
-def test_scaled_kernel_mean_scales_single_and_double_integrals():
+def test_scaled_kernel_mean_scales_single_and_double_integrals() -> None:
     _, _, unscaled, _ = _problem(kernel_scale=None)
     _, _, scaled, _ = _problem(kernel_scale=3.25)
     points = jnp.asarray([-0.4, 0.7])
@@ -63,7 +65,7 @@ def test_scaled_kernel_mean_scales_single_and_double_integrals():
     assert jnp.allclose(scaled.double_mean(), 3.25 * unscaled.double_mean())
 
 
-def test_fixed_bq_matches_independent_dense_oracle_and_retains_solve_evidence():
+def test_fixed_bq_matches_independent_dense_oracle_and_retains_solve_evidence() -> None:
     probability, target, kernel_mean, plan = _problem(
         count=9, observation_noise=2.0e-4, solve_regularization=3.0e-6
     )
@@ -89,7 +91,7 @@ def test_fixed_bq_matches_independent_dense_oracle_and_retains_solve_evidence():
     assert estimate.diagnostics.solve_regularization == pytest.approx(3.0e-6)
 
 
-def test_constants_kernel_sections_arrays_fields_and_pytrees_use_same_weights():
+def test_constants_kernel_sections_arrays_fields_and_pytrees_use_same_weights() -> None:
     probability, target, kernel_mean, plan = _problem(count=8)
     realization = phx.integration.materialize(target, plan)
     points = realization.batch.points.points["z"]
@@ -127,7 +129,7 @@ def test_constants_kernel_sections_arrays_fields_and_pytrees_use_same_weights():
     assert tree.error_kind == "bayesian-posterior-standard-deviation"
 
 
-def test_materialized_design_replays_deterministically():
+def test_materialized_design_replays_deterministically() -> None:
     _, target, _, plan = _problem(count=16)
     first = phx.integration.materialize(target, plan)
     second = phx.integration.materialize(target, plan)
@@ -139,11 +141,11 @@ def test_materialized_design_replays_deterministically():
     assert first.batch.points.provenance == second.batch.points.provenance
 
 
-def test_bq_reduce_is_jittable_and_supports_jvp_and_vjp():
+def test_bq_reduce_is_jittable_and_supports_jvp_and_vjp() -> None:
     probability, target, _, plan = _problem(count=10)
     realization = phx.integration.materialize(target, plan)
 
-    def objective(coefficient):
+    def objective(coefficient: Any) -> Any:
         function = probability.Function("z")(lambda z: coefficient * z**2 + z)
         return phx.integration.reduce(function, realization).value.data
 
@@ -162,7 +164,7 @@ def test_bq_reduce_is_jittable_and_supports_jvp_and_vjp():
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-def test_bq_preserves_integration_precision_stages(dtype):
+def test_bq_preserves_integration_precision_stages(dtype: Any) -> None:
     probability, target, _, plan = _problem(dtype=dtype, count=7)
     precision = phx.integration.IntegrationPrecisionPolicy(
         evaluation_dtype=dtype,
@@ -178,6 +180,7 @@ def test_bq_preserves_integration_precision_stages(dtype):
     )
 
     assert estimate.value.data.dtype == dtype
+    # ty: ignore[unresolved-attribute]
     assert estimate.error_estimate.dtype == dtype
     assert estimate.diagnostics.posterior_variance.dtype == dtype
     assert (
@@ -186,7 +189,7 @@ def test_bq_preserves_integration_precision_stages(dtype):
     )
 
 
-def test_zero_noise_is_supported_for_a_nonsingular_design():
+def test_zero_noise_is_supported_for_a_nonsingular_design() -> None:
     probability, target, _, plan = _problem(
         count=6, observation_noise=0.0, solve_regularization=0.0
     )
@@ -199,7 +202,7 @@ def test_zero_noise_is_supported_for_a_nonsingular_design():
     assert estimate.diagnostics.solve_regularization == 0.0
 
 
-def test_singular_design_fails_closed_with_child_solve_status():
+def test_singular_design_fails_closed_with_child_solve_status() -> None:
     probability = phx.domain.ProbabilityDomain(
         phx.uq.Normal(jnp.float32(0.0), jnp.float32(1.0e-30)), label="z"
     )
@@ -220,10 +223,11 @@ def test_singular_design_fails_closed_with_child_solve_status():
     assert estimate.status == int(phx.integration.IntegrationStatus.LINEAR_SOLVE_FAILED)
     assert not estimate.diagnostics.solve.successful
     assert jnp.isnan(estimate.value.data)
+    # ty: ignore[invalid-argument-type]
     assert jnp.isnan(estimate.error_estimate)
 
 
-def test_target_identity_mismatch_is_rejected_before_integrand_evaluation():
+def test_target_identity_mismatch_is_rejected_before_integrand_evaluation() -> None:
     _, _, kernel_mean, _ = _problem(target_id="first")
     other_probability = phx.domain.ProbabilityDomain(phx.uq.Normal(0.3, 1.1), label="z")
     other = phx.integration.expectation(other_probability, target_id="second")
@@ -235,7 +239,7 @@ def test_target_identity_mismatch_is_rejected_before_integrand_evaluation():
         phx.integration.materialize(other, mismatched)
 
 
-def test_generic_integration_rejects_non_gaussian_kernel_means():
+def test_generic_integration_rejects_non_gaussian_kernel_means() -> None:
     _, target, _, _ = _problem()
     interval_mean = phx.integration.IntervalKernelMean(
         phx.domain.Interval1d(-1.0, 2.0),
@@ -250,7 +254,7 @@ def test_generic_integration_rejects_non_gaussian_kernel_means():
         phx.integration.materialize(target, plan)
 
 
-def test_generic_integration_rejects_fixed_kernel_mean_designs():
+def test_generic_integration_rejects_fixed_kernel_mean_designs() -> None:
     _, target, kernel_mean, _ = _problem()
     plan = phx.integration.BayesianQuadraturePlan(
         kernel_mean,
@@ -263,7 +267,7 @@ def test_generic_integration_rejects_fixed_kernel_mean_designs():
         phx.integration.materialize(target, plan)
 
 
-def test_unsupported_target_kernel_and_dimension_fail_closed():
+def test_unsupported_target_kernel_and_dimension_fail_closed() -> None:
     uniform = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="u")
     uniform_target = phx.integration.expectation(uniform)
     squared_exponential = phx.kernels.SquaredExponentialKernel()
@@ -273,7 +277,9 @@ def test_unsupported_target_kernel_and_dimension_fail_closed():
     _, target, _, _ = _problem()
     with pytest.raises(TypeError, match="SquaredExponentialKernel"):
         phx.integration.GaussianKernelMean(
-            target, phx.kernels.Matern32Kernel(length_scale=1.0)
+            target,
+            # ty: ignore[invalid-argument-type]
+            phx.kernels.Matern32Kernel(length_scale=1.0),
         )
     with pytest.raises(TypeError, match="wrapped once"):
         phx.integration.GaussianKernelMean(
@@ -292,7 +298,7 @@ def test_unsupported_target_kernel_and_dimension_fail_closed():
         kernel_mean.mean(jnp.ones((3, 2)))
 
 
-def test_nonfinite_integrand_and_invalid_posterior_variance_fail_closed():
+def test_nonfinite_integrand_and_invalid_posterior_variance_fail_closed() -> None:
     probability, target, _, plan = _problem(count=6)
     realization = phx.integration.materialize(target, plan)
     nonfinite = phx.integration.reduce(
@@ -314,10 +320,11 @@ def test_nonfinite_integrand_and_invalid_posterior_variance_fail_closed():
         phx.integration.IntegrationStatus.INVALID_POSTERIOR_VARIANCE
     )
     assert jnp.isnan(invalid.value.data)
+    # ty: ignore[invalid-argument-type]
     assert jnp.isnan(invalid.error_estimate)
 
 
-def test_point_and_linear_resource_guards_fire_before_execution():
+def test_point_and_linear_resource_guards_fire_before_execution() -> None:
     _, target, kernel_mean, _ = _problem(count=4)
     with pytest.raises(ValueError, match="no kernel matrix was allocated"):
         phx.integration.BayesianQuadraturePlan(
@@ -342,7 +349,7 @@ def test_point_and_linear_resource_guards_fire_before_execution():
         phx.integration.materialize(target, constrained)
 
 
-def test_randomized_point_design_requires_key_and_replays_with_same_key():
+def test_randomized_point_design_requires_key_and_replays_with_same_key() -> None:
     import jax.random as jr
 
     _, target, kernel_mean, _ = _problem(count=5)
@@ -359,7 +366,7 @@ def test_randomized_point_design_requires_key_and_replays_with_same_key():
     )
 
 
-def test_matching_target_id_cannot_mask_different_gaussian_content():
+def test_matching_target_id_cannot_mask_different_gaussian_content() -> None:
     _, _, kernel_mean, _ = _problem(target_id="shared")
     probability = phx.domain.ProbabilityDomain(
         phx.uq.Normal(5.0, 2.0),
@@ -375,7 +382,7 @@ def test_matching_target_id_cannot_mask_different_gaussian_content():
         phx.integration.materialize(target, plan)
 
 
-def test_finite_inputs_with_overflowing_weighted_contraction_fail_closed():
+def test_finite_inputs_with_overflowing_weighted_contraction_fail_closed() -> None:
     _, target, _, plan = _problem(count=4)
     realization = phx.integration.materialize(target, plan)
     huge = jnp.asarray(
@@ -393,7 +400,7 @@ def test_finite_inputs_with_overflowing_weighted_contraction_fail_closed():
     assert jnp.isnan(estimate.value.data)
 
 
-def test_kernel_and_domain_function_execute_in_evaluation_dtype():
+def test_kernel_and_domain_function_execute_in_evaluation_dtype() -> None:
     probability, target, kernel_mean, plan = _problem(count=7)
     precision = phx.integration.IntegrationPrecisionPolicy(
         evaluation_dtype="float32",
@@ -415,7 +422,7 @@ def test_kernel_and_domain_function_execute_in_evaluation_dtype():
     assert jnp.allclose(probe.value.data, constant.value.data)
 
 
-def test_variance_envelope_uses_actual_arithmetic_precision():
+def test_variance_envelope_uses_actual_arithmetic_precision() -> None:
     _, target, _, plan = _problem(count=8)
     precision = phx.integration.IntegrationPrecisionPolicy(
         evaluation_dtype="float32",
@@ -442,7 +449,7 @@ def test_variance_envelope_uses_actual_arithmetic_precision():
     assert batch.variance_roundoff_envelope >= expected_minimum
 
 
-def test_analytic_means_remain_finite_for_huge_legal_scales():
+def test_analytic_means_remain_finite_for_huge_legal_scales() -> None:
     broad_kernel_probability = phx.domain.ProbabilityDomain(
         phx.uq.Normal(0.0, 1.0), label="z"
     )
@@ -474,7 +481,7 @@ def test_analytic_means_remain_finite_for_huge_legal_scales():
     assert double_mean == pytest.approx(2.0**-0.5 * 1.0e-200, rel=1e-12, abs=0.0)
 
 
-def test_only_preflighted_dense_lu_solve_route_is_accepted():
+def test_only_preflighted_dense_lu_solve_route_is_accepted() -> None:
     _, _, kernel_mean, _ = _problem(count=4)
     with pytest.raises(TypeError, match="only a DenseLU"):
         phx.integration.BayesianQuadraturePlan(
@@ -487,7 +494,7 @@ def test_only_preflighted_dense_lu_solve_route_is_accepted():
         )
 
 
-def test_tiny_kernel_amplitude_is_solved_in_relative_scale():
+def test_tiny_kernel_amplitude_is_solved_in_relative_scale() -> None:
     probability, target, _, plan = _problem(
         count=4,
         kernel_scale=1.0e-20,
@@ -503,10 +510,11 @@ def test_tiny_kernel_amplitude_is_solved_in_relative_scale():
     assert estimate.successful
     assert estimate.diagnostics.solve.successful
     assert jnp.isfinite(estimate.value.data)
+    # ty: ignore[invalid-argument-type]
     assert jnp.isfinite(estimate.error_estimate)
 
 
-def test_standardized_differences_handle_huge_opposite_and_equal_points():
+def test_standardized_differences_handle_huge_opposite_and_equal_points() -> None:
     # A location beyond 1/eps scales has no faithful reference transport.
     with pytest.raises(ValueError, match="round-trip"):
         phx.domain.ProbabilityDomain(phx.uq.Normal(1.0e308, 1.0e-200), label="z")
@@ -537,7 +545,7 @@ def test_standardized_differences_handle_huge_opposite_and_equal_points():
     assert matrix[1, 0] == 0.0
 
 
-def test_mixed_float32_factorization_controls_variance_roundoff_envelope():
+def test_mixed_float32_factorization_controls_variance_roundoff_envelope() -> None:
     _, target, kernel_mean, _ = _problem(
         count=4,
         observation_noise=0.5,
@@ -586,8 +594,11 @@ def test_mixed_float32_factorization_controls_variance_roundoff_envelope():
     "stage",
     ["operator_dtype", "residual_dtype", "accumulation_dtype"],
 )
-def test_dense_lu_precision_stage_mismatch_fails_before_gram_allocation(stage):
+def test_dense_lu_precision_stage_mismatch_fails_before_gram_allocation(
+    stage: Any,
+) -> None:
     _, target, kernel_mean, _ = _problem(count=4)
+    # ty: ignore[invalid-argument-type]
     mixed_precision = phx.linalg.MixedPrecisionPolicy(**{stage: "float32"})
     plan = phx.integration.BayesianQuadraturePlan(
         kernel_mean,

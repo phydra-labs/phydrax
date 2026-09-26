@@ -399,7 +399,10 @@ def fit_amortized_state_space_variational(
     )(fitted.unconstrained_samples)
     # The training kernel rebuilds the fitted family with the input family's treedef.
     fitted_family = fitted.family
-    assert isinstance(fitted_family, AmortizedGaussianMarkovFamily)
+    if not (isinstance(fitted_family, AmortizedGaussianMarkovFamily)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(fitted_family, AmortizedGaussianMarkovFamily)."
+        )
     return AmortizedStateSpaceVariationalResult(
         problem=problem,
         family=fitted_family,

@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _splat():
+def _splat() -> Any:
     grid_plan = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(8, periodic=True, endpoint=False)
@@ -30,7 +32,7 @@ def _splat():
     return prepared, position, index_space
 
 
-def test_route_superset_jvp_vjp_and_topology_guard():
+def test_route_superset_jvp_vjp_and_topology_guard() -> None:
     prepared, position, _ = _splat()
     deformation = jnp.broadcast_to(jnp.eye(2), (2, 2, 2))
     plan = phx.solver.MPMRouteSupersetPlan(prepared, minimum_margin=1e-10)
@@ -57,7 +59,7 @@ def test_route_superset_jvp_vjp_and_topology_guard():
     assert jnp.all(jnp.isfinite(result.position_transpose))
 
 
-def test_compact_residual_jvp_transpose_match_dense_operator():
+def test_compact_residual_jvp_transpose_match_dense_operator() -> None:
     prepared, position, index_space = _splat()
     routes = prepared.build(position)
     topology_plan = phx.discretization.SparseBlockTopologyPlan(
@@ -86,7 +88,7 @@ def test_compact_residual_jvp_transpose_match_dense_operator():
     assert result.dense_compact_transpose_defect < 1e-10
 
 
-def test_implicit_unknown_layout_and_contact_generalized_actions():
+def test_implicit_unknown_layout_and_contact_generalized_actions() -> None:
     free = jnp.ones((2, 1, 2), dtype="bool")
     essential = jnp.zeros_like(free).at[0, 0, 1].set(True)
     free = free & ~essential
@@ -129,7 +131,7 @@ def test_implicit_unknown_layout_and_contact_generalized_actions():
     assert jnp.all(jnp.isfinite(linearized.transpose))
 
 
-def test_compact_implicit_mpm_solves_on_storage_node_unknowns():
+def test_compact_implicit_mpm_solves_on_storage_node_unknowns() -> None:
     grid_plan = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformAxisSpec(8, periodic=True, endpoint=False)

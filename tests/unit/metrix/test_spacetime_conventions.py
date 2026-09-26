@@ -1,9 +1,11 @@
+from typing import Any
+
 import pytest
 
 from phydrax.metrix._spacetime_conventions import RelativityConvention
 
 
-def test_canonical_relativity_convention_round_trips_with_stable_identity():
+def test_canonical_relativity_convention_round_trips_with_stable_identity() -> None:
     convention = RelativityConvention.canonical()
     restored = RelativityConvention.from_dict(convention.to_dict())
 
@@ -30,7 +32,9 @@ def test_canonical_relativity_convention_round_trips_with_stable_identity():
         ("fourier_sign", 1),
     ],
 )
-def test_every_relativity_convention_choice_changes_content_identity(field, value):
+def test_every_relativity_convention_choice_changes_content_identity(
+    field: Any, value: Any
+) -> None:
     canonical = RelativityConvention.canonical()
     values = {
         "metric_signature": canonical.metric_signature,
@@ -48,12 +52,13 @@ def test_every_relativity_convention_choice_changes_content_identity(field, valu
     assert changed.convention_id != canonical.convention_id
 
 
-def test_relativity_convention_rejects_ambiguous_signs_and_tampered_payloads():
+def test_relativity_convention_rejects_ambiguous_signs_and_tampered_payloads() -> None:
     with pytest.raises(ValueError, match="either -1 or \\+1"):
         RelativityConvention(riemann_sign=0)
     with pytest.raises(TypeError, match="integer sign"):
         RelativityConvention(fourier_sign=True)
     with pytest.raises(ValueError, match="metric_signature"):
+        # ty: ignore[invalid-argument-type]
         RelativityConvention(metric_signature="euclidean")
 
     payload = RelativityConvention.canonical().to_dict()

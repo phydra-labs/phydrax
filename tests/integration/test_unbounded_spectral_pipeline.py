@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_rational_line_compiles_matrix_free_heat_dynamics_with_gradients():
+def test_rational_line_compiles_matrix_free_heat_dynamics_with_gradients() -> None:
     x = phx.equations.PDECoordinate("x", "space")
     time = phx.equations.PDECoordinate("t", "time")
     field = phx.equations.PDEField("u", coordinates=("x", "t"))

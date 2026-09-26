@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _dynamics(dimension=1, orientation=3, activity=0.0):
+def _dynamics(dimension: Any = 1, orientation: Any = 3, activity: Any = 0.0) -> Any:
     axes = tuple(
         phx.discretization.UniformCellAxisSpec(8, periodic=True) for _ in range(dimension)
     )
@@ -26,7 +29,7 @@ def _dynamics(dimension=1, orientation=3, activity=0.0):
     )
 
 
-def test_passive_nematic_relaxation_decreases_free_energy():
+def test_passive_nematic_relaxation_decreases_free_energy() -> None:
     dynamics = _dynamics()
     compact = jnp.zeros((8, 5)).at[:, 0].set(0.1)
     before = dynamics.evaluate(compact)
@@ -44,7 +47,7 @@ def test_passive_nematic_relaxation_decreases_free_energy():
     assert semi_implicit.evaluation.total_free_energy <= before.total_free_energy + 1.0e-8
 
 
-def test_periodic_mac_nematic_stress_is_work_dual_and_commit_is_atomic():
+def test_periodic_mac_nematic_stress_is_work_dual_and_commit_is_atomic() -> None:
     axes = (
         phx.discretization.UniformCellAxisSpec(8, periodic=True),
         phx.discretization.UniformCellAxisSpec(8, periodic=True),

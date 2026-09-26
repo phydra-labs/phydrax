@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from math import log, sqrt
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -25,7 +26,7 @@ from phydrax.applications.solid_mechanics._rod_tendon_friction import (
 from phydrax.nonlinear import NonlinearTermination
 
 
-def _rod_and_route():
+def _rod_and_route() -> Any:
     rod = prepare_rod(
         RodPlan(
             jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
@@ -47,7 +48,7 @@ def _rod_and_route():
     return rod, route_plan, route_plan.prepare(rod)
 
 
-def _state(tensions=(10.0, 30.0), slip=0.0):
+def _state(tensions: Any = (10.0, 30.0), slip: Any = 0.0) -> Any:
     return CapstanTendonFrictionState(
         jnp.asarray(tensions),
         jnp.ones((2,)),
@@ -55,7 +56,7 @@ def _state(tensions=(10.0, 30.0), slip=0.0):
     )
 
 
-def test_zero_friction_recovers_the_ideal_series_tendon_tension():
+def test_zero_friction_recovers_the_ideal_series_tendon_tension() -> None:
     rod, route_plan, _ = _rod_and_route()
     ideal = FrictionlessElasticTendonPlan(
         route_plan,
@@ -101,7 +102,7 @@ def test_zero_friction_recovers_the_ideal_series_tendon_tension():
     )
 
 
-def test_taut_tendon_sticks_strictly_inside_both_capstan_inequalities():
+def test_taut_tendon_sticks_strictly_inside_both_capstan_inequalities() -> None:
     _, _, route = _rod_and_route()
     state = _state((10.0, 15.0), slip=0.125)
     prepared = CapstanTendonFrictionPlan(
@@ -129,7 +130,7 @@ def test_taut_tendon_sticks_strictly_inside_both_capstan_inequalities():
     assert evaluation.evidence.power_residual == pytest.approx(0.0, abs=1.0e-6)
 
 
-def test_taut_sliding_state_matches_capstan_boundary_and_dissipates():
+def test_taut_sliding_state_matches_capstan_boundary_and_dissipates() -> None:
     rod, _, route = _rod_and_route()
     state = _state()
     prepared = CapstanTendonFrictionPlan(
@@ -192,7 +193,7 @@ def test_taut_sliding_state_matches_capstan_boundary_and_dissipates():
     )
 
 
-def test_fully_slack_spans_remain_finite_without_logarithmic_tensions():
+def test_fully_slack_spans_remain_finite_without_logarithmic_tensions() -> None:
     _, _, route = _rod_and_route()
     state = _state((0.0, 0.0), slip=-0.25)
     prepared = CapstanTendonFrictionPlan(
@@ -219,7 +220,7 @@ def test_fully_slack_spans_remain_finite_without_logarithmic_tensions():
     assert jnp.all(jnp.isfinite(evaluation.candidate_state.slip))
 
 
-def test_prepared_capstan_update_retains_dynamic_bounds_under_filter_jit():
+def test_prepared_capstan_update_retains_dynamic_bounds_under_filter_jit() -> None:
     _, _, route = _rod_and_route()
     state = _state()
     prepared = CapstanTendonFrictionPlan(
@@ -241,7 +242,7 @@ def test_prepared_capstan_update_retains_dynamic_bounds_under_filter_jit():
     assert evaluation.forward_capstan_margin[0] == pytest.approx(0.0, abs=2.0e-4)
 
 
-def test_failed_vi_keeps_candidate_evidence_and_rolls_back_all_history():
+def test_failed_vi_keeps_candidate_evidence_and_rolls_back_all_history() -> None:
     _, _, route = _rod_and_route()
     state = _state((7.0, 11.0), slip=0.04)
     termination = NonlinearTermination(

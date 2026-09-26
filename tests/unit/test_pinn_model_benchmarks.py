@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -17,7 +18,7 @@ from tools.pinn_model_benchmarks import (
     "scenario_name",
     ("poisson-smooth", "helmholtz-oscillatory", "allen-cahn-nonlinear"),
 )
-def test_manufactured_solution_exactly_satisfies_each_pde(scenario_name):
+def test_manufactured_solution_exactly_satisfies_each_pde(scenario_name: Any) -> None:
     scenario = _SCENARIOS[scenario_name]
     points = jnp.linspace(-1.0, 1.0, 17)[:, None]
     truth = _manufactured_solution(points, scenario.frequency)
@@ -28,7 +29,7 @@ def test_manufactured_solution_exactly_satisfies_each_pde(scenario_name):
 
 
 @pytest.mark.parametrize("architecture", ("mlp", "modified_mlp", "piratenet", "siren"))
-def test_pointwise_benchmark_smoke_covers_every_model_family(architecture):
+def test_pointwise_benchmark_smoke_covers_every_model_family(architecture: Any) -> None:
     scenario = PINNBenchmarkScenario(
         "smoke-poisson",
         "poisson",
@@ -56,12 +57,14 @@ def test_pointwise_benchmark_smoke_covers_every_model_family(architecture):
     assert math.isfinite(record.relative_h1)
 
 
-def test_multifidelity_pinn_benchmark_smoke_is_finite():
+def test_multifidelity_pinn_benchmark_smoke_is_finite() -> None:
     result = run_multifidelity_pinn_benchmark(
         seed=0,
         low_steps=1,
         target_steps=1,
     )
+    # ty: ignore[invalid-argument-type]
     assert math.isfinite(result["target_rmse"])
+    # ty: ignore[invalid-argument-type]
     assert math.isfinite(result["target_physics_loss"])
     assert result["parent_unchanged"]

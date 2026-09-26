@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _reacting_system():
+def _reacting_system() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("H2", "O2", "H2O"),
         (phx.equations.ChemicalPhaseKind.GAS,) * 3,
@@ -46,7 +49,7 @@ def _reacting_system():
     return phx.equations.HomogeneousMixtureEulerSystem(model), mechanism
 
 
-def test_reacting_mixture_uses_full_species_and_full_chemical_energy():
+def test_reacting_mixture_uses_full_species_and_full_chemical_energy() -> None:
     system, mechanism = _reacting_system()
     primitive = jnp.asarray((0.04, 0.32, 0.0, 0.0, 1200.0))
     state = system.primitive_to_conserved(primitive)
@@ -68,7 +71,7 @@ def test_reacting_mixture_uses_full_species_and_full_chemical_energy():
     assert bool(rate.successful)
 
 
-def test_homogeneous_mixture_flux_and_bounds_are_finite():
+def test_homogeneous_mixture_flux_and_bounds_are_finite() -> None:
     system, _ = _reacting_system()
     primitive = jnp.asarray((0.04, 0.32, 0.18, 2.0, 900.0))
     state = system.primitive_to_conserved(primitive)

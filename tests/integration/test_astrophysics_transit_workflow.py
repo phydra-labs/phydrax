@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,12 +8,12 @@ import phydrax as phx
 from examples.differentiable_transit_photometry import build_workflow
 
 
-def test_transit_photometry_workflow_has_finite_likelihood_and_gradient():
+def test_transit_photometry_workflow_has_finite_likelihood_and_gradient() -> None:
     cadence, occultation, plan, spectrum = build_workflow()
     baseline_relative = occultation.evaluate(jnp.abs(cadence), 0.1).relative_flux
     observed = jnp.floor(plan.evaluate(baseline_relative, spectrum).expected_counts)
 
-    def objective(radius_ratio):
+    def objective(radius_ratio: Any) -> Any:
         relative = occultation.evaluate(jnp.abs(cadence), radius_ratio).relative_flux
         result = plan.evaluate(relative, spectrum)
         return phx.applications.astrophysics.transit_poisson_log_prob(result, observed)

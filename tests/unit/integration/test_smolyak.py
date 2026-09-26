@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -12,14 +14,14 @@ import phydrax as phx
 from phydrax.integration import _sparse_grid as sparse_grid_module
 
 
-def _product_intervals(dimension):
+def _product_intervals(dimension: Any) -> Any:
     factors = tuple(
         phx.domain.ScalarInterval(0.0, 1.0, label=f"x{axis}") for axis in range(dimension)
     )
     return phx.domain.ProductDomain(*factors)
 
 
-def test_conventional_sparse_grid_growth_and_diagnostics_in_eight_dimensions():
+def test_conventional_sparse_grid_growth_and_diagnostics_in_eight_dimensions() -> None:
     domain = _product_intervals(8)
     plan = phx.integration.SparseGridPlan(8, 3)
     realization = phx.integration.materialize(
@@ -40,7 +42,7 @@ def test_conventional_sparse_grid_growth_and_diagnostics_in_eight_dimensions():
     assert "rules-clenshaw-curtis" in estimate.provenance.realization
 
 
-def test_sparse_plan_accepts_real_anisotropy_and_validates_rule_contract():
+def test_sparse_plan_accepts_real_anisotropy_and_validates_rule_contract() -> None:
     plan = phx.integration.SparseGridPlan(
         3,
         4,
@@ -64,7 +66,7 @@ def test_sparse_plan_accepts_real_anisotropy_and_validates_rule_contract():
         )
 
 
-def test_gauss_hermite_integrates_shifted_normal_moments():
+def test_gauss_hermite_integrates_shifted_normal_moments() -> None:
     probability = phx.domain.ProbabilityDomain(
         phx.uq.Normal(2.0, 3.0),
         label="z",
@@ -83,7 +85,7 @@ def test_gauss_hermite_integrates_shifted_normal_moments():
     assert jnp.allclose(jnp.asarray(estimate.value.data), expected, atol=1e-11)
 
 
-def test_gauss_hermite_uses_lognormal_reference_transform():
+def test_gauss_hermite_uses_lognormal_reference_transform() -> None:
     probability = phx.domain.ProbabilityDomain(
         phx.uq.LogNormal(0.1, 0.2),
         label="z",
@@ -101,7 +103,7 @@ def test_gauss_hermite_uses_lognormal_reference_transform():
     )
 
 
-def test_mixed_physical_uniform_and_normal_axes_preserve_measure_semantics():
+def test_mixed_physical_uniform_and_normal_axes_preserve_measure_semantics() -> None:
     x = phx.domain.ScalarInterval(0.0, 2.0, label="x")
     u = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="u")
     z = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
@@ -125,7 +127,7 @@ def test_mixed_physical_uniform_and_normal_axes_preserve_measure_semantics():
     assert estimate.value.data == pytest.approx(4.0, abs=1e-11)
 
 
-def test_gaussian_sparse_grid_supports_normalized_density_targets():
+def test_gaussian_sparse_grid_supports_normalized_density_targets() -> None:
     probability = phx.domain.ProbabilityDomain(
         phx.uq.Normal(0.0, 1.0),
         label="z",
@@ -144,7 +146,7 @@ def test_gaussian_sparse_grid_supports_normalized_density_targets():
     assert estimate.value.data == pytest.approx(0.2, abs=1e-10)
 
 
-def test_sparse_grid_rejects_incompatible_factor_rule_pairs():
+def test_sparse_grid_rejects_incompatible_factor_rule_pairs() -> None:
     interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
     normal = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
 
@@ -160,7 +162,7 @@ def test_sparse_grid_rejects_incompatible_factor_rule_pairs():
         )
 
 
-def test_sparse_grid_preserves_complex_vector_outputs_under_jit_reduction():
+def test_sparse_grid_preserves_complex_vector_outputs_under_jit_reduction() -> None:
     interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
     function = interval.Function("x")(
         lambda x: jnp.stack((x + 1j * x**2, x**4 - 2j * x**3))
@@ -175,7 +177,7 @@ def test_sparse_grid_preserves_complex_vector_outputs_under_jit_reduction():
     assert jnp.allclose(value, jnp.asarray([2j / 3.0, 0.4 + 0j]), atol=1e-11)
 
 
-def test_builtin_probability_reference_transforms_round_trip():
+def test_builtin_probability_reference_transforms_round_trip() -> None:
     distributions = (
         phx.uq.Uniform(-2.0, 4.0),
         phx.uq.Normal(1.0, 3.0),
@@ -214,16 +216,18 @@ def test_builtin_probability_reference_transforms_round_trip():
     ),
 )
 def test_adaptive_sparse_grid_rejects_frontier_before_materialization(
-    monkeypatch,
-    capacity,
-    expected_status,
-):
+    monkeypatch: Any,
+    capacity: Any,
+    expected_status: Any,
+) -> None:
     interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
     function = interval.Function("x")(lambda x: x**2)
     materialized_index_counts = []
     original = sparse_grid_module._materialize_level
 
-    def instrumented(target, plan, level, /, *, index_set=None):
+    def instrumented(
+        target: Any, plan: Any, level: Any, /, *, index_set: Any = None
+    ) -> Any:
         materialized_index_counts.append(len(index_set.indices))
         return original(target, plan, level, index_set=index_set)
 
@@ -247,13 +251,17 @@ def test_adaptive_sparse_grid_rejects_frontier_before_materialization(
     assert result.diagnostics.num_unique_nodes == 1
 
 
-def test_adaptive_sparse_grid_accepts_an_exactly_in_cap_refinement(monkeypatch):
+def test_adaptive_sparse_grid_accepts_an_exactly_in_cap_refinement(
+    monkeypatch: Any,
+) -> None:
     interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
     function = interval.Function("x")(lambda x: x**2)
     materialized_node_counts = []
     original = sparse_grid_module._materialize_level
 
-    def instrumented(target, plan, level, /, *, index_set=None):
+    def instrumented(
+        target: Any, plan: Any, level: Any, /, *, index_set: Any = None
+    ) -> Any:
         batch = original(target, plan, level, index_set=index_set)
         materialized_node_counts.append(batch.weights.data.size)
         return batch

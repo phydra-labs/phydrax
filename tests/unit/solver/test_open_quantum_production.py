@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def test_event_driven_jump_finds_norm_threshold_events():
+def test_event_driven_jump_finds_norm_threshold_events() -> None:
     problem = phx.solver.amplitude_damping_trajectory_problem(
         3.0, jnp.asarray([0.0j, 1.0 + 0.0j])
     )
@@ -26,7 +29,7 @@ def test_event_driven_jump_finds_norm_threshold_events():
     )
 
 
-def test_mps_canonicalization_and_tebd_identity():
+def test_mps_canonicalization_and_tebd_identity() -> None:
     state = phx.tensor_network.product_mps(
         jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype="complex128")
     )
@@ -47,7 +50,7 @@ def test_mps_canonicalization_and_tebd_identity():
     assert jnp.allclose(evolved.to_dense(), canonical.to_dense())
 
 
-def test_mps_jump_and_locally_purified_channel():
+def test_mps_jump_and_locally_purified_channel() -> None:
     state = phx.tensor_network.product_mps(
         jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
     )
@@ -91,7 +94,7 @@ def test_mps_jump_and_locally_purified_channel():
     assert bool(purified.valid)
 
 
-def test_heom_continuation_and_nonmarkovian_comparison():
+def test_heom_continuation_and_nonmarkovian_comparison() -> None:
     density = jnp.asarray([[0.6 + 0.0j, 0.0j], [0.0j, 0.4 + 0.0j]])
     expansion = phx.operators.quantum.drude_lorentz_matsubara(0.05, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
@@ -111,7 +114,7 @@ def test_heom_continuation_and_nonmarkovian_comparison():
     assert bool(comparison.valid)
 
 
-def test_map_level_nonmarkovian_physicality():
+def test_map_level_nonmarkovian_physicality() -> None:
     identity = jnp.eye(4, dtype="complex128")
     report = phx.operators.quantum.analyze_dynamical_map_series(
         jnp.stack((identity, identity)), 2
@@ -121,11 +124,11 @@ def test_map_level_nonmarkovian_physicality():
     assert bool(report.cp_divisible)
 
 
-def test_adaptive_fock_continuation_and_fermionic_gaussian():
+def test_adaptive_fock_continuation_and_fermionic_gaussian() -> None:
     initial_space = phx.operators.quantum.BosonicFockSpace((3,))
     initial = jnp.asarray([1.0 + 0.0j, 0.0j, 0.0j])
 
-    def stage(space, state):
+    def stage(space: Any, state: Any) -> Any:
         return state, jnp.asarray([jnp.real(jnp.vdot(state, state))])
 
     continuation = phx.solver.solve_fock_continuation(
@@ -143,7 +146,7 @@ def test_adaptive_fock_continuation_and_fermionic_gaussian():
     assert bool(result.valid)
 
 
-def test_process_causality_and_neural_jump_projection():
+def test_process_causality_and_neural_jump_projection() -> None:
     identity = jnp.eye(4, dtype="complex128")
     density = jnp.asarray([[0.7 + 0.0j, 0.0j], [0.0j, 0.3 + 0.0j]])
     process = phx.tensor_network.markov_process_tensor((identity,), density)

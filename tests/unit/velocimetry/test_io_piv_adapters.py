@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib.util
+from typing import Any
 
 import numpy as np
 import pytest
@@ -71,7 +72,9 @@ def _physical_field() -> PhysicalPIVResult2D:
     )
 
 
-def test_openpiv_pixel_round_trip_preserves_orientation_zero_and_invalidity(tmp_path):
+def test_openpiv_pixel_round_trip_preserves_orientation_zero_and_invalidity(
+    tmp_path: Any,
+) -> None:
     path = tmp_path / "field.txt"
     source = _pixel_field()
     write_report = write_openpiv_text(
@@ -88,19 +91,24 @@ def test_openpiv_pixel_round_trip_preserves_orientation_zero_and_invalidity(tmp_
         delta_t=2.0,
     )
 
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(restored.positions_rc, source.positions_rc)
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         np.asarray(restored.displacement_rc)[np.asarray(source.valid)],
         np.asarray(source.displacement_rc)[np.asarray(source.valid)],
     )
     assert bool(np.asarray(restored.valid)[0, 0])
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(np.asarray(restored.displacement_rc)[0, 0], [0.0, 0.0])
     assert not bool(np.asarray(restored.valid)[1, 0])
     assert write_report.status == AdapterStatus.DECLARED_LOSS
     assert read_report.status == AdapterStatus.DECLARED_LOSS
 
 
-def test_openpiv_physical_velocity_targets_right_handed_physical_result(tmp_path):
+def test_openpiv_physical_velocity_targets_right_handed_physical_result(
+    tmp_path: Any,
+) -> None:
     path = tmp_path / "physical.txt"
     path.write_text(
         "# x y u v flags mask\n10 2 1 -3 0 0\n12 2 0 0 0 0\n10 4 2 5 1 0\n12 4 -1 1 0 0\n",
@@ -127,7 +135,7 @@ def test_openpiv_physical_velocity_targets_right_handed_physical_result(tmp_path
     assert "OpenPIV y -> physical y" in report.coordinate_mapping
 
 
-def test_openpiv_rejects_duplicate_or_incomplete_grid(tmp_path):
+def test_openpiv_rejects_duplicate_or_incomplete_grid(tmp_path: Any) -> None:
     path = tmp_path / "bad.txt"
     path.write_text(
         "# x y u v flags mask\n0 0 1 1 0 0\n0 0 2 2 0 0\n",
@@ -143,7 +151,9 @@ def test_openpiv_rejects_duplicate_or_incomplete_grid(tmp_path):
 
 
 @pytest.mark.parametrize("suffix", [".mat", ".h5"])
-def test_pivlab_supported_mat_and_hdf5_layouts_round_trip_pixel_field(tmp_path, suffix):
+def test_pivlab_supported_mat_and_hdf5_layouts_round_trip_pixel_field(
+    tmp_path: Any, suffix: Any
+) -> None:
     path = tmp_path / f"field{suffix}"
     source = _pixel_field()
     write_report = write_pivlab(path, source, y_axis="down")
@@ -167,7 +177,7 @@ def test_pivlab_supported_mat_and_hdf5_layouts_round_trip_pixel_field(tmp_path, 
     assert read_report.losses
 
 
-def test_pivlab_physical_layout_returns_physical_result(tmp_path):
+def test_pivlab_physical_layout_returns_physical_result(tmp_path: Any) -> None:
     path = tmp_path / "physical.mat"
     source = _physical_field()
     write_pivlab(path, source, y_axis="up")
@@ -193,7 +203,9 @@ def test_pivlab_physical_layout_returns_physical_result(tmp_path):
     np.testing.assert_array_equal(restored.valid, source.valid)
 
 
-def test_physical_piv_grid_and_observation_adapters_flip_y_without_component_swap():
+def test_physical_piv_grid_and_observation_adapters_flip_y_without_component_swap() -> (
+    None
+):
     source = _physical_field()
     grid, space, values, valid, report = piv_to_tensor_grid(source)
 
@@ -202,6 +214,7 @@ def test_physical_piv_grid_and_observation_adapters_flip_y_without_component_swa
     np.testing.assert_array_equal(values[1, 1], [0.0, 0.0])
     assert bool(valid[1, 1])
     assert not bool(valid[0, 0])
+    # ty: ignore[unresolved-attribute]
     assert space.layout.value_shape == (2, 3, 2)
     assert report.status == AdapterStatus.LOSSLESS
 
@@ -217,7 +230,7 @@ def test_physical_piv_grid_and_observation_adapters_flip_y_without_component_swa
     assert sequence_grid.prepared_id == grid.prepared_id
 
 
-def test_optional_labeled_dependencies_fail_at_call_boundary(monkeypatch):
+def test_optional_labeled_dependencies_fail_at_call_boundary(monkeypatch: Any) -> None:
     import phydrax.velocimetry.io._xarray as adapter
 
     original = importlib.util.find_spec

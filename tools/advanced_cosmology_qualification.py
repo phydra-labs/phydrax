@@ -49,8 +49,11 @@ def main() -> None:
         background.realization,
     )
     cb = cosmo.MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         common[0],
+        # ty: ignore[invalid-argument-type]
         common[1],
+        # ty: ignore[invalid-argument-type]
         [[4.0, 4.0], [4.0, 4.0]],
         descriptor("cold_baryon", "cold_baryon"),
         common[2],
@@ -58,8 +61,11 @@ def main() -> None:
         common[4],
     )
     nu = cosmo.MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         common[0],
+        # ty: ignore[invalid-argument-type]
         common[1],
+        # ty: ignore[invalid-argument-type]
         [[1.0, 1.0], [1.0, 1.0]],
         descriptor("massive_neutrino_total", "massive_neutrino_total"),
         common[2],
@@ -67,8 +73,11 @@ def main() -> None:
         common[4],
     )
     cross = cosmo.MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         common[0],
+        # ty: ignore[invalid-argument-type]
         common[1],
+        # ty: ignore[invalid-argument-type]
         [[2.0, 2.0], [2.0, 2.0]],
         descriptor("cold_baryon", "massive_neutrino_total"),
         common[2],

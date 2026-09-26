@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -15,7 +18,7 @@ from phydrax.linalg._policies import (
 from phydrax.linalg._runtime import solve_adjoint_checked, solve_checked
 
 
-def _positive_definite_properties():
+def _positive_definite_properties() -> Any:
     return la.OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
@@ -27,7 +30,7 @@ def _positive_definite_properties():
     )
 
 
-def test_block_actions_preserve_every_column_and_transpose_adjoint_duality():
+def test_block_actions_preserve_every_column_and_transpose_adjoint_duality() -> None:
     source_weights = jnp.asarray([2.0, 3.0, 5.0])
     target_weights = jnp.asarray([7.0, 11.0])
     source = la.ArraySpace(
@@ -80,7 +83,7 @@ def test_block_actions_preserve_every_column_and_transpose_adjoint_duality():
     )
 
 
-def test_dual_pair_and_dual_transpose_obey_algebraic_duality():
+def test_dual_pair_and_dual_transpose_obey_algebraic_duality() -> None:
     matrix = jnp.asarray(
         [[1.0 + 0.5j, -2.0j], [3.0, 0.5 - 1.0j]],
         dtype=jnp.complex128,
@@ -128,7 +131,7 @@ def test_dual_pair_and_dual_transpose_obey_algebraic_duality():
         assert jnp.allclose(transposed.mv(covector), matrix.T @ covector)
 
 
-def test_dual_transpose_is_distinct_from_weighted_hilbert_adjoint():
+def test_dual_transpose_is_distinct_from_weighted_hilbert_adjoint() -> None:
     source_weights = jnp.asarray([2.0, 5.0], dtype=jnp.float64)
     target_weights = jnp.asarray([3.0, 7.0], dtype=jnp.float64)
     source = la.ArraySpace(
@@ -161,7 +164,7 @@ def test_dual_transpose_is_distinct_from_weighted_hilbert_adjoint():
     assert not jnp.allclose(algebraic.mv(covector), hilbert.mv(covector))
 
 
-def test_dual_transpose_preserves_composition_and_identity():
+def test_dual_transpose_preserves_composition_and_identity() -> None:
     source = la.ArraySpace((2,), dtype=jnp.float64, space_id="composition-source")
     middle = la.ArraySpace((3,), dtype=jnp.float64, space_id="composition-middle")
     target = la.ArraySpace((2,), dtype=jnp.float64, space_id="composition-target")
@@ -195,7 +198,7 @@ def test_dual_transpose_preserves_composition_and_identity():
     assert dual_transpose(dual_identity) is identity
 
 
-def test_mass_and_inverse_mass_compose_between_primal_and_dual():
+def test_mass_and_inverse_mass_compose_between_primal_and_dual() -> None:
     weights = jnp.asarray([2.0, 3.0, 5.0], dtype=jnp.float64)
     primal = la.ArraySpace(
         (3,),
@@ -235,7 +238,7 @@ def test_mass_and_inverse_mass_compose_between_primal_and_dual():
     )
 
 
-def test_default_block_action_is_explicitly_nonfused_and_column_complete():
+def test_default_block_action_is_explicitly_nonfused_and_column_complete() -> None:
     matrix = jnp.asarray([[2.0, -1.0], [0.5, 3.0]])
     space = la.ArraySpace((2,), dtype=matrix.dtype)
     operator = la.FunctionLinearOperator(
@@ -259,7 +262,7 @@ def test_default_block_action_is_explicitly_nonfused_and_column_complete():
     )
 
 
-def test_checked_primal_and_adjoint_use_true_declared_operator_residuals():
+def test_checked_primal_and_adjoint_use_true_declared_operator_residuals() -> None:
     matrix = jnp.asarray(
         [[3.0 + 0.5j, -1.0j], [2.0, 4.0 - 0.25j]],
         dtype=jnp.complex128,
@@ -300,7 +303,7 @@ def test_checked_primal_and_adjoint_use_true_declared_operator_residuals():
     assert jnp.allclose(derivative_evidence.true_residual_norm, 0.0, atol=1e-12)
 
 
-def test_checked_nullspace_evidence_uses_compatibility_and_gauge_projections():
+def test_checked_nullspace_evidence_uses_compatibility_and_gauge_projections() -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
     matrix = jnp.asarray([[1.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 1.0]])
     operator = la.DenseLinearOperator(
@@ -343,7 +346,7 @@ def test_checked_nullspace_evidence_uses_compatibility_and_gauge_projections():
     assert jnp.allclose(evidence.gauge_residual, 0.0, atol=1e-12)
 
 
-def test_nonfinite_and_nonconverged_solves_cannot_produce_valid_evidence():
+def test_nonfinite_and_nonconverged_solves_cannot_produce_valid_evidence() -> None:
     diagonal = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
     space = la.ArraySpace((4,), dtype=diagonal.dtype)
     iterative_operator = la.FunctionLinearOperator(
@@ -392,7 +395,7 @@ def test_nonfinite_and_nonconverged_solves_cannot_produce_valid_evidence():
     assert not bool(nonfinite_evidence.valid)
 
 
-def test_invalid_primal_evidence_invalidates_successful_adjoint_evidence():
+def test_invalid_primal_evidence_invalidates_successful_adjoint_evidence() -> None:
     matrix = jnp.asarray([[2.0, 0.5], [-1.0, 3.0]])
     operator = la.DenseLinearOperator(matrix, operator_id="primal-evidence-system")
     problem = la.LinearSystem(operator)
@@ -425,7 +428,9 @@ def test_invalid_primal_evidence_invalidates_successful_adjoint_evidence():
     )
 
 
-def test_spectral_interval_identity_includes_endpoints_but_not_values_in_structure():
+def test_spectral_interval_identity_includes_endpoints_but_not_values_in_structure() -> (
+    None
+):
     operator = la.DiagonalLinearOperator(
         jnp.asarray([1.0, 2.0]),
         operator_id="spectral-interval-identity",
@@ -437,7 +442,7 @@ def test_spectral_interval_identity_includes_endpoints_but_not_values_in_structu
     assert first.certificate_id != second.certificate_id
 
 
-def test_checked_solve_exposes_conditional_and_certified_forward_error_bounds():
+def test_checked_solve_exposes_conditional_and_certified_forward_error_bounds() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 4.0]))
     operator = la.DenseLinearOperator(
         matrix,
@@ -493,7 +498,7 @@ def test_checked_solve_exposes_conditional_and_certified_forward_error_bounds():
     assert not asserted.forward_error_bound_certified
 
 
-def test_hermitian_square_root_rejects_indefinite_inputs():
+def test_hermitian_square_root_rejects_indefinite_inputs() -> None:
     indefinite = la.hermitian_sqrt(
         jnp.asarray([[-1.0]]),
         tolerance=1.0e-8,
@@ -511,7 +516,7 @@ def test_hermitian_square_root_rejects_indefinite_inputs():
     )
 
 
-def test_block_scaled_contraction_rejects_complex_operands():
+def test_block_scaled_contraction_rejects_complex_operands() -> None:
     with pytest.raises(TypeError, match="operands must be real"):
         la.contract_block_scaled(
             "i,i->",

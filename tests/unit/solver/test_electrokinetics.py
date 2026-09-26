@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _periodic_electrolyte():
+def _periodic_electrolyte() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
         axis_names=("x",),
@@ -47,7 +50,7 @@ def _periodic_electrolyte():
     )
 
 
-def test_periodic_pnp_preserves_uniform_boltzmann_equilibrium():
+def test_periodic_pnp_preserves_uniform_boltzmann_equilibrium() -> None:
     plan = _periodic_electrolyte()
     concentrations = jnp.ones((16, 2))
     evaluation = plan.evaluate(concentrations)
@@ -62,7 +65,7 @@ def test_periodic_pnp_preserves_uniform_boltzmann_equilibrium():
     np.testing.assert_allclose(coupled.power_defect, 0.0, atol=1e-14)
 
 
-def test_pnp_step_is_conservative_and_energy_dissipative():
+def test_pnp_step_is_conservative_and_energy_dissipative() -> None:
     plan = _periodic_electrolyte()
     coordinate = (jnp.arange(16) + 0.5) / 16.0
     perturbation = 0.05 * jnp.sin(2.0 * jnp.pi * coordinate)
@@ -80,7 +83,7 @@ def test_pnp_step_is_conservative_and_energy_dissipative():
     assert result.evaluation.total_free_energy <= before.total_free_energy + 1e-8
 
 
-def test_nonzero_dirichlet_electrostatic_lift_is_exact():
+def test_nonzero_dirichlet_electrostatic_lift_is_exact() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
         axis_names=("x",),
@@ -98,7 +101,7 @@ def test_nonzero_dirichlet_electrostatic_lift_is_exact():
     np.testing.assert_allclose(result.electric, 0.0, atol=1e-9)
 
 
-def test_bernoulli_has_finite_forward_and_reverse_derivatives_at_extremes():
+def test_bernoulli_has_finite_forward_and_reverse_derivatives_at_extremes() -> None:
     bernoulli = phx.discretization.stable_bernoulli
     arguments = jnp.asarray([-1.0e20, -1000.0, -1.0, 0.0, 1.0, 1000.0, 1.0e20])
     values, forward = jax.jvp(bernoulli, (arguments,), (jnp.ones_like(arguments),))
@@ -113,7 +116,7 @@ def test_bernoulli_has_finite_forward_and_reverse_derivatives_at_extremes():
     np.testing.assert_allclose(jax.grad(jax.grad(bernoulli))(0.0), 1.0 / 6.0)
 
 
-def test_sg_flux_has_physical_diffusion_drift_and_boltzmann_directions():
+def test_sg_flux_has_physical_diffusion_drift_and_boltzmann_directions() -> None:
     flux = phx.discretization.scharfetter_gummel_flux
     # At zero drift, material moves from high to low concentration.
     np.testing.assert_allclose(flux(3.0, 1.0, 0.0, 2.0), 4.0)
@@ -128,7 +131,7 @@ def test_sg_flux_has_physical_diffusion_drift_and_boltzmann_directions():
     )
 
 
-def test_pnp_ideal_diffusion_is_not_counted_twice():
+def test_pnp_ideal_diffusion_is_not_counted_twice() -> None:
     plan = _periodic_electrolyte()
     coordinate = plan.electrostatic.bridge.cochain.coordinates[0][:, 0]
     density = 1.0 + 0.2 * jnp.cos(2.0 * jnp.pi * coordinate)
@@ -150,7 +153,7 @@ def test_pnp_ideal_diffusion_is_not_counted_twice():
     np.testing.assert_allclose(evaluation.flux.species_mass_defect, 0.0, atol=1e-14)
 
 
-def test_pnp_preserves_nonuniform_boltzmann_equilibrium_with_fixed_charge():
+def test_pnp_preserves_nonuniform_boltzmann_equilibrium_with_fixed_charge() -> None:
     plan = _periodic_electrolyte()
     coordinate = plan.electrostatic.bridge.cochain.coordinates[0][:, 0]
     thermal_voltage = (
@@ -183,18 +186,20 @@ def test_pnp_preserves_nonuniform_boltzmann_equilibrium_with_fixed_charge():
     np.testing.assert_allclose(evaluation.flux.species_mass_defect, 0.0, atol=1e-14)
 
 
-def test_positive_charge_and_nonzero_dirichlet_data_give_correct_poisson_field():
+def test_positive_charge_and_nonzero_dirichlet_data_give_correct_poisson_field() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
     bridge = phx.discretization.StructuredCochainBridge(grid)
+    # ty: ignore[not-subscriptable]
     coordinate = bridge.cochain.coordinates[0][:, 0]
     lift = 2.0 + 3.0 * coordinate
     boundary = phx.solver.CochainElectrostaticBoundaryPlan.dirichlet(bridge, lift)
     plan = phx.solver.CochainElectrostaticPlan(bridge, boundary, permittivity=2.0)
     result = plan.solve(jnp.full(coordinate.shape, 24.0))
     expected_potential = lift + 6.0 * coordinate * (1.0 - coordinate)
+    # ty: ignore[not-subscriptable]
     edge_coordinate = bridge.cochain.coordinates[1][:, 0]
     expected_electric = -3.0 - 6.0 * (1.0 - 2.0 * edge_coordinate)
 
@@ -203,12 +208,13 @@ def test_positive_charge_and_nonzero_dirichlet_data_give_correct_poisson_field()
     np.testing.assert_allclose(result.physical_electric[0], expected_electric, atol=1e-9)
 
 
-def test_neumann_charge_balance_recovers_quadratic_potential_and_gauge():
+def test_neumann_charge_balance_recovers_quadratic_potential_and_gauge() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
     bridge = phx.discretization.StructuredCochainBridge(grid)
+    # ty: ignore[not-subscriptable]
     coordinate = bridge.cochain.coordinates[0][:, 0]
     volumes = bridge.cochain.hodge_stars[0]
     # phi=x^2: rho=-2; outward grad(phi)=2 on the right boundary.
@@ -223,6 +229,7 @@ def test_neumann_charge_balance_recovers_quadratic_potential_and_gauge():
     np.testing.assert_allclose(result.potential, expected, atol=1e-9)
     np.testing.assert_allclose(
         result.physical_electric[0],
+        # ty: ignore[not-subscriptable]
         -2 * bridge.cochain.coordinates[1][:, 0],
         atol=1e-9,
     )

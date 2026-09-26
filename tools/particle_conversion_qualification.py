@@ -5,13 +5,14 @@
 """Conservation and backend-agreement campaign for particle conversion."""
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _mesh_case(geometry, shells):
+def _mesh_case(geometry: Any, shells: Any) -> Any:
     mesh = phx.discretization.RadialShellMeshPlan(geometry, shells).prepare()
     scale = jnp.asarray([2.0])
     metrics = mesh.metrics(scale)
@@ -30,7 +31,7 @@ def _mesh_case(geometry, shells):
     }
 
 
-def _conversion_case(shells, step_size):
+def _conversion_case(shells: Any, step_size: Any) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.ones((1,)), ambient_dimension=3
     ).prepare()
@@ -129,7 +130,7 @@ def _conversion_case(shells, step_size):
     }
 
 
-def main():
+def main() -> Any:
     mesh_cases = [
         _mesh_case(geometry, shells)
         for geometry in phx.discretization.ParticleInternalGeometry

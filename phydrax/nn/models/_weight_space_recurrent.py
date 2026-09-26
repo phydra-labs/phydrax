@@ -16,7 +16,7 @@ from jaxtyping import PyTree
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from .._keys import EvalKey
 from ..layers import RecurrentBatch, RecurrentResult
 from ..layers._weight_space_recurrence import (
@@ -125,8 +125,7 @@ class WeightSpaceRecurrentModel(StrictModule, ParameterOwner):
         dtype: Any | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
-        if execution not in ("serial", "associative"):
-            raise ValueError("execution must be 'serial' or 'associative'.")
+        execution = parse(execution, WeightSpaceExecution, "execution")
         self.decoder = FunctionalStateDecoder(subspace, query_size)
         self.recurrence = WeightSpaceRecurrence(
             observation_size,

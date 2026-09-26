@@ -264,7 +264,10 @@ def compile_linear_conic_control(
     total_soc_rows = problem.horizon * sum(stage_dimensions) + sum(terminal_dimensions)
     relation = base.constraint_matrix.relation
     # The sparse control compiler always routes constraints through an EdgeRelation.
-    assert isinstance(relation, EdgeRelation)
+    if not (isinstance(relation, EdgeRelation)):
+        raise RuntimeError(
+            "Internal invariant failed: isinstance(relation, EdgeRelation)."
+        )
     relation_valid = np.asarray(relation.valid)
     row_routes = [np.asarray(relation.target_indices, dtype=np.int32)[relation_valid]]
     column_routes = [np.asarray(relation.source_indices, dtype=np.int32)[relation_valid]]

@@ -386,13 +386,9 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
     ) -> None:
         if not isinstance(component, DomainComponent):
             raise TypeError("component must be a DomainComponent.")
-        if not isinstance(target_schema, TargetSchema) or target_schema.kind not in (
-            "binary",
-            "multiclass",
-            "multilabel",
-            "ordinal",
-        ):
+        if not isinstance(target_schema, TargetSchema):
             raise TypeError("target_schema must declare a classification target kind.")
+        parse(target_schema.kind, ClassificationKind, "target_schema.kind")
         dataset = _dataset_factor(component)
         template, case_count, case_axis, site_labels = _normalize_grid_sampling(
             component, dataset, sampling

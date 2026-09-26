@@ -9,6 +9,7 @@ import json
 import time
 from math import sqrt
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +20,7 @@ import phydrax as phx
 fd = phx.applications.solid_mechanics
 
 
-def _chain(node_count: int):
+def _chain(node_count: int) -> Any:
     nodes = int(node_count)
     coordinates = jnp.stack(
         (jnp.linspace(-5.0, 5.0, nodes), jnp.zeros((nodes,))), axis=-1
@@ -74,7 +75,7 @@ def run_forward(node_count: int, repeats: int, /) -> dict[str, object]:
         jax.block_until_ready(refreshed.state.positions)
     steady_seconds = (time.perf_counter() - started) / repeats
 
-    def objective(force_densities):
+    def objective(force_densities: Any) -> Any:
         dynamic = fd.ForceDensityInputs(
             force_densities,
             inputs.prescribed_values,
@@ -149,14 +150,14 @@ def run_arch(node_count: int, /) -> dict[str, object]:
         linear_policy=strict_linear,
     )
 
-    def decode(magnitude, _):
+    def decode(magnitude: Any, _: Any) -> Any:
         return fd.ForceDensityInputs(
             jnp.full((nodes - 1,), -magnitude.reshape(())),
             prescribed,
             loads,
         )
 
-    def objective(magnitude, _):
+    def objective(magnitude: Any, _: Any) -> Any:
         inputs = decode(magnitude, None)
         state = fd.solve_force_density(fd.prepare_force_density(plan, inputs)).state
         return fd.force_density_load_path(state)
@@ -259,8 +260,11 @@ def run_nonlinear(node_count: int, repeats: int, /) -> dict[str, object]:
         "first_solve_seconds": first_seconds,
         "steady_refresh_solve_seconds": refresh_seconds,
         "status": int(first.status),
+        # ty: ignore[unresolved-attribute]
         "iterations": int(nonlinear.diagnostics.iterations),
+        # ty: ignore[unresolved-attribute]
         "linear_iterations": int(nonlinear.diagnostics.linear_iterations),
+        # ty: ignore[unresolved-attribute]
         "linear_plan_id": nonlinear.provenance.linear_plan_id,
         "weighted_setup": plan.nonlinear_uses_setup,
         "residual_norm": float(first.diagnostics.free_residual_norm),

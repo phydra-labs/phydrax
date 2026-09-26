@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -19,7 +22,7 @@ from phydrax.optics.transport._tissue import (
 )
 
 
-def _plane(z, negative_medium, positive_medium, indices):
+def _plane(z: Any, negative_medium: Any, positive_medium: Any, indices: Any) -> Any:
     vertices = jnp.asarray(
         [[-100.0, -100.0, z], [100.0, -100.0, z], [100.0, 100.0, z], [-100.0, 100.0, z]]
     )
@@ -34,15 +37,15 @@ def _plane(z, negative_medium, positive_medium, indices):
     )
 
 
-def _origins(count, z):
+def _origins(count: Any, z: Any) -> Any:
     return jnp.broadcast_to(jnp.asarray([0.0, 0.0, z]), (count, 3))
 
 
-def _directions(count, direction=(0.0, 0.0, 1.0)):
+def _directions(count: Any, direction: Any = (0.0, 0.0, 1.0)) -> Any:
     return jnp.broadcast_to(jnp.asarray(direction), (count, 3))
 
 
-def test_beer_lambert_escape_probability_and_standard_error_scaling():
+def test_beer_lambert_escape_probability_and_standard_error_scaling() -> None:
     mu_a = jnp.log(2.0)
     coefficients = TissueTransportCoefficients(
         jnp.asarray([mu_a, 0.0]),
@@ -85,7 +88,7 @@ def test_beer_lambert_escape_probability_and_standard_error_scaling():
     assert float(large.maximum_absolute_ledger_residual) < 2e-6
 
 
-def test_henyey_greenstein_first_moment_matches_g():
+def test_henyey_greenstein_first_moment_matches_g() -> None:
     count = 16_384
     g = 0.72
     surfaces = _plane(-10.0, 0, 0, (1.0,))
@@ -121,7 +124,7 @@ def test_henyey_greenstein_first_moment_matches_g():
     )
 
 
-def test_stochastic_fresnel_frequency_expected_split_and_tir():
+def test_stochastic_fresnel_frequency_expected_split_and_tir() -> None:
     count = 20_000
     indices = (1.0, 1.5)
     coefficients = TissueTransportCoefficients(
@@ -186,7 +189,7 @@ def test_stochastic_fresnel_frequency_expected_split_and_tir():
     assert bool(jnp.all(tir.terminal_directions[:, 0, 2] > 0.0))
 
 
-def test_remaining_optical_depth_crosses_media_without_distance_rescaling():
+def test_remaining_optical_depth_crosses_media_without_distance_rescaling() -> None:
     key = jr.PRNGKey(62)
     photon_ids = jnp.asarray([3, 11, 29], dtype=jnp.uint32)
     coefficients = TissueTransportCoefficients(
@@ -224,7 +227,7 @@ def test_remaining_optical_depth_crosses_media_without_distance_rescaling():
     np.testing.assert_array_equal(result.terminal_medium_indices[:, 0], 1)
 
 
-def test_roulette_is_unbiased_and_weight_ledger_is_pathwise_complete():
+def test_roulette_is_unbiased_and_weight_ledger_is_pathwise_complete() -> None:
     count = 16_384
     coefficients = TissueTransportCoefficients(
         jnp.asarray([0.9]),
@@ -256,7 +259,7 @@ def test_roulette_is_unbiased_and_weight_ledger_is_pathwise_complete():
     np.testing.assert_allclose(result.tallies.absorption, [0.9], atol=2e-6)
 
 
-def test_same_key_is_reproducible_and_photon_ids_are_batching_invariant():
+def test_same_key_is_reproducible_and_photon_ids_are_batching_invariant() -> None:
     coefficients = TissueTransportCoefficients(
         jnp.asarray([0.3]),
         jnp.asarray([0.7]),
@@ -315,7 +318,7 @@ def test_same_key_is_reproducible_and_photon_ids_are_batching_invariant():
     )
 
 
-def test_expected_split_capacity_exhaustion_reports_truncated_weight():
+def test_expected_split_capacity_exhaustion_reports_truncated_weight() -> None:
     indices = (1.0, 1.5)
     coefficients = TissueTransportCoefficients(
         jnp.zeros((2,)), jnp.zeros((2,)), jnp.zeros((2,)), jnp.asarray(indices)
@@ -342,7 +345,7 @@ def test_expected_split_capacity_exhaustion_reports_truncated_weight():
     np.testing.assert_allclose(result.per_photon_tallies.ledger_residual, 0.0, atol=2e-6)
 
 
-def test_detector_and_signed_surface_flux_use_fixed_tallies():
+def test_detector_and_signed_surface_flux_use_fixed_tallies() -> None:
     vertices = jnp.asarray(
         [[-2.0, -2.0, 0.0], [2.0, -2.0, 0.0], [2.0, 2.0, 0.0], [-2.0, 2.0, 0.0]]
     )

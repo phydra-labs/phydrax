@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from phydrax.algebraic import SparsePolynomialSystem
@@ -34,7 +36,7 @@ from phydrax.optics import wave
 from phydrax.particle_physics import integrate_native_rge, NativeSpectrumModelPlan
 
 
-def _s3_irrep_basis():
+def _s3_irrep_basis() -> Any:
     resources = SectorBasisResourcePolicy(
         maximum_dimension=32,
         maximum_table_bytes=1_000_000,
@@ -234,6 +236,7 @@ def test_mapped_infinite_phi4_kink_has_correct_sector() -> None:
             ("potential",),
             (0, 0, 0),
             ((4,), (2,), (0,)),
+            # ty: ignore[invalid-argument-type]
             (0.25, -0.5, 0.25),
         ),
         "phi4",
@@ -255,8 +258,11 @@ def test_zero_coupling_multimode_envelope_is_identity() -> None:
     time = np.linspace(-2.0, 2.0, 16, endpoint=False)
     plan = wave.CoupledEnvelopePlan(
         time,
+        # ty: ignore[invalid-argument-type]
         (0.0,),
+        # ty: ignore[invalid-argument-type]
         (0.0,),
+        # ty: ignore[invalid-argument-type]
         (10.0, 12.0),
         np.zeros((2, 16)),
         np.zeros((2, 16)),
@@ -440,6 +446,7 @@ def test_defect_scattering_runs_with_asserted_metric_evidence() -> None:
             ("potential",),
             (0, 0, 0),
             ((4,), (2,), (0,)),
+            # ty: ignore[invalid-argument-type]
             (0.25, -0.5, 0.25),
         ),
         "phi4",

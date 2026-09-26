@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,7 +19,7 @@ import phydrax._spectral as multiresolution
 import phydrax.discretization as spectral
 
 
-def _assert_finite_model_gradient(model, loss):
+def _assert_finite_model_gradient(model: Any, loss: Any) -> None:
     value, gradient = eqx.filter_value_and_grad(loss)(model)
     leaves = [
         leaf for leaf in jax.tree_util.tree_leaves(gradient) if eqx.is_inexact_array(leaf)
@@ -27,13 +30,13 @@ def _assert_finite_model_gradient(model, loss):
 
 
 def _point_batch(
-    values,
+    values: Any,
     *,
-    source_mask=None,
-    query_mask=None,
-    source_name="u",
-    query_coordinates=None,
-):
+    source_mask: Any = None,
+    query_mask: Any = None,
+    source_name: Any = "u",
+    query_coordinates: Any = None,
+) -> Any:
     source_coordinates = jnp.array([[0.0], [0.3], [0.7], [1.0]])
     if query_coordinates is None:
         query_coordinates = jnp.array([[0.1], [0.5], [0.9]])
@@ -60,7 +63,7 @@ def _point_batch(
     )
 
 
-def _case_point_batch(values):
+def _case_point_batch(values: Any) -> Any:
     source_mask = jnp.array([[True, True, True, False], [True, True, False, False]])
     query_mask = jnp.array([[True, True, False], [True, False, False]])
     return phx.nn.operator.OperatorBatch(
@@ -83,7 +86,9 @@ def _case_point_batch(values):
     )
 
 
-def _grid_batch(values, *, query_mask=None, source_name="state"):
+def _grid_batch(
+    values: Any, *, query_mask: Any = None, source_name: Any = "state"
+) -> Any:
     values = jnp.asarray(values)
     size = values.shape[0]
     points = jnp.linspace(0.0, 1.0, size, endpoint=False)
@@ -114,7 +119,7 @@ def _grid_batch(values, *, query_mask=None, source_name="state"):
 
 
 @pytest.fixture
-def masked_point_batch():
+def masked_point_batch() -> Any:
     return _point_batch(
         jnp.sin(jnp.pi * jnp.array([0.0, 0.3, 0.7, 1.0])),
         source_mask=jnp.array([True, True, True, False]),
@@ -123,8 +128,8 @@ def masked_point_batch():
 
 
 def test_coordinate_conditioned_operator_film_decode_is_masked_jittable_and_finite(
-    masked_point_batch,
-):
+    masked_point_batch: Any,
+) -> None:
     branch = phx.nn.operator.architectures.IntegralBranchEncoder(
         feature_model=phx.nn.models.MLP(
             in_size=2,
@@ -171,7 +176,7 @@ def test_coordinate_conditioned_operator_film_decode_is_masked_jittable_and_fini
     )
 
 
-def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
+def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields() -> None:
     scalar_values = jnp.sin(2.0 * jnp.pi * jnp.arange(8) / 8.0)
     channel_values = jnp.stack((scalar_values, jnp.cos(scalar_values)), axis=-1)
     query_mask = jnp.array([True, True, True, True, True, True, True, False])
@@ -236,7 +241,7 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
     _assert_finite_model_gradient(mwt, lambda item: jnp.sum(item(scalar_batch) ** 2))
 
 
-def test_wavelet_operator_admits_bounded_four_dimensional_subbands():
+def test_wavelet_operator_admits_bounded_four_dimensional_subbands() -> None:
     model = phx.nn.operator.architectures.WaveletNeuralOperator(
         4,
         in_channels="scalar",
@@ -263,7 +268,7 @@ def test_wavelet_operator_admits_bounded_four_dimensional_subbands():
         )
 
 
-def test_wavelet_operators_reuse_one_model_across_resolutions():
+def test_wavelet_operators_reuse_one_model_across_resolutions() -> None:
     sizes = (17, 29)
     batches = tuple(
         _grid_batch(jnp.sin(2.0 * jnp.pi * jnp.arange(size, dtype="float64") / size))
@@ -301,7 +306,7 @@ def test_wavelet_operators_reuse_one_model_across_resolutions():
     assert all(jnp.all(jnp.isfinite(output)) for output in mwt_outputs)
 
 
-def test_manifold_spectral_operator_runs_valid_small_laplacian_plan():
+def test_manifold_spectral_operator_runs_valid_small_laplacian_plan() -> None:
     laplacian = np.array(
         [
             [2.0, -1.0, 0.0, -1.0],
@@ -350,7 +355,7 @@ def test_manifold_spectral_operator_runs_valid_small_laplacian_plan():
     _assert_finite_model_gradient(model, lambda item: jnp.sum(item(batch) ** 2))
 
 
-def test_stiffness_plan_rejects_negative_semidefinite_operator():
+def test_stiffness_plan_rejects_negative_semidefinite_operator() -> None:
     differential_laplacian = np.array(
         [
             [-2.0, 1.0, 0.0, 1.0],
@@ -368,7 +373,7 @@ def test_stiffness_plan_rejects_negative_semidefinite_operator():
         )
 
 
-def test_triangle_mesh_plan_preserves_sparse_sphere_eigenspace_multiplicities():
+def test_triangle_mesh_plan_preserves_sparse_sphere_eigenspace_multiplicities() -> None:
     mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
     triangle_mesh = phx.geometry.simplicial.TriangleMesh(
         np.asarray(mesh.vertices),
@@ -393,7 +398,7 @@ def test_triangle_mesh_plan_preserves_sparse_sphere_eigenspace_multiplicities():
     assert np.ptp(np.asarray(plan.synthesis)[:, 0]) < 1e-8
 
 
-def test_upt_and_abupt_preserve_case_and_source_query_masks():
+def test_upt_and_abupt_preserve_case_and_source_query_masks() -> None:
     values = jnp.array([[0.0, 0.5, 1.0, 1000.0], [1.0, 0.5, -1000.0, 2000.0]])
     changed_padding = values.at[0, 3].set(-9000.0).at[1, 2:].set(7000.0)
     batch = _case_point_batch(values)
@@ -468,7 +473,7 @@ def test_upt_and_abupt_preserve_case_and_source_query_masks():
     _assert_finite_model_gradient(abupt, lambda item: jnp.sum(item(batch) ** 2))
 
 
-def test_abupt_predicts_named_fields_on_distinct_queries():
+def test_abupt_predicts_named_fields_on_distinct_queries() -> None:
     source_coordinates = jnp.linspace(0.0, 1.0, 4)[:, None]
     batch = phx.nn.operator.OperatorBatch(
         inputs={
@@ -531,7 +536,7 @@ def test_abupt_predicts_named_fields_on_distinct_queries():
     assert prediction.field("flux").spec.component_names == ("x", "y")
 
 
-def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask():
+def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask() -> None:
     coordinates = jnp.array([[0.0], [0.3], [0.7], [1.0]])
     query_mask = jnp.array([True, True, True, False])
     batch = phx.nn.operator.OperatorBatch(
@@ -599,7 +604,7 @@ def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask():
     _assert_finite_model_gradient(model, lambda item: jnp.sum(item(batch) ** 2))
 
 
-def test_eqgino_is_rotation_and_reflection_equivariant():
+def test_eqgino_is_rotation_and_reflection_equivariant() -> None:
     representation = phx.nn.operator.representations.O3Representation(vectors=1)
     model = phx.nn.operator.architectures.EqGINO(
         representation,
@@ -620,7 +625,7 @@ def test_eqgino_is_rotation_and_reflection_equivariant():
     source_mask = jnp.array([True, True, True, False])
     query_mask = jnp.array([True, True, False])
 
-    def batch_for(coordinates, values, queries):
+    def batch_for(coordinates: Any, values: Any, queries: Any) -> Any:
         return phx.nn.operator.OperatorBatch(
             inputs={
                 "field": phx.nn.operator.FunctionSamples(
@@ -664,7 +669,7 @@ def test_eqgino_is_rotation_and_reflection_equivariant():
     _assert_finite_model_gradient(model, lambda item: jnp.sum(item(batch) ** 2))
 
 
-def test_in_context_operator_prompt_mask_and_permutation_are_semantic():
+def test_in_context_operator_prompt_mask_and_permutation_are_semantic() -> None:
     query_batch = _point_batch(
         jnp.array([0.0, 0.2, 0.6, 1000.0]),
         source_mask=jnp.array([True, True, True, False]),
@@ -729,7 +734,7 @@ def test_in_context_operator_prompt_mask_and_permutation_are_semantic():
     _assert_finite_model_gradient(model, lambda item: jnp.sum(item(prompted) ** 2))
 
 
-def test_gaussian_function_operator_has_coherent_shape_sampling_and_masked_nll():
+def test_gaussian_function_operator_has_coherent_shape_sampling_and_masked_nll() -> None:
     values = jnp.sin(2.0 * jnp.pi * jnp.arange(8) / 8.0)
     query_mask = jnp.array([True, True, True, True, True, True, True, False])
     batch = _grid_batch(values, query_mask=query_mask)
@@ -784,7 +789,7 @@ def test_gaussian_function_operator_has_coherent_shape_sampling_and_masked_nll()
     )
 
 
-def _pde_problem(lhs):
+def _pde_problem(lhs: Any) -> Any:
     return phx.equations.PDEProblemIR(
         coordinates=(phx.equations.PDECoordinate("x", "space"),),
         fields=(phx.equations.PDEField("u", coordinates=("x",)),),
@@ -792,7 +797,9 @@ def _pde_problem(lhs):
     )
 
 
-def test_pde_condition_encoder_respects_semantic_hash_and_attaches_case_condition():
+def test_pde_condition_encoder_respects_semantic_hash_and_attaches_case_condition() -> (
+    None
+):
     field = phx.equations.PDEExpression.field("u")
     equivalent_a = _pde_problem(field + 1.0)
     equivalent_b = _pde_problem(1.0 + field)
@@ -835,7 +842,7 @@ def test_pde_condition_encoder_respects_semantic_hash_and_attaches_case_conditio
     _assert_finite_model_gradient(encoder, lambda item: jnp.sum(item(tokens_a) ** 2))
 
 
-def _semantic_token_arrays(tokens):
+def _semantic_token_arrays(tokens: Any) -> Any:
     return tuple(
         getattr(tokens, name)
         for name in (
@@ -855,15 +862,15 @@ def _semantic_token_arrays(tokens):
 
 def _semantic_problem(
     *,
-    coordinates=None,
-    fields=None,
-    parameters=(),
-    expression=None,
-    regions=(),
-    conditions=(),
-    nondimensionalization=(),
-    metadata=(),
-):
+    coordinates: Any = None,
+    fields: Any = None,
+    parameters: Any = (),
+    expression: Any = None,
+    regions: Any = (),
+    conditions: Any = (),
+    nondimensionalization: Any = (),
+    metadata: Any = (),
+) -> Any:
     coordinates = (
         (phx.equations.PDECoordinate("x", "space"),)
         if coordinates is None
@@ -889,7 +896,7 @@ def _semantic_problem(
     )
 
 
-def test_pde_condition_encoder_distinguishes_execution_semantics():
+def test_pde_condition_encoder_distinguishes_execution_semantics() -> None:
     expression = phx.equations.PDEExpression
     u = expression.field("u")
     vector_fields = (
@@ -1109,7 +1116,7 @@ def test_pde_condition_encoder_distinguishes_execution_semantics():
         )
 
 
-def test_pde_condition_encoder_is_alpha_renaming_invariant():
+def test_pde_condition_encoder_is_alpha_renaming_invariant() -> None:
     expression = phx.equations.PDEExpression
     original = _semantic_problem(
         coordinates=(phx.equations.PDECoordinate("x", "space"),),
@@ -1147,7 +1154,7 @@ def test_pde_condition_encoder_is_alpha_renaming_invariant():
     )
 
 
-def test_pde_token_padding_and_stacking_preserve_semantic_channels():
+def test_pde_token_padding_and_stacking_preserve_semantic_channels() -> None:
     first = phx.equations.tokenize_pde_ir(
         _semantic_problem(
             expression=phx.equations.PDEExpression.field("u").derivative(
@@ -1172,7 +1179,7 @@ def test_pde_token_padding_and_stacking_preserve_semantic_channels():
     assert stacked.slot.shape == stacked.mask.shape
 
 
-def test_arbitrary_pde_metadata_stays_outside_neural_semantics():
+def test_arbitrary_pde_metadata_stays_outside_neural_semantics() -> None:
     first = _semantic_problem(metadata=(("provenance", "experiment-a"),))
     second = _semantic_problem(metadata=(("provenance", "experiment-b"),))
     first_tokens = phx.equations.tokenize_pde_ir(first, dimension_basis=())

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -27,7 +29,7 @@ def _law(
     flow_id: str,
     source_path_id: str | None,
     *,
-    weights=None,
+    weights: Any = None,
     particles: int = 2,
 ) -> EmpiricalMeanField:
     return EmpiricalMeanField(
@@ -41,15 +43,15 @@ def _law(
     )
 
 
-def _mean(flow: EmpiricalMeanField):
+def _mean(flow: EmpiricalMeanField) -> Any:
     return jnp.mean(jax_means(flow))
 
 
-def jax_means(flow: EmpiricalMeanField):
+def jax_means(flow: EmpiricalMeanField) -> Any:
     return jnp.stack([flow.snapshot(time).mean[0] for time in flow.times])
 
 
-def _response(flow: EmpiricalMeanField, *, minimum_ess: float = 2.0):
+def _response(flow: EmpiricalMeanField, *, minimum_ess: float = 2.0) -> Any:
     path_id = f"best-response-evaluation:{flow.mean_field_id}"
     particles = flow.num_particles
     paths = BSDEPathBatch(
@@ -98,7 +100,9 @@ def _response(flow: EmpiricalMeanField, *, minimum_ess: float = 2.0):
     )
 
 
-def _induced(response, value, *, weights=None, source=None):
+def _induced(
+    response: Any, value: Any, *, weights: Any = None, source: Any = None
+) -> Any:
     flow_id = f"induced:{response.flow_id}"
     return _law(
         value,
@@ -109,12 +113,14 @@ def _induced(response, value, *, weights=None, source=None):
     )
 
 
-def _normalized_weights(flow: EmpiricalMeanField):
+def _normalized_weights(flow: EmpiricalMeanField) -> Any:
     weights = flow.weights.reshape((flow.num_particles, flow.times.size))
     return weights / jnp.sum(weights, axis=0, keepdims=True)
 
 
-def _law_mixture(current, induced, damping, iteration, args):
+def _law_mixture(
+    current: Any, induced: Any, damping: Any, iteration: Any, args: Any
+) -> Any:
     del args
     time_count = current.times.size
     particles = jnp.concatenate(
@@ -154,14 +160,14 @@ def _law_mixture(current, induced, damping, iteration, args):
 
 
 def _problem(
-    initial,
-    induced,
+    initial: Any,
+    induced: Any,
     *,
-    distance=None,
-    best_response=_response,
-    law_mixture=_law_mixture,
-    law_mixture_id="exact-union-support-mixture",
-):
+    distance: Any = None,
+    best_response: Any = _response,
+    law_mixture: Any = _law_mixture,
+    law_mixture_id: Any = "exact-union-support-mixture",
+) -> Any:
     if distance is None:
         distance = lambda current, candidate, args: jnp.max(
             jnp.abs(jax_means(current) - jax_means(candidate))
@@ -188,12 +194,12 @@ def _problem(
 
 
 def _plan(
-    maximum_iterations=4,
+    maximum_iterations: Any = 4,
     *,
-    tolerance=1.0e-8,
-    damping=1.0,
-    minimum_ess=2.0,
-):
+    tolerance: Any = 1.0e-8,
+    damping: Any = 1.0,
+    minimum_ess: Any = 2.0,
+) -> Any:
     return MeanFieldGameFixedPointPlan(
         maximum_iterations=maximum_iterations,
         consistency_tolerance=tolerance,
@@ -203,7 +209,7 @@ def _plan(
     )
 
 
-def test_analytic_one_period_fixed_point_retains_both_evidence_layers():
+def test_analytic_one_period_fixed_point_retains_both_evidence_layers() -> None:
     initial = _law(1.0, "initial-fixed-point", "initial-paths")
     problem = _problem(initial, lambda response, args: _induced(response, 1.0))
 
@@ -231,7 +237,9 @@ def test_analytic_one_period_fixed_point_retains_both_evidence_layers():
     assert result.consistency_validity_history[0]
 
 
-def test_successful_frozen_response_does_not_hide_deliberately_wrong_induced_law():
+def test_successful_frozen_response_does_not_hide_deliberately_wrong_induced_law() -> (
+    None
+):
     initial = _law(0.0, "wrong-law-initial", "wrong-law-input-paths")
     problem = _problem(initial, lambda response, args: _induced(response, 3.0))
 
@@ -246,7 +254,7 @@ def test_successful_frozen_response_does_not_hide_deliberately_wrong_induced_law
     assert not result.valid
 
 
-def test_half_damping_forms_a_union_support_mixture_instead_of_a_midpoint():
+def test_half_damping_forms_a_union_support_mixture_instead_of_a_midpoint() -> None:
     initial = _law(-1.0, "damping-initial", "damping-input-paths")
     problem = _problem(initial, lambda response, args: _induced(response, 1.0))
 
@@ -269,7 +277,7 @@ def test_half_damping_forms_a_union_support_mixture_instead_of_a_midpoint():
     assert result.law_mixture_id == "exact-union-support-mixture"
 
 
-def test_subunit_damping_requires_an_identified_law_mixture():
+def test_subunit_damping_requires_an_identified_law_mixture() -> None:
     initial = _law(-1.0, "missing-mixture-initial", "missing-mixture-paths")
     with pytest.raises(ValueError, match="must be supplied together"):
         _problem(
@@ -293,10 +301,12 @@ def test_subunit_damping_requires_an_identified_law_mixture():
 @pytest.mark.parametrize(
     "invalid_kind", ["non-law", "reused-law", "midpoint", "claimed-source"]
 )
-def test_invalid_law_mixture_callback_fails_closed(invalid_kind):
+def test_invalid_law_mixture_callback_fails_closed(invalid_kind: Any) -> None:
     initial = _law(-1.0, "invalid-mixture-initial", "invalid-mixture-paths")
 
-    def invalid_mixture(current, induced, damping, iteration, args):
+    def invalid_mixture(
+        current: Any, induced: Any, damping: Any, iteration: Any, args: Any
+    ) -> Any:
         if invalid_kind == "non-law":
             return object()
         if invalid_kind == "reused-law":
@@ -329,10 +339,12 @@ def test_invalid_law_mixture_callback_fails_closed(invalid_kind):
     assert not result.valid
 
 
-def test_unit_damping_uses_the_induced_law_without_calling_the_mixture():
+def test_unit_damping_uses_the_induced_law_without_calling_the_mixture() -> None:
     initial = _law(0.0, "unit-damping-initial", "unit-damping-paths")
 
-    def forbidden_mixture(current, induced, damping, iteration, args):
+    def forbidden_mixture(
+        current: Any, induced: Any, damping: Any, iteration: Any, args: Any
+    ) -> None:
         raise AssertionError("law_mixture must not be called when damping is one")
 
     problem = _problem(
@@ -350,7 +362,7 @@ def test_unit_damping_uses_the_induced_law_without_calling_the_mixture():
     assert result.flow.source_path_id is not None
 
 
-def test_singular_nonconvergent_induced_map_exhausts_fixed_capacity():
+def test_singular_nonconvergent_induced_map_exhausts_fixed_capacity() -> None:
     initial = _law(1.0, "oscillation-initial", "oscillation-input-paths")
     problem = _problem(
         initial,
@@ -369,7 +381,7 @@ def test_singular_nonconvergent_induced_map_exhausts_fixed_capacity():
     assert not result.converged
 
 
-def test_low_effective_sample_size_is_rejected_before_distance_acceptance():
+def test_low_effective_sample_size_is_rejected_before_distance_acceptance() -> None:
     initial = _law(0.0, "ess-initial", "ess-input-paths")
     problem = _problem(
         initial,
@@ -390,10 +402,10 @@ def test_low_effective_sample_size_is_rejected_before_distance_acceptance():
 
 
 @pytest.mark.parametrize("reuse", ["flow", "source", "best-response-paths"])
-def test_induced_law_requires_new_flow_and_forward_path_identities(reuse):
+def test_induced_law_requires_new_flow_and_forward_path_identities(reuse: Any) -> None:
     initial = _law(0.0, f"identity-initial:{reuse}", f"identity-input-paths:{reuse}")
 
-    def induced(response, args):
+    def induced(response: Any, args: Any) -> Any:
         if reuse == "flow":
             return response.mean_field
         if reuse == "source":
@@ -412,7 +424,7 @@ def test_induced_law_requires_new_flow_and_forward_path_identities(reuse):
     assert jnp.isnan(result.distance_history[0])
 
 
-def test_invalid_response_invalid_law_and_nonfinite_metric_fail_closed():
+def test_invalid_response_invalid_law_and_nonfinite_metric_fail_closed() -> None:
     initial = _law(0.0, "failure-initial", "failure-input-paths")
     invalid_response = _problem(
         initial,
@@ -438,7 +450,7 @@ def test_invalid_response_invalid_law_and_nonfinite_metric_fail_closed():
     assert not distance_result.valid
 
 
-def test_fixed_capacity_histories_and_ids_are_deterministic():
+def test_fixed_capacity_histories_and_ids_are_deterministic() -> None:
     initial = _law(0.0, "deterministic-initial", "deterministic-input-paths")
     problem = _problem(initial, lambda response, args: _induced(response, 1.0))
     plan = _plan(3, tolerance=0.0, damping=0.5)
@@ -460,7 +472,7 @@ def test_fixed_capacity_histories_and_ids_are_deterministic():
     assert first.current_flow_id == second.current_flow_id
 
 
-def test_result_label_and_claim_boundaries_are_explicit():
+def test_result_label_and_claim_boundaries_are_explicit() -> None:
     initial = _law(2.0, "label-initial", "label-input-paths")
     result = solve_mean_field_game_fixed_point(
         _problem(initial, lambda response, args: _induced(response, 2.0)), _plan()

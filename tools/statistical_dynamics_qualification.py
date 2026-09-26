@@ -354,8 +354,10 @@ def build_statistical_dynamics_candidate(
     )
     run_dependency_ids = frozenset(value.dependency_id for value in run_dependencies)
     operational_failures.extend(
+        # ty: ignore[unresolved-attribute]
         f"resolved-run-missing-profile-dependency:{value.dependency_id}"
         for value in profile.dependencies
+        # ty: ignore[unresolved-attribute]
         if value.dependency_id not in run_dependency_ids
     )
     if all(

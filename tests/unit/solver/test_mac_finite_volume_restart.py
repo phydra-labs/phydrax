@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -15,7 +18,7 @@ from phydrax.solver._mac_finite_volume_checkpoint import (
 )
 
 
-def _adaptive_plan():
+def _adaptive_plan() -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(2)),
         axis_names=("x", "y"),
@@ -46,7 +49,9 @@ def _adaptive_plan():
     return plan, state
 
 
-def test_mac_checkpoint_restore_continues_with_exact_controller_history(tmp_path):
+def test_mac_checkpoint_restore_continues_with_exact_controller_history(
+    tmp_path: Any,
+) -> None:
     plan, state = _adaptive_plan()
     uninterrupted = plan.rollout(jnp.asarray(0.0), state)
     initial = plan.initialize(jnp.asarray(0.0), state)
@@ -69,8 +74,8 @@ def test_mac_checkpoint_restore_continues_with_exact_controller_history(tmp_path
 
 
 def test_mac_checkpoint_corruption_fails_before_advance_and_preserves_runtime(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     plan, state = _adaptive_plan()
     runtime = plan.initialize(jnp.asarray(0.0), state)
     checkpoint_plan = MACFiniteVolumeCheckpointPlan(plan, runtime)

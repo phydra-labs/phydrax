@@ -22,6 +22,7 @@ def run() -> dict[str, object]:
     prepared = mr.ExactSingleCrystalNMRProfile(
         mr.MagneticResonanceSpinSystem(
             (mr.SpinSite("spin", isotope),),
+            # ty: ignore[invalid-argument-type]
             (0.0, 0.0, 1.0),
             system_id="magnetic-resonance-smoke",
         )

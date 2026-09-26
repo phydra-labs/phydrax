@@ -82,7 +82,8 @@ class QuadratureAccuracyPolicy(StrictModule, NonTrainableState):
         if self.kind == "explicit-rule":
             degree = self.explicit_degree
             # __init__ requires a nonnegative explicit_degree for explicit-rule policies.
-            assert degree is not None
+            if not (degree is not None):
+                raise RuntimeError("Internal invariant failed: degree is not None.")
             return int(degree)
         if self.kind == "collocated":
             return max(trial, test)

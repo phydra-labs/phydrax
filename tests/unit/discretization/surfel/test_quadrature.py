@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -8,7 +10,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _geometry():
+def _geometry() -> Any:
     prepared = phx.discretization.SurfelSetPlan(
         jnp.asarray((0, 1, 2)),
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (2.0, 0.0))),

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -19,7 +22,7 @@ from phydrax.ml.neighbors import (
 )
 
 
-def _data():
+def _data() -> Any:
     features = jnp.array(
         [[-1.5, 0.0], [-0.8, 0.5], [-0.1, -0.2], [0.6, 0.4], [1.4, -0.3], [2.0, 0.8]]
     )
@@ -28,7 +31,7 @@ def _data():
     return features, targets, labels
 
 
-def test_exact_regression_and_classification_dense_chunked_jit_vmap_parity():
+def test_exact_regression_and_classification_dense_chunked_jit_vmap_parity() -> None:
     features, targets, labels = _data()
     weights = jnp.array([1.0, 2.0, 1.0, 0.5, 1.5, 1.0])
     query = jnp.array([[-1.0, 0.1], [0.2, 0.0], [1.1, -0.1], [1.8, 0.7]])
@@ -41,17 +44,21 @@ def test_exact_regression_and_classification_dense_chunked_jit_vmap_parity():
     reg_model = reg_result.as_trainable()
     cls_model = cls_result.as_trainable()
 
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(reg_model(query), reg_model.predict_chunked(query, chunk_size=2))
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(cls_model(query), cls_model.predict_chunked(query, chunk_size=2))
     assert jax.jit(reg_model)(query).shape == (4,)
     assert jax.vmap(reg_model)(query).shape == (4,)
+    # ty: ignore[unresolved-attribute]
     assert cls_model.predict_proba(query).shape == (4, 2)
+    # ty: ignore[unresolved-attribute]
     assert cls_model.predict(query).dtype == jnp.int32
     assert "neighbor_indices" in reg_result.derivative_contract.nondifferentiable_outputs
     assert "predict" in cls_result.derivative_contract.nondifferentiable_outputs
 
 
-def test_neighbor_cases_masks_outputs_and_fixed_capacity_status_are_explicit():
+def test_neighbor_cases_masks_outputs_and_fixed_capacity_status_are_explicit() -> None:
     features, targets, labels = _data()
     case_features = jnp.stack((features, features + jnp.array([0.2, -0.1])), axis=0)
     case_targets = jnp.stack((targets, 2.0 * targets), axis=0)
@@ -74,10 +81,11 @@ def test_neighbor_cases_masks_outputs_and_fixed_capacity_status_are_explicit():
     )
     assert not exhausted.valid
     assert exhausted.status == ML_CAPACITY_EXHAUSTED
+    # ty: ignore[unresolved-attribute]
     assert exhausted.as_trainable().support.shape == (3, 2)
 
 
-def test_neighbor_recipes_require_explicit_sparse_materialization():
+def test_neighbor_recipes_require_explicit_sparse_materialization() -> None:
     dense = jnp.array(
         [[1.0, 0.0, 2.0], [0.0, -1.0, 0.5], [2.0, 1.0, 0.0], [-1.0, 0.0, 1.0]]
     )
@@ -95,7 +103,7 @@ def test_neighbor_recipes_require_explicit_sparse_materialization():
     assert jnp.allclose(dense_model(dense), explicit_model(dense))
 
 
-def test_soft_kernel_neighbors_are_smooth_and_distinct_from_hard_top_k():
+def test_soft_kernel_neighbors_are_smooth_and_distinct_from_hard_top_k() -> None:
     features, targets, labels = _data()
     query = jnp.array([[0.05, 0.1], [0.9, -0.2]])
     soft_reg_result = KernelNeighborsRegressorRecipe(temperature=0.4).fit_batch(
@@ -111,8 +119,11 @@ def test_soft_kernel_neighbors_are_smooth_and_distinct_from_hard_top_k():
     soft_cls = soft_cls_result.as_trainable()
 
     assert not jnp.allclose(soft_reg(query), hard_model(query))
+    # ty: ignore[unresolved-attribute]
     assert soft_reg.weights(query).shape == (2, features.shape[0])
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(jnp.sum(soft_reg.weights(query), axis=-1), 1.0)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(jnp.sum(soft_cls.predict_proba(query), axis=-1), 1.0)
     assert soft_reg_result.derivative_contract.route is DerivativeRoute.RELAXED
     assert soft_cls_result.derivative_contract.route is DerivativeRoute.RELAXED
@@ -146,7 +157,7 @@ def test_soft_kernel_neighbors_are_smooth_and_distinct_from_hard_top_k():
     assert jnp.isfinite(temperature_gradient)
 
 
-def test_radius_regression_and_classification_expose_empty_and_hard_semantics():
+def test_radius_regression_and_classification_expose_empty_and_hard_semantics() -> None:
     features, targets, labels = _data()
     reg_result = RadiusNeighborsRegressorRecipe(0.35).fit_batch(
         MLBatch(features, targets)
@@ -159,12 +170,15 @@ def test_radius_regression_and_classification_expose_empty_and_hard_semantics():
     far = jnp.array([[20.0, 20.0]])
 
     assert jnp.isnan(reg_model(far)[0])
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(cls_model.predict_proba(far) == 0.0)
+    # ty: ignore[unresolved-attribute]
     assert cls_model.predict(far)[0] == -1
     assert "radius_membership" in reg_result.derivative_contract.nondifferentiable_outputs
     assert "radius_membership" in cls_result.derivative_contract.nondifferentiable_outputs
     assert jnp.allclose(
         reg_model(features[:4]),
+        # ty: ignore[unresolved-attribute]
         reg_model.predict_chunked(features[:4], chunk_size=2),
         equal_nan=True,
     )

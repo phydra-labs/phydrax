@@ -12,7 +12,7 @@ from phydrax.linalg._substructuring import DeluxeScalingPlan, SubstructuredSPDSy
 la = phx.linalg
 
 
-def test_complex_orthonormal_frame_normalizes_qr_phases():
+def test_complex_orthonormal_frame_normalizes_qr_phases() -> None:
     matrix = jnp.asarray(
         [
             [1.0 + 2.0j, 0.5 - 0.25j],
@@ -37,7 +37,7 @@ def test_complex_orthonormal_frame_normalizes_qr_phases():
     assert jnp.allclose(jnp.linalg.det(full_frame), 1.0, atol=1e-12)
 
 
-def test_banded_operator_rejects_dtype_mismatch_and_budgets_every_batch_factor():
+def test_banded_operator_rejects_dtype_mismatch_and_budgets_every_batch_factor() -> None:
     real_space = la.ArraySpace((3,), dtype=jnp.float64)
     complex_bands = jnp.ones((3, 3), dtype=jnp.complex128)
     with pytest.raises(TypeError, match="produces dtype"):
@@ -73,7 +73,7 @@ def test_banded_operator_rejects_dtype_mismatch_and_budgets_every_batch_factor()
         )
 
 
-def test_deluxe_scaling_resolves_unsorted_local_to_global_maps():
+def test_deluxe_scaling_resolves_unsorted_local_to_global_maps() -> None:
     system = SubstructuredSPDSystem(
         (
             jnp.asarray([[3.0, 0.25], [0.25, 2.0]]),
@@ -95,7 +95,7 @@ def test_deluxe_scaling_resolves_unsorted_local_to_global_maps():
     assert interface.partition_unity_error < 1e-12
 
 
-def test_complex_tridiagonal_lines_use_real_pivot_tolerances():
+def test_complex_tridiagonal_lines_use_real_pivot_tolerances() -> None:
     lower = jnp.asarray([0.0, 1.0 - 0.5j, -0.25 + 0.2j])
     diagonal = jnp.asarray([3.0 + 0.5j, 4.0 - 0.25j, 2.5 + 0.75j])
     upper = jnp.asarray([0.5 + 0.25j, -1.0 + 0.1j, 0.0])

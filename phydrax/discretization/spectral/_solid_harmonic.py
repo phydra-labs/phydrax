@@ -19,6 +19,7 @@ from ...special._solid_harmonic import (
     _solid_harmonic_synthesis,
     SolidHarmonicKind,
 )
+from ...typing import parse
 from .._core import DiscretizationCapability, PreparationReport
 from ._spherical_layout import SphericalModeLayout
 
@@ -44,8 +45,7 @@ class SolidHarmonicPlan(StrictModule, NonTrainableState):
             raise TypeError("bandlimit must be a static integer.")
         limit = int(bandlimit)
         kind_ = str(kind).lower()
-        if kind_ not in ("regular", "irregular"):
-            raise ValueError("kind must be 'regular' or 'irregular'.")
+        kind_ = parse(kind_, SolidHarmonicKind, "kind_")
         reality_ = bool(reality)
         layout = SphericalModeLayout(limit, spin=0, reality=reality_)
         capabilities = (

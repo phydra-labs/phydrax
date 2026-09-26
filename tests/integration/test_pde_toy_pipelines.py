@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -18,11 +21,11 @@ from phydrax.operators.differential import bilaplacian, dt, laplacian
 from phydrax.solver import FunctionalSolver
 
 
-def test_pde_toy_steady_pipeline_zero_loss():
+def test_pde_toy_steady_pipeline_zero_loss() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 1.0
 
     left = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
@@ -65,11 +68,11 @@ def test_pde_toy_steady_pipeline_zero_loss():
     assert loss < 1e-6
 
 
-def test_pde_toy_steady_pipeline_zero_loss_jet_backend():
+def test_pde_toy_steady_pipeline_zero_loss_jet_backend() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 1.0
 
     # Jet cannot be mixed with enforced boundary constraints (Boundary() enforced constraints /
@@ -94,11 +97,11 @@ def test_pde_toy_steady_pipeline_zero_loss_jet_backend():
     assert loss < 1e-6
 
 
-def test_pde_toy_steady_pipeline_zero_loss_basis_backend_coord_separable():
+def test_pde_toy_steady_pipeline_zero_loss_basis_backend_coord_separable() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 1.0
 
     left = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
@@ -123,6 +126,7 @@ def test_pde_toy_steady_pipeline_zero_loss_basis_backend_coord_separable():
             periodic=True,
         ),
     )
+    # ty: ignore[invalid-argument-type]
     batch = pde_condition.on.sample(phx.domain.GridSampling({"x": FourierAxisSpec(64)}))
     pde_term = phx.terms.ResidualPenalty(
         pde_condition,
@@ -150,11 +154,11 @@ def test_pde_toy_steady_pipeline_zero_loss_basis_backend_coord_separable():
     assert loss < 1e-6
 
 
-def test_pde_toy_steady_pipeline_zero_loss_bilaplacian_jet_backend():
+def test_pde_toy_steady_pipeline_zero_loss_bilaplacian_jet_backend() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> float:
         return 1.0
 
     # Jet cannot be mixed with enforced boundary constraints (Boundary() enforced constraints /
@@ -178,13 +182,13 @@ def test_pde_toy_steady_pipeline_zero_loss_bilaplacian_jet_backend():
     assert loss < 1e-6
 
 
-def test_pde_toy_transient_pipeline_zero_loss():
+def test_pde_toy_transient_pipeline_zero_loss() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> float:
         return 1.0
 
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
@@ -249,13 +253,13 @@ def test_pde_toy_transient_pipeline_zero_loss():
     assert loss < 1e-6
 
 
-def test_pde_toy_transient_pipeline_zero_loss_jet_backend():
+def test_pde_toy_transient_pipeline_zero_loss_jet_backend() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> float:
         return 1.0
 
     # Jet cannot be mixed with enforced boundary constraints (Boundary() enforced constraints /
@@ -295,13 +299,13 @@ def test_pde_toy_transient_pipeline_zero_loss_jet_backend():
     assert loss < 1e-6
 
 
-def test_pde_toy_transient_enforced_initial_targets_dt2_zero_jet_backend():
+def test_pde_toy_transient_enforced_initial_targets_dt2_zero_jet_backend() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
     @domain.Function("x", "t")
-    def u(x, t):
+    def u(x: Any, t: Any) -> Any:
         return 1.0 + t**2
 
     initial = domain.component({"t": FixedStart()})

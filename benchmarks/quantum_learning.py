@@ -65,7 +65,7 @@ def _stratified_holdout(
 
 def _compiled_case(
     name: str,
-    function,
+    function: Any,
     arguments: tuple[Any, ...],
     /,
     *,
@@ -311,7 +311,7 @@ def _run(profile: str, /) -> dict[str, Any]:
     nested_selection = None
     if profile == "standard":
 
-        def projected_recipe(*, c=1.0):
+        def projected_recipe(*, c: Any=1.0) -> Any:
             return phx.ml.compose.Pipeline(
                 (
                     ("scale", phx.ml.preprocessing.MinMaxScaler((-jnp.pi, jnp.pi))),

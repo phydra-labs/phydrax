@@ -246,7 +246,8 @@ class FixedTopologyCohortBatch:
     def conditional_probability(self) -> Array:
         log_weights = self.dataset.case_log_weights
         # ``OperatorDataset.__post_init__`` always materializes case log weights.
-        assert log_weights is not None
+        if not (log_weights is not None):
+            raise RuntimeError("Internal invariant failed: log_weights is not None.")
         return jnp.exp(log_weights)
 
 
@@ -297,8 +298,14 @@ def batch_fixed_topology_cohort(
     targets: list[OperatorTargetBatch] = []
     for case in complete:
         # Complete cases are validated to carry operator inputs and targets.
-        assert case.operator_batch is not None
-        assert case.operator_targets is not None
+        if not (case.operator_batch is not None):
+            raise RuntimeError(
+                "Internal invariant failed: case.operator_batch is not None."
+            )
+        if not (case.operator_targets is not None):
+            raise RuntimeError(
+                "Internal invariant failed: case.operator_targets is not None."
+            )
         batches.append(case.operator_batch)
         targets.append(case.operator_targets)
     dataset = operator_dataset_from_cases(

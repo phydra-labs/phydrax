@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -25,20 +27,20 @@ from phydrax.operators.mechanics import (
 )
 
 
-def _deformation(dimension):
+def _deformation(dimension: Any) -> Any:
     if dimension == 2:
         return jnp.asarray([[1.08, 0.07], [0.02, 0.94]])
     return jnp.asarray([[1.08, 0.07, 0.01], [0.02, 0.94, 0.03], [0.0, 0.01, 1.04]])
 
 
-def _parameters():
+def _parameters() -> Any:
     return NeoHookeanParameters.from_shear_bulk(3.0, 11.0)
 
 
 @pytest.mark.parametrize("dimension", [2, 3])
 def test_finite_strain_kinematics_energy_stress_and_tangent_are_ad_consistent(
-    dimension,
-):
+    dimension: Any,
+) -> None:
     deformation = _deformation(dimension)
     parameters = _parameters()
     kinematics = finite_strain_kinematics(deformation)
@@ -81,7 +83,7 @@ def test_finite_strain_kinematics_energy_stress_and_tangent_are_ad_consistent(
 
 
 @pytest.mark.parametrize("dimension", [2, 3])
-def test_nanson_area_and_stress_transforms_are_exact_inverses(dimension):
+def test_nanson_area_and_stress_transforms_are_exact_inverses(dimension: Any) -> None:
     deformation = _deformation(dimension)
     parameters = _parameters()
     reference_area = (
@@ -107,7 +109,9 @@ def test_nanson_area_and_stress_transforms_are_exact_inverses(dimension):
 
 @pytest.mark.parametrize("kind", ["jacobian", "logarithmic"])
 @pytest.mark.parametrize("dimension", [2, 3])
-def test_volumetric_constraint_derivative_matches_forward_ad(kind, dimension):
+def test_volumetric_constraint_derivative_matches_forward_ad(
+    kind: Any, dimension: Any
+) -> None:
     deformation = _deformation(dimension)
     constraint = VolumetricConstraint(kind)
     value, derivative = constraint.evaluate(deformation)
@@ -122,7 +126,7 @@ def test_volumetric_constraint_derivative_matches_forward_ad(kind, dimension):
     )
 
 
-def test_finite_strain_and_material_admissibility_are_explicit():
+def test_finite_strain_and_material_admissibility_are_explicit() -> None:
     inverted = jnp.diag(jnp.asarray((-1.0, 1.0)))
     inverted_response = neo_hookean_response(inverted, _parameters())
     assert not bool(inverted_response.kinematic_admissible)
@@ -143,7 +147,7 @@ def test_finite_strain_and_material_admissibility_are_explicit():
         finite_strain_kinematics(jnp.ones((2, 3)))
 
 
-def test_canonical_moduli_kernels_support_batched_scalar_material_fields():
+def test_canonical_moduli_kernels_support_batched_scalar_material_fields() -> None:
     deformations = jnp.stack((_deformation(2), 1.03 * _deformation(2)))
     shear = jnp.asarray((2.0, 4.0))
     lambda_ = jnp.asarray((3.0, 5.0))

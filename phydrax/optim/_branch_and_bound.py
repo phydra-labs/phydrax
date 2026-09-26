@@ -331,7 +331,8 @@ def branch_and_bound(
                     incumbent_value = candidate.objective
 
         # Counted entries are only re-queued after their evaluation succeeded.
-        assert evaluation is not None
+        if not (evaluation is not None):
+            raise RuntimeError("Internal invariant failed: evaluation is not None.")
         if evaluation.failure is not None:
             failure = evaluation.failure
             unresolved_bound = inherited_bound

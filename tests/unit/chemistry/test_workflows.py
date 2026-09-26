@@ -1,21 +1,26 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _case():
+def _case() -> Any:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     target = np.asarray(
         [[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]],
         dtype="float64",
     )
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [8, 1, 1],
         target
         + np.asarray([[0.05, -0.03, 0.02], [0.02, 0.04, -0.01], [-0.03, 0.01, 0.03]]),
+        # ty: ignore[invalid-argument-type]
         [15.999, 1.008, 1.008],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[101, 102, 103],
         name="water-fixture",
     )
@@ -24,7 +29,7 @@ def _case():
     )
     stiffness = 2.0
 
-    def evaluate(positions, _cell):
+    def evaluate(positions: Any, _cell: Any) -> Any:
         coordinate = jnp.asarray(positions)
         delta = coordinate - jnp.asarray(target)
         energy = 0.5 * stiffness * jnp.sum(delta**2)
@@ -36,10 +41,13 @@ def _case():
             True,
             provider_id="harmonic-surface",
             source_result_id=phx.atomistic.AtomicStructure(
+                # ty: ignore[invalid-argument-type]
                 [8, 1, 1],
                 coordinate,
+                # ty: ignore[invalid-argument-type]
                 [15.999, 1.008, 1.008],
                 units.scale,
+                # ty: ignore[invalid-argument-type]
                 particle_ids=[101, 102, 103],
             ).structure_id,
         )
@@ -54,7 +62,7 @@ def _case():
     return units, target, structure, system, surface
 
 
-def test_optimization_hessian_vibration_and_rrho_form_one_typed_workflow():
+def test_optimization_hessian_vibration_and_rrho_form_one_typed_workflow() -> None:
     units, target, structure, system, surface = _case()
     convergence = phx.chemistry.MolecularGeometryConvergencePlan(
         maximum_force=1.0e-7,
@@ -113,20 +121,26 @@ def test_optimization_hessian_vibration_and_rrho_form_one_typed_workflow():
     assert molar.energy_unit == phx.units.KILOJOULE_PER_MOLE
 
 
-def test_native_atomistic_program_adapts_to_the_same_surface_contract():
+def test_native_atomistic_program_adapts_to_the_same_surface_contract() -> None:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [1, 2],
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0],
+        # ty: ignore[invalid-argument-type]
         molecule_ids=[0, 0],
     ).prepare()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
+        # ty: ignore[invalid-argument-type]
         [phx.atomistic.LennardJonesPotential([0.2], [1.0], 2.5)]
     ).prepare(system)
     surface = phx.chemistry.AtomisticPotentialEnergySurface(

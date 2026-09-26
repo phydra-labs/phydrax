@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _immersed_system(count=8):
+def _immersed_system(count: Any = 8) -> Any:
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(2)
@@ -35,7 +38,7 @@ def _immersed_system(count=8):
     return finite_volume, operators, boundaries, markers, transfer, projection
 
 
-def test_exact_immersed_projection_preserves_zero_state():
+def test_exact_immersed_projection_preserves_zero_state() -> None:
     finite_volume, operators, _, markers, _, projection = _immersed_system()
     zero_velocity = tuple(
         jnp.zeros(layout.shape) for layout in finite_volume.face_layouts
@@ -52,7 +55,7 @@ def test_exact_immersed_projection_preserves_zero_state():
     assert result.kkt_residual_norm < 1.0e-8
 
 
-def test_marker_interpolation_adjoint_matches_spread_and_jit():
+def test_marker_interpolation_adjoint_matches_spread_and_jit() -> None:
     finite_volume, operators, _, markers, transfer, _ = _immersed_system()
     relation = transfer.relation(markers.reference_position)
     operator = transfer.interpolation_operator(relation)
@@ -78,7 +81,7 @@ def test_marker_interpolation_adjoint_matches_spread_and_jit():
     )
 
 
-def test_marker_geometry_jvp_is_finite_inside_fixed_routes():
+def test_marker_geometry_jvp_is_finite_inside_fixed_routes() -> None:
     finite_volume, _, _, markers, transfer, _ = _immersed_system()
     velocity = tuple(
         jnp.sin(
@@ -89,7 +92,7 @@ def test_marker_geometry_jvp_is_finite_inside_fixed_routes():
     position = markers.reference_position + jnp.asarray([0.013, -0.017])
     tangent = jnp.full_like(position, 0.01)
 
-    def observable(value):
+    def observable(value: Any) -> Any:
         relation = transfer.relation(value)
         return jnp.sum(transfer.gather(relation, velocity) ** 2)
 

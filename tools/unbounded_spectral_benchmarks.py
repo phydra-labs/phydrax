@@ -7,6 +7,7 @@ import json
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -47,7 +48,7 @@ class UnboundedSpectralBenchmarkRecord:
         )
 
 
-def _measure(function, argument, repeats):
+def _measure(function: Any, argument: Any, repeats: Any) -> Any:
     compiled = jax.jit(function)
     started = time.perf_counter()
     value = compiled(argument)
@@ -61,7 +62,7 @@ def _measure(function, argument, repeats):
     return value, first, steady
 
 
-def _oscillator(mode_count):
+def _oscillator(mode_count: Any) -> Any:
     domain = phx.discretization.AxisDomain.real_line()
     basis = phx.discretization.ConstrainedBasisPlan(
         phx.discretization.RationalChebyshevLineBasisPlan(mode_count, 4.0),

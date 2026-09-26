@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.metadata
 import math
 from dataclasses import dataclass
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -28,7 +29,7 @@ from benchmarks._runtime import (
 from phydrax._fingerprint import canonical_fingerprint
 
 
-def test_duration_distribution_derives_both_unit_views_from_raw_samples():
+def test_duration_distribution_derives_both_unit_views_from_raw_samples() -> None:
     distribution = DurationDistribution((0.001, 0.003, 0.002))
 
     assert distribution.count == 3
@@ -51,7 +52,7 @@ def test_duration_distribution_derives_both_unit_views_from_raw_samples():
     }
 
 
-def test_duration_distribution_empty_and_invalid_contracts():
+def test_duration_distribution_empty_and_invalid_contracts() -> None:
     assert DurationDistribution(()).to_seconds_dict() == {
         "count": 0,
         "samples_seconds": [],
@@ -68,17 +69,17 @@ def test_duration_distribution_empty_and_invalid_contracts():
         DurationDistribution((1.0,)).to_dict(unit="minutes")  # ty: ignore[invalid-argument-type]
 
 
-def test_measure_repeated_synchronizes_warmups_and_retains_every_sample():
+def test_measure_repeated_synchronizes_warmups_and_retains_every_sample() -> None:
     events = []
     counter = 0
 
-    def operation():
+    def operation() -> Any:
         nonlocal counter
         counter += 1
         events.append(("operation", counter))
         return counter
 
-    def synchronizer(value):
+    def synchronizer(value: Any) -> Any:
         events.append(("synchronize", value))
         return value
 
@@ -109,10 +110,10 @@ def test_measure_repeated_synchronizes_warmups_and_retains_every_sample():
         measure_repeated(operation, warmup=-1, repeats=1)
 
 
-def test_host_and_synchronized_measurement_have_distinct_boundaries():
+def test_host_and_synchronized_measurement_have_distinct_boundaries() -> None:
     events = []
 
-    def operation():
+    def operation() -> str:
         events.append("operation")
         return "value"
 
@@ -130,14 +131,14 @@ def test_host_and_synchronized_measurement_have_distinct_boundaries():
     assert events == ["operation", "operation", "sync:value"]
 
 
-def test_lowering_and_compilation_are_ordered_independent_host_phases():
+def test_lowering_and_compilation_are_ordered_independent_host_phases() -> None:
     events = []
 
-    def lower():
+    def lower() -> str:
         events.append("lower")
         return "lowered"
 
-    def compile(lowered):
+    def compile(lowered: Any) -> str:
         events.append(f"compile:{lowered}")
         return "compiled"
 
@@ -155,7 +156,7 @@ class _NestedArrays:
     second: object
 
 
-def test_synchronize_and_logical_bytes_cover_nested_pytrees():
+def test_synchronize_and_logical_bytes_cover_nested_pytrees() -> None:
     value = _NestedArrays(
         {"array": jnp.ones((2,), dtype=jnp.float32)},
         (np.ones((3,), dtype=np.float64), "host"),
@@ -173,9 +174,12 @@ class _MemoryAnalysis:
     generated_code_size_in_bytes: int = 40
 
 
-def test_compiler_evidence_distinguishes_values_unavailability_and_not_applicable():
+def test_compiler_evidence_distinguishes_values_unavailability_and_not_applicable() -> (
+    None
+):
     evidence = compiler_evidence(
         {"flops": 101.2, "bytes accessed": 202.4},
+        # ty: ignore[invalid-argument-type]
         _MemoryAnalysis(),
         source="xla-cost-analysis",
     )
@@ -199,12 +203,14 @@ def test_compiler_evidence_distinguishes_values_unavailability_and_not_applicabl
 
 
 class _Distribution:
-    def __init__(self, name: str, version: str):
+    def __init__(self, name: str, version: str) -> None:
         self.metadata = {"Name": name}
         self.version = version
 
 
-def test_installed_package_fingerprint_normalizes_order_and_spelling(monkeypatch):
+def test_installed_package_fingerprint_normalizes_order_and_spelling(
+    monkeypatch: Any,
+) -> None:
     first = (_Distribution("A_Package", "1"), _Distribution("b.package", "2"))
     second = (_Distribution("B-PACKAGE", "2"), _Distribution("a-package", "1"))
     monkeypatch.setattr(importlib.metadata, "distributions", lambda: first)
@@ -218,7 +224,7 @@ def test_installed_package_fingerprint_normalizes_order_and_spelling(monkeypatch
         installed_package_fingerprint()
 
 
-def test_captured_environment_fingerprint_covers_serialized_runtime_evidence():
+def test_captured_environment_fingerprint_covers_serialized_runtime_evidence() -> None:
     environment = capture_environment()
     payload = environment.to_dict()
     observed = payload.pop("fingerprint")
@@ -228,7 +234,7 @@ def test_captured_environment_fingerprint_covers_serialized_runtime_evidence():
     assert payload["package_fingerprint"]
 
 
-def test_captured_environment_records_xla_worker_count(monkeypatch):
+def test_captured_environment_records_xla_worker_count(monkeypatch: Any) -> None:
     monkeypatch.setenv("NPROC", "3")
     environment = capture_environment()
     assert dict(environment.performance_environment)["NPROC"] == "3"

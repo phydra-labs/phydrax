@@ -1,7 +1,9 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+
 from types import SimpleNamespace
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -56,7 +58,7 @@ from phydrax.qualification import (
 from phydrax.sparse import EdgeRelation
 
 
-def _provenance(profile_id="profile:periodic"):
+def _provenance(profile_id: Any = "profile:periodic") -> Any:
     return ArrayArtifactProvenance(
         "phydrax-test-producer",
         ("source:independent-fixture",),
@@ -65,9 +67,13 @@ def _provenance(profile_id="profile:periodic"):
     )
 
 
-def test_periodic_family_archive_round_trip_requires_matching_structure(tmp_path):
+def test_periodic_family_archive_round_trip_requires_matching_structure(
+    tmp_path: Any,
+) -> None:
+    # ty: ignore[invalid-argument-type]
     relation = EdgeRelation([0], [0], source_size=1, target_size=1)
     plan = PeriodicTranslationFamilyPlan(relation, [[0]], [0])
+    # ty: ignore[invalid-argument-type]
     state = PeriodicTranslationFamilyState(plan, [[[2.5]]])
     path = tmp_path / "periodic-family.pxa"
 
@@ -75,15 +81,18 @@ def test_periodic_family_archive_round_trip_requires_matching_structure(tmp_path
     restored, reopened = read_periodic_artifact_archive(path, state, _provenance())
 
     assert reopened.artifact_id == written.artifact_id
+    # ty: ignore[unresolved-attribute]
     assert restored.numeric_id == state.numeric_id
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(restored.values, state.values)
 
+    # ty: ignore[invalid-argument-type]
     other = PeriodicTranslationFamilyState(plan, [[[3.0]]])
     with pytest.raises(ValueError, match="caller-prepared structure"):
         read_periodic_artifact_archive(path, other, _provenance())
 
 
-def test_quantum_sector_archive_preserves_direct_basis_tables(tmp_path):
+def test_quantum_sector_archive_preserves_direct_basis_tables(tmp_path: Any) -> None:
     policy = SectorBasisResourcePolicy(
         maximum_dimension=16,
         maximum_table_bytes=4096,
@@ -102,12 +111,17 @@ def test_quantum_sector_archive_preserves_direct_basis_tables(tmp_path):
         _provenance("profile:sector"),
     )
 
+    # ty: ignore[unresolved-attribute]
     assert restored.basis_id == basis.basis_id
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(restored.state_charges, basis.state_charges)
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(restored.suffix_counts, basis.suffix_counts)
 
 
-def test_detector_result_archive_preserves_masks_residuals_and_sign(tmp_path):
+def test_detector_result_archive_preserves_masks_residuals_and_sign(
+    tmp_path: Any,
+) -> None:
     result = ShockleyRamoResponseResult(
         jnp.asarray([[[0.0, -1.0, -2.0], [0.0, 1.0, 2.0]]]),
         jnp.asarray([[[-1.0, -1.0], [1.0, 1.0]]]),
@@ -137,17 +151,22 @@ def test_detector_result_archive_preserves_masks_residuals_and_sign(tmp_path):
     )
 
     np.testing.assert_array_equal(
-        restored.interpolation_support, result.interpolation_support
+        # ty: ignore[unresolved-attribute]
+        restored.interpolation_support,
+        result.interpolation_support,
     )
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         restored.current_integral_closure_defect,
         result.current_integral_closure_defect,
     )
+    # ty: ignore[unresolved-attribute]
     assert restored.sign_convention == result.sign_convention
+    # ty: ignore[unresolved-attribute]
     assert not bool(restored.successful)
 
 
-def test_periodic_profiles_are_exact_unreleased_single_tuple_candidates():
+def test_periodic_profiles_are_exact_unreleased_single_tuple_candidates() -> None:
     profiles = periodic_candidate_profiles()
 
     assert profiles
@@ -159,7 +178,7 @@ def test_periodic_profiles_are_exact_unreleased_single_tuple_candidates():
     assert len({profile.profile_id for profile in profiles}) == len(profiles)
 
 
-def test_candidate_ledger_covers_every_implemented_baseline_slice():
+def test_candidate_ledger_covers_every_implemented_baseline_slice() -> None:
     profiles = condensed_matter_candidate_profiles()
     capabilities = {profile.capability for profile in profiles}
     assert {
@@ -188,7 +207,7 @@ def test_candidate_ledger_covers_every_implemented_baseline_slice():
     )
 
 
-def test_frontier_inventory_is_separate_and_maturity_neutral():
+def test_frontier_inventory_is_separate_and_maturity_neutral() -> None:
     profiles = condensed_matter_frontier_candidate_profiles()
     capabilities = {profile.capability for profile in profiles}
     assert {
@@ -206,14 +225,14 @@ def test_frontier_inventory_is_separate_and_maturity_neutral():
 
 
 class _StructuralTrustPolicy:
-    def verify_index(self, index, at_time):
+    def verify_index(self, index: Any, at_time: Any) -> bool:
         return True
 
-    def accepts_evidence(self, evidence, at_time):
+    def accepts_evidence(self, evidence: Any, at_time: Any) -> bool:
         return True
 
 
-def _candidate(name):
+def _candidate(name: Any) -> Any:
     support = SupportTuple(name, {"scope": "exact"})
     return CapabilityProfile(
         f"{name}.profile",
@@ -225,7 +244,7 @@ def _candidate(name):
     )
 
 
-def test_closure_ledger_refuses_missing_and_unreleased_dependencies():
+def test_closure_ledger_refuses_missing_and_unreleased_dependencies() -> None:
     required = _candidate("test.required")
     unrelated = _candidate("test.unrelated")
     ledger = CondensedMatterClosureLedger.from_profiles((required,))
@@ -256,7 +275,7 @@ def test_closure_ledger_refuses_missing_and_unreleased_dependencies():
         require_condensed_matter_closure(unreleased, ledger, policy, at_time=0)
 
 
-def _campaign(prefix, calibration_unit, locked_unit):
+def _campaign(prefix: Any, calibration_unit: Any, locked_unit: Any) -> Any:
     calibration = ScientificCase(
         f"{prefix}-calibration",
         calibration_unit,
@@ -284,7 +303,7 @@ def _campaign(prefix, calibration_unit, locked_unit):
     )
 
 
-def test_campaign_aggregation_retains_roles_and_refuses_cross_owner_leakage():
+def test_campaign_aggregation_retains_roles_and_refuses_cross_owner_leakage() -> None:
     aggregation = condensed_matter_candidate_campaigns()
     assert (
         CondensedMatterCampaignAggregation.from_record(
@@ -345,11 +364,11 @@ def test_campaign_aggregation_retains_roles_and_refuses_cross_owner_leakage():
         )
 
 
-def test_orchestrator_retains_every_component_failure(monkeypatch):
+def test_orchestrator_retains_every_component_failure(monkeypatch: Any) -> None:
     returncodes = iter((0, 7, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0))
     invoked = []
 
-    def execute(command, **kwargs):
+    def execute(command: Any, **kwargs: Any) -> Any:
         invoked.append(command)
         return SimpleNamespace(returncode=next(returncodes))
 
@@ -358,6 +377,7 @@ def test_orchestrator_retains_every_component_failure(monkeypatch):
 
     assert len(invoked) == 12
     assert not result["passed"]
+    # ty: ignore[not-iterable]
     assert [component["returncode"] for component in result["components"]] == [
         0,
         7,

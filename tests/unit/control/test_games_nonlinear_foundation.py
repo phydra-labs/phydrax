@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -17,8 +20,8 @@ from phydrax.control.games import (
 )
 
 
-def _player_stage_cost(player):
-    def cost(context, state, control, args):
+def _player_stage_cost(player: Any) -> Any:
+    def cost(context: Any, state: Any, control: Any, args: Any) -> Any:
         step = context.step_index
         return (
             0.5 * state @ args["Q"][player, step] @ state
@@ -32,8 +35,8 @@ def _player_stage_cost(player):
     return cost
 
 
-def _player_terminal_cost(player):
-    def cost(time, state, args):
+def _player_terminal_cost(player: Any) -> Any:
+    def cost(time: Any, state: Any, args: Any) -> Any:
         del time
         return (
             0.5 * state @ args["Q_terminal"][player] @ state
@@ -44,7 +47,7 @@ def _player_terminal_cost(player):
     return cost
 
 
-def _affine_data():
+def _affine_data() -> Any:
     return {
         "A": jnp.asarray(
             [
@@ -132,7 +135,7 @@ def _affine_data():
     }
 
 
-def _permute_affine_data(data):
+def _permute_affine_data(data: Any) -> Any:
     players = jnp.asarray([1, 0])
     controls = jnp.asarray([2, 0, 1])
     return {
@@ -153,14 +156,16 @@ def _permute_affine_data(data):
     }
 
 
-def _affine_problem(initial_state, *, permuted=False, failing_policy=False):
+def _affine_problem(
+    initial_state: Any, *, permuted: Any = False, failing_policy: Any = False
+) -> Any:
     data = _affine_data()
     if permuted:
         data = _permute_affine_data(data)
     state_layout = phx.dynamics.StateLayout((2,))
     input_layout = phx.dynamics.InputLayout((3,), roles="control")
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         step = context.step_index
         return (
             args["A"][step] @ state
@@ -195,7 +200,7 @@ def _affine_problem(initial_state, *, permuted=False, failing_policy=False):
         problem_id="permuted-affine-game" if permuted else "affine-game",
     )
 
-    def feedback_policy(context, state, args):
+    def feedback_policy(context: Any, state: Any, args: Any) -> Any:
         step = context.step_index
         control = args["K"][step] @ state + args["feedforward"][step]
         if failing_policy:
@@ -214,8 +219,8 @@ def _affine_problem(initial_state, *, permuted=False, failing_policy=False):
     return problem, policy
 
 
-def _direct_player_objectives(problem, joint_controls):
-    def step(state, step_control):
+def _direct_player_objectives(problem: Any, joint_controls: Any) -> Any:
+    def step(state: Any, step_control: Any) -> Any:
         step_index, control = step_control
         context = phx.dynamics.DiscreteStepContext(
             problem.time_grid.times[step_index],
@@ -247,7 +252,7 @@ def _direct_player_objectives(problem, joint_controls):
     return jnp.sum(stage_costs, axis=0) + terminal
 
 
-def test_affine_lq_callbacks_are_unweighted_and_keep_physical_time_axes():
+def test_affine_lq_callbacks_are_unweighted_and_keep_physical_time_axes() -> None:
     problem, policy = _affine_problem(jnp.asarray([0.35, -0.25]))
     evaluation = evaluate_game_policy(problem, policy)
     trajectory = evaluation.trajectory
@@ -297,7 +302,7 @@ def test_affine_lq_callbacks_are_unweighted_and_keep_physical_time_axes():
     assert not np.allclose(np.asarray(evaluation.total_costs), duration_weighted)
 
 
-def test_owned_adjoint_rows_equal_whole_horizon_complete_objective_gradients():
+def test_owned_adjoint_rows_equal_whole_horizon_complete_objective_gradients() -> None:
     problem, policy = _affine_problem(jnp.asarray([0.35, -0.25]))
     evaluation = evaluate_game_policy(problem, policy)
     scaling = ILQGameScaling(
@@ -327,7 +332,7 @@ def test_owned_adjoint_rows_equal_whole_horizon_complete_objective_gradients():
     np.testing.assert_allclose(residual.dynamics_defect, 0.0, atol=2e-7)
 
 
-def test_player_and_owned_control_permutation_is_equivariant():
+def test_player_and_owned_control_permutation_is_equivariant() -> None:
     initial = jnp.asarray([0.35, -0.25])
     problem, policy = _affine_problem(initial)
     permuted_problem, permuted_policy = _affine_problem(initial, permuted=True)
@@ -371,7 +376,7 @@ def test_player_and_owned_control_permutation_is_equivariant():
     )
 
 
-def test_explicit_dimensionless_scaling_controls_all_reported_norms():
+def test_explicit_dimensionless_scaling_controls_all_reported_norms() -> None:
     problem, policy = _affine_problem(jnp.asarray([0.35, -0.25]))
     evaluation = evaluate_game_policy(problem, policy)
     scaling = ILQGameScaling(
@@ -416,7 +421,7 @@ def test_explicit_dimensionless_scaling_controls_all_reported_norms():
     )
 
 
-def test_mixed_case_failure_is_local_and_preserves_the_first_cause():
+def test_mixed_case_failure_is_local_and_preserves_the_first_cause() -> None:
     problem, policy = _affine_problem(
         jnp.asarray([[0.35, -0.25], [-0.2, 0.1]]), failing_policy=True
     )
@@ -444,13 +449,13 @@ def test_mixed_case_failure_is_local_and_preserves_the_first_cause():
     assert np.all(np.isnan(np.asarray(evaluation.total_costs[1])))
 
 
-def test_explicit_transition_failure_stops_game_callbacks_and_preserves_status():
+def test_explicit_transition_failure_stops_game_callbacks_and_preserves_status() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0, 2.0]), time_id="failed-game-transition-grid"
     )
     input_layout = phx.dynamics.InputLayout((1,), roles="control")
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del control, args
         invalid_later_call = context.source > 0.0
         checked = eqx.error_if(
@@ -490,13 +495,14 @@ def test_explicit_transition_failure_stops_game_callbacks_and_preserves_status()
 
     assert int(evaluation.status) == int(GamePolicyEvaluationStatus.TRANSITION_FAILED)
     np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
         evaluation.trajectory.transition_evidence.attempted,
         jnp.asarray([True, False]),
     )
     assert int(evaluation.trajectory.backend_status) == 91
 
 
-def test_certificate_is_only_local_nominal_stationarity_evidence():
+def test_certificate_is_only_local_nominal_stationarity_evidence() -> None:
     problem, policy = _affine_problem(jnp.asarray([0.35, -0.25]))
     evaluation = evaluate_game_policy(problem, policy)
     residual = nominal_nash_residual(

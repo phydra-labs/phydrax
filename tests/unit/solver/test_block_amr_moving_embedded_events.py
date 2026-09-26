@@ -1,12 +1,15 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _geometry_plan():
+def _geometry_plan() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4),),
         axis_names=("x",),
@@ -31,12 +34,12 @@ def _geometry_plan():
     )
 
 
-def _journal(epoch):
+def _journal(epoch: Any) -> Any:
     artifacts = phx.solver.FiniteVolumeTopologyArtifacts(epoch, "initial-prepared")
     return phx.solver.FiniteVolumeTopologyEventJournal(epoch, artifacts, capacity=4)
 
 
-def test_moving_embedded_boundary_commits_one_conservative_successor_epoch():
+def test_moving_embedded_boundary_commits_one_conservative_successor_epoch() -> None:
     geometry = _geometry_plan()
     source = geometry.state(0.0)
     target = geometry.state(1.0, revision=1)
@@ -60,7 +63,9 @@ def test_moving_embedded_boundary_commits_one_conservative_successor_epoch():
     assert result.evidence.budget_defect == 0.0
 
 
-def test_moving_embedded_boundary_rejects_unclosed_swept_volume_budget_atomically():
+def test_moving_embedded_boundary_rejects_unclosed_swept_volume_budget_atomically() -> (
+    None
+):
     geometry = _geometry_plan()
     source = geometry.state(0.0)
     target = geometry.state(1.0, revision=1)

@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,7 +11,7 @@ from phydrax.nn.models import MLP
 from tests._ported_models import full_port, in_order, PortedAffine
 
 
-def _problem(*, mask=None):
+def _problem(*, mask: Any = None) -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[1.0], [2.0]]),
@@ -43,7 +45,7 @@ def _problem(*, mask=None):
     )
 
 
-def test_etkf_matches_linear_gaussian_mean_and_variance():
+def test_etkf_matches_linear_gaussian_mean_and_variance() -> None:
     problem = _problem()
     exact = phx.uq.kalman_filter(problem)
     ensemble = phx.uq.ensemble_transform_kalman_filter(
@@ -59,7 +61,7 @@ def test_etkf_matches_linear_gaussian_mean_and_variance():
     assert jnp.all(ensemble.status == phx.uq.ENSEMBLE_FILTER_SUCCESS)
 
 
-def test_streaming_and_batch_etkf_are_identical():
+def test_streaming_and_batch_etkf_are_identical() -> None:
     problem = _problem()
     batch = phx.uq.ensemble_transform_kalman_filter(jr.key(21), problem, ensemble_size=32)
     state = phx.uq.initialize_ensemble_filter(jr.key(21), problem, ensemble_size=32)
@@ -75,7 +77,7 @@ def test_streaming_and_batch_etkf_are_identical():
     )
 
 
-def test_missing_observation_is_forecast_only_and_smoother_is_terminally_exact():
+def test_missing_observation_is_forecast_only_and_smoother_is_terminally_exact() -> None:
     problem = _problem(mask=jnp.asarray([[True], [False]]))
     filtered = phx.uq.ensemble_transform_kalman_filter(
         jr.key(22), problem, ensemble_size=64
@@ -89,7 +91,7 @@ def test_missing_observation_is_forecast_only_and_smoother_is_terminally_exact()
     assert predictive.samples.data.shape == (2, 64, 1)
 
 
-def test_nonlinear_gaussian_observation_and_diagnostics():
+def test_nonlinear_gaussian_observation_and_diagnostics() -> None:
     base = _problem()
     observation = phx.stochastic.GaussianObservationModel(
         lambda state, time, context: state**2,
@@ -119,7 +121,7 @@ def test_nonlinear_gaussian_observation_and_diagnostics():
     assert jnp.all(diagnostics.ensemble_spread >= 0.0)
 
 
-def _with_observation(base, location, /):
+def _with_observation(base: Any, location: Any, /) -> Any:
     observation = phx.stochastic.GaussianObservationModel(
         location,
         jnp.asarray([[0.2]]),
@@ -134,7 +136,7 @@ def _with_observation(base, location, /):
     )
 
 
-def test_learned_observation_location_runs_unchanged_etkf_numerics():
+def test_learned_observation_location_runs_unchanged_etkf_numerics() -> None:
     base = _problem()
     network = MLP(in_size=1, out_size=1, width_size=4, depth=1, key=jr.key(3))
     location = phx.stochastic.ModelObservationLocation(
@@ -160,7 +162,7 @@ def test_learned_observation_location_runs_unchanged_etkf_numerics():
     }
     context = phx.stochastic.StateSpaceStepContext.empty()
 
-    def log_likelihood(parameters):
+    def log_likelihood(parameters: Any) -> Any:
         bound = phx.combine_parameters(parameters, model_state, fixed)
         return bound.log_prob(
             jnp.asarray([1.0]), jnp.asarray([0.3]), 0.5, jnp.asarray([True]), context
@@ -171,14 +173,16 @@ def test_learned_observation_location_runs_unchanged_etkf_numerics():
     assert any(jnp.any(leaf != 0.0) for leaf in jax.tree.leaves(gradient))
 
 
-def test_model_observation_location_requires_exact_pointwise_sizes():
+def test_model_observation_location_requires_exact_pointwise_sizes() -> None:
     network = MLP(in_size=2, out_size=1, width_size=4, depth=1, key=jr.key(4))
     location = phx.stochastic.ModelObservationLocation(
         network, state_shape=(1,), observation_shape=(1,), time_input=True
     )
     states = jnp.asarray([[0.1], [0.4], [-0.2]])
 
+    # ty: ignore[invalid-argument-type]
     batched = location(states, 0.5, None)
+    # ty: ignore[invalid-argument-type]
     single = jnp.stack([location(state, 0.5, None) for state in states])
     assert batched.shape == (3, 1)
     assert jnp.allclose(batched, single, rtol=1e-12, atol=1e-14)
@@ -188,7 +192,7 @@ def test_model_observation_location_requires_exact_pointwise_sizes():
         )
 
 
-def test_port_declaring_observation_location_binds_declared_owner_ports():
+def test_port_declaring_observation_location_binds_declared_owner_ports() -> None:
     owner = phx.ModelPorts(
         inputs=(full_port("latent.state", (1,)), full_port("latent.time", ())),
         outputs=(full_port("sensor.reading", (1,)),),
@@ -196,10 +200,12 @@ def test_port_declaring_observation_location_binds_declared_owner_ports():
     model = PortedAffine(owner, out_size=1, weight=jnp.asarray([[2.0, 1.0]]))
     arguments = dict(state_shape=(1,), observation_shape=(1,), time_input=True)
     with pytest.raises(ValueError, match="observation-model'.*owner_ports"):
+        # ty: ignore[invalid-argument-type]
         phx.stochastic.ModelObservationLocation(model, **arguments)
     with pytest.raises(ValueError, match="output ports must declare the event shapes"):
         phx.stochastic.ModelObservationLocation(
             model,
+            # ty: ignore[invalid-argument-type]
             **arguments,
             ports=phx.ModelPorts(
                 inputs=owner.inputs, outputs=(full_port("sensor.reading", (2,)),)
@@ -208,17 +214,25 @@ def test_port_declaring_observation_location_binds_declared_owner_ports():
         )
 
     location = phx.stochastic.ModelObservationLocation(
-        model, **arguments, ports=owner, port_mapping=in_order(owner, owner)
+        model,
+        # ty: ignore[invalid-argument-type]
+        **arguments,
+        ports=owner,
+        port_mapping=in_order(owner, owner),
     )
     evidence = location.component_contract().port_binding
+    # ty: ignore[unresolved-attribute]
     assert evidence.inputs == tuple((port.port_id,) * 2 for port in owner.inputs)
+    # ty: ignore[unresolved-attribute]
     assert evidence.unverified == ()
     assert jnp.allclose(
-        location(jnp.asarray([[0.5], [1.0]]), 0.25, None), jnp.asarray([[1.25], [2.25]])
+        # ty: ignore[invalid-argument-type]
+        location(jnp.asarray([[0.5], [1.0]]), 0.25, None),
+        jnp.asarray([[1.25], [2.25]]),
     )
 
 
-def test_high_dimensional_path_uses_ensemble_rank_not_state_covariance():
+def test_high_dimensional_path_uses_ensemble_rank_not_state_covariance() -> None:
     state_size = 128
     ensemble_size = 12
     prior = phx.stochastic.GaussianStatePrior(

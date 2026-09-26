@@ -1,6 +1,7 @@
 """Behavioral contracts at the host geophysical/native-operator boundary."""
 
 from dataclasses import replace
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -23,7 +24,7 @@ from phydrax.applications.geophysics._metrics import (
 from phydrax.applications.geophysics._quantities import GeophysicalQuantity
 
 
-def _column(*, kind="interval_increment", control=False):
+def _column(*, kind: Any = "interval_increment", control: Any = False) -> Any:
     op = phx.nn.operator
     q = GeophysicalQuantity("temperature", "temperature", phx.units.KELVIN)
     fields = [
@@ -55,7 +56,7 @@ def _column(*, kind="interval_increment", control=False):
     )
 
 
-def _records():
+def _records() -> Any:
     return tuple(
         phx.nn.operator.OperatorCaseProvenance(
             f"c{i}",
@@ -69,7 +70,7 @@ def _records():
     )
 
 
-def _dataset(binding, *, forcing=None, forcing_bounds=None):
+def _dataset(binding: Any, *, forcing: Any = None, forcing_bounds: Any = None) -> Any:
     before = 280.0 + np.arange(24).reshape(12, 2, 1)
     after = before + np.asarray([1.0, -0.5])[None, :, None]
     resolved = np.full_like(before, 0.25)
@@ -86,7 +87,7 @@ def _dataset(binding, *, forcing=None, forcing_bounds=None):
     )
 
 
-def test_column_labels_subtract_finite_resolved_increment_and_keep_mass_order():
+def test_column_labels_subtract_finite_resolved_increment_and_keep_mass_order() -> None:
     binding = _column()
     data = _dataset(binding)
     np.testing.assert_allclose(
@@ -105,7 +106,7 @@ def test_column_labels_subtract_finite_resolved_increment_and_keep_mass_order():
         replace(binding, interval_seconds=30.0)
 
 
-def test_column_forcing_shift_is_rejected_even_when_duration_matches():
+def test_column_forcing_shift_is_rejected_even_when_duration_matches() -> None:
     binding = _column(control=True)
     samples = phx.nn.operator.FunctionSamples(
         values=jnp.ones((12, 2)),
@@ -125,7 +126,7 @@ def test_column_forcing_shift_is_rejected_even_when_duration_matches():
         )
 
 
-def test_same_model_simulation_holdout_and_train_only_normalization():
+def test_same_model_simulation_holdout_and_train_only_normalization() -> None:
     binding = _column()
     experiment = GeophysicalLearningExperiment.prepare(binding.task, _dataset(binding))
     partitions = (
@@ -136,12 +137,14 @@ def test_same_model_simulation_holdout_and_train_only_normalization():
     groups = [
         {
             tuple(record.identities[key] for key in ("scenario", "model", "member"))
+            # ty: ignore[not-iterable]
             for record in part.provenance
         }
         for part in partitions
     ]
     assert not (groups[0] & groups[1] or groups[0] & groups[2] or groups[1] & groups[2])
     assert all(
+        # ty: ignore[not-iterable]
         {record.identities["model"] for record in part.provenance} == {"shared-model"}
         for part in partitions
     )
@@ -169,21 +172,29 @@ def test_same_model_simulation_holdout_and_train_only_normalization():
         jit=False,
     )
     assert fit.completed_steps == 2
+    # ty: ignore[unresolved-attribute]
     normalized = fit.normalization.normalize_batch(experiment.split.train.batch)
     values = normalized.input("state").values
     weights = normalized.input("state").quadrature(case_shape=normalized.case_shape)
     np.testing.assert_allclose(
-        jnp.sum(values * weights) / jnp.sum(weights), 0.0, atol=2e-5
+        # ty: ignore[unsupported-operator]
+        jnp.sum(values * weights) / jnp.sum(weights),
+        0.0,
+        atol=2e-5,
     )
     # Holding out cases cannot pull the training normalization toward their mean.
     heldout = experiment.split.test.batch
+    # ty: ignore[unresolved-attribute]
     normalized_test = fit.normalization.normalize_batch(heldout).input("state").values
     train_physical = experiment.split.train.batch.input("state").values
+    # ty: ignore[unsupported-operator]
     train_mean = jnp.sum(train_physical * weights) / jnp.sum(weights)
     test_weights = heldout.input("state").quadrature(case_shape=heldout.case_shape)
+    # ty: ignore[unsupported-operator]
     test_mean = jnp.sum(heldout.input("state").values * test_weights) / jnp.sum(
         test_weights
     )
+    # ty: ignore[unsupported-operator]
     normalized_mean = jnp.sum(normalized_test * test_weights) / jnp.sum(test_weights)
     assert float(normalized_mean) * float(test_mean - train_mean) > 0
     # A model-independent question still requires independent models explicitly.
@@ -195,7 +206,9 @@ def test_same_model_simulation_holdout_and_train_only_normalization():
         )
 
 
-def test_declared_simulation_groups_reject_disjoint_cases_from_the_same_simulation():
+def test_declared_simulation_groups_reject_disjoint_cases_from_the_same_simulation() -> (
+    None
+):
     binding = _column()
     experiment = GeophysicalLearningExperiment.prepare(binding.task, _dataset(binding))
     train = experiment.split.train
@@ -205,7 +218,9 @@ def test_declared_simulation_groups_reject_disjoint_cases_from_the_same_simulati
         GeophysicalLearningExperiment(binding.task, split)
 
 
-def test_explicit_chronological_window_split_accepts_same_simulation_but_rejects_overlap():
+def test_explicit_chronological_window_split_accepts_same_simulation_but_rejects_overlap() -> (
+    None
+):
     binding = _column()
     dataset = _dataset(binding)
     records = tuple(
@@ -234,10 +249,12 @@ def test_explicit_chronological_window_split_accepts_same_simulation_but_rejects
         experiment.split.test,
     )
     for left, right in zip(partitions[:-1], partitions[1:], strict=True):
+        # ty: ignore[not-iterable]
         assert max(record.order["end"] for record in left.provenance) <= min(
             record.order["start"] for record in right.provenance
         )
     assert all(
+        # ty: ignore[not-iterable]
         {record.identities["member"] for record in part.provenance} == {"r1"}
         for part in partitions
     )
@@ -249,7 +266,9 @@ def test_explicit_chronological_window_split_accepts_same_simulation_but_rejects
         order={
             **overlapping[index].order,
             "end": min(
-                record.order["start"] for record in experiment.split.validation.provenance
+                record.order["start"]
+                # ty: ignore[not-iterable]
+                for record in experiment.split.validation.provenance
             )
             + 1.0,
         },
@@ -263,7 +282,7 @@ def test_explicit_chronological_window_split_accepts_same_simulation_but_rejects
         )
 
 
-def test_budget_projection_reports_corrections_and_rejects_unphysical_state():
+def test_budget_projection_reports_corrections_and_rejects_unphysical_state() -> None:
     binding = _column()
     before = jnp.asarray([[280.0], [280.0]])
     report = admit_column_closure(
@@ -291,7 +310,7 @@ def test_budget_projection_reports_corrections_and_rejects_unphysical_state():
         rejected.require_state()
 
 
-def test_masked_weighted_metrics_keep_lead_members_and_physical_error_units():
+def test_masked_weighted_metrics_keep_lead_members_and_physical_error_units() -> None:
     q = _column().quantities[0]
     truth = jnp.zeros((2, 1, 2, 1, 1))
     forecast = jnp.asarray(
@@ -315,6 +334,7 @@ def test_masked_weighted_metrics_keep_lead_members_and_physical_error_units():
     )
     np.testing.assert_allclose(field.crps.value, [2.5, 4.5])
     np.testing.assert_allclose(field.bias.value, [[2.0, 4.0], [4.5, 4.5]])
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(field.drift_per_second.value, [2.5 / 60.0, 0.5 / 60.0])
     assert field.error_unit == phx.units.KELVIN
     assert np.all(np.asarray(field.rmse.valid))
@@ -332,7 +352,7 @@ def test_masked_weighted_metrics_keep_lead_members_and_physical_error_units():
     assert not np.any(np.asarray(empty.fields[0].rmse.valid))
 
 
-def test_anomaly_provenance_and_explicit_multivariate_scaling():
+def test_anomaly_provenance_and_explicit_multivariate_scaling() -> None:
     q = _column().quantities[0]
     climatology = fit_geophysical_climatology(
         jnp.full((2, 2, 1, 1), 280.0),
@@ -356,23 +376,31 @@ def test_anomaly_provenance_and_explicit_multivariate_scaling():
     )
     with pytest.raises(ValueError, match="independent"):
         geophysical_forecast_metrics(
-            truth, ensemble, verification_case_ids=("train-a",), **kwargs
+            truth,
+            ensemble,
+            verification_case_ids=("train-a",),
+            # ty: ignore[invalid-argument-type]
+            **kwargs,
         )
     result = geophysical_forecast_metrics(
         truth,
         ensemble,
         verification_case_ids=("test",),
         multivariate_scales=(2.0,),
+        # ty: ignore[invalid-argument-type]
         **kwargs,
     )
     np.testing.assert_allclose(
-        result.fields[0].anomaly_correlation.value, [[1 / np.sqrt(2)]]
+        # ty: ignore[unresolved-attribute]
+        result.fields[0].anomaly_correlation.value,
+        [[1 / np.sqrt(2)]],
     )
+    # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(result.scaled_energy_score.value, [0.5])
     assert result.climatology_id == climatology.climatology_id
 
 
-def test_extreme_reliability_empty_bins_and_native_complex_spectral_error():
+def test_extreme_reliability_empty_bins_and_native_complex_spectral_error() -> None:
     q = _column().quantities[0]
     result = geophysical_extreme_reliability(
         [[0.0, 2.0]],
@@ -395,7 +423,9 @@ def test_extreme_reliability_empty_bins_and_native_complex_spectral_error():
     np.testing.assert_allclose(spectral.value, [np.sqrt(3.0)])
 
 
-def test_real_trained_sfno_artifact_forecast_restart_and_column_admission(tmp_path):
+def test_real_trained_sfno_artifact_forecast_restart_and_column_admission(
+    tmp_path: Any,
+) -> None:
     from examples.geophysical_operator_forecast import run_example
 
     result = run_example(steps=3, artifact_directory=tmp_path / "native-sfno")

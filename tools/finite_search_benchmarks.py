@@ -10,6 +10,7 @@ import argparse
 import json
 import platform
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -69,8 +70,8 @@ def _candidate_space(
     return phx.optim.FiniteProductSpace(tuple(axes))
 
 
-def _evaluator(objective_size: int, work: int):
-    def evaluate(point):
+def _evaluator(objective_size: int, work: int) -> Any:
+    def evaluate(point: Any) -> Any:
         leaves = [jnp.ravel(value) for value in jax.tree_util.tree_leaves(point)]
         state = jnp.concatenate(leaves)
         score = jnp.sum((state - 0.125) ** 2)
@@ -85,7 +86,7 @@ def _evaluator(objective_size: int, work: int):
     return evaluate
 
 
-def _compile_and_time(function, repeat: int):
+def _compile_and_time(function: Any, repeat: int) -> Any:
     started = perf_counter()
     executable = jax.jit(function).lower().compile()
     compilation_seconds = perf_counter() - started
@@ -98,7 +99,7 @@ def _compile_and_time(function, repeat: int):
     return executable, output, compilation_seconds, samples
 
 
-def _memory_report(executable) -> dict[str, int]:
+def _memory_report(executable: Any) -> dict[str, int]:
     memory = executable.memory_analysis()
     return {
         "argument_bytes": int(memory.argument_size_in_bytes),
@@ -120,7 +121,7 @@ def _timing_report(samples: list[float], candidate_count: int) -> dict[str, floa
     }
 
 
-def _json_value(value):
+def _json_value(value: Any) -> Any:
     array = np.asarray(value)
     return array.item() if array.shape == () else array.tolist()
 
@@ -150,7 +151,7 @@ def run_benchmark(arguments: argparse.Namespace) -> dict[str, object]:
     dense_objective_bytes = candidate_count * arguments.objective_size * dtype_bytes
     estimated_dense_bytes = dense_candidate_bytes + dense_objective_bytes
 
-    def streaming_search():
+    def streaming_search() -> Any:
         evidence = phx.optim.search_finite(
             evaluator,
             space,
@@ -201,7 +202,7 @@ def run_benchmark(arguments: argparse.Namespace) -> dict[str, object]:
         }
         return report
 
-    def dense_search():
+    def dense_search() -> Any:
         points = space.take(jnp.arange(candidate_count, dtype=jnp.int64))
         scores, valid = jax.vmap(evaluator)(points)
         finite = valid & jnp.isfinite(scores)

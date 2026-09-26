@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def _polymer_runtime():
+def _polymer_runtime() -> Any:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 10.0)
     particle_ids = np.asarray([10, 20, 30, 40])
     topology = phx.atomistic.MolecularTopologyPlan(
@@ -15,11 +17,16 @@ def _polymer_runtime():
     )
     system = phx.atomistic.AtomisticSystemPlan(
         particle_ids,
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0, 1.0, 1.0],
         phx.atomistic.AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         element_mask=[False, False, False, False],
+        # ty: ignore[invalid-argument-type]
         molecule_ids=[0, 0, 0, 0],
         topology=topology,
         cell=cell,
@@ -27,9 +34,15 @@ def _polymer_runtime():
     cutoff = 2.0 ** (1.0 / 6.0)
     potential = phx.atomistic.AtomisticPotentialProgram(
         [
+            # ty: ignore[invalid-argument-type]
             phx.atomistic.FiniteExtensibleNonlinearElasticBondPotential([30.0], [1.5]),
             phx.atomistic.LennardJonesPotential(
-                [1.0], [1.0], cutoff, shift_energy_at_cutoff=True
+                # ty: ignore[invalid-argument-type]
+                [1.0],
+                # ty: ignore[invalid-argument-type]
+                [1.0],
+                cutoff,
+                shift_energy_at_cutoff=True,
             ),
         ]
     ).prepare(system)
@@ -48,7 +61,11 @@ def _polymer_runtime():
         temperature=1.0,
     ).prepare(dynamics)
     layout = phx.atomistic.PolymerChainLayoutPlan(
-        [[0, 1, 2, 3]], [[True, True, True, True]], maximum_frames=4
+        # ty: ignore[invalid-argument-type]
+        [[0, 1, 2, 3]],
+        # ty: ignore[invalid-argument-type]
+        [[True, True, True, True]],
+        maximum_frames=4,
     )
     profile = phx.applications.polymer_liquids.KremerGrestProfilePlan(
         production_steps=10,
@@ -59,7 +76,7 @@ def _polymer_runtime():
     return dynamics, thermodynamic, layout, profile
 
 
-def test_shifted_lennard_jones_is_continuous_wca_parameterization():
+def test_shifted_lennard_jones_is_continuous_wca_parameterization() -> None:
     cutoff = 2.0 ** (1.0 / 6.0)
     dynamics, thermodynamic, _, _ = _polymer_runtime()
     positions = jnp.asarray(
@@ -91,7 +108,9 @@ def test_shifted_lennard_jones_is_continuous_wca_parameterization():
 
     with pytest.raises(ValueError, match="mutually exclusive"):
         phx.atomistic.LennardJonesPotential(
+            # ty: ignore[invalid-argument-type]
             [1.0],
+            # ty: ignore[invalid-argument-type]
             [1.0],
             cutoff,
             switch_distance=1.0,
@@ -99,7 +118,7 @@ def test_shifted_lennard_jones_is_continuous_wca_parameterization():
         )
 
 
-def test_fene_domain_and_kremer_grest_profile_evidence():
+def test_fene_domain_and_kremer_grest_profile_evidence() -> None:
     dynamics, thermodynamic, _, profile = _polymer_runtime()
     positions = jnp.asarray(
         [[1.0, 1.0, 1.0], [1.96, 1.0, 1.0], [2.92, 1.0, 1.0], [3.88, 1.0, 1.0]]
@@ -117,7 +136,7 @@ def test_fene_domain_and_kremer_grest_profile_evidence():
     np.testing.assert_allclose(evidence.maximum_bond_fraction, 0.96 / 1.5)
     fene = dynamics.potential.terms[0]
 
-    def fene_energy(coordinates):
+    def fene_energy(coordinates: Any) -> Any:
         context = dynamics.potential.context(
             coordinates,
             state.neighborhood,
@@ -152,7 +171,7 @@ def test_fene_domain_and_kremer_grest_profile_evidence():
     assert jnp.isnan(invalid.energy)
 
 
-def test_polymer_observables_retain_normalization_and_contour_semantics():
+def test_polymer_observables_retain_normalization_and_contour_semantics() -> None:
     _, _, layout, _ = _polymer_runtime()
     positions = jnp.asarray(
         [[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]]]
@@ -171,7 +190,11 @@ def test_polymer_observables_retain_normalization_and_contour_semantics():
 
     debye = phx.atomistic.debye_scattering(
         phx.atomistic.DebyeScatteringPlan(
-            [0.0, 1.0], maximum_frames=1, maximum_particles=4, block_size=2
+            # ty: ignore[invalid-argument-type]
+            [0.0, 1.0],
+            maximum_frames=1,
+            maximum_particles=4,
+            block_size=2,
         ),
         positions,
     )
@@ -180,12 +203,14 @@ def test_polymer_observables_retain_normalization_and_contour_semantics():
 
     partial = phx.atomistic.partial_structure_factors(
         phx.atomistic.PartialStructureFactorPlan(
+            # ty: ignore[invalid-argument-type]
             [[0.0, 0.0, 0.0]],
             1,
             maximum_frames=1,
             maximum_particles=4,
         ),
         positions,
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0, 0],
     )
     assert partial.successful

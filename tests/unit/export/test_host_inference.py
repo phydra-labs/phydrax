@@ -2,7 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 import hashlib
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +15,7 @@ import phydrax as phx
 from phydrax.interchange import ExternalTensorSpec
 
 
-def _binding():
+def _binding() -> Any:
     semantic = phx.SemanticProvenance({"kind": "affine-host-runtime"})
     return phx.ArtifactBindingIdentity(
         semantic,
@@ -22,7 +24,7 @@ def _binding():
     )
 
 
-def _adapter(runner, **options):
+def _adapter(runner: Any, **options: Any) -> Any:
     return phx.export.HostInferenceAdapter(
         runner,
         (ExternalTensorSpec("x", (3,), np.float64),),
@@ -32,10 +34,10 @@ def _adapter(runner, **options):
     )
 
 
-def test_host_inference_refuses_schema_mismatches_before_the_runtime():
+def test_host_inference_refuses_schema_mismatches_before_the_runtime() -> None:
     calls = []
 
-    def runner(values):
+    def runner(values: Any) -> Any:
         calls.append(values)
         return [2.0 * values[0]]
 
@@ -54,10 +56,10 @@ def test_host_inference_refuses_schema_mismatches_before_the_runtime():
         _adapter(lambda values: [values[0], values[0]])(jnp.ones(3))
 
 
-def test_host_inference_transports_return_equal_detached_values():
+def test_host_inference_transports_return_equal_detached_values() -> None:
     x = jnp.asarray([1.0, -2.0, 3.0])
 
-    def runner(values):
+    def runner(values: Any) -> Any:
         return [2.0 * values[0]]
 
     copied = _adapter(runner)(x)
@@ -70,7 +72,7 @@ def test_host_inference_transports_return_equal_detached_values():
         _adapter(runner, transport="dlpack")([1.0, 2.0, 3.0])
 
 
-def _affine_onnx_model(weight, bias, *, batch):
+def _affine_onnx_model(weight: Any, bias: Any, *, batch: Any) -> Any:
     onnx = pytest.importorskip("onnx")
     helper = onnx.helper
     graph = helper.make_graph(
@@ -91,12 +93,12 @@ def _affine_onnx_model(weight, bias, *, batch):
     return model.SerializeToString()
 
 
-def _write_model(path, model_bytes):
+def _write_model(path: Any, model_bytes: Any) -> Any:
     path.write_bytes(model_bytes)
     return hashlib.sha256(model_bytes).hexdigest()
 
 
-def test_onnx_runtime_host_inference_is_pinned_bound_and_host_only(tmp_path):
+def test_onnx_runtime_host_inference_is_pinned_bound_and_host_only(tmp_path: Any) -> None:
     # Skips (with the reason in the report) when the optional
     # `phydrax[onnx-inference]` runtime or the `onnx` builder is not installed.
     pytest.importorskip("onnxruntime")

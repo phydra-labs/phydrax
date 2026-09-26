@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,11 +18,11 @@ from phydrax.signal import (
 )
 
 
-def _active_values(result):
+def _active_values(result: Any) -> Any:
     return np.asarray(result.values)[np.asarray(result.active)]
 
 
-def test_streaming_chunks_and_flush_equal_causal_raw_upfirdn():
+def test_streaming_chunks_and_flush_equal_causal_raw_upfirdn() -> None:
     values = jnp.linspace(-1.0, 1.0, 11)
     prototype = kaiser_sinc_resampling_filter(3, 2, half_width=3)
     plan = RationalResamplingPlan(3, 2, prototype.size, 4)
@@ -48,7 +51,7 @@ def test_streaming_chunks_and_flush_equal_causal_raw_upfirdn():
     assert int(reset.output_count) == 0
 
 
-def test_short_causal_filter_emits_only_finite_record_outputs():
+def test_short_causal_filter_emits_only_finite_record_outputs() -> None:
     plan = RationalResamplingPlan(3, 1, 1, 1)
     taps = jnp.ones((1,))
     state = plan.initial_state((1,), dtype=jnp.float64)
@@ -63,7 +66,7 @@ def test_short_causal_filter_emits_only_finite_record_outputs():
     assert int(state.output_count) == 4
 
 
-def test_zero_valid_resampling_chunk_is_a_state_preserving_noop():
+def test_zero_valid_resampling_chunk_is_a_state_preserving_noop() -> None:
     prototype = kaiser_sinc_resampling_filter(3, 2, half_width=2)
     plan = RationalResamplingPlan(3, 2, prototype.size, 4)
     state = plan.initial_state((4,), dtype=jnp.float64)
@@ -82,15 +85,15 @@ def test_zero_valid_resampling_chunk_is_a_state_preserving_noop():
     assert jnp.allclose(result.values, 0.0)
 
 
-def test_streaming_resampling_is_jittable_vmappable_and_differentiable():
+def test_streaming_resampling_is_jittable_vmappable_and_differentiable() -> None:
     prototype = kaiser_sinc_resampling_filter(3, 2, half_width=2)
     plan = RationalResamplingPlan(3, 2, prototype.size, 4)
     state = plan.initial_state((4,), dtype=jnp.float64)
     chunks = jnp.arange(8.0).reshape((2, 4))
 
     @eqx.filter_jit
-    def two_steps(initial_state, values, taps):
-        def body(carried, chunk):
+    def two_steps(initial_state: Any, values: Any, taps: Any) -> Any:
+        def body(carried: Any, chunk: Any) -> Any:
             carried, result = plan.step(carried, chunk, taps)
             return carried, result.values
 
@@ -110,7 +113,7 @@ def test_streaming_resampling_is_jittable_vmappable_and_differentiable():
     assert batched.shape == (2, plan.output_capacity)
 
 
-def test_resampling_plan_rejects_incompatible_topology_and_chunk_shape():
+def test_resampling_plan_rejects_incompatible_topology_and_chunk_shape() -> None:
     with pytest.raises(ValueError, match="divisible"):
         RationalResamplingPlan(3, 2, 7, 3)
     plan = RationalResamplingPlan(3, 2, 7, 4)

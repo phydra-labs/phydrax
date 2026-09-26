@@ -33,7 +33,7 @@ from phydrax.tensor_network._core import MatrixProductState
 from phydrax.tensor_network._mpo import apply_mpo
 
 
-def test_periodic_schwinger_global_flux_theta_and_gauss_commutator():
+def test_periodic_schwinger_global_flux_theta_and_gauss_commutator() -> None:
     model = PeriodicSchwingerModel(
         2,
         maximum_flux=1,
@@ -63,16 +63,21 @@ def test_periodic_schwinger_global_flux_theta_and_gauss_commutator():
     assert evidence.maximum_residual == 0.0
 
 
-def test_periodic_theta_shift_matches_neighboring_global_flux_sector():
+def test_periodic_theta_shift_matches_neighboring_global_flux_sector() -> None:
     parameters = {
         "maximum_flux": 1,
         "lattice_spacing": 0.5,
         "mass": 0.2,
         "gauge_coupling": 0.7,
     }
+    # ty: ignore[invalid-argument-type]
     first = PeriodicSchwingerModel(2, theta_angle=0.3, global_flux_sector=0, **parameters)
     shifted = PeriodicSchwingerModel(
-        2, theta_angle=0.3 + 2.0 * jnp.pi, global_flux_sector=-1, **parameters
+        2,
+        theta_angle=0.3 + 2.0 * jnp.pi,
+        global_flux_sector=-1,
+        # ty: ignore[invalid-argument-type]
+        **parameters,
     )
     first_dense = materialize_local_hamiltonian(
         periodic_schwinger_hamiltonian(first),
@@ -85,7 +90,7 @@ def test_periodic_theta_shift_matches_neighboring_global_flux_sector():
     assert jnp.allclose(first_dense, shifted_dense)
 
 
-def test_compact_two_skeleton_dense_mpo_mps_and_gauss_evolution_agree():
+def test_compact_two_skeleton_dense_mpo_mps_and_gauss_evolution_agree() -> None:
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     model = CompactU1GaugeModel(
         topology,
@@ -130,6 +135,7 @@ def test_compact_two_skeleton_dense_mpo_mps_and_gauss_evolution_agree():
     )
     initial = (
         jnp.zeros((network.physical_dimension,), dtype="complex128")
+        # ty: ignore[unresolved-attribute]
         .at[int(sector.subspace.basis_indices[0])]
         .set(1.0)
     )
@@ -150,7 +156,7 @@ def test_compact_two_skeleton_dense_mpo_mps_and_gauss_evolution_agree():
     assert result.evidence.final_leakage <= 1e-12
 
 
-def test_compact_u1_uses_the_two_skeleton_of_three_dimensional_topology():
+def test_compact_u1_uses_the_two_skeleton_of_three_dimensional_topology() -> None:
     topology = tetrahedral_cell_complex(jnp.asarray(((0, 1, 2, 3),)), 4)
     model = CompactU1GaugeModel(
         topology,
@@ -167,7 +173,7 @@ def test_compact_u1_uses_the_two_skeleton_of_three_dimensional_topology():
     assert compact_u1_gauss_network(model).vertex_count == topology.entities(0).count
 
 
-def test_product_formula_lcu_and_qubitization_counts_are_explicit():
+def test_product_formula_lcu_and_qubitization_counts_are_explicit() -> None:
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     hamiltonian = compact_u1_hamiltonian(
         CompactU1GaugeModel(

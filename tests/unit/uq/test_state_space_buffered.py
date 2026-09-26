@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,7 +12,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0, 1.5, 2.0]),
         jnp.asarray([[1.0], [2.0], [1.5], [1.8]]),
@@ -47,7 +50,7 @@ def _problem():
     )
 
 
-def test_window_inclusion_weights_reconstruct_every_full_path_factor():
+def test_window_inclusion_weights_reconstruct_every_full_path_factor() -> None:
     plan = phx.uq.StateSpaceWindowPlan(
         6,
         target_length=3,
@@ -68,7 +71,7 @@ def test_window_inclusion_weights_reconstruct_every_full_path_factor():
     assert jnp.all(plan.inclusion_probability > 0.0)
 
 
-def test_buffer_context_changes_bidirectional_amortized_conditioning():
+def test_buffer_context_changes_bidirectional_amortized_conditioning() -> None:
     problem = _problem()
     family = phx.uq.AmortizedGaussianMarkovFamily.from_problem(
         problem,
@@ -94,7 +97,7 @@ def test_buffer_context_changes_bidirectional_amortized_conditioning():
     )
 
 
-def test_buffered_variational_training_replays_and_returns_full_context_family():
+def test_buffered_variational_training_replays_and_returns_full_context_family() -> None:
     problem = _problem()
     config = phx.uq.BufferedStateSpaceVariationalConfig(
         target_length=2,
@@ -131,7 +134,7 @@ def test_buffered_variational_training_replays_and_returns_full_context_family()
     assert jnp.array_equal(first.family.context_mask, problem.observations.step_valid)
 
 
-def test_full_length_target_has_unit_inclusion_and_full_context():
+def test_full_length_target_has_unit_inclusion_and_full_context() -> None:
     plan = phx.uq.StateSpaceWindowPlan(
         4,
         target_length=4,

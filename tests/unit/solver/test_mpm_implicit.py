@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +16,7 @@ import phydrax as phx
 import phydrax.solver._material_point_implicit as implicit_solver
 
 
-def _compiled(material):
+def _compiled(material: Any) -> Any:
     dimension = material.dimension
     grid = phx.discretization.TensorGridPlan(
         tuple(
@@ -47,7 +49,7 @@ def _compiled(material):
     return compiled, position, volume
 
 
-def test_implicit_hyperelastic_step_converges_and_has_implicit_gradient():
+def test_implicit_hyperelastic_step_converges_and_has_implicit_gradient() -> None:
     material = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(2)
     compiled, position, volume = _compiled(material)
     arguments = phx.equations.MaterialPointArguments(
@@ -63,7 +65,7 @@ def test_implicit_hyperelastic_step_converges_and_has_implicit_gradient():
     assert bool(detail.diagnostics.tangent_successful)
     assert detail.accepted_state.time == 0.001
 
-    def objective(scale):
+    def objective(scale: Any) -> Any:
         state = compiled.initialize_state(position, scale * velocity, volume, arguments)
         result = implicit.step_detailed(state, 0.001, arguments)
         return jnp.sum(result.accepted_state.particles.position**2)
@@ -74,9 +76,9 @@ def test_implicit_hyperelastic_step_converges_and_has_implicit_gradient():
 
 @pytest.mark.parametrize("failure", ("tangent", "determinant"))
 def test_implicit_step_rejects_invalid_tangent_or_deformation_jacobian(
-    failure,
-    monkeypatch,
-):
+    failure: Any,
+    monkeypatch: Any,
+) -> None:
     material = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(2)
     compiled, position, volume = _compiled(material)
     arguments = phx.equations.MaterialPointArguments(
@@ -92,7 +94,7 @@ def test_implicit_step_rejects_invalid_tangent_or_deformation_jacobian(
         material_type = type(compiled.dynamics.material)
         evaluate_linearized = material_type.evaluate_linearized
 
-        def invalid_tangent(self, *args, **kwargs):
+        def invalid_tangent(self: Any, *args: Any, **kwargs: Any) -> Any:
             result = evaluate_linearized(self, *args, **kwargs)
             return eqx.tree_at(
                 lambda value: value.tangent_successful,
@@ -104,7 +106,7 @@ def test_implicit_step_rejects_invalid_tangent_or_deformation_jacobian(
     else:
         solve_small_linear = implicit_solver.solve_small_linear
 
-        def invalid_determinant(*args, **kwargs):
+        def invalid_determinant(*args: Any, **kwargs: Any) -> Any:
             result = solve_small_linear(*args, **kwargs)
             return eqx.tree_at(
                 lambda value: value.determinant,
@@ -135,7 +137,7 @@ def test_implicit_step_rejects_invalid_tangent_or_deformation_jacobian(
     assert eqx.tree_equal(detail.accepted_state, rejected)
 
 
-def test_implicit_plane_stress_uses_condensed_material_tangent():
+def test_implicit_plane_stress_uses_condensed_material_tangent() -> None:
     material = phx.applications.solid_mechanics.PlaneStressMPMConstitutivePlan(
         phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
     )
@@ -155,7 +157,7 @@ def test_implicit_plane_stress_uses_condensed_material_tangent():
     assert jnp.all(detail.accepted_state.particles.material_state[:, -1] == 0.0)
 
 
-def test_implicit_j2_accepts_elastic_step_and_preserves_history_shape():
+def test_implicit_j2_accepts_elastic_step_and_preserves_history_shape() -> None:
     material = phx.applications.solid_mechanics.FiniteStrainJ2MPMConstitutivePlan()
     compiled, position, volume = _compiled(material)
     arguments = phx.equations.MaterialPointArguments(

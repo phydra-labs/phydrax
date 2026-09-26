@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,7 +15,7 @@ import phydrax as phx
 from phydrax.enforcement._ansatz import _enforcement_weight_fn
 
 
-def test_enforcement_weight_fn_mesh_normals_jittable():
+def test_enforcement_weight_fn_mesh_normals_jittable() -> None:
     mesh = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
     geom = phx.domain.GeometryDomain(
         phx.geometry.mesh_region_from_source(
@@ -20,7 +23,7 @@ def test_enforcement_weight_fn_mesh_normals_jittable():
         ).compile()
     )
 
-    def where(point):
+    def where(point: Any) -> Any:
         return point[0] > 0.0
 
     w_fn = _enforcement_weight_fn(
@@ -41,6 +44,7 @@ def test_enforcement_weight_fn_mesh_normals_jittable():
         ],
         dtype="float64",
     )
+    # ty: ignore[invalid-argument-type]
     values = jax.jit(jax.vmap(w_fn))(points)
     assert values.shape == (points.shape[0],)
     assert np.all(np.isfinite(np.asarray(values)))

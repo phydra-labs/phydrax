@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -18,7 +21,7 @@ from phydrax.uq._constraint_conditioning import (
 from phydrax.uq._gaussian_factor import GaussianFactor
 
 
-def test_exact_linear_gaussian_conditioning_matches_dense_closed_form():
+def test_exact_linear_gaussian_conditioning_matches_dense_closed_form() -> None:
     prior_mean = jnp.asarray([0.5, -0.25])
     prior_covariance = jnp.asarray([[2.0, 0.3], [0.3, 1.0]])
     prior_factor = GaussianFactor(jnp.linalg.cholesky(prior_covariance))
@@ -62,7 +65,7 @@ def test_exact_linear_gaussian_conditioning_matches_dense_closed_form():
     "method",
     ["first-order", "cubature", "unscented", "gauss-hermite"],
 )
-def test_nonlinear_conditioning_reports_the_selected_approximation(method):
+def test_nonlinear_conditioning_reports_the_selected_approximation(method: Any) -> None:
     prior_mean = jnp.asarray([0.4])
     prior_factor = GaussianFactor(jnp.asarray([[0.3]]))
     likelihood = ConstraintLikelihoodTerm(
@@ -84,7 +87,7 @@ def test_nonlinear_conditioning_reports_the_selected_approximation(method):
     assert not result.zero_noise_bridge
 
 
-def test_zero_noise_hard_bridge_lifts_an_unchanged_coordinate_posterior():
+def test_zero_noise_hard_bridge_lifts_an_unchanged_coordinate_posterior() -> None:
     hard_matrix = jnp.asarray([[1.0, 1.0]])
     hard_operator = prepare_constraint_operator(DenseLinearOperator(hard_matrix))
     coordinate_mean = jnp.asarray([0.4])
@@ -98,6 +101,7 @@ def test_zero_noise_hard_bridge_lifts_an_unchanged_coordinate_posterior():
     )
 
     reconstructed_mean = (
+        # ty: ignore[unsupported-operator]
         result.feasible_origin + result.feasible_basis @ result.coordinate_mean
     )
     assert bool(result.valid)
@@ -116,7 +120,7 @@ def test_zero_noise_hard_bridge_lifts_an_unchanged_coordinate_posterior():
     )
 
 
-def test_numerical_jitter_cannot_turn_inconsistent_zero_noise_into_evidence():
+def test_numerical_jitter_cannot_turn_inconsistent_zero_noise_into_evidence() -> None:
     prior_mean = jnp.asarray([0.0])
     prior_factor = GaussianFactor(jnp.asarray([[1.0]]))
     matrix = jnp.asarray([[1.0], [1.0]])

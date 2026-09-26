@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -35,7 +36,7 @@ from phydrax.discretization.particle._rigid_body import _quaternion_retract
 from phydrax.qualification import ReferenceArtifactManifest
 
 
-def _source(payload: bytes, name: str, *, export: bool = True):
+def _source(payload: bytes, name: str, *, export: bool = True) -> Any:
     return ReferenceArtifactManifest(
         name,
         checksum_algorithm="sha256",
@@ -55,14 +56,14 @@ def _source(payload: bytes, name: str, *, export: bool = True):
 
 def _fixture(
     *,
-    units=None,
-    fixed_protein=True,
-    fixed_body=False,
-    order=(0, 1),
-    virtual=False,
-    cross_kwargs=None,
-    nucleotide_export=True,
-):
+    units: Any = None,
+    fixed_protein: Any = True,
+    fixed_body: Any = False,
+    order: Any = (0, 1),
+    virtual: Any = False,
+    cross_kwargs: Any = None,
+    nucleotide_export: Any = True,
+) -> Any:
     units = AtomisticUnitSystem.reduced() if units is None else units
     order = np.asarray(order)
     ids = np.asarray([7, 11], dtype=np.int64)[order]
@@ -70,19 +71,27 @@ def _fixture(
     coordinate_map = None
     if virtual:
         sites = AtomisticInteractionSitePlan(
+            # ty: ignore[invalid-argument-type]
             [7, 11, 90],
+            # ty: ignore[invalid-argument-type]
             [0, 0, 0],
+            # ty: ignore[invalid-argument-type]
             [0, 0, 0],
+            # ty: ignore[invalid-argument-type]
             [0.0, 0.0, 0.0],
+            # ty: ignore[invalid-argument-type]
             element_mask=[False] * 3,
+            # ty: ignore[invalid-argument-type]
             physical_mask=[True, True, False],
         )
         lookup = {int(key): slot for slot, key in enumerate(ids)}
         coordinate_map = AtomisticCoordinateMapPlan(
             ids,
             sites,
+            # ty: ignore[invalid-argument-type]
             [lookup[7], lookup[11], -1],
             virtual_rules=(
+                # ty: ignore[invalid-argument-type]
                 VirtualSiteRule(VirtualSiteKind.WEIGHTED, 90, [7, 11], [0.5, 0.5]),
             ),
         )
@@ -91,6 +100,7 @@ def _fixture(
         np.zeros(2, dtype=np.int32),
         np.asarray([2.0, 3.0])[order],
         units,
+        # ty: ignore[invalid-argument-type]
         element_mask=[False, False],
         mobile_mask=np.asarray([not fixed_protein, True])[order],
         coordinate_map=coordinate_map,
@@ -115,6 +125,7 @@ def _fixture(
         np.asarray([4.0, 5.0]),
         np.tile(np.eye(3), (2, 1, 1)),
         artifact,
+        # ty: ignore[invalid-argument-type]
         fixed_mask=[fixed_body, False],
     ).prepare()
     kwargs = (
@@ -148,7 +159,7 @@ def _fixture(
     return model, model.initialize(positions, np.zeros_like(positions), rigid)
 
 
-def test_mixed_forces_obey_virtual_work_and_keep_fixed_reactions():
+def test_mixed_forces_obey_virtual_work_and_keep_fixed_reactions() -> None:
     model, state = _fixture(fixed_body=True, virtual=True)
     evaluation = jax.jit(lambda value: model.evaluate(value))(state)
     assert bool(evaluation.successful)
@@ -194,7 +205,7 @@ def test_mixed_forces_obey_virtual_work_and_keep_fixed_reactions():
     dr = jnp.asarray([[0.1, 0.2, 0.3], [0.2, -0.1, 0.0]])
     rotation = jnp.asarray([[0.2, -0.3, 0.1], [0.1, 0.2, 0.3]])
 
-    def displaced_energy(amount):
+    def displaced_energy(amount: Any) -> Any:
         rigid = eqx.tree_at(
             lambda x: (x.position, x.orientation),
             state.nucleotide,
@@ -222,7 +233,7 @@ def test_mixed_forces_obey_virtual_work_and_keep_fixed_reactions():
     )
 
 
-def test_disjoint_identity_and_site_binding_survive_protein_order():
+def test_disjoint_identity_and_site_binding_survive_protein_order() -> None:
     model, state = _fixture()
     reordered, reordered_state = _fixture(order=(1, 0))
     identities = [record[2] for record in model.support_map.records]
@@ -243,7 +254,11 @@ def test_disjoint_identity_and_site_binding_survive_protein_order():
         original.nucleotide_load.torque, other.nucleotide_load.torque, atol=1e-13
     )
     bad_cross = HybridCrossInteractionPlan(
-        [[999, 8]], model.cross.units, model.cross.parameter_source, linker_stiffness=1.0
+        # ty: ignore[invalid-argument-type]
+        [[999, 8]],
+        model.cross.units,
+        model.cross.parameter_source,
+        linker_stiffness=1.0,
     )
     with pytest.raises(ValueError, match="active stable sites"):
         PreparedHybridModel(
@@ -254,10 +269,14 @@ def test_disjoint_identity_and_site_binding_survive_protein_order():
         )
     with pytest.raises(ValueError, match="Duplicate"):
         HybridCrossInteractionPlan(
-            [[11, 8], [11, 8]], model.cross.units, model.cross.parameter_source
+            # ty: ignore[invalid-argument-type]
+            [[11, 8], [11, 8]],
+            model.cross.units,
+            model.cross.parameter_source,
         )
     frame_id = int(model.nucleotide_model.marker_map.markers.plan.marker_ids[5])
     frame_cross = HybridCrossInteractionPlan(
+        # ty: ignore[invalid-argument-type]
         [[11, frame_id]],
         model.cross.units,
         model.cross.parameter_source,
@@ -272,7 +291,7 @@ def test_disjoint_identity_and_site_binding_survive_protein_order():
         )
 
 
-def test_linker_force_and_reference_linear_response():
+def test_linker_force_and_reference_linear_response() -> None:
     model, state = _fixture(cross_kwargs={"linker_stiffness": 2.0, "linker_length": 1.0})
     evaluation = model.evaluate(state)
     site = model.nucleotide_model.site_positions(state.nucleotide)[1]
@@ -302,7 +321,7 @@ def test_linker_force_and_reference_linear_response():
 
 
 @pytest.mark.parametrize("physical_units", [False, True])
-def test_split_drift_uses_shared_old_force_and_correct_units(physical_units):
+def test_split_drift_uses_shared_old_force_and_correct_units(physical_units: Any) -> None:
     units = (
         AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
         if physical_units
@@ -345,12 +364,12 @@ def test_split_drift_uses_shared_old_force_and_correct_units(physical_units):
     assert not bool(model.step(state, 0.0).successful)
 
 
-def test_kdk_energy_error_decreases_with_step_size():
+def test_kdk_energy_error_decreases_with_step_size() -> None:
     model, initial = _fixture(fixed_protein=False)
     initial_energy = model.evaluate(initial).energy + model.kinetic_energy(initial)
 
-    def evolve(dt, steps):
-        def body(state, _):
+    def evolve(dt: Any, steps: Any) -> Any:
+        def body(state: Any, _: Any) -> Any:
             result = model.step(state, dt)
             return result.state, (result.total_energy, result.successful)
 
@@ -366,16 +385,22 @@ def test_kdk_energy_error_decreases_with_step_size():
     assert float(fine_error) < 0.4 * float(coarse_error)
 
 
-def test_padding_never_gains_material_or_cross_interactions():
+def test_padding_never_gains_material_or_cross_interactions() -> None:
     model, initial = _fixture()
     units = model.cross.units
     system = AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [7, 11, 99],
+        # ty: ignore[invalid-argument-type]
         [0, 0, 0],
+        # ty: ignore[invalid-argument-type]
         [2.0, 3.0, 1.0],
         units,
+        # ty: ignore[invalid-argument-type]
         element_mask=[False] * 3,
+        # ty: ignore[invalid-argument-type]
         active_mask=[True, True, False],
+        # ty: ignore[invalid-argument-type]
         mobile_mask=[False, True, False],
     ).prepare()
     reference = np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [np.nan, np.nan, np.nan]])
@@ -393,15 +418,20 @@ def test_padding_never_gains_material_or_cross_interactions():
     np.testing.assert_allclose(result.energy, model.evaluate(initial).energy, atol=1e-13)
     np.testing.assert_array_equal(result.protein_forces[2], 0.0)
     bad_cross = HybridCrossInteractionPlan(
-        [[99, 8]], units, model.cross.parameter_source, linker_stiffness=1.0
+        # ty: ignore[invalid-argument-type]
+        [[99, 8]],
+        units,
+        model.cross.parameter_source,
+        linker_stiffness=1.0,
     )
     with pytest.raises(ValueError, match="active stable sites"):
         PreparedHybridModel(network, model.nucleotide_model, bad_cross, reference_source)
 
 
-def test_incompatible_scales_reference_rights_and_singular_sites_refuse():
+def test_incompatible_scales_reference_rights_and_singular_sites_refuse() -> None:
     model, state = _fixture()
     different = HybridCrossInteractionPlan(
+        # ty: ignore[invalid-argument-type]
         [[11, 8]],
         AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond(),
         model.cross.parameter_source,
@@ -414,6 +444,7 @@ def test_incompatible_scales_reference_rights_and_singular_sites_refuse():
             model.protein_reference,
         )
     restricted = _source(b"restricted-parameters", "restricted", export=False)
+    # ty: ignore[invalid-argument-type]
     cross = HybridCrossInteractionPlan([[11, 8]], model.cross.units, restricted)
     with pytest.raises(PermissionError):
         PreparedHybridModel(

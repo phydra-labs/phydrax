@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 import time
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -16,7 +17,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _problem():
+def _problem() -> Any:
     count = 32
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(count, periodic=True),),
@@ -43,6 +44,7 @@ def _problem():
         method,
     ).dynamics
     transport = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -79,7 +81,7 @@ def _problem():
     return runtime, initial, realized
 
 
-def _state_bytes(state) -> int:
+def _state_bytes(state: Any) -> int:
     return sum(
         np.asarray(jax.device_get(leaf)).nbytes
         for leaf in jax.tree.leaves(state)
@@ -87,11 +89,13 @@ def _state_bytes(state) -> int:
     )
 
 
-def eqx_is_array(value) -> bool:
+def eqx_is_array(value: Any) -> bool:
     return isinstance(value, jax.Array | np.ndarray)
 
 
-def _mode_report(runtime, initial, realized, mode, block_size):
+def _mode_report(
+    runtime: Any, initial: Any, realized: Any, mode: Any, block_size: Any
+) -> Any:
     replay = phx.solver.FiniteVolumeReplayPolicy(mode, block_size=block_size)
     scheduled = phx.solver.ScheduledBalanceLawRolloutPlan.from_realized_mesh(
         runtime,
@@ -99,8 +103,9 @@ def _mode_report(runtime, initial, realized, mode, block_size):
         replay=replay,
     )
 
-    def loss(gravity):
+    def loss(gravity: Any) -> Any:
         result = scheduled.rollout(initial, {"gravity": gravity})
+        # ty: ignore[unresolved-attribute]
         momentum = result.final_state.transport_state.cell_average()[..., 1]
         return jnp.sum(momentum**2)
 
@@ -139,9 +144,13 @@ def _mode_report(runtime, initial, realized, mode, block_size):
         "gradient": float(gradient),
         "finite_difference_gradient": float(finite_difference),
         "gradient_residual": float(jnp.abs(gradient - finite_difference)),
+        # ty: ignore[unresolved-attribute]
         "compiled_argument_bytes": memory.argument_size_in_bytes,
+        # ty: ignore[unresolved-attribute]
         "compiled_output_bytes": memory.output_size_in_bytes,
+        # ty: ignore[unresolved-attribute]
         "compiled_temporary_bytes": memory.temp_size_in_bytes,
+        # ty: ignore[unresolved-attribute]
         "compiled_alias_bytes": memory.alias_size_in_bytes,
         "state_bytes": state_bytes,
         "estimated_checkpoint_state_bytes": state_bytes * checkpoint_count,

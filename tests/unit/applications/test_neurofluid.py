@@ -1,4 +1,5 @@
 import sys
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -6,7 +7,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _manifest():
+def _manifest() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "synthetic-reference",
         checksum_algorithm="sha256",
@@ -24,7 +25,7 @@ def _manifest():
     )
 
 
-def _image(values, unit, asset_id):
+def _image(values: Any, unit: Any, asset_id: Any) -> Any:
     contract = phx.SpatialCoordinateContract(
         phx.units.MILLIMETER,
         coordinate_system="cartesian-lps",
@@ -53,7 +54,7 @@ def _image(values, unit, asset_id):
     )
 
 
-def test_relaxivity_calibration_retains_negative_noisy_observations():
+def test_relaxivity_calibration_retains_negative_noisy_observations() -> None:
     baseline = _image(np.full((2, 2, 2), 2.0), phx.units.SECOND, "baseline")
     contrast_values = np.full((2, 2, 2), 1.0)
     contrast_values[0, 0, 0] = 4.0
@@ -68,7 +69,7 @@ def test_relaxivity_calibration_retains_negative_noisy_observations():
     assert not bool(result.evidence.nonnegative_state_candidate)
 
 
-def test_neurofluid_transport_units_derive_physical_scales():
+def test_neurofluid_transport_units_derive_physical_scales() -> None:
     units = phx.applications.neurofluid.NeurofluidTransportUnits(
         phx.units.MILLIMETER, phx.units.SECOND, phx.units.MILLIMOLAR
     )
@@ -82,7 +83,7 @@ def test_neurofluid_transport_units_derive_physical_scales():
     assert units.volume_flow_unit.dimension == volume_flow.dimension
 
 
-def test_periodic_flow_schedule_requires_complete_matching_cycle():
+def test_periodic_flow_schedule_requires_complete_matching_cycle() -> None:
     schedule = phx.applications.neurofluid.FlowTransportSchedule(
         np.asarray((0.0, 0.5, 1.0)),
         np.asarray(((1.0,), (2.0,), (1.0,))),
@@ -99,7 +100,7 @@ def test_periodic_flow_schedule_requires_complete_matching_cycle():
     assert not bool(partial.successful)
 
 
-def test_image_space_inverse_reports_rank_and_builds_state_design_problem():
+def test_image_space_inverse_reports_rank_and_builds_state_design_problem() -> None:
     operator = phx.spatial_sampling.ObservationSamplingPlan(
         np.asarray(((0,), (1,))),
         np.ones((2, 1)),
@@ -134,7 +135,7 @@ def test_image_space_inverse_reports_rank_and_builds_state_design_problem():
     np.testing.assert_allclose(problem.objective(state, jnp.asarray((1.0, 2.0))), 0.0)
 
 
-def test_rank_deficient_identifiability_reports_infinite_condition_number():
+def test_rank_deficient_identifiability_reports_infinite_condition_number() -> None:
     operator = phx.spatial_sampling.ObservationSamplingPlan(
         np.asarray(((0,), (1,))),
         np.ones((2, 1)),
@@ -167,7 +168,7 @@ def test_rank_deficient_identifiability_reports_infinite_condition_number():
     assert jnp.isinf(report.condition_number)
 
 
-def test_pipeline_manifest_requires_topological_order():
+def test_pipeline_manifest_requires_topological_order() -> None:
     first = phx.applications.neurofluid.NeurofluidPipelineStage(
         "ingest", "image-ingest", ("source",), ("image",)
     )
@@ -180,7 +181,7 @@ def test_pipeline_manifest_requires_topological_order():
     assert manifest.manifest_id
 
 
-def test_external_tool_provider_records_real_output(tmp_path):
+def test_external_tool_provider_records_real_output(tmp_path: Any) -> None:
     provider = phx.imaging.MedicalToolProvider(
         "python", sys.executable, ("--version",), "PSF-2.0", "test-runtime"
     )

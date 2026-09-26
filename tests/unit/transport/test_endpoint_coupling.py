@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,45 +14,45 @@ class _FixedPlan(AbstractBalancedTransportPlan):
     regularized_cost: jnp.ndarray
     convergence: jnp.ndarray
 
-    def __init__(self, matrix, *, converged=True):
+    def __init__(self, matrix: Any, *, converged: Any = True) -> None:
         self.matrix = jnp.asarray(matrix, dtype="float64")
         self.regularized_cost = jnp.asarray(0.0)
         self.convergence = jnp.asarray(converged)
 
     @property
-    def converged(self):
+    def converged(self) -> Any:
         return self.convergence
 
-    def regularized_objective(self):
+    def regularized_objective(self) -> Any:
         return self.regularized_cost
 
-    def source_marginal(self):
+    def source_marginal(self) -> Any:
         return jnp.sum(self.matrix, axis=1)
 
-    def target_marginal(self):
+    def target_marginal(self) -> Any:
         return jnp.sum(self.matrix, axis=0)
 
-    def apply_source_to_target(self, values):
+    def apply_source_to_target(self, values: Any) -> Any:
         return self.matrix.T @ jnp.asarray(values)
 
-    def apply_target_to_source(self, values):
+    def apply_target_to_source(self, values: Any) -> Any:
         return self.matrix @ jnp.asarray(values)
 
-    def barycentric_source_to_target(self, values):
+    def barycentric_source_to_target(self, values: Any) -> Any:
         marginal = self.target_marginal()
         applied = self.apply_source_to_target(values)
         return applied / marginal.reshape((-1,) + (1,) * (applied.ndim - 1))
 
-    def barycentric_target_to_source(self, values):
+    def barycentric_target_to_source(self, values: Any) -> Any:
         marginal = self.source_marginal()
         applied = self.apply_target_to_source(values)
         return applied / marginal.reshape((-1,) + (1,) * (applied.ndim - 1))
 
-    def dense_plan(self):
+    def dense_plan(self) -> Any:
         return self.matrix
 
 
-def test_independent_endpoint_coupling_replays_indices_and_gathers_context():
+def test_independent_endpoint_coupling_replays_indices_and_gathers_context() -> None:
     source = jnp.arange(12.0).reshape((6, 2))
     target = 100.0 + jnp.arange(8.0).reshape((4, 2))
     context = {"condition": jnp.arange(4.0)[:, None]}
@@ -82,7 +84,7 @@ def test_independent_endpoint_coupling_replays_indices_and_gathers_context():
     assert jnp.allclose(jnp.sum(first.probabilities), 1.0)
 
 
-def test_transport_plan_endpoint_coupling_samples_joint_not_barycentric_pairs():
+def test_transport_plan_endpoint_coupling_samples_joint_not_barycentric_pairs() -> None:
     source = jnp.asarray([[0.0], [1.0]])
     target = jnp.asarray([[10.0], [20.0]])
     plan = _FixedPlan(jnp.asarray([[0.0, 0.5], [0.5, 0.0]]))
@@ -101,7 +103,7 @@ def test_transport_plan_endpoint_coupling_samples_joint_not_barycentric_pairs():
     assert jnp.all(jnp.isin(pairs.target[:, 0], jnp.asarray([10.0, 20.0])))
 
 
-def test_transport_plan_endpoint_coupling_rejects_failure_and_shape_mismatch():
+def test_transport_plan_endpoint_coupling_rejects_failure_and_shape_mismatch() -> None:
     failed = _FixedPlan(jnp.eye(2), converged=False)
     with pytest.raises(eqx.EquinoxRuntimeError, match="did not converge"):
         phx.transport.transport_plan_endpoint_coupling(

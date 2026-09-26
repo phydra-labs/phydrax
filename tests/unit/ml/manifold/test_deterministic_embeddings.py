@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -22,7 +25,7 @@ from phydrax.ml.manifold import (
 )
 
 
-def _features():
+def _features() -> Any:
     return jnp.array(
         [
             [-2.3, -0.4, 0.8],
@@ -37,19 +40,21 @@ def _features():
     )
 
 
-def _transductive_loss(model):
+def _transductive_loss(model: Any) -> Any:
     embedding = model.training_embedding
     coefficients = jnp.arange(1.0, embedding.shape[-2] + 1.0)
     return jnp.sum(coefficients[:, None] * jnp.square(jnp.abs(embedding)))
 
 
-def _assert_finite_nonzero(array):
+def _assert_finite_nonzero(array: Any) -> None:
     assert jnp.all(jnp.isfinite(array))
     assert jnp.any(jnp.abs(array) > 1e-8)
 
 
 @pytest.mark.parametrize("variant", ["standard", "modified", "hessian", "ltsa"])
-def test_every_lle_variant_has_declared_schema_and_exact_transform_support(variant):
+def test_every_lle_variant_has_declared_schema_and_exact_transform_support(
+    variant: Any,
+) -> None:
     recipe = LocallyLinearEmbeddingRecipe(1, n_neighbors=3, variant=variant)
     result = recipe.fit_batch(MLBatch(_features()))
     model = result.as_trainable()
@@ -91,6 +96,7 @@ def test_every_lle_variant_has_declared_schema_and_exact_transform_support(varia
             result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
             is GradientLevel.ALMOST_EVERYWHERE
         )
+        # ty: ignore[unresolved-attribute]
         assert result.derivative_contract.regularity.continuity == -1
     else:
         assert (
@@ -105,7 +111,9 @@ def test_every_lle_variant_has_declared_schema_and_exact_transform_support(varia
             model(jnp.array([0.2, -0.1, 0.4]))
 
 
-def test_lle_preserves_case_sample_feature_and_target_axes_and_statistical_weight_policy():
+def test_lle_preserves_case_sample_feature_and_target_axes_and_statistical_weight_policy() -> (
+    None
+):
     base = _features()
     features = jnp.stack((base, base * jnp.array([1.2, 0.8, 1.1])), axis=0)
     targets = jnp.stack(
@@ -122,26 +130,36 @@ def test_lle_preserves_case_sample_feature_and_target_axes_and_statistical_weigh
         sample_weight=sample_weight,
     )
 
+    # ty: ignore[invalid-argument-type]
     first = recipe.fit_batch(MLBatch(features, targets, measure_weight=1.0, **common))
+    # ty: ignore[invalid-argument-type]
     second = recipe.fit_batch(MLBatch(features, targets, measure_weight=99.0, **common))
     model = first.as_trainable()
     queries = features[:, :3] + 0.05
 
+    # ty: ignore[unresolved-attribute]
     assert model.case_shape == (2,)
+    # ty: ignore[unresolved-attribute]
     assert model.training_embedding.shape == (2, 8, 1)
     assert model(queries).shape == (2, 3, 1)
     assert model(jnp.array([0.1, 0.2, -0.3])).shape == (2, 1)
     assert first.diagnostics.effective_samples.shape == (2,)
     assert jnp.array_equal(first.diagnostics.effective_samples, jnp.array([6, 6]))
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(model.training_embedding[:, 3] == 0.0)
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(model.training_embedding[:, 7] == 0.0)
     assert jnp.allclose(
+        # ty: ignore[unresolved-attribute]
         jnp.abs(model.training_embedding),
+        # ty: ignore[unresolved-attribute]
         jnp.abs(second.as_trainable().training_embedding),
     )
 
 
-def test_spectral_embedding_is_jittable_vmappable_and_conditionally_differentiable():
+def test_spectral_embedding_is_jittable_vmappable_and_conditionally_differentiable() -> (
+    None
+):
     features = _features()
     weights = jnp.array([1.0, 1.4, 0.8, 1.7, 1.2, 0.9, 1.5, 1.1])
     recipe = SpectralEmbeddingRecipe(2, n_neighbors=3, bandwidth=1.4)
@@ -175,6 +193,7 @@ def test_spectral_embedding_is_jittable_vmappable_and_conditionally_differentiab
     assert contract.level(DerivativeSurface.MODEL_PARAMETER) is (
         GradientLevel.ALMOST_EVERYWHERE
     )
+    # ty: ignore[unresolved-attribute]
     assert contract.regularity.continuity == -1
     assert model.model_execution_contract().regularity == contract.regularity
     assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
@@ -186,12 +205,13 @@ def test_spectral_embedding_is_jittable_vmappable_and_conditionally_differentiab
     assert contract.route is DerivativeRoute.SPECTRAL
 
 
-def test_classical_mds_preserves_planar_distances_and_smacof_rejects_transform():
+def test_classical_mds_preserves_planar_distances_and_smacof_rejects_transform() -> None:
     planar = _features()[:, :2]
     classical = MultidimensionalScalingRecipe(2, method="classical").fit_batch(
         MLBatch(planar)
     )
     classical_model = classical.as_trainable()
+    # ty: ignore[unresolved-attribute]
     embedded = classical_model.training_embedding
     original_distances = jnp.linalg.norm(planar[:, None] - planar[None, :], axis=-1)
     embedded_distances = jnp.linalg.norm(embedded[:, None] - embedded[None, :], axis=-1)
@@ -215,6 +235,7 @@ def test_classical_mds_preserves_planar_distances_and_smacof_rejects_transform()
         2, method="smacof", iterations=3, tolerance=1e6
     ).fit_batch(MLBatch(planar))
     smacof_model = smacof.as_trainable()
+    # ty: ignore[unresolved-attribute]
     assert smacof_model.training_embedding.shape == (8, 2)
     assert smacof.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
     assert (
@@ -225,6 +246,7 @@ def test_classical_mds_preserves_planar_distances_and_smacof_rejects_transform()
     with pytest.raises(ValueError, match="transductive"):
         smacof_model(planar[0])
     with pytest.raises(TypeError):
+        # ty: ignore[unknown-argument]
         MultidimensionalScalingRecipe(2, metric="precomputed")
     nonconverged = MultidimensionalScalingRecipe(
         1, method="smacof", iterations=1, tolerance=1e-30
@@ -233,7 +255,7 @@ def test_classical_mds_preserves_planar_distances_and_smacof_rejects_transform()
     assert nonconverged.status == ML_NONCONVERGED
 
 
-def test_isomap_exposes_geodesic_invariants_capacity_and_connectivity_status():
+def test_isomap_exposes_geodesic_invariants_capacity_and_connectivity_status() -> None:
     features = _features()
     result = IsomapRecipe(2, n_neighbors=3, max_samples=8).fit_batch(MLBatch(features))
     model = result.as_trainable()
@@ -253,6 +275,7 @@ def test_isomap_exposes_geodesic_invariants_capacity_and_connectivity_status():
         result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
         is GradientLevel.ALMOST_EVERYWHERE
     )
+    # ty: ignore[unresolved-attribute]
     assert result.derivative_contract.regularity.continuity == -1
     assert (
         result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
@@ -277,7 +300,7 @@ def test_isomap_exposes_geodesic_invariants_capacity_and_connectivity_status():
     assert invalid.diagnostics.connected_components == 2
 
 
-def test_complex_manifold_coordinates_use_hermitian_geometry():
+def test_complex_manifold_coordinates_use_hermitian_geometry() -> None:
     real = _features()
     complex_features = real + 0.2j * jnp.flip(real, axis=-1)
     graph = build_neighbor_graph(
@@ -308,11 +331,13 @@ def test_complex_manifold_coordinates_use_hermitian_geometry():
         IsomapRecipe(1, n_neighbors=3),
     ],
 )
-def test_deterministic_manifold_fit_feature_and_weight_gradients_match_contract(recipe):
+def test_deterministic_manifold_fit_feature_and_weight_gradients_match_contract(
+    recipe: Any,
+) -> None:
     features = _features()
     weights = jnp.array([1.0, 1.2, 0.9, 1.4, 1.1, 0.8, 1.3, 1.05])
 
-    def feature_loss(value):
+    def feature_loss(value: Any) -> Any:
         fitted = recipe.fit_batch(MLBatch(value, sample_weight=weights)).as_trainable()
         if isinstance(fitted, SpectralEmbeddingModel):
             embedding = fitted.eigenvectors
@@ -320,7 +345,7 @@ def test_deterministic_manifold_fit_feature_and_weight_gradients_match_contract(
             return jnp.sum(coefficients[:, None] * jnp.square(jnp.abs(embedding)))
         return _transductive_loss(fitted)
 
-    def weight_loss(value):
+    def weight_loss(value: Any) -> Any:
         fitted = recipe.fit_batch(MLBatch(features, sample_weight=value)).as_trainable()
         if isinstance(fitted, SpectralEmbeddingModel):
             embedding = fitted.eigenvectors

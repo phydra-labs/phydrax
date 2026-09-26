@@ -26,7 +26,7 @@ from benchmarks._runtime import (
 from phydrax.uq._causal_hmc import build_causal_hmc_kernel
 
 
-def _timings(function, arguments, *, repetitions: int):
+def _timings(function: Any, arguments: Any, *, repetitions: int) -> Any:
     jitted = jax.jit(function)
     compiled, compilation = measure_lower_and_compile(
         lambda: jitted.lower(*arguments),
@@ -46,13 +46,13 @@ def _timings(function, arguments, *, repetitions: int):
     }
 
 
-def _target(name: str, dimension: int):
+def _target(name: str, dimension: int) -> Any:
     scales = jnp.linspace(1.0, 4.0, dimension)
     if name == "gaussian":
         return lambda value: -0.5 * jnp.sum(scales * value * value)
     if name == "curved":
 
-        def logdensity(value):
+        def logdensity(value: Any) -> Any:
             leading = value[:-1]
             trailing = value[1:]
             rosenbrock = jnp.sum(
@@ -83,6 +83,7 @@ def benchmark_case(
     sequential_kernel = blackjax.hmc.build_kernel()
     config = phx.uq.CausalHMCConfig(
         trajectory_block_size=min(128, leapfrog_steps),
+        # ty: ignore[invalid-argument-type]
         linearization=linearization,
         probe_count=4,
         absolute_residual=2e-6,
@@ -91,7 +92,7 @@ def benchmark_case(
     )
     causal_kernel = build_causal_hmc_kernel(config)
 
-    def sequential(current_key, current_state):
+    def sequential(current_key: Any, current_state: Any) -> Any:
         return sequential_kernel(
             current_key,
             current_state,
@@ -101,7 +102,7 @@ def benchmark_case(
             leapfrog_steps,
         )
 
-    def causal(current_key, current_state):
+    def causal(current_key: Any, current_state: Any) -> Any:
         return causal_kernel(
             current_key,
             current_state,

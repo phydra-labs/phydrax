@@ -10,7 +10,7 @@ from phydrax.nn.activations._stan import Stan
 
 
 class TestStan:
-    def test_scalar_input(self):
+    def test_scalar_input(self) -> None:
         """Test Stan activation with scalar input."""
         # Create Stan activation with default scalar shape
         stan = Stan()
@@ -28,7 +28,7 @@ class TestStan:
             expected = jnp.tanh(x) * (1 + stan.beta * x)
             assert jnp.isclose(output, expected)
 
-    def test_vector_input(self):
+    def test_vector_input(self) -> None:
         """Test Stan activation with vector input."""
         # Create Stan activation with vector shape
         shape = (3,)
@@ -46,7 +46,7 @@ class TestStan:
         expected = jnp.tanh(x) * (1 + stan.beta * x)
         assert jnp.allclose(output, expected)
 
-    def test_matrix_input(self):
+    def test_matrix_input(self) -> None:
         """Test Stan activation with matrix input."""
         # Create Stan activation with matrix shape
         shape = (2, 2)
@@ -64,7 +64,7 @@ class TestStan:
         expected = jnp.tanh(x) * (1 + stan.beta * x)
         assert jnp.allclose(output, expected)
 
-    def test_broadcasting(self):
+    def test_broadcasting(self) -> None:
         """Test that broadcasting works correctly with different shapes."""
         # Create Stan activation with a vector shape
         shape = (3,)
@@ -84,7 +84,7 @@ class TestStan:
         for i in range(batch_size):
             assert jnp.allclose(output[i], output[0])
 
-    def test_special_values(self):
+    def test_special_values(self) -> None:
         """Test Stan activation with special input values."""
         stan = Stan()
 
@@ -101,7 +101,7 @@ class TestStan:
         expected_neg = jnp.tanh(large_neg) * (1 + stan.beta * large_neg)
         assert jnp.isclose(stan(jnp.array(large_neg)), expected_neg)
 
-    def test_modified_beta(self):
+    def test_modified_beta(self) -> None:
         """Test Stan activation with modified beta values."""
         # Create Stan activation
         stan = Stan()

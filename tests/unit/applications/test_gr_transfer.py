@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -34,13 +36,13 @@ jax.config.update("jax_enable_x64", True)
 
 
 def _snapshot(
-    time,
+    time: Any,
     *,
-    temperature_offset=0.0,
-    chart_id="cartesian-inertial",
-    scale=None,
-    convention=None,
-):
+    temperature_offset: Any = 0.0,
+    chart_id: Any = "cartesian-inertial",
+    scale: Any = None,
+    convention: Any = None,
+) -> Any:
     axes = tuple(jnp.asarray([0.0, 1.0]) for _ in range(3))
     x, y, z = jnp.meshgrid(*axes, indexing="ij")
     scalar = 1.0 + x + 2.0 * y + 3.0 * z
@@ -61,7 +63,7 @@ def _snapshot(
     )
 
 
-def test_fast_light_fixed_stencil_reports_support_and_is_jittable():
+def test_fast_light_fixed_stencil_reports_support_and_is_jittable() -> None:
     snapshot = _snapshot(0.0)
     coordinates = jnp.asarray([[0.2, 0.3, 0.4], [1.2, 0.3, 0.4]])
     plan = snapshot.prepare_sampling(coordinates)
@@ -91,7 +93,7 @@ def test_fast_light_fixed_stencil_reports_support_and_is_jittable():
     np.testing.assert_allclose(spatial_derivative, 1.0, rtol=1.0e-6)
 
 
-def test_monotone_slow_light_stationary_limit_matches_fast_light():
+def test_monotone_slow_light_stationary_limit_matches_fast_light() -> None:
     first = _snapshot(0.0)
     second = _snapshot(1.0)
     worldtube = MonotoneSlowLightWorldtube(
@@ -112,7 +114,7 @@ def test_monotone_slow_light_stationary_limit_matches_fast_light():
         MonotoneSlowLightWorldtube((first, _snapshot(0.0)), worldtube_id="nonmonotone")
 
 
-def test_invariant_scalar_transfer_vacuum_slab_thin_and_thick_limits():
+def test_invariant_scalar_transfer_vacuum_slab_thin_and_thick_limits() -> None:
     units = InvariantTransferUnitContract.si_affine_length()
     plan = InvariantScalarTransferPlan(jnp.asarray([2.0]), units, path_id="slab")
 
@@ -159,26 +161,26 @@ def test_invariant_scalar_transfer_vacuum_slab_thin_and_thick_limits():
 
 
 class _OpaqueMinkowskiMetric:
-    def __call__(self, coordinates):
+    def __call__(self, coordinates: Any) -> Any:
         return jnp.diag(jnp.asarray((-1.0, 1.0, 1.0, 1.0), dtype=coordinates.dtype))
 
 
-def _capture_after_affine_03(affine, point, tangent):
+def _capture_after_affine_03(affine: Any, point: Any, tangent: Any) -> Any:
     return 0.3 - affine
 
 
 def _flat_polarized_ray(
-    affine_parameter,
+    affine_parameter: Any,
     *,
-    capture_margin=None,
-    scale=None,
-    convention=None,
-    coordinate_unit=None,
-    affine_parameter_unit=None,
-    metric=None,
-    metric_semantic_id=None,
-    metric_numeric_id=None,
-):
+    capture_margin: Any = None,
+    scale: Any = None,
+    convention: Any = None,
+    coordinate_unit: Any = None,
+    affine_parameter_unit: Any = None,
+    metric: Any = None,
+    metric_semantic_id: Any = None,
+    metric_numeric_id: Any = None,
+) -> Any:
     metric = (
         minkowski_metric(CoordinateChart("transfer-cartesian", ("t", "x", "y", "z")))
         if metric is None
@@ -226,7 +228,7 @@ def _flat_polarized_ray(
     return metric, ray_plan.trace()
 
 
-def _pure_faraday_matrix(rotation):
+def _pure_faraday_matrix(rotation: Any) -> Any:
     return jnp.asarray(
         [
             [0.0, 0.0, 0.0, 0.0],
@@ -237,7 +239,7 @@ def _pure_faraday_matrix(rotation):
     )
 
 
-def test_polarized_transfer_binds_ray_basis_and_preserves_faraday_cone():
+def test_polarized_transfer_binds_ray_basis_and_preserves_faraday_cone() -> None:
     metric, ray = _flat_polarized_ray(jnp.asarray([0.0, 0.5]))
     path = PolarizedRayPath(ray, metric, ray_index=0, basis_tolerance=1.0e-7)
     plan = PolarizedInvariantTransferPlan(
@@ -325,7 +327,7 @@ def test_polarized_transfer_binds_ray_basis_and_preserves_faraday_cone():
     assert not bool(rejected.evidence.qualified)
 
 
-def test_polarized_ray_path_retains_exact_terminal_partial_segment():
+def test_polarized_ray_path_retains_exact_terminal_partial_segment() -> None:
     metric, ray = _flat_polarized_ray(
         jnp.asarray([0.0, 0.5, 1.0]),
         capture_margin=_capture_after_affine_03,
@@ -345,7 +347,7 @@ def test_polarized_ray_path_retains_exact_terminal_partial_segment():
     np.testing.assert_allclose(path.tangents[1], ray.event_ledger.tangent[0], atol=2.0e-7)
 
 
-def test_ray_metric_and_medium_chart_identities_are_exactly_bound():
+def test_ray_metric_and_medium_chart_identities_are_exactly_bound() -> None:
     metric, ray = _flat_polarized_ray(jnp.asarray([0.0, 0.5]))
     path = PolarizedRayPath(ray, metric, ray_index=0)
     wrong_metric = minkowski_metric(
@@ -403,7 +405,7 @@ def test_ray_metric_and_medium_chart_identities_are_exactly_bound():
     assert not bool(slow.evidence.in_support[-1])
 
 
-def test_opaque_metric_identity_flows_through_polarized_transfer():
+def test_opaque_metric_identity_flows_through_polarized_transfer() -> None:
     metric = LorentzianMetric(
         _OpaqueMinkowskiMetric(),
         chart=CoordinateChart("opaque-transfer-cartesian", ("t", "x", "y", "z")),
@@ -449,7 +451,7 @@ def test_opaque_metric_identity_flows_through_polarized_transfer():
         )
 
 
-def test_polarized_transfer_preserves_tiny_physical_emission_scale():
+def test_polarized_transfer_preserves_tiny_physical_emission_scale() -> None:
     metric, ray = _flat_polarized_ray(jnp.asarray([0.0, 0.25]))
     plan = PolarizedInvariantTransferPlan(
         PolarizedRayPath(ray, metric, ray_index=0),
@@ -476,7 +478,7 @@ def test_polarized_transfer_preserves_tiny_physical_emission_scale():
     assert bool(result.evidence.qualified)
 
 
-def test_validated_log_bessel_k2_matches_high_precision_reference_values():
+def test_validated_log_bessel_k2_matches_high_precision_reference_values() -> None:
     arguments = jnp.asarray([1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0, 100.0, 1000.0])
     trusted_log_values = jnp.asarray(
         [
@@ -493,7 +495,7 @@ def test_validated_log_bessel_k2_matches_high_precision_reference_values():
     np.testing.assert_allclose(evaluated, trusted_log_values, atol=1.0e-9, rtol=0.0)
 
 
-def test_thermal_synchrotron_attribution_and_scoped_qualification():
+def test_thermal_synchrotron_attribution_and_scoped_qualification() -> None:
     model = ThermalSynchrotronModel()
     coefficients = eqx.filter_jit(model.evaluate)(
         jnp.asarray(1.0e6),

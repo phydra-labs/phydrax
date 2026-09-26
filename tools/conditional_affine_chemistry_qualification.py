@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +14,7 @@ import phydrax as phx
 from benchmarks._runtime import capture_environment
 
 
-def _mechanism():
+def _mechanism() -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B", "C"),
         (
@@ -51,7 +52,7 @@ def _mechanism():
     ).prepare()
 
 
-def _drivers(value):
+def _drivers(value: Any) -> Any:
     return phx.equations.ChemicalConditionalAffineDrivers(
         jnp.asarray((value,)),
         jnp.asarray(500.0),
@@ -59,7 +60,7 @@ def _drivers(value):
     )
 
 
-def qualification():
+def qualification() -> Any:
     mechanism = _mechanism()
     plan = phx.equations.ChemicalConditionalAffinePlan(("B", "C"), ("A",))
     certificate = plan.analyze(mechanism)
@@ -93,7 +94,7 @@ def qualification():
         jnp.max(jnp.abs(second.candidate_state - midpoint.candidate_state))
     )
 
-    def differentiated(driver):
+    def differentiated(driver: Any) -> Any:
         batched_drivers = phx.equations.ChemicalConditionalAffineDrivers(
             driver.reshape((1, 1)),
             jnp.asarray((500.0,)),
@@ -164,7 +165,7 @@ def qualification():
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",

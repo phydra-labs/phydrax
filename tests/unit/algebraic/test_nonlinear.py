@@ -10,7 +10,7 @@ from phydrax.linalg import DenseLinearOperator
 from phydrax.nonlinear import NonlinearSystemProblem
 
 
-def test_complex_root_lowering_uses_cartesian_residual_and_real_block_jacobian():
+def test_complex_root_lowering_uses_cartesian_residual_and_real_block_jacobian() -> None:
     system = SparsePolynomialSystem.from_coo(
         ("z",),
         ("f",),

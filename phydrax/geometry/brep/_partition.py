@@ -248,7 +248,8 @@ class BRepPartitionOperand:
 def _operand_selection(operand: BRepPartitionOperand) -> CADSelectionSet:
     selection = operand.selection
     # BRepPartitionOperand.__post_init__ replaces a None selection with all solids.
-    assert selection is not None
+    if not (selection is not None):
+        raise RuntimeError("Internal invariant failed: selection is not None.")
     return selection
 
 

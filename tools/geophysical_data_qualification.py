@@ -21,6 +21,7 @@ from phydrax.units import derived_unit, KELVIN, KILOGRAM, METER
 
 
 def qualify(directory: Path, format: str) -> dict[str, object]:
+    # ty: ignore[unresolved-import]
     import xarray as xr  # Optional host boundary, never imported by compiled models.
 
     layout = StateLayout((2,), component_names=("temperature", "rain_amount"))

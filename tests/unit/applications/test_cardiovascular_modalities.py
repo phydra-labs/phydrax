@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -50,7 +52,7 @@ from phydrax.units import (
 )
 
 
-def _spatial_affine():
+def _spatial_affine() -> Any:
     return ImageIndexAffine(
         np.eye(4),
         "voxel-index",
@@ -63,7 +65,7 @@ def _spatial_affine():
     )
 
 
-def _delta_psf():
+def _delta_psf() -> Any:
     return np.pad(np.ones((1, 1, 1)), ((1, 1), (1, 1), (1, 1)))
 
 
@@ -73,7 +75,7 @@ _CUBIC_MILLIMETER = derived_unit("mm3", ((MILLIMETER, 3),))
 def _record(
     record_id: str,
     modality: str,
-    values,
+    values: Any,
     quantity_name: str,
     unit: UnitDefinition,
     timebase: SampleTimeAxis,
@@ -100,9 +102,12 @@ def _record(
     return ObservationRecord(record_id, modality, field)
 
 
-def _lge_plan(*, motion=None, noise=0.0, acquisition_id="lge"):
+def _lge_plan(
+    *, motion: Any = None, noise: Any = 0.0, acquisition_id: Any = "lge"
+) -> Any:
     shape = (2, 2, 2)
     if motion is None:
+        # ty: ignore[no-matching-overload]
         motion = np.eye(np.prod(shape))
     return LGEObservationPlan(
         shape,
@@ -120,7 +125,7 @@ def _lge_plan(*, motion=None, noise=0.0, acquisition_id="lge"):
     )
 
 
-def test_lat_apd_timing_censoring_and_record_boundary():
+def test_lat_apd_timing_censoring_and_record_boundary() -> None:
     timebase = SampleTimeAxis.uniform("ep-1ms", 8, 1.0, MILLISECOND)
     voltage = jnp.asarray(
         [
@@ -180,7 +185,7 @@ def test_lat_apd_timing_censoring_and_record_boundary():
     assert bool(apd.evidence.activation_censored[1])
 
 
-def test_egm_gauge_electrode_filter_and_timebase_evidence():
+def test_egm_gauge_electrode_filter_and_timebase_evidence() -> None:
     timebase = SampleTimeAxis.uniform("electrical-1ms", 5, 1.0, MILLISECOND)
     labels = ("e1", "e2", "e3")
     gauge = ElectricalGaugePlan(
@@ -220,10 +225,11 @@ def test_egm_gauge_electrode_filter_and_timebase_evidence():
     assert bool(result.evidence.electrode.every_electrode_responsive)
     assert bool(result.evidence.timebase.uniform)
     with pytest.raises(TypeError, match="sampled Vm"):
+        # ty: ignore[invalid-argument-type]
         plan.observe(jnp.zeros((5, 2)))
 
 
-def test_ecg_lead_reciprocity_and_fail_closed_mismatch():
+def test_ecg_lead_reciprocity_and_fail_closed_mismatch() -> None:
     timebase = SampleTimeAxis.uniform("ecg-2ms", 4, 2.0, MILLISECOND)
     electrodes = ("ra", "la", "ll")
     gauge = ElectricalGaugePlan(
@@ -279,7 +285,7 @@ def test_ecg_lead_reciprocity_and_fail_closed_mismatch():
     np.testing.assert_array_equal(mismatch.values_mv, jnp.zeros_like(mismatch.values_mv))
 
 
-def test_pressure_volume_flow_observations_and_pv_work_derivative():
+def test_pressure_volume_flow_observations_and_pv_work_derivative() -> None:
     timebase = SampleTimeAxis.uniform("hemodynamics-1ms", 5, 1.0, MILLISECOND)
     pressure_plan = PressureObservationPlan(
         jnp.eye(2),
@@ -404,7 +410,7 @@ def test_pressure_volume_flow_observations_and_pv_work_derivative():
     np.testing.assert_allclose(derivative, 4.0)
 
 
-def test_lge_constant_noise_motion_limits_and_fixed_map_derivative():
+def test_lge_constant_noise_motion_limits_and_fixed_map_derivative() -> None:
     shape = (2, 2, 2)
     plan = _lge_plan()
     tissue = LGETissueState(

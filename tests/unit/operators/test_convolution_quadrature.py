@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -26,7 +27,7 @@ from phydrax.solver._convolution_quadrature import (
 )
 
 
-def _declaration(dimension: int, *, provider: str = "phydrax.linalg"):
+def _declaration(dimension: int, *, provider: str = "phydrax.linalg") -> Any:
     return ConvolutionQuadratureDeclaration(
         dimension,
         family_id="test-dynamic-transfer",
@@ -43,10 +44,10 @@ def _system_factory(
     matrix: Callable[[jax.Array], jax.Array],
     *,
     singular_first_forward: bool = False,
-):
+) -> Any:
     calls = {"forward": 0, "transpose": 0, "adjoint": 0}
 
-    def factory(parameter, action):
+    def factory(parameter: Any, action: Any) -> Any:
         base = jnp.asarray(matrix(parameter))
         call_index = calls[action]
         calls[action] += 1
@@ -62,14 +63,14 @@ def _system_factory(
     return factory, calls
 
 
-def _scalar_factory(rate: float, *, singular_first_forward: bool = False):
+def _scalar_factory(rate: float, *, singular_first_forward: bool = False) -> Any:
     return _system_factory(
         lambda parameter: jnp.reshape(parameter + rate, (1, 1)),
         singular_first_forward=singular_first_forward,
     )
 
 
-def test_bdf_symbols_and_balanced_radius_policy_are_explicit():
+def test_bdf_symbols_and_balanced_radius_policy_are_explicit() -> None:
     zeta = jnp.asarray([0.0 + 0.0j, 0.2 - 0.3j])
     assert jnp.allclose(bdf_symbol(zeta, "bdf1"), 1.0 - zeta)
     assert jnp.allclose(
@@ -84,7 +85,7 @@ def test_bdf_symbols_and_balanced_radius_policy_are_explicit():
     assert explicit.resolve(128) == 0.82
 
 
-def test_contour_fft_round_trip_retains_every_history_sample():
+def test_contour_fft_round_trip_retains_every_history_sample() -> None:
     with jax.enable_x64():
         contour = prepare_convolution_quadrature_contour(
             0.125,
@@ -111,7 +112,7 @@ def test_contour_fft_round_trip_retains_every_history_sample():
     assert not contour.conjugate_symmetric
 
 
-def test_scalar_transfer_matches_direct_cq_weight_oracle():
+def test_scalar_transfer_matches_direct_cq_weight_oracle() -> None:
     with jax.enable_x64():
         factory, _ = _scalar_factory(0.7)
         prepared = prepare_convolution_quadrature(
@@ -150,6 +151,7 @@ def _terminal_smooth_forcing_error(method: str, steps: int) -> float:
         step_size,
         history_length,
         _declaration(1),
+        # ty: ignore[invalid-argument-type]
         method=method,
         fft_length=2 * history_length,
         contour_policy=ConvolutionQuadratureContourPolicy(tolerance=1.0e-14),
@@ -162,7 +164,7 @@ def _terminal_smooth_forcing_error(method: str, steps: int) -> float:
     return float(jnp.abs(terminal - exact))
 
 
-def test_bdf1_and_bdf2_show_their_expected_convergence_orders():
+def test_bdf1_and_bdf2_show_their_expected_convergence_orders() -> None:
     with jax.enable_x64():
         bdf1_coarse = _terminal_smooth_forcing_error("bdf1", 24)
         bdf1_fine = _terminal_smooth_forcing_error("bdf1", 48)
@@ -174,7 +176,7 @@ def test_bdf1_and_bdf2_show_their_expected_convergence_orders():
     assert bdf2_fine < bdf1_fine
 
 
-def test_conjugacy_reduction_matches_full_contour_and_rejects_complex_history():
+def test_conjugacy_reduction_matches_full_contour_and_rejects_complex_history() -> None:
     with jax.enable_x64():
         full_factory, full_calls = _scalar_factory(0.4)
         reduced_factory, reduced_calls = _scalar_factory(0.4)
@@ -189,6 +191,7 @@ def test_conjugacy_reduction_matches_full_contour_and_rejects_complex_history():
             7,
             _declaration(1),
             conjugate_symmetric=False,
+            # ty: ignore[invalid-argument-type]
             **common,
         )
         reduced = prepare_convolution_quadrature(
@@ -197,6 +200,7 @@ def test_conjugacy_reduction_matches_full_contour_and_rejects_complex_history():
             7,
             _declaration(1),
             conjugate_symmetric=True,
+            # ty: ignore[invalid-argument-type]
             **common,
         )
         history = jnp.linspace(-0.3, 1.1, 7, dtype=jnp.float64)[:, None]
@@ -211,7 +215,7 @@ def test_conjugacy_reduction_matches_full_contour_and_rejects_complex_history():
         reduced.apply(history.astype(jnp.complex128))
 
 
-def test_causal_reconstruction_cannot_see_future_samples_or_truncate_old_ones():
+def test_causal_reconstruction_cannot_see_future_samples_or_truncate_old_ones() -> None:
     with jax.enable_x64():
         factory, _ = _scalar_factory(0.25)
         prepared = prepare_convolution_quadrature(
@@ -233,7 +237,7 @@ def test_causal_reconstruction_cannot_see_future_samples_or_truncate_old_ones():
     assert not first.error_evidence.history_truncated
 
 
-def test_any_failed_node_invalidates_the_complete_history_and_retains_results():
+def test_any_failed_node_invalidates_the_complete_history_and_retains_results() -> None:
     with jax.enable_x64():
         factory, _ = _scalar_factory(0.5, singular_first_forward=True)
         prepared = prepare_convolution_quadrature(
@@ -253,7 +257,7 @@ def test_any_failed_node_invalidates_the_complete_history_and_retains_results():
     assert not bool(result.error_evidence.node_solves_successful)
 
 
-def test_total_history_transpose_and_adjoint_are_exact_for_batched_rhs_axes():
+def test_total_history_transpose_and_adjoint_are_exact_for_batched_rhs_axes() -> None:
     with jax.enable_x64():
         base = jnp.asarray([[0.8 + 0.2j, -0.3 + 0.1j], [0.4j, 1.1 - 0.2j]])
         factory, _ = _system_factory(
@@ -289,7 +293,7 @@ def test_total_history_transpose_and_adjoint_are_exact_for_batched_rhs_axes():
     assert adjointed.parameter_indices == tuple((-index) % 16 for index in range(16))
 
 
-def test_resource_error_and_scientific_scope_evidence_are_retained():
+def test_resource_error_and_scientific_scope_evidence_are_retained() -> None:
     with jax.enable_x64():
         factory, _ = _scalar_factory(0.9)
         prepared = prepare_convolution_quadrature(

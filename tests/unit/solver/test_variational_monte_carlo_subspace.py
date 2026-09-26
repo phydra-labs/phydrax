@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,7 +17,7 @@ class _BasisState(eqx.Module):
     index: int = eqx.field(static=True)
     phase: complex = eqx.field(static=True)
 
-    def __call__(self, configuration):
+    def __call__(self, configuration: Any) -> Any:
         index = jnp.where(configuration[0] > 0, 0, 1)
         log_abs = jnp.where(index == self.index, 0.0, -jnp.inf)
         return phx.operators.LogAmplitude(log_abs, self.phase)
@@ -23,16 +26,16 @@ class _BasisState(eqx.Module):
 class _TableState(eqx.Module):
     parameters: jax.Array = phx.parameter_field()
 
-    def __call__(self, configuration):
+    def __call__(self, configuration: Any) -> Any:
         index = jnp.where(configuration[0] > 0, 0, 1)
         return phx.operators.LogAmplitude(self.parameters[index], 1.0 + 0.0j)
 
 
-def _operator():
-    def diagonal(configurations):
+def _operator() -> Any:
+    def diagonal(configurations: Any) -> Any:
         return jnp.where(configurations[..., 0] > 0, 0.0, 2.0)
 
-    def connections(configurations):
+    def connections(configurations: Any) -> Any:
         connected = (-configurations)[..., None, :]
         shape = configurations.shape[:-1] + (1,)
         return phx.operators.ConnectedConfigurations(
@@ -50,7 +53,7 @@ def _operator():
     )
 
 
-def _kernel():
+def _kernel() -> Any:
     proposal = phx.sampling.CallableProposal(
         lambda _key, current: -current,
         lambda _proposed, _current: jnp.asarray(0.0),
@@ -59,11 +62,11 @@ def _kernel():
     return phx.sampling.MetropolisHastings(proposal)
 
 
-def _initial_configurations():
+def _initial_configurations() -> Any:
     return jnp.asarray([[1], [-1]], dtype=jnp.int32)
 
 
-def test_subspace_vmc_recovers_exact_complex_phased_basis():
+def test_subspace_vmc_recovers_exact_complex_phased_basis() -> None:
     problem = phx.solver.VariationalMonteCarloSubspaceProblem(
         (_BasisState(0, 1.0 + 0.0j), _BasisState(1, 0.0 + 1.0j)),
         _operator(),
@@ -91,7 +94,7 @@ def test_subspace_vmc_recovers_exact_complex_phased_basis():
     assert samples.final_state.step_index > state.markov_state.step_index
 
 
-def test_subspace_vmc_reports_collapsed_state_span():
+def test_subspace_vmc_reports_collapsed_state_span() -> None:
     problem = phx.solver.VariationalMonteCarloSubspaceProblem(
         (_BasisState(0, 1.0 + 0.0j), _BasisState(0, 0.0 + 1.0j)),
         _operator(),
@@ -113,7 +116,7 @@ def test_subspace_vmc_reports_collapsed_state_span():
     assert estimate.gram_numerical_rank == 1
 
 
-def test_subspace_vmc_zero_iterations_returns_certified_ritz_modes():
+def test_subspace_vmc_zero_iterations_returns_certified_ritz_modes() -> None:
     problem = phx.solver.VariationalMonteCarloSubspaceProblem(
         (_BasisState(0, 1.0 + 0.0j), _BasisState(1, 1.0 + 0.0j)),
         _operator(),
@@ -143,7 +146,7 @@ def test_subspace_vmc_zero_iterations_returns_certified_ritz_modes():
     )
 
 
-def test_subspace_vmc_score_corrected_sr_step_is_finite():
+def test_subspace_vmc_score_corrected_sr_step_is_finite() -> None:
     problem = phx.solver.VariationalMonteCarloSubspaceProblem(
         (
             _TableState(jnp.asarray([0.0, -0.7])),

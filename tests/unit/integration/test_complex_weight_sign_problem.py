@@ -13,7 +13,7 @@ from phydrax.integration._complex_weight import (
 )
 
 
-def test_phase_quenched_reweighting_matches_exact_finite_complex_measure():
+def test_phase_quenched_reweighting_matches_exact_finite_complex_measure() -> None:
     samples = jnp.asarray([[0.0], [1.0], [2.0]])
     weights = jnp.asarray([1.0 + 1.0j, 1.0 - 1.0j, 2.0 + 0.0j])
     observable = jnp.asarray([0.0, 2.0, 1.0])
@@ -37,7 +37,7 @@ def test_phase_quenched_reweighting_matches_exact_finite_complex_measure():
     assert result.overlap.average_phase_magnitude > 0.5
 
 
-def test_phase_quenched_reweighting_abstains_when_average_phase_vanishes():
+def test_phase_quenched_reweighting_abstains_when_average_phase_vanishes() -> None:
     measure = complex_weight_measure(
         jnp.asarray([[0.0], [1.0], [2.0], [3.0]]),
         jnp.asarray([1.0 + 0.0j, -1.0 + 0.0j, 1.0 + 0.0j, -1.0 + 0.0j]),
@@ -59,7 +59,7 @@ def test_phase_quenched_reweighting_abstains_when_average_phase_vanishes():
     assert jnp.isnan(jnp.real(result.value))
 
 
-def test_zero_weight_observations_do_not_poison_complex_reweighting():
+def test_zero_weight_observations_do_not_poison_complex_reweighting() -> None:
     measure = complex_weight_measure(
         jnp.asarray([[0.0], [1.0], [2.0]]),
         jnp.asarray([1.0 + 0.0j, 0.0 + 0.0j, 1.0 + 0.0j]),

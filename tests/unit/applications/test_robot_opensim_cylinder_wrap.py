@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -22,20 +25,20 @@ _POINTS = jnp.asarray(((-2.0, 0.35, -0.8), (2.1, 0.65, 1.2)))
 _VELOCITY = jnp.asarray(((0.12, -0.04, 0.17), (-0.03, 0.08, -0.11)))
 
 
-def _prepared(*, side="shortest", length=8.0, samples=32):
+def _prepared(*, side: Any = "shortest", length: Any = 8.0, samples: Any = 32) -> Any:
     return OpenSimCylinderRouteWrapPlan(samples, side=side).prepare(
         jnp.zeros(3), jnp.asarray((0.0, 0.0, 1.0)), 1.0, length
     )
 
 
-def _accepted(prepared, points=_POINTS):
+def _accepted(prepared: Any, points: Any = _POINTS) -> Any:
     source = prepared.initial_state()
     candidate = prepared.propose(source, points)
     assert bool(candidate.successful)
     return prepared.commit(candidate, source)
 
 
-def _stationary_source_oracle(points, sign):
+def _stationary_source_oracle(points: Any, sign: Any) -> Any:
     """Independent polar tangents + Newton solve of source axial stationarity.
 
     OpenSim's _make_spiral_path uses sqrt((r*theta)^2 + dz^2), and
@@ -81,7 +84,9 @@ def _stationary_source_oracle(points, sign):
     return np.sum(segment_lengths), segment_lengths[1], tangents, sign * arc
 
 
-def test_unequal_axial_lateral_path_matches_source_stationarity_and_shortest_cost():
+def test_unequal_axial_lateral_path_matches_source_stationarity_and_shortest_cost() -> (
+    None
+):
     prepared = _prepared()
     candidate = prepared.propose(prepared.initial_state(), _POINTS)
     result = candidate.evaluation
@@ -107,7 +112,9 @@ def test_unequal_axial_lateral_path_matches_source_stationarity_and_shortest_cos
     np.testing.assert_allclose(coarse.evaluation.total_length_m, result.total_length_m)
 
 
-def test_side_prescription_selects_complete_tangent_paths_not_reversed_surface_only():
+def test_side_prescription_selects_complete_tangent_paths_not_reversed_surface_only() -> (
+    None
+):
     positive = _prepared(side="positive")
     negative = _prepared(side="negative")
     for prepared, sign in ((positive, 1), (negative, -1)):
@@ -120,7 +127,7 @@ def test_side_prescription_selects_complete_tangent_paths_not_reversed_surface_o
         assert np.sign(float(result.signed_surface_angle_rad)) == sign
 
 
-def test_planar_source_fidelity_remains_separate_and_nonplanar_fails_there():
+def test_planar_source_fidelity_remains_separate_and_nonplanar_fails_there() -> None:
     planar = PlanarCylinderRouteWrapPlan().prepare(
         jnp.zeros(3), jnp.asarray((0.0, 0.0, 1.0)), 1.0, 8.0
     )
@@ -132,7 +139,7 @@ def test_planar_source_fidelity_remains_separate_and_nonplanar_fails_there():
     assert bool(_prepared().propose(_prepared().initial_state(), _POINTS).successful)
 
 
-def test_fixed_branch_jit_vmap_jvp_vjp_and_virtual_power():
+def test_fixed_branch_jit_vmap_jvp_vjp_and_virtual_power() -> None:
     prepared = _prepared()
     state = _accepted(prepared)
     result = eqx.filter_jit(prepared.evaluate_fixed_branch)(state, _POINTS)
@@ -161,7 +168,7 @@ def test_fixed_branch_jit_vmap_jvp_vjp_and_virtual_power():
     assert bool(jnp.all(batch.successful))
 
 
-def test_rigid_frame_covariance_and_endpoint_action_reaction():
+def test_rigid_frame_covariance_and_endpoint_action_reaction() -> None:
     prepared = _prepared()
     state = _accepted(prepared)
     angle = 0.71
@@ -202,7 +209,7 @@ def test_rigid_frame_covariance_and_endpoint_action_reaction():
     np.testing.assert_allclose(jnp.sum(original_loads[:, 2]), 0.0, atol=2e-5)
 
 
-def test_candidate_commit_branch_transition_and_stale_or_foreign_rollback():
+def test_candidate_commit_branch_transition_and_stale_or_foreign_rollback() -> None:
     prepared = _prepared()
     initial = prepared.initial_state()
     candidate = prepared.propose(initial, _POINTS)
@@ -255,7 +262,9 @@ def test_candidate_commit_branch_transition_and_stale_or_foreign_rollback():
         ),
     ),
 )
-def test_event_and_invalid_input_roll_back_all_state_and_load_zero(points, flag):
+def test_event_and_invalid_input_roll_back_all_state_and_load_zero(
+    points: Any, flag: Any
+) -> None:
     prepared = _prepared()
     state = _accepted(prepared)
     points = jnp.asarray(points)
@@ -270,7 +279,7 @@ def test_event_and_invalid_input_roll_back_all_state_and_load_zero(points, flag)
     np.testing.assert_array_equal(loads, jnp.zeros((2, 3)))
 
 
-def test_cap_rim_gate_does_not_substitute_a_direct_chord_or_longer_branch():
+def test_cap_rim_gate_does_not_substitute_a_direct_chord_or_longer_branch() -> None:
     prepared = _prepared(length=0.1)
     source = prepared.initial_state()
     candidate = prepared.propose(source, _POINTS)
@@ -289,7 +298,7 @@ def test_cap_rim_gate_does_not_substitute_a_direct_chord_or_longer_branch():
     )
 
 
-def test_clear_direct_branch_and_exclusive_force_owner():
+def test_clear_direct_branch_and_exclusive_force_owner() -> None:
     prepared = _prepared()
     points = _POINTS.at[:, 1].add(3.0)
     state = _accepted(prepared, points)

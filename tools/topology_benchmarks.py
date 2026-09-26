@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,7 +17,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _triangular_grid(width):
+def _triangular_grid(width: Any) -> Any:
     axis = np.linspace(-1.0, 1.0, width)
     x, y = np.meshgrid(axis, axis, indexing="xy")
     vertices = np.stack((x.reshape((-1,)), y.reshape((-1,))), axis=1)
@@ -36,13 +37,13 @@ def _triangular_grid(width):
     return jnp.asarray(vertices), jnp.asarray(faces, dtype=jnp.int32)
 
 
-def _timed(function):
+def _timed(function: Any) -> Any:
     started = time.perf_counter()
     value = function()
     return value, time.perf_counter() - started
 
 
-def topology_case(width, repeats):
+def topology_case(width: Any, repeats: Any) -> Any:
     vertices, faces = _triangular_grid(width)
     mesh = phx.discretization.CellMesh.from_triangles(vertices, faces)
     complex = phx.topology.CellSubcomplex.full(mesh.topology)
@@ -50,6 +51,7 @@ def topology_case(width, repeats):
         mesh.topology,
         (
             np.arange(vertices.shape[0], dtype=np.int32)[:, None],
+            # ty: ignore[unresolved-attribute]
             np.asarray(mesh.connectivity.edges, dtype=np.int32),
             np.asarray(faces, dtype=np.int32),
         ),
@@ -109,7 +111,7 @@ def topology_case(width, repeats):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mesh-width", type=int, default=12)
     parser.add_argument("--repeats", type=int, default=10)

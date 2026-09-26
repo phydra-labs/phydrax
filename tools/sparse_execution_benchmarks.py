@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -15,11 +16,11 @@ import numpy as np
 import phydrax as phx
 
 
-def _ready(value):
+def _ready(value: Any) -> Any:
     return jax.block_until_ready(value)
 
 
-def _time(function, *arguments, repeats=3):
+def _time(function: Any, *arguments: Any, repeats: Any = 3) -> Any:
     compiled = jax.jit(function)
     started = perf_counter()
     value = _ready(compiled(*arguments))
@@ -32,7 +33,7 @@ def _time(function, *arguments, repeats=3):
     return value, first, float(np.median(timings))
 
 
-def _array_bytes(value):
+def _array_bytes(value: Any) -> Any:
     return int(
         sum(
             leaf.size * leaf.dtype.itemsize
@@ -42,7 +43,7 @@ def _array_bytes(value):
     )
 
 
-def _group_case():
+def _group_case() -> Any:
     count = 4096
     keys = (jnp.arange(count, dtype=jnp.int32) * 17) % 512
     plan = phx.sparse.KeyGroupPlan(
@@ -65,7 +66,7 @@ def _group_case():
     }
 
 
-def _relation_case():
+def _relation_case() -> Any:
     count = 4096
     target_count = 512
     targets = (jnp.arange(count, dtype=jnp.int32) * 29) % target_count
@@ -96,7 +97,7 @@ def _relation_case():
     }
 
 
-def _raster_case():
+def _raster_case() -> Any:
     image = phx.imaging.ImagePlaneSupport((128, 128))
     row, column = jnp.meshgrid(
         jnp.linspace(8.0, 120.0, 16),
@@ -138,7 +139,7 @@ def _raster_case():
     }
 
 
-def _periodic_index(count):
+def _periodic_index(count: Any) -> Any:
     plan = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(count, periodic=True),
@@ -149,7 +150,7 @@ def _periodic_index(count):
     return plan.prepare_index_space(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
 
 
-def _lbm_case():
+def _lbm_case() -> Any:
     count = 32
     index = _periodic_index(count)
     rows, columns = np.meshgrid(np.arange(8, 24), np.arange(8, 24), indexing="ij")
@@ -174,7 +175,7 @@ def _lbm_case():
     }
 
 
-def _mpm_case():
+def _mpm_case() -> Any:
     count = 32
     grid_plan = phx.discretization.TensorGridPlan(
         (
@@ -229,6 +230,7 @@ def _mpm_case():
     return {
         "logical_nodes": count * count,
         "storage_nodes": storage.storage_capacity,
+        # ty: ignore[unresolved-attribute]
         "active_blocks": int(state.storage_state.evidence.required_blocks),
         "state_bytes": _array_bytes(state),
         "compile_and_first_ms": first,
@@ -237,7 +239,7 @@ def _mpm_case():
     }
 
 
-def _flip_case():
+def _flip_case() -> Any:
     count = 32
     index = _periodic_index(count)
     row, column = jnp.meshgrid(
@@ -304,7 +306,7 @@ def _flip_case():
     }
 
 
-def run(output: Path):
+def run(output: Path) -> None:
     cases = {
         "key_groups": _group_case(),
         "relation_execution": _relation_case(),

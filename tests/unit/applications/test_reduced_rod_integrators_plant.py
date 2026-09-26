@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -39,7 +41,7 @@ from phydrax.dynamics import PlantStepContext
 from phydrax.nonlinear import NonlinearTermination
 
 
-def _axial_dynamics(*, viscosity: float = 0.0):
+def _axial_dynamics(*, viscosity: float = 0.0) -> Any:
     dtype = jnp.float32
     rod = prepare_rod(
         RodPlan(
@@ -87,7 +89,9 @@ def _axial_dynamics(*, viscosity: float = 0.0):
     )
 
 
-def _initial_state(dynamics, *, coefficient: float = 0.08, velocity: float = 0.0):
+def _initial_state(
+    dynamics: Any, *, coefficient: float = 0.08, velocity: float = 0.0
+) -> Any:
     dtype = dynamics.reduction.reference_coefficients.dtype
     return initialize_reduced_rod_integration_state(
         dynamics,
@@ -98,7 +102,7 @@ def _initial_state(dynamics, *, coefficient: float = 0.08, velocity: float = 0.0
     )
 
 
-def _assert_tree_arrays_equal(left, right):
+def _assert_tree_arrays_equal(left: Any, right: Any) -> None:
     assert jax.tree.structure(left) == jax.tree.structure(right)
     for left_leaf, right_leaf in zip(
         jax.tree.leaves(left), jax.tree.leaves(right), strict=True
@@ -106,7 +110,9 @@ def _assert_tree_arrays_equal(left, right):
         assert jnp.array_equal(left_leaf, right_leaf)
 
 
-def _advance(dynamics, policy, source, step_size: float, count: int):
+def _advance(
+    dynamics: Any, policy: Any, source: Any, step_size: float, count: int
+) -> Any:
     state = source
     for _ in range(count):
         result = integrate_reduced_rod_step(
@@ -120,7 +126,7 @@ def _advance(dynamics, policy, source, step_size: float, count: int):
     return state
 
 
-def test_velocity_euler_is_velocity_first_and_first_order_time_convergent():
+def test_velocity_euler_is_velocity_first_and_first_order_time_convergent() -> None:
     dynamics = _axial_dynamics()
     source = _initial_state(dynamics)
     step = jnp.asarray(1.0e-3, dtype=source.reduced_state.values.dtype)
@@ -182,7 +188,7 @@ def test_velocity_euler_is_velocity_first_and_first_order_time_convergent():
     )
 
 
-def test_implicit_midpoint_conservative_and_damped_ledgers_close():
+def test_implicit_midpoint_conservative_and_damped_ledgers_close() -> None:
     conservative = _axial_dynamics()
     source = _initial_state(conservative, coefficient=0.08, velocity=-0.1)
     policy = ReducedRodImplicitMidpoint(
@@ -218,7 +224,7 @@ def test_implicit_midpoint_conservative_and_damped_ledgers_close():
     assert damped_ledger.mechanical_energy_after < damped_ledger.mechanical_energy_before
 
 
-def test_material_mass_and_nonlinear_failures_roll_back_every_integration_leaf():
+def test_material_mass_and_nonlinear_failures_roll_back_every_integration_leaf() -> None:
     dynamics = _axial_dynamics()
     source = _initial_state(dynamics, coefficient=0.1, velocity=0.2)
     explicit = ReducedRodSemiImplicitVelocityEuler(
@@ -279,7 +285,7 @@ def test_material_mass_and_nonlinear_failures_roll_back_every_integration_leaf()
     _assert_tree_arrays_equal(nonlinear_failure.accepted_state, source)
 
 
-def test_passive_plant_reset_step_rollback_checkpoint_replay_and_mass_revision():
+def test_passive_plant_reset_step_rollback_checkpoint_replay_and_mass_revision() -> None:
     dynamics = _axial_dynamics()
     plant = prepare_reduced_rod_plant(
         dynamics,
@@ -350,7 +356,9 @@ def test_passive_plant_reset_step_rollback_checkpoint_replay_and_mass_revision()
     assert failed.candidate_state.time == failed_context.target_time
 
 
-def test_plant_material_mass_and_nonlinear_failures_roll_back_payload_clock_and_key():
+def test_plant_material_mass_and_nonlinear_failures_roll_back_payload_clock_and_key() -> (
+    None
+):
     dynamics = _axial_dynamics()
     explicit_plant = prepare_reduced_rod_plant(
         dynamics,
@@ -451,7 +459,7 @@ def test_plant_material_mass_and_nonlinear_failures_roll_back_payload_clock_and_
     )
 
 
-def test_differential_adapter_is_the_same_smooth_stateless_contact_free_law():
+def test_differential_adapter_is_the_same_smooth_stateless_contact_free_law() -> None:
     dynamics = _axial_dynamics(viscosity=0.25)
     plant = prepare_reduced_rod_plant(
         dynamics,

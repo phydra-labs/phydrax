@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +18,7 @@ SIGMA_Y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype="complex128")
 SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 
-def test_pauli_expectations_norm_and_variance():
+def test_pauli_expectations_norm_and_variance() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     state = time.Function()(jnp.asarray([1.0, 1.0], dtype="complex128") / jnp.sqrt(2.0))
     sigma_x = time.Function()(SIGMA_X)
@@ -29,15 +32,15 @@ def test_pauli_expectations_norm_and_variance():
     assert jnp.allclose(phx.operators.observable_variance(state, sigma_z).func(), 1.0)
 
 
-def test_state_and_density_expectations_agree_for_pure_state():
+def test_state_and_density_expectations_agree_for_pure_state() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
 
     @time.Function("t")
-    def state(t):
+    def state(t: Any) -> Any:
         return jnp.asarray([jnp.exp(-0.5j * t), jnp.exp(0.5j * t)]) / jnp.sqrt(2.0)
 
     @time.Function("t")
-    def factor(t):
+    def factor(t: Any) -> Any:
         return state.func(t)[:, None]
 
     sigma_x = time.Function()(SIGMA_X)
@@ -50,7 +53,7 @@ def test_state_and_density_expectations_agree_for_pure_state():
     assert jnp.allclose(density_value.func(point), state_value.func(point), atol=1e-12)
 
 
-def test_rectangular_density_factor_is_physical():
+def test_rectangular_density_factor_is_physical() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     factor_value = jnp.asarray(
         [[1.0 + 1.0j, 0.2], [0.3j, 1.4], [0.5, -0.7j]],
@@ -66,11 +69,11 @@ def test_rectangular_density_factor_is_physical():
     assert jnp.allclose(phx.operators.unit_trace_residual(density).func(), 0.0)
 
 
-def test_density_factorization_is_jittable_and_parameter_differentiable():
+def test_density_factorization_is_jittable_and_parameter_differentiable() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     sigma_z = time.Function()(SIGMA_Z)
 
-    def expectation(theta):
+    def expectation(theta: Any) -> Any:
         factor = time.Function()(jnp.diag(jnp.asarray([theta, 1.0])))
         density = phx.operators.density_from_factor(factor)
         value = phx.operators.density_expectation(density, sigma_z).func()
@@ -82,7 +85,7 @@ def test_density_factorization_is_jittable_and_parameter_differentiable():
     assert jnp.allclose(derivative, expected, atol=1e-12)
 
 
-def test_density_from_factor_rejects_zero_and_invalid_shapes():
+def test_density_from_factor_rejects_zero_and_invalid_shapes() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     zero = phx.operators.density_from_factor(time.Function()(jnp.zeros((2, 1))))
     invalid = phx.operators.density_from_factor(time.Function()(jnp.ones((2,))))
@@ -97,7 +100,7 @@ def test_density_from_factor_rejects_zero_and_invalid_shapes():
         invalid.func()
 
 
-def test_quantum_state_operators_validate_value_dimensions():
+def test_quantum_state_operators_validate_value_dimensions() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     scalar = time.Function()(1.0)
     state = time.Function()(jnp.ones((2,)))

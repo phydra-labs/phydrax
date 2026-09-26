@@ -51,8 +51,7 @@ class SelectiveSequenceModel(StrictModule, ParameterOwner):
         resolved_depth = int(depth)
         if resolved_depth <= 0:
             raise ValueError("depth must be positive.")
-        if execution not in ("serial", "associative"):
-            raise ValueError("execution must be 'serial' or 'associative'.")
+        execution = parse(execution, SelectiveSequenceExecution, "execution")
         return_mode = parse(return_mode, SelectiveReturnMode, "return_mode")
         keys = jr.split(key, resolved_depth)
         block_kwargs: dict[str, Any] = {

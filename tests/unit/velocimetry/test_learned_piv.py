@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -32,7 +34,7 @@ from phydrax.velocimetry.piv._learned_training import (
 )
 
 
-def _small_model(key=jr.key(4)):
+def _small_model(key: Any = jr.key(4)) -> Any:
     plan = LearnedDensePIVPlan(
         (8, 8),
         level_count=2,
@@ -47,7 +49,7 @@ def _small_model(key=jr.key(4)):
     )
 
 
-def test_backward_warp_has_pullback_sign_and_nonperiodic_support():
+def test_backward_warp_has_pullback_sign_and_nonperiodic_support() -> None:
     image = jnp.broadcast_to(jnp.arange(5.0)[None, :], (4, 5))
     displacement = jnp.zeros((4, 5, 2)).at[..., 1].set(1.0)
 
@@ -59,7 +61,7 @@ def test_backward_warp_has_pullback_sign_and_nonperiodic_support():
     np.testing.assert_array_equal(warped.valid[:, 0], False)
 
 
-def test_displacement_resize_scales_row_and_column_components_independently():
+def test_displacement_resize_scales_row_and_column_components_independently() -> None:
     displacement = jnp.ones((2, 4, 2)) * jnp.asarray((1.0, 2.0))
 
     resized = resize_displacement_2d(displacement, (4, 2))
@@ -68,7 +70,7 @@ def test_displacement_resize_scales_row_and_column_components_independently():
     np.testing.assert_allclose(resized[..., 1], 1.0)
 
 
-def test_cost_volume_channel_offsets_are_first_to_second_row_column_candidates():
+def test_cost_volume_channel_offsets_are_first_to_second_row_column_candidates() -> None:
     reference = jnp.zeros((5, 5, 1)).at[2, 2, 0].set(1.0)
     target = jnp.zeros((5, 5, 1)).at[2, 3, 0].set(1.0)
     plan = CostVolumePlan(1, chunk_size=4)
@@ -86,7 +88,7 @@ def test_cost_volume_channel_offsets_are_first_to_second_row_column_candidates()
     assert bool(volume.valid[2, 2, positive_column])
 
 
-def test_all_invalid_multiscale_loss_is_zero_with_finite_zero_gradient():
+def test_all_invalid_multiscale_loss_is_zero_with_finite_zero_gradient() -> None:
     image = jnp.arange(36.0).reshape((6, 6, 1))
     displacement = jnp.zeros((6, 6, 2))
     invalid = jnp.zeros((6, 6), dtype="bool")
@@ -97,7 +99,7 @@ def test_all_invalid_multiscale_loss_is_zero_with_finite_zero_gradient():
         smoothness_weight=1.0,
     )
 
-    def objective(candidate):
+    def objective(candidate: Any) -> Any:
         return loss(
             image,
             image,
@@ -128,7 +130,7 @@ def test_all_invalid_multiscale_loss_is_zero_with_finite_zero_gradient():
     assert int(evidence.status) == PIV_LOSS_INSUFFICIENT_SUPPORT
 
 
-def test_correlation_pyramid_initialization_and_prediction_are_deterministic():
+def test_correlation_pyramid_initialization_and_prediction_are_deterministic() -> None:
     first = jnp.linspace(0.0, 1.0, 64).reshape((8, 8, 1))
     second = jnp.roll(first, 1, axis=1)
     model_a = _small_model(jr.key(9))
@@ -146,7 +148,7 @@ def test_correlation_pyramid_initialization_and_prediction_are_deterministic():
         np.testing.assert_allclose(first_leaf, second_leaf)
 
 
-def test_model_objective_has_finite_gradients_and_training_is_reproducible():
+def test_model_objective_has_finite_gradients_and_training_is_reproducible() -> None:
     base = jnp.linspace(0.0, 1.0, 64).reshape((8, 8, 1))
     first_images = jnp.stack((base, jnp.flip(base, axis=0)))
     second_images = jnp.roll(first_images, 1, axis=2)
@@ -187,7 +189,7 @@ def test_model_objective_has_finite_gradients_and_training_is_reproducible():
         np.testing.assert_allclose(first_leaf, second_leaf)
 
 
-def test_held_out_qualification_returns_neutral_canonical_dense_fields():
+def test_held_out_qualification_returns_neutral_canonical_dense_fields() -> None:
     geometry = ImagePlaneSupport((8, 8), support_id="held-out-geometry")
     image = jnp.linspace(0.0, 1.0, 64).reshape((1, 8, 8, 1))
     target = jnp.zeros((1, 8, 8, 2))

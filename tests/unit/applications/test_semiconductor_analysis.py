@@ -4,6 +4,8 @@
 
 """Independent uniform-conductor limits and conservative transfer invariants."""
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -21,7 +23,7 @@ LENGTH = 1e-6
 AREA = 1e-12
 
 
-def _uniform_device(nodes=7):
+def _uniform_device(nodes: Any = 7) -> Any:
     support = sc.TransportSupport.interval(np.linspace(0.0, LENGTH, nodes), area=AREA)
     plan = sc.DevicePlan(
         support,
@@ -34,7 +36,7 @@ def _uniform_device(nodes=7):
     return sc.PreparedSemiconductorDevice(plan)
 
 
-def _conductance_capacitance(device):
+def _conductance_capacitance(device: Any) -> Any:
     plan = device.plan
     conductance = (
         Q
@@ -47,7 +49,7 @@ def _conductance_capacitance(device):
     return conductance, capacitance
 
 
-def test_uniform_small_signal_matches_distributed_conductor_and_displacement():
+def test_uniform_small_signal_matches_distributed_conductor_and_displacement() -> None:
     device = _uniform_device()
     point = device.equilibrium()
     frequencies = jnp.asarray([0.0, 1e5, 1e7])
@@ -64,7 +66,7 @@ def test_uniform_small_signal_matches_distributed_conductor_and_displacement():
     np.testing.assert_allclose(jnp.sum(response.admittance, axis=2), 0.0, atol=1e-17)
 
 
-def test_native_transient_keeps_carriers_and_initial_displacement_consistent():
+def test_native_transient_keeps_carriers_and_initial_displacement_consistent() -> None:
     device = _uniform_device(5)
     point = device.equilibrium()
     slope = 2e5
@@ -93,7 +95,9 @@ def test_native_transient_keeps_carriers_and_initial_displacement_consistent():
     )
 
 
-def test_depleted_pn_transient_resolves_screening_without_losing_terminal_charge():
+def test_depleted_pn_transient_resolves_screening_without_losing_terminal_charge() -> (
+    None
+):
     length, area, slope = 4e-6, 1e-12, 5e6
     device = sc.PreparedSemiconductorDevice(sc.pn_junction(21, length=length, area=area))
     equilibrium = device.equilibrium()
@@ -122,7 +126,7 @@ def test_depleted_pn_transient_resolves_screening_without_losing_terminal_charge
     )
 
 
-def test_implicit_bias_material_and_geometry_derivatives_match_ohms_law():
+def test_implicit_bias_material_and_geometry_derivatives_match_ohms_law() -> None:
     device = _uniform_device()
     point = device.solve(jnp.asarray([0.005, 0.0]))
     assert bool(point.successful)
@@ -136,7 +140,7 @@ def test_implicit_bias_material_and_geometry_derivatives_match_ohms_law():
         atol=1e-18,
     )
 
-    def parameterize(theta):
+    def parameterize(theta: Any) -> Any:
         mobility, length = theta
         plan = device.plan
         changed = eqx.tree_at(
@@ -170,7 +174,7 @@ def test_implicit_bias_material_and_geometry_derivatives_match_ohms_law():
     np.testing.assert_allclose(sensitivity.derivatives, expected, rtol=2e-7, atol=1e-18)
 
 
-def test_circuit_law_preserves_si_signs_and_carrier_storage_dynamics():
+def test_circuit_law_preserves_si_signs_and_carrier_storage_dynamics() -> None:
     device = _uniform_device()
     law = sc.SemiconductorCircuitLaw(device)
     voltage, slope = 0.003, 7e5
@@ -185,6 +189,7 @@ def test_circuit_law_preserves_si_signs_and_carrier_storage_dynamics():
         jnp.asarray([slope, 0.0]),
         law.initialize(coordinates),
         law.initialize_rate(coordinates, rate),
+        # ty: ignore[invalid-argument-type]
         None,
         None,
     )
@@ -199,7 +204,7 @@ def test_circuit_law_preserves_si_signs_and_carrier_storage_dynamics():
     np.testing.assert_allclose(value.auxiliary_residual, 0.0, atol=1e-10)
 
 
-def test_failed_linear_solve_never_exposes_admittance_as_valid():
+def test_failed_linear_solve_never_exposes_admittance_as_valid() -> None:
     device = _uniform_device(11)
     point = device.equilibrium()
     policy = LinearSolvePolicy(
@@ -216,7 +221,7 @@ def test_failed_linear_solve_never_exposes_admittance_as_valid():
     )
 
 
-def _triangle_result():
+def _triangle_result() -> Any:
     mesh = phx.discretization.CellMesh.from_triangles(
         np.asarray([[0.0, 0.0], [1e-6, 0.0], [0.5e-6, np.sqrt(3.0) * 0.5e-6]]),
         np.asarray([[0, 1, 2]], dtype=np.int32),
@@ -226,7 +231,7 @@ def _triangle_result():
     return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
 
-def _triangle_device(result):
+def _triangle_device(result: Any) -> Any:
     support = sc.TransportSupport.from_meshing(result, transverse_measure=1e-6)
     patch = phx.meshing.MeshPatch("reservoir", support.node_scope())
     plan = sc.DevicePlan(
@@ -237,7 +242,7 @@ def _triangle_device(result):
     return sc.PreparedSemiconductorDevice(plan)
 
 
-def _geometry_transition(source_result, scale):
+def _geometry_transition(source_result: Any, scale: Any) -> Any:
     source = source_result.mesh
     moved = source.with_coordinates(scale * source.coordinates, numeric_version="next")
     target = phx.meshing.certify_cell_mesh(moved, phx.SpatialCoordinateContract.si())
@@ -276,7 +281,9 @@ def _geometry_transition(source_result, scale):
     )
 
 
-def test_native_transfer_conserves_particles_and_rejects_reservoir_mass_creation_atomically():
+def test_native_transfer_conserves_particles_and_rejects_reservoir_mass_creation_atomically() -> (
+    None
+):
     source = _triangle_result()
     device = _triangle_device(source)
     point = device.equilibrium()
@@ -314,7 +321,7 @@ def test_native_transfer_conserves_particles_and_rejects_reservoir_mass_creation
         )
 
 
-def test_coupled_nanoampere_circuit_dc_and_rc_transient_are_physically_scaled():
+def test_coupled_nanoampere_circuit_dc_and_rc_transient_are_physically_scaled() -> None:
     device = _uniform_device(3)
     plan, support = device.plan, device.plan.support
     conductance, capacitance = _conductance_capacitance(device)
@@ -385,7 +392,7 @@ def test_coupled_nanoampere_circuit_dc_and_rc_transient_are_physically_scaled():
     np.testing.assert_allclose(holes / plan.intrinsic_density, 1, rtol=1e-6)
 
 
-def test_depleted_junction_ac_and_implicit_response_match_biased_device_solves():
+def test_depleted_junction_ac_and_implicit_response_match_biased_device_solves() -> None:
     device = sc.PreparedSemiconductorDevice(sc.pn_junction(21))
     volts = jnp.array([0.025, 0.0])
     point = device.solve(volts)

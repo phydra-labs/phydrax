@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _ocean(*, coriolis=0.0, temperature_flux=None):
+def _ocean(*, coriolis: Any = 0.0, temperature_flux: Any = None) -> Any:
     shape = (4, 4, 4)
     grid = phx.discretization.TensorGridPlan(
         (
@@ -30,7 +33,7 @@ def _ocean(*, coriolis=0.0, temperature_flux=None):
     return plan.prepare(discretization)
 
 
-def _state(ocean, *, u=0.0, v=0.0, temperature=None):
+def _state(ocean: Any, *, u: Any = 0.0, v: Any = 0.0, temperature: Any = None) -> Any:
     discretization = ocean.operators.discretization
     velocity = (
         jnp.full(discretization.face_layouts[0].shape, u),
@@ -47,7 +50,7 @@ def _state(ocean, *, u=0.0, v=0.0, temperature=None):
     return ocean.initial_state(velocity, temperature_, salinity)
 
 
-def test_ocean_fixed_step_inertial_oscillation():
+def test_ocean_fixed_step_inertial_oscillation() -> None:
     ocean = _ocean(coriolis=0.5)
     continuation = phx.applications.ocean.OceanBoussinesqContinuationState.initialize(
         _state(ocean, u=1.0)
@@ -72,7 +75,7 @@ def test_ocean_fixed_step_inertial_oscillation():
     np.testing.assert_allclose(final.coriolis_work, 0.0, atol=2e-12)
 
 
-def test_stratification_restriction_detects_internal_wave_scale():
+def test_stratification_restriction_detects_internal_wave_scale() -> None:
     ocean = _ocean()
     z = ocean.operators.discretization.grid.structured_axes[2].interval_centers
     temperature = 10.0 + jnp.broadcast_to(
@@ -86,7 +89,7 @@ def test_stratification_restriction_detects_internal_wave_scale():
     assert restriction.stratification > 0.0
 
 
-def test_surface_heat_flux_updates_only_accepted_temperature_inventory():
+def test_surface_heat_flux_updates_only_accepted_temperature_inventory() -> None:
     flux = phx.discretization.MACScalarBoundaryCondition("flux", 1.0e-5)
     ocean = _ocean(temperature_flux=flux)
     coordinates = _state(ocean)
@@ -134,7 +137,7 @@ def test_surface_heat_flux_updates_only_accepted_temperature_inventory():
     )
 
 
-def jax_tree_last(tree):
+def jax_tree_last(tree: Any) -> Any:
     import jax
 
     return jax.tree.map(lambda leaf: leaf[-1], tree)

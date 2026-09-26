@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -52,7 +55,7 @@ _DIRECT_CONTRACT = DerivativeContract(
 )
 
 
-def _result(model, batch, method):
+def _result(model: Any, batch: Any, method: Any) -> Any:
     valid = jnp.ones(batch.case_shape or (), dtype="bool")
     status = jnp.zeros(batch.case_shape or (), dtype=jnp.int32)
     diagnostics = FitDiagnostics(
@@ -76,12 +79,12 @@ class _ConstantModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, value, in_size):
+    def __init__(self, value: Any, in_size: Any) -> None:
         self.value = jnp.asarray(value, dtype="float64")
         self.in_size = int(in_size)
         self.out_size = 1
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.broadcast_to(self.value, jnp.asarray(x).shape[:-1] + (1,))
 
@@ -89,16 +92,16 @@ class _ConstantModel(AbstractArrayModel):
 class _ConstantRecipe(AbstractRecipe):
     value: float = eqx.field(static=True)
 
-    def __init__(self, value):
+    def __init__(self, value: Any) -> None:
         self.value = float(value)
 
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         return _result(_ConstantModel(self.value, batch.feature_count), batch, "constant")
 
 
 class _CountRecipe(AbstractRecipe):
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         return _result(
             _ConstantModel(float(batch.sample_count), batch.feature_count),
@@ -108,7 +111,7 @@ class _CountRecipe(AbstractRecipe):
 
 
 class _FeatureMeanRecipe(AbstractRecipe):
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         value = jnp.mean(batch.dense_features()[..., 0])
         return _result(_ConstantModel(value, batch.feature_count), batch, "feature-mean")
@@ -119,12 +122,12 @@ class _GateModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, logits, in_size):
+    def __init__(self, logits: Any, in_size: Any) -> None:
         self.logits = jnp.asarray(logits)
         self.in_size = int(in_size)
         self.out_size = self.logits.shape[0]
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.broadcast_to(
             self.logits, jnp.asarray(x).shape[:-1] + self.logits.shape
@@ -134,17 +137,17 @@ class _GateModel(AbstractArrayModel):
 class _GateRecipe(AbstractRecipe):
     count: int = eqx.field(static=True)
 
-    def __init__(self, count):
+    def __init__(self, count: Any) -> None:
         self.count = int(count)
 
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         return _result(
             _GateModel(jnp.zeros((self.count,)), batch.feature_count), batch, "gate"
         )
 
 
-def _batch(case=False):
+def _batch(case: Any = False) -> Any:
     x = jnp.arange(24.0).reshape(2, 6, 2) if case else jnp.arange(12.0).reshape(6, 2)
     y = jnp.sum(x, axis=-1, keepdims=True)
     return MLBatch(
@@ -155,7 +158,7 @@ def _batch(case=False):
     )
 
 
-def test_bagging_homogeneous_uq_keys_case_axes_jit_vmap_and_grad():
+def test_bagging_homogeneous_uq_keys_case_axes_jit_vmap_and_grad() -> None:
     batch = _batch(case=True)
     recipe = BaggingRecipe(_CountRecipe(), num_members=3, sample_fraction=0.5)
     with pytest.raises(ValueError, match="explicit JAX key"):
@@ -181,7 +184,7 @@ def test_bagging_homogeneous_uq_keys_case_axes_jit_vmap_and_grad():
     assert jax.vmap(lambda point: model(point))(points[0]).shape == (4, 1)
 
 
-def test_random_subspace_is_heterogeneous_deterministic_and_capacity_checked():
+def test_random_subspace_is_heterogeneous_deterministic_and_capacity_checked() -> None:
     batch = _batch()
     recipe = RandomSubspaceRecipe(_CountRecipe(), num_members=4, feature_count=1)
     first = recipe.fit_batch(batch, key=jax.random.key(11))
@@ -203,7 +206,7 @@ def test_random_subspace_is_heterogeneous_deterministic_and_capacity_checked():
         )
 
 
-def test_soft_and_hard_voting_are_distinct_and_fail_closed_on_weights():
+def test_soft_and_hard_voting_are_distinct_and_fail_closed_on_weights() -> None:
     batch = _batch()
     soft = SoftVotingRecipe(
         (_ConstantRecipe(1.0), _ConstantRecipe(3.0)),
@@ -226,7 +229,7 @@ def test_soft_and_hard_voting_are_distinct_and_fail_closed_on_weights():
         )
 
 
-def test_stacking_meta_features_are_strictly_out_of_fold():
+def test_stacking_meta_features_are_strictly_out_of_fold() -> None:
     batch = _batch()
     result = StackingRecipe(
         (_CountRecipe(),), _FeatureMeanRecipe(), num_folds=3
@@ -243,7 +246,7 @@ def test_stacking_meta_features_are_strictly_out_of_fold():
         )
 
 
-def test_mixture_of_experts_uses_smooth_gate_and_structured_diagnostics():
+def test_mixture_of_experts_uses_smooth_gate_and_structured_diagnostics() -> None:
     batch = _batch(case=True)
     result = MixtureOfExpertsRecipe(
         (_ConstantRecipe(1.0), _ConstantRecipe(3.0)),
@@ -262,7 +265,7 @@ def test_mixture_of_experts_uses_smooth_gate_and_structured_diagnostics():
     )
 
 
-def test_ensemble_models_reject_misaligned_members():
+def test_ensemble_models_reject_misaligned_members() -> None:
     with pytest.raises(ValueError, match="identical input and output sizes"):
         HomogeneousEnsembleModel((_ConstantModel(1.0, 1), _ConstantModel(2.0, 2)))
     with pytest.raises(ValueError, match="identical input and output sizes"):

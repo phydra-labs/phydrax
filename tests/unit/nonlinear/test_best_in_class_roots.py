@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,7 +16,7 @@ import phydrax as phx
 nl = phx.nonlinear
 
 
-def _root_termination():
+def _root_termination() -> Any:
     return nl.NonlinearTermination(
         absolute_residual=1e-8,
         relative_residual=0.0,
@@ -23,7 +26,7 @@ def _root_termination():
     )
 
 
-def test_dynamic_budget_and_fail_fast_nested_evidence_are_jittable():
+def test_dynamic_budget_and_fail_fast_nested_evidence_are_jittable() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
     failing = nl.FunctionNonlinearUpdate(
         lambda state, args: jnp.full_like(state, jnp.nan),
@@ -45,7 +48,7 @@ def test_dynamic_budget_and_fail_fast_nested_evidence_are_jittable():
     )
 
     @eqx.filter_jit
-    def apply(current, budget):
+    def apply(current: Any, budget: Any) -> Any:
         return nl.apply_prepared_nonlinear_update(
             current,
             jnp.asarray([0.0]),
@@ -65,7 +68,7 @@ def test_dynamic_budget_and_fail_fast_nested_evidence_are_jittable():
     assert jnp.array_equal(exhausted.state, jnp.asarray([0.0]))
 
 
-def test_canonical_prepared_newton_step_retains_iteration_state():
+def test_canonical_prepared_newton_step_retains_iteration_state() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state * state - target)
     update = nl.NewtonStepUpdate(termination=_root_termination())
     prepared = nl.prepare_nonlinear_update(
@@ -97,7 +100,7 @@ def test_canonical_prepared_newton_step_retains_iteration_state():
         nl.SafeguardedHalley(),
     ],
 )
-def test_scalar_root_family_preserves_bracket_and_certifies_residual(method):
+def test_scalar_root_family_preserves_bracket_and_certifies_residual(method: Any) -> None:
     problem = nl.ScalarRootProblem(
         lambda state, target: state * state - target,
         bracket=(0.0, 2.0),
@@ -116,7 +119,7 @@ def test_scalar_root_family_preserves_bracket_and_certifies_residual(method):
     assert abs(float(result.value)) <= 1e-8
 
 
-def test_newton_iteration_trace_and_control_stop_at_an_accepted_state():
+def test_newton_iteration_trace_and_control_stop_at_an_accepted_state() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state * state - target,
         problem_id="observed-sqrt-two",
@@ -149,7 +152,7 @@ def test_newton_iteration_trace_and_control_stop_at_an_accepted_state():
     assert float(trace.terminal.metrics.final_residual_norm) == pytest.approx(0.25)
 
 
-def test_scalar_root_exposes_terminal_iteration_evidence():
+def test_scalar_root_exposes_terminal_iteration_evidence() -> None:
     result = nl.scalar_root(
         nl.ScalarRootProblem(
             lambda state, target: state * state - target,
@@ -180,7 +183,7 @@ def test_scalar_root_exposes_terminal_iteration_evidence():
         nl.RobustRoot(),
     ],
 )
-def test_vector_root_family_certifies_physical_root(method):
+def test_vector_root_family_certifies_physical_root(method: Any) -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state * state - target)
     result = method.solve(
         problem,
@@ -194,10 +197,10 @@ def test_vector_root_family_certifies_physical_root(method):
     assert float(result.diagnostics.final_residual_norm) <= 1e-7
 
 
-def test_fast_root_defers_initial_residual_to_selected_method():
+def test_fast_root_defers_initial_residual_to_selected_method() -> None:
     calls = 0
 
-    def residual(state, args):
+    def residual(state: Any, args: Any) -> Any:
         nonlocal calls
         calls += 1
         return state - 1.0
@@ -213,7 +216,7 @@ def test_fast_root_defers_initial_residual_to_selected_method():
     assert int(result.diagnostics.residual_evaluations) == 1
 
 
-def test_root_polyalgorithm_hands_newton_model_to_next_attempt():
+def test_root_polyalgorithm_hands_newton_model_to_next_attempt() -> None:
     result = nl.RootPolyalgorithm((nl.NewtonKrylov(), nl.NewtonTrustRegion())).solve(
         nl.NonlinearSystemProblem(lambda state, args: jnp.ones_like(state)),
         jnp.zeros(2),
@@ -233,7 +236,7 @@ def test_root_polyalgorithm_hands_newton_model_to_next_attempt():
     assert "prepared-handoffs=1" in result.provenance.notes
 
 
-def test_chord_converges_in_declared_local_basin():
+def test_chord_converges_in_declared_local_basin() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state * state - target)
     result = nl.Chord().solve(
         problem,
@@ -246,7 +249,7 @@ def test_chord_converges_in_declared_local_basin():
 
 
 @pytest.mark.parametrize("kind", ["type-i", "type-ii"])
-def test_anderson_variants_and_steffensen_converge(kind):
+def test_anderson_variants_and_steffensen_converge(kind: Any) -> None:
     problem = nl.FixedPointProblem(lambda state, args: jnp.cos(state))
     anderson = nl.FixedPointIteration(
         acceleration=nl.AndersonAcceleration(kind=kind)
@@ -262,7 +265,7 @@ def test_anderson_variants_and_steffensen_converge(kind):
     assert jnp.allclose(anderson.state, steffensen.state, atol=1e-7)
 
 
-def test_fixed_point_initial_solution_has_exact_success_work():
+def test_fixed_point_initial_solution_has_exact_success_work() -> None:
     result = nl.FixedPointIteration(
         acceleration=nl.AndersonAcceleration(history=4)
     ).solve(
@@ -286,7 +289,7 @@ def test_fixed_point_initial_solution_has_exact_success_work():
 
 
 @pytest.mark.parametrize("kind", ["type-i", "type-ii"])
-def test_anderson_damped_complex_two_step_recurrence(kind):
+def test_anderson_damped_complex_two_step_recurrence(kind: Any) -> None:
     matrix = jnp.asarray(
         [
             [0.20 + 0.10j, 0.05 - 0.02j],
@@ -298,7 +301,7 @@ def test_anderson_damped_complex_two_step_recurrence(kind):
     initial = jnp.asarray([0.2 - 0.1j, -0.3 + 0.4j], dtype=jnp.complex64)
     damping = 0.4
 
-    def mapping(state, args):
+    def mapping(state: Any, args: Any) -> Any:
         return matrix @ state + offset
 
     result = nl.FixedPointIteration(
@@ -349,7 +352,7 @@ def test_anderson_damped_complex_two_step_recurrence(kind):
     assert f"anderson-kind={kind}" in result.provenance.notes
 
 
-def test_type_ii_regularization_is_direct_and_reports_direct_condition():
+def test_type_ii_regularization_is_direct_and_reports_direct_condition() -> None:
     matrix = jnp.diag(jnp.asarray([11.0, 0.0]))
     offset = jnp.asarray([1.0, 0.0])
     result = nl.FixedPointIteration(
@@ -381,7 +384,7 @@ def test_type_ii_regularization_is_direct_and_reports_direct_condition():
     )
 
 
-def test_unusable_anderson_solve_reuses_raw_mapping_and_records_restart():
+def test_unusable_anderson_solve_reuses_raw_mapping_and_records_restart() -> None:
     matrix = jnp.diag(jnp.asarray([11.0, 0.0]))
     offset = jnp.asarray([1.0, 0.0])
     result = nl.FixedPointIteration(
@@ -414,7 +417,7 @@ def test_unusable_anderson_solve_reuses_raw_mapping_and_records_restart():
     )
 
 
-def test_anderson_budget_reserves_active_history_mapping_work():
+def test_anderson_budget_reserves_active_history_mapping_work() -> None:
     result = nl.FixedPointIteration(
         acceleration=nl.AndersonAcceleration(history=2)
     ).solve(
@@ -435,7 +438,7 @@ def test_anderson_budget_reserves_active_history_mapping_work():
     assert int(result.diagnostics.residual_evaluations) == 2
 
 
-def test_anderson_honors_aggregate_iterative_coefficient_budget():
+def test_anderson_honors_aggregate_iterative_coefficient_budget() -> None:
     matrix = jnp.asarray([[0.7, 0.2], [-0.1, 0.8]])
     offset = jnp.asarray([0.3, -0.4])
     method = nl.FixedPointIteration(
@@ -491,7 +494,7 @@ def test_anderson_honors_aggregate_iterative_coefficient_budget():
     assert int(wide_budget.diagnostics.linear_iterations) <= 16
 
 
-def test_anderson_safeguard_counts_rejected_accelerated_proposals():
+def test_anderson_safeguard_counts_rejected_accelerated_proposals() -> None:
     result = nl.FixedPointIteration(
         acceleration=nl.AndersonAcceleration(
             history=3,
@@ -516,7 +519,7 @@ def test_anderson_safeguard_counts_rejected_accelerated_proposals():
     )
 
 
-def test_zero_coordinate_anderson_is_jittable_and_skips_coefficients():
+def test_zero_coordinate_anderson_is_jittable_and_skips_coefficients() -> None:
     method = nl.FixedPointIteration(
         damping=0.5,
         acceleration=nl.AndersonAcceleration(kind="type-i", history=5),
@@ -540,14 +543,14 @@ def test_zero_coordinate_anderson_is_jittable_and_skips_coefficients():
     assert "history-effective=0" in result.provenance.notes
 
 
-def test_fixed_point_conversion_preserves_identity_sign_and_implicit_derivative():
+def test_fixed_point_conversion_preserves_identity_sign_and_implicit_derivative() -> None:
     fixed_point = nl.FixedPointProblem(
         lambda state, target: target,
         problem_id="converted-fixed-point",
     )
     problem = fixed_point.as_nonlinear_problem()
 
-    def solution(target):
+    def solution(target: Any) -> Any:
         return nl.implicit_root_result(
             problem,
             jnp.zeros_like(target),
@@ -564,7 +567,7 @@ def test_fixed_point_conversion_preserves_identity_sign_and_implicit_derivative(
     assert jnp.allclose(tangent, jnp.ones_like(target))
 
 
-def test_first_second_and_truncated_solution_map_derivatives():
+def test_first_second_and_truncated_solution_map_derivatives() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, argument: state * state - argument)
     first = nl.root_solution_jvp(
         problem,
@@ -597,7 +600,7 @@ def test_first_second_and_truncated_solution_map_derivatives():
     assert jnp.allclose(truncated.value, jnp.asarray([0.25]), atol=1e-7)
 
 
-def test_explicit_solution_map_sensitivities_reject_a_nonroot_state():
+def test_explicit_solution_map_sensitivities_reject_a_nonroot_state() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, argument: state * state - argument)
     state = jnp.asarray([1.5])
     argument = jnp.asarray([4.0])
@@ -633,7 +636,7 @@ def test_explicit_solution_map_sensitivities_reject_a_nonroot_state():
     assert jnp.all(jnp.isnan(reverse.value))
 
 
-def test_minimizer_solution_sensitivity_rejects_a_nonstationary_point():
+def test_minimizer_solution_sensitivity_rejects_a_nonstationary_point() -> None:
     derivative = nl.minimizer_solution_jvp(
         lambda state, target: 0.5 * jnp.sum((state - target) ** 2),
         jnp.asarray([0.0]),
@@ -650,7 +653,7 @@ def test_minimizer_solution_sensitivity_rejects_a_nonstationary_point():
     assert jnp.all(jnp.isnan(derivative.value))
 
 
-def test_small_batch_mixed_precision_and_sharding_contracts():
+def test_small_batch_mixed_precision_and_sharding_contracts() -> None:
     starts = jnp.ones((4, 2))
     arguments = jnp.asarray([[4.0, 9.0], [1.0, 16.0], [0.25, 0.36], [25.0, 36.0]])
     batched = nl.batched_small_root(
@@ -694,7 +697,7 @@ def test_small_batch_mixed_precision_and_sharding_contracts():
     assert float(policy.residual_norm(placed)) == pytest.approx(5.0)
 
 
-def _component(authority, precision):
+def _component(authority: Any, precision: Any) -> Any:
     return phx.ComponentContract(
         authority=authority,
         model_contract=phx.ModelExecutionContract(
@@ -705,8 +708,8 @@ def _component(authority, precision):
     )
 
 
-def test_model_precision_below_state_precision_requires_declared_cast_boundary():
-    def float32_model(*casts):
+def test_model_precision_below_state_precision_requires_declared_cast_boundary() -> None:
+    def float32_model(*casts: Any) -> Any:
         return phx.ComponentPrecisionContract(
             input_dtype="float64",
             parameter_dtype="float32",
@@ -738,7 +741,7 @@ def test_model_precision_below_state_precision_requires_declared_cast_boundary()
     assert policy.residual_floor() == pytest.approx(1e-5)
 
 
-def test_relative_component_floor_requires_a_declared_residual_scale():
+def test_relative_component_floor_requires_a_declared_residual_scale() -> None:
     relative = phx.ComponentPrecisionContract(
         input_dtype="float64",
         parameter_dtype="float32",
@@ -752,7 +755,7 @@ def test_relative_component_floor_requires_a_declared_residual_scale():
     problem = nl.NonlinearSystemProblem(lambda state, target: state**3 - target)
     target = jnp.asarray([2.0, 3.0])
 
-    def termination(tolerance):
+    def termination(tolerance: Any) -> Any:
         return nl.NonlinearTermination(
             absolute_residual=tolerance, relative_residual=0.0, maximum_steps=50
         )
@@ -801,29 +804,47 @@ def test_relative_component_floor_requires_a_declared_residual_scale():
         nl.NonlinearPrecisionPolicy(components=components, residual_scale=True)
 
 
-def test_solver_graduation_and_regression_gates():
+def test_solver_graduation_and_regression_gates() -> None:
     evidence = nl.SolverGraduationEvidence(
+        # ty: ignore[invalid-argument-type]
         0,
+        # ty: ignore[invalid-argument-type]
         100,
+        # ty: ignore[invalid-argument-type]
         100,
+        # ty: ignore[invalid-argument-type]
         100,
+        # ty: ignore[invalid-argument-type]
         0.9,
+        # ty: ignore[invalid-argument-type]
         1e-8,
+        # ty: ignore[invalid-argument-type]
         True,
+        # ty: ignore[invalid-argument-type]
         True,
+        # ty: ignore[invalid-argument-type]
         True,
+        # ty: ignore[invalid-argument-type]
         True,
+        # ty: ignore[invalid-argument-type]
         True,
     )
     graduation = nl.evaluate_solver_graduation(evidence)
     regression = nl.evaluate_solver_regression(
         nl.SolverRegressionEvidence(
+            # ty: ignore[invalid-argument-type]
             0,
+            # ty: ignore[invalid-argument-type]
             0.0,
+            # ty: ignore[invalid-argument-type]
             0.0,
+            # ty: ignore[invalid-argument-type]
             1.0,
+            # ty: ignore[invalid-argument-type]
             False,
+            # ty: ignore[invalid-argument-type]
             False,
+            # ty: ignore[invalid-argument-type]
             False,
         )
     )
@@ -831,7 +852,7 @@ def test_solver_graduation_and_regression_gates():
     assert bool(regression.passed)
 
 
-def test_root_polyalgorithm_replans_when_newton_policies_change():
+def test_root_polyalgorithm_replans_when_newton_policies_change() -> None:
     result = nl.RootPolyalgorithm(
         (
             nl.NewtonKrylov(),
@@ -856,7 +877,7 @@ def test_root_polyalgorithm_replans_when_newton_policies_change():
     assert int(result.attempts[1].work.jacobian_preparations) >= 1
 
 
-def test_picard_and_sensitivity_require_physical_problem_validity():
+def test_picard_and_sensitivity_require_physical_problem_validity() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state - target,
         validity=lambda state, residual, auxiliary, target: jnp.all(state < target),
@@ -888,7 +909,7 @@ def test_picard_and_sensitivity_require_physical_problem_validity():
     assert jnp.all(jnp.isnan(sensitivity.value))
 
 
-def test_picard_certification_uses_declared_residual_geometry():
+def test_picard_certification_uses_declared_residual_geometry() -> None:
     residual_space = phx.linalg.ArraySpace(
         (1,),
         dtype=jnp.float64,
@@ -915,14 +936,14 @@ def test_picard_certification_uses_declared_residual_geometry():
     assert float(result.diagnostics.final_residual_norm) == pytest.approx(100.0)
 
 
-def test_steffensen_exit_reuses_cached_mapping_under_evaluation_limit():
+def test_steffensen_exit_reuses_cached_mapping_under_evaluation_limit() -> None:
     calls = 0
 
-    def count():
+    def count() -> None:
         nonlocal calls
         calls += 1
 
-    def mapping(state, args):
+    def mapping(state: Any, args: Any) -> Any:
         jax.debug.callback(count)
         return state + 1.0
 
@@ -944,7 +965,7 @@ def test_steffensen_exit_reuses_cached_mapping_under_evaluation_limit():
 
 
 @pytest.mark.parametrize("method", (nl.Broyden(), nl.Chord()))
-def test_quasi_newton_reserves_final_certification_evaluation(method):
+def test_quasi_newton_reserves_final_certification_evaluation(method: Any) -> None:
     result = method.solve(
         nl.NonlinearSystemProblem(lambda state, target: state - target),
         jnp.asarray([0.0]),
@@ -962,14 +983,14 @@ def test_quasi_newton_reserves_final_certification_evaluation(method):
     assert jnp.array_equal(result.state, jnp.asarray([0.0]))
 
 
-def test_safeguarded_derivative_root_reserves_certification_budget():
+def test_safeguarded_derivative_root_reserves_certification_budget() -> None:
     calls = 0
 
-    def count():
+    def count() -> None:
         nonlocal calls
         calls += 1
 
-    def residual(value, target):
+    def residual(value: Any, target: Any) -> Any:
         jax.debug.callback(count)
         return value * value - target
 
@@ -1000,7 +1021,7 @@ def test_safeguarded_derivative_root_reserves_certification_budget():
     assert calls == 0
 
 
-def test_vector_halley_enforces_residual_and_linear_work_limits():
+def test_vector_halley_enforces_residual_and_linear_work_limits() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state * state - target)
     evaluation_limited = nl.VectorHalley().solve(
         problem,
@@ -1032,7 +1053,9 @@ def test_vector_halley_enforces_residual_and_linear_work_limits():
     assert int(linear_limited.diagnostics.linear_iterations) == 0
 
 
-def test_small_root_damping_floor_controls_trials_and_integer_guesses_fail_early():
+def test_small_root_damping_floor_controls_trials_and_integer_guesses_fail_early() -> (
+    None
+):
     kernel = nl.SmallRootKernel(
         lambda state, target: state * state - target,
         minimum_damping=1.0,
@@ -1056,7 +1079,7 @@ def test_small_root_damping_floor_controls_trials_and_integer_guesses_fail_early
         )
 
 
-def test_newton_direction_refuses_zero_budget_before_linear_solve():
+def test_newton_direction_refuses_zero_budget_before_linear_solve() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, args: state - 1.0)
     model = nl.RootLinearModelPolicy().prepare(problem, jnp.zeros(2), None)
     result = nl.NewtonDirectionPolicy().compute(
@@ -1073,10 +1096,10 @@ def test_newton_direction_refuses_zero_budget_before_linear_solve():
     assert jnp.array_equal(result.direction, jnp.zeros(2))
 
 
-def test_mixed_precision_reserves_physical_certification_evaluations():
+def test_mixed_precision_reserves_physical_certification_evaluations() -> None:
     calls = 0
 
-    def residual(state, target):
+    def residual(state: Any, target: Any) -> Any:
         nonlocal calls
         calls += 1
         return state - target

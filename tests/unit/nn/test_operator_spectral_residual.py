@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,22 +14,22 @@ class _ScaledSourceOperator(phx.nn.operator.AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, scale=0.0):
+    def __init__(self, scale: Any = 0.0) -> None:
         self.scale = jnp.asarray(scale)
         self.in_size = "scalar"
         self.out_size = "scalar"
 
-    def __call_operator_batch__(self, batch, *, key=None):
+    def __call_operator_batch__(self, batch: Any, *, key: Any = None) -> Any:
         del key
         source = batch.input("forcing")
         assert source.values is not None
         return self.scale * source.values
 
-    def __call__(self, batch, *, key=None):
+    def __call__(self, batch: Any, *, key: Any = None) -> Any:
         return self.__call_operator_batch__(batch, key=key)
 
 
-def _problem():
+def _problem() -> Any:
     x = phx.equations.PDECoordinate(
         "x",
         "space",
@@ -46,7 +48,7 @@ def _problem():
     )
 
 
-def _dataset(count=12):
+def _dataset(count: Any = 12) -> Any:
     nodes = jnp.linspace(0.0, 1.0, count, endpoint=False)
     axis = phx.nn.operator.OperatorAxis(
         "x",
@@ -69,7 +71,7 @@ def _dataset(count=12):
     return phx.nn.operator.training.OperatorDataset(batch, targets)
 
 
-def _compiled(count=12):
+def _compiled(count: Any = 12) -> Any:
     space = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
@@ -82,7 +84,7 @@ def _compiled(count=12):
     )
 
 
-def _loss_value(term, model, dataset):
+def _loss_value(term: Any, model: Any, dataset: Any) -> Any:
     prediction = model.evaluate(dataset.batch)
     context = phx.nn.operator.training.OperatorLossContext(
         prediction,
@@ -104,7 +106,7 @@ def _loss_value(term, model, dataset):
     )
 
 
-def test_spectral_pde_loss_is_targetless_differentiable_and_fingerprinted():
+def test_spectral_pde_loss_is_targetless_differentiable_and_fingerprinted() -> None:
     dataset = _dataset()
     compiled = _compiled()
     term = phx.nn.operator.training.SpectralPDEResidualLoss(
@@ -144,7 +146,7 @@ def test_spectral_pde_loss_is_targetless_differentiable_and_fingerprinted():
     )
 
 
-def test_targetless_operator_fit_reduces_spectral_residual():
+def test_targetless_operator_fit_reduces_spectral_residual() -> None:
     dataset = _dataset()
     term = phx.nn.operator.training.SpectralPDEResidualLoss(
         "spectral_poisson",

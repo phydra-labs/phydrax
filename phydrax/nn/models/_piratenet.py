@@ -210,9 +210,15 @@ class PirateNet(_AbstractBaseModel):
             # x + alpha * (F(x) - x) with a constant alpha: a sum of x and F(x).
             # AdaptiveResidual stores the key-only branch behind its key adapter.
             adapter = block.branch
-            assert isinstance(adapter, _KeyIterAdapter)
+            if not (isinstance(adapter, _KeyIterAdapter)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(adapter, _KeyIterAdapter)."
+                )
             pirate_branch = adapter.func
-            assert isinstance(pirate_branch, _PirateBranch)
+            if not (isinstance(pirate_branch, _PirateBranch)):
+                raise RuntimeError(
+                    "Internal invariant failed: isinstance(pirate_branch, _PirateBranch)."
+                )
             branch = pirate_branch._regularity(hidden, encoder_u, encoder_v)
             hidden = sum_regularity((hidden, branch))
         return compose_regularity(

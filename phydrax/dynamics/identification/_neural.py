@@ -775,7 +775,8 @@ def _reference_window_values(
     runtime_valid = jnp.asarray(True)
     reference = objective.reference
     reference_step_size = reference.step_size
-    assert reference_step_size is not None
+    if not (reference_step_size is not None):
+        raise RuntimeError("Internal invariant failed: reference_step_size is not None.")
     eligible, _ = _active_window_evidence(batch, active_horizon)
 
     for origin in range(horizon):

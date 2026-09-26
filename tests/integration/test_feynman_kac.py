@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -9,7 +12,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_feynman_kac_heat_solution_matches_analytic_and_pde_routes():
+def test_feynman_kac_heat_solution_matches_analytic_and_pde_routes() -> None:
     kappa = 0.35
     wave_number = 1.1
     final_time = 0.7
@@ -30,12 +33,13 @@ def test_feynman_kac_heat_solution_matches_analytic_and_pde_routes():
     exact = jnp.cos(wave_number * x0[0]) * jnp.exp(-kappa * wave_number**2 * final_time)
     assert jnp.abs(estimate.value - exact) < 5.0 * estimate.standard_error
 
+    # ty: ignore[invalid-argument-type]
     space = phx.domain.HyperRectangle([-2.0], [2.0], label="x")
     time = phx.domain.TimeInterval(0.0, final_time)
     domain = space @ time
 
     @domain.Function("x", "t")
-    def exact_field(x, t):
+    def exact_field(x: Any, t: Any) -> Any:
         return jnp.cos(wave_number * x[0]) * jnp.exp(
             -kappa * wave_number**2 * (final_time - t)
         )
@@ -47,7 +51,7 @@ def test_feynman_kac_heat_solution_matches_analytic_and_pde_routes():
     assert jnp.abs(residual.func(x0, jnp.array(0.2))) < 1e-12
 
 
-def test_feynman_kac_constant_killing_and_diffusion_gradient():
+def test_feynman_kac_constant_killing_and_diffusion_gradient() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 0.6, 24, role="path")
     killing_rate = 0.3
     x0 = jnp.array([0.1])
@@ -75,7 +79,7 @@ def test_feynman_kac_constant_killing_and_diffusion_gradient():
 
     oscillatory_terminal = lambda x, t: jnp.cos(x[0])
 
-    def value(diffusivity):
+    def value(diffusivity: Any) -> Any:
         return phx.operators.feynman_kac_expectation(
             oscillatory_terminal,
             drift,
@@ -91,7 +95,7 @@ def test_feynman_kac_constant_killing_and_diffusion_gradient():
     assert gradient < 0.0
 
 
-def test_ornstein_uhlenbeck_terminal_mean_matches_euler_reference():
+def test_ornstein_uhlenbeck_terminal_mean_matches_euler_reference() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 64, role="path")
     theta = 0.7
     sigma = 0.4
@@ -111,7 +115,7 @@ def test_ornstein_uhlenbeck_terminal_mean_matches_euler_reference():
     assert jnp.allclose(estimate.effective_sample_size, estimate.num_paths)
 
 
-def test_discrete_first_passage_converges_to_brownian_interval_survival():
+def test_discrete_first_passage_converges_to_brownian_interval_survival() -> None:
     final_time = 0.5
     sigma = 0.5
     slicing = phx.discretization.TemporalMesh.uniform(0.0, final_time, 256, role="path")

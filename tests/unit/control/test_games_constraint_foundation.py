@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -27,7 +29,7 @@ from phydrax.control.games._layout import PlayerControlPartition
 
 
 def _path_block(
-    function,
+    function: Any,
     constraint_id: str,
     *,
     scope: GameConstraintScope,
@@ -60,7 +62,7 @@ def _path_block(
 
 
 def _trajectory_block(
-    function,
+    function: Any,
     constraint_id: str,
     *,
     scope: GameConstraintScope,
@@ -93,7 +95,7 @@ def _trajectory_block(
     )
 
 
-def test_constraint_and_multiplier_layouts_distinguish_ownership_concepts():
+def test_constraint_and_multiplier_layouts_distinguish_ownership_concepts() -> None:
     partition = PlayerControlPartition(("alpha", "beta", "gamma"), (1, 1, 1))
     local = _path_block(
         lambda time, state, control, args: state[0],
@@ -172,7 +174,7 @@ def test_constraint_and_multiplier_layouts_distinguish_ownership_concepts():
     assert variational.layout_id != generalized.layout_id
 
 
-def test_constraint_metadata_rejects_ambiguous_ownership_and_bound_forms():
+def test_constraint_metadata_rejects_ambiguous_ownership_and_bound_forms() -> None:
     path = BoundedPathConstraint(
         lambda time, state, control, args: control[0],
         lower=-jnp.inf,
@@ -227,7 +229,7 @@ def test_constraint_metadata_rejects_ambiguous_ownership_and_bound_forms():
         )
 
 
-def test_ordered_constraints_validate_partition_members_and_order():
+def test_ordered_constraints_validate_partition_members_and_order() -> None:
     partition = PlayerControlPartition(("alpha", "beta"), (1, 1))
     unknown = _trajectory_block(
         lambda trajectory, args: trajectory.final_state[..., 0],
@@ -256,11 +258,13 @@ def test_ordered_constraints_validate_partition_members_and_order():
         OpenLoopGameConstraints(partition, (reversed_participants,))
 
 
-def test_evaluation_preserves_path_terminal_and_trajectory_axes_and_evaluates_shared_once():
+def test_evaluation_preserves_path_terminal_and_trajectory_axes_and_evaluates_shared_once() -> (
+    None
+):
     partition = PlayerControlPartition(("alpha", "beta"), (1, 1))
     calls = {"shared_terminal": 0}
 
-    def shared_terminal(trajectory, args):
+    def shared_terminal(trajectory: Any, args: Any) -> Any:
         calls["shared_terminal"] += 1
         return trajectory.final_state[..., 0]
 
@@ -371,7 +375,7 @@ def test_evaluation_preserves_path_terminal_and_trajectory_axes_and_evaluates_sh
     )
 
 
-def test_nonfinite_residual_is_case_local_and_scoped_to_shared_participants():
+def test_nonfinite_residual_is_case_local_and_scoped_to_shared_participants() -> None:
     partition = PlayerControlPartition(("alpha", "beta"), (1, 1))
     shared_beta = _trajectory_block(
         lambda trajectory, args: trajectory.final_state[..., 0],
@@ -420,11 +424,11 @@ def test_nonfinite_residual_is_case_local_and_scoped_to_shared_participants():
     assert np.isinf(np.asarray(evidence.violations[0][1]))
 
 
-def test_schema_checks_precede_callbacks_and_return_shapes_are_enforced():
+def test_schema_checks_precede_callbacks_and_return_shapes_are_enforced() -> None:
     partition = PlayerControlPartition(("alpha", "beta"), (1, 1))
     calls = {"path": 0}
 
-    def path_callback(time, state, control, args):
+    def path_callback(time: Any, state: Any, control: Any, args: Any) -> Any:
         calls["path"] += 1
         return control[0]
 

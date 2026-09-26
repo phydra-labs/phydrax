@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,7 +13,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def run(*, output: str | Path = ".tmp/gravitational-wave-example.phxresult"):
+def run(*, output: str | Path = ".tmp/gravitational-wave-example.phxresult") -> Any:
     gw = phx.applications.astrophysics.gravitational_waves
     provenance = phx.applications.astrophysics.ObservationDataProvenance.native(
         "sine-gaussian-example"

@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -9,11 +12,11 @@ import pytest
 import phydrax as phx
 
 
-def test_complex_pointwise_transforms():
+def test_complex_pointwise_transforms() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
 
     @time.Function("t")
-    def matrix(t):
+    def matrix(t: Any) -> Any:
         return jnp.asarray([[1.0 + 2.0j * t, 3.0j], [4.0, 5.0 - 1.0j]])
 
     point = 0.25
@@ -24,7 +27,7 @@ def test_complex_pointwise_transforms():
     assert jnp.allclose(phx.operators.imag_part(matrix).func(point), jnp.imag(value))
 
 
-def test_adjoint_reverses_matrix_product():
+def test_adjoint_reverses_matrix_product() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     a_value = jnp.asarray([[1.0 + 1.0j, 2.0], [0.0, -1.0j]])
     b_value = jnp.asarray([[0.5, 1.0j], [2.0 - 1.0j, 3.0]])
@@ -36,12 +39,12 @@ def test_adjoint_reverses_matrix_product():
     assert jnp.allclose(left.func(), right.func())
 
 
-def test_complex_transforms_are_jittable_and_differentiable():
+def test_complex_transforms_are_jittable_and_differentiable() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
 
-    def value(theta):
+    def value(theta: Any) -> Any:
         @time.Function("t")
-        def field(t):
+        def field(t: Any) -> Any:
             return theta * jnp.exp(1j * t)
 
         transformed = phx.operators.real_part(phx.operators.conjugate(field))
@@ -50,7 +53,7 @@ def test_complex_transforms_are_jittable_and_differentiable():
     assert jnp.isfinite(jax.jit(jax.grad(value))(2.0))
 
 
-def test_adjoint_rejects_vector_values():
+def test_adjoint_rejects_vector_values() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     vector = time.Function()(jnp.asarray([1.0, 2.0j]))
 

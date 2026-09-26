@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -26,22 +29,22 @@ class _AffineIncrement(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, weight, bias):
+    def __init__(self, weight: Any, bias: Any) -> None:
         self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.bias = jnp.asarray(bias, dtype=jnp.float64)
         self.out_size, self.in_size = self.weight.shape
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return self.weight @ x + self.bias
 
 
-def _decay(time, state, args):
+def _decay(time: Any, state: Any, args: Any) -> Any:
     del time, args
     return -state
 
 
-def _correction(bias, weight=None, **checks):
+def _correction(bias: Any, weight: Any = None, **checks: Any) -> Any:
     weight = jnp.zeros((2, 4)) if weight is None else weight
     return phx.solver.LearnedStepCorrection(
         _AffineIncrement(weight, bias),
@@ -51,7 +54,7 @@ def _correction(bias, weight=None, **checks):
     )
 
 
-def _problem(transform=None, *, steps=3):
+def _problem(transform: Any = None, *, steps: Any = 3) -> Any:
     return phx.solver.FixedStepProblem(
         phx.solver.SSPRK33FixedStepMethod(_decay, transform=transform),
         INITIAL,
@@ -61,11 +64,11 @@ def _problem(transform=None, *, steps=3):
     )
 
 
-def _trajectory(problem):
+def _trajectory(problem: Any) -> Any:
     return phx.solver.FixedStepRolloutPlan(retention="trajectory").rollout(problem)
 
 
-def test_admitted_correction_changes_the_rollout():
+def test_admitted_correction_changes_the_rollout() -> None:
     bias = jnp.asarray([0.01, -0.01])
     corrected = _trajectory(
         _problem(_correction(bias, conserved=[[1.0, 1.0]], lower_bounds=0.0))
@@ -110,8 +113,8 @@ def test_admitted_correction_changes_the_rollout():
     ),
 )
 def test_rejected_correction_keeps_the_native_rollout_with_reason_bits(
-    bias, checks, reasons
-):
+    bias: Any, checks: Any, reasons: Any
+) -> None:
     corrected = _trajectory(_problem(_correction(jnp.asarray(bias), **checks)))
     native = _trajectory(_problem())
 
@@ -123,7 +126,7 @@ def test_rejected_correction_keeps_the_native_rollout_with_reason_bits(
     assert jnp.all(corrected.transform_admissibility.reason_bits == int(reasons))
 
 
-def test_rejected_transaction_commits_the_unchanged_native_candidate():
+def test_rejected_transaction_commits_the_unchanged_native_candidate() -> None:
     correction = _correction(jnp.asarray([0.5, -0.5]))
     native = 0.9 * INITIAL
 
@@ -137,7 +140,7 @@ def test_rejected_transaction_commits_the_unchanged_native_candidate():
     assert int(committed.evidence.reason_bits) == int(Reason.STABILITY_BOUND)
 
 
-def test_composite_transforms_keep_every_correction_reason():
+def test_composite_transforms_keep_every_correction_reason() -> None:
     admitted = _correction(jnp.asarray([0.01, -0.01]))
     rejected = _correction(jnp.asarray([0.01, 0.01]), conserved=[[1.0, 1.0]])
     composite = phx.solver.CompositeAcceptedStepTransform((admitted, rejected))
@@ -148,7 +151,9 @@ def test_composite_transforms_keep_every_correction_reason():
     assert result.successful
     assert result.applied
     assert jnp.array_equal(result.transformed_state, native + jnp.asarray([0.01, -0.01]))
+    # ty: ignore[unresolved-attribute]
     assert int(result.admissibility.reason_bits) == int(Reason.CONSERVATION)
+    # ty: ignore[unresolved-attribute]
     assert not result.admissibility.eligible
 
 
@@ -159,7 +164,7 @@ def test_composite_transforms_keep_every_correction_reason():
         phx.solver.FixedStepReplayPolicy("block", block_size=2),
     ),
 )
-def test_checkpointed_rollout_gradients_match_finite_differences(replay):
+def test_checkpointed_rollout_gradients_match_finite_differences(replay: Any) -> None:
     weight_key, bias_key, direction_key = jax.random.split(jax.random.key(0), 3)
     correction = _correction(
         2e-3 * jax.random.normal(bias_key, (2,)),
@@ -171,7 +176,7 @@ def test_checkpointed_rollout_gradients_match_finite_differences(replay):
     plan = phx.solver.FixedStepRolloutPlan(replay=replay)
     parameters, model_state, fixed = phx.partition_parameters(problem)
 
-    def objective(values):
+    def objective(values: Any) -> Any:
         rollout = plan.rollout(phx.combine_parameters(values, model_state, fixed))
         return jnp.sum(rollout.final_state**2)
 
@@ -184,7 +189,7 @@ def test_checkpointed_rollout_gradients_match_finite_differences(replay):
     )
     epsilon = 1e-6
 
-    def shifted(scale):
+    def shifted(scale: Any) -> Any:
         return objective(
             jax.tree.map(lambda leaf, step: leaf + scale * step, parameters, direction)
         )
@@ -208,7 +213,7 @@ def test_checkpointed_rollout_gradients_match_finite_differences(replay):
     np.testing.assert_allclose(directional, finite_difference, rtol=1e-6)
 
 
-def test_correction_slot_confers_discretization_authority():
+def test_correction_slot_confers_discretization_authority() -> None:
     contract = _correction(jnp.zeros(2)).component_contract()
 
     assert contract.authority is phx.ComponentAuthority.DISCRETIZATION
@@ -219,7 +224,7 @@ def test_correction_slot_confers_discretization_authority():
     )
 
 
-def test_port_declaring_correction_binds_in_owner_order():
+def test_port_declaring_correction_binds_in_owner_order() -> None:
     accepted, candidate = full_port("y:accepted", (2,)), full_port("y:candidate", (2,))
     owner = phx.ModelPorts(
         inputs=(accepted, candidate), outputs=(full_port("y:increment", (2,)),)
@@ -228,21 +233,29 @@ def test_port_declaring_correction_binds_in_owner_order():
     arguments = dict(state_shape=(2,), maximum_relative_correction=0.5)
     model = PortedAffine(owner, out_size=2, weight=weight)
     with pytest.raises(ValueError, match="accepted-step-transform'.*owner_ports"):
+        # ty: ignore[invalid-argument-type]
         phx.solver.LearnedStepCorrection(model, **arguments)
     swapped = phx.ModelPorts(inputs=(candidate, accepted), outputs=owner.outputs)
     with pytest.raises(ValueError, match="never repacked"):
         phx.solver.LearnedStepCorrection(
             PortedAffine(swapped, out_size=2),
+            # ty: ignore[invalid-argument-type]
             **arguments,
             ports=owner,
             port_mapping=in_order(swapped, swapped),
         )
 
     correction = phx.solver.LearnedStepCorrection(
-        model, **arguments, ports=owner, port_mapping=in_order(owner, owner)
+        model,
+        # ty: ignore[invalid-argument-type]
+        **arguments,
+        ports=owner,
+        port_mapping=in_order(owner, owner),
     )
     evidence = correction.component_contract().port_binding
+    # ty: ignore[unresolved-attribute]
     assert evidence.inputs == ((accepted.port_id,) * 2, (candidate.port_id,) * 2)
+    # ty: ignore[unresolved-attribute]
     assert evidence.unverified == ()
     transaction = correction.propose(
         jnp.asarray(0), jnp.asarray([1.0, 2.0]), jnp.asarray([0.9, 1.8])
@@ -260,11 +273,15 @@ def test_port_declaring_correction_binds_in_owner_order():
         ({"lower_bounds": (jnp.nan, 0.0)}, "finite or -inf"),
     ),
 )
-def test_correction_refuses_inconsistent_declarations(keywords, message):
+def test_correction_refuses_inconsistent_declarations(
+    keywords: Any, message: Any
+) -> None:
     arguments = {"state_shape": (2,), "maximum_relative_correction": 0.5, **keywords}
     with pytest.raises(ValueError, match=message):
         phx.solver.LearnedStepCorrection(
-            _AffineIncrement(jnp.zeros((2, 4)), jnp.zeros(2)), **arguments
+            _AffineIncrement(jnp.zeros((2, 4)), jnp.zeros(2)),
+            # ty: ignore[invalid-argument-type]
+            **arguments,
         )
 
 
@@ -276,12 +293,20 @@ class _ProposingTransform(phx.solver.AbstractAcceptedStepTransform):
     dtype: str = eqx.field(static=True)
     transform_id: str = "test:proposing-transform"
 
-    def __init__(self, offset, successful, dtype="float64"):
+    def __init__(self, offset: Any, successful: Any, dtype: Any = "float64") -> None:
         self.offset = offset
         self.successful = successful
         self.dtype = dtype
 
-    def apply(self, step_index, time, previous_state, candidate_state, args, /):
+    def apply(
+        self,
+        step_index: Any,
+        time: Any,
+        previous_state: Any,
+        candidate_state: Any,
+        args: Any,
+        /,
+    ) -> Any:
         del step_index, time, previous_state, args
         return phx.solver.AcceptedStepTransformResult(
             (candidate_state + self.offset).astype(self.dtype),
@@ -291,7 +316,7 @@ class _ProposingTransform(phx.solver.AbstractAcceptedStepTransform):
         )
 
 
-def test_failed_direct_transform_cannot_change_the_source_state():
+def test_failed_direct_transform_cannot_change_the_source_state() -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         _decay, transform=_ProposingTransform(5.0, False)
     )
@@ -307,7 +332,7 @@ def test_failed_direct_transform_cannot_change_the_source_state():
     )
 
 
-def test_direct_transform_results_are_validated_centrally():
+def test_direct_transform_results_are_validated_centrally() -> None:
     method = phx.solver.SSPRK33FixedStepMethod(
         _decay, transform=_ProposingTransform(0.0, True, "float32")
     )

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -35,7 +36,7 @@ from phydrax.lifecycle._repository import (
 from phydrax.solver._particle_gravity import DistributedParticleLayout
 
 
-def _workflow():
+def _workflow() -> Any:
     count = 4
     particle_count = count**2
     grid = phx.discretization.TensorGridPlan(
@@ -63,6 +64,7 @@ def _workflow():
         ),
     ).dynamics
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.3, maximum_retries=0),
@@ -109,6 +111,7 @@ def _workflow():
         ),
     ).prepare(space, background)
     gas = ComovingEulerPlan(
+        # ty: ignore[invalid-argument-type]
         dynamics,
         adiabatic_index=5.0 / 3.0,
         expansion_dimension=2,
@@ -196,7 +199,9 @@ def _repository(path: Path) -> POSIXArtifactRepository:
     )
 
 
-def test_distributed_wave_particle_gas_rollout_is_atomic_and_matches_single_part():
+def test_distributed_wave_particle_gas_rollout_is_atomic_and_matches_single_part() -> (
+    None
+):
     mixed, state, execution = _workflow()
     local = mixed.rollout(state)
     initialized = execution.initialize(state)
@@ -228,7 +233,7 @@ def test_distributed_wave_particle_gas_rollout_is_atomic_and_matches_single_part
 
 def test_distributed_checkpoint_has_exact_coverage_and_restores_into_destination_sharding(
     tmp_path: Path,
-):
+) -> None:
     _, state, execution = _workflow()
     distributed = execution.initialize(
         state, rng_counters=jnp.arange(16, dtype=jnp.uint64)
@@ -271,7 +276,9 @@ def test_distributed_checkpoint_has_exact_coverage_and_restores_into_destination
     )
 
 
-def test_checkpoint_restore_rejects_incomplete_and_identity_substitution(tmp_path: Path):
+def test_checkpoint_restore_rejects_incomplete_and_identity_substitution(
+    tmp_path: Path,
+) -> None:
     _, state, execution = _workflow()
     distributed = execution.initialize(state)
     repository = _repository(tmp_path / "distributed-mixed-rejection")

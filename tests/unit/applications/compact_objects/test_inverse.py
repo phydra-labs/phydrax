@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from types import SimpleNamespace
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -21,7 +23,7 @@ from phydrax.applications.compact_objects._inverse import (
 )
 
 
-def _evaluation(values, signature=0, **flags):
+def _evaluation(values: Any, signature: Any = 0, **flags: Any) -> Any:
     evidence = {
         "finite": True,
         "converged": True,
@@ -42,8 +44,8 @@ def _evaluation(values, signature=0, **flags):
     )
 
 
-def test_kerr_geometry_jvp_vjp_and_finite_difference_agree():
-    def evaluate(parameters):
+def test_kerr_geometry_jvp_vjp_and_finite_difference_agree() -> None:
+    def evaluate(parameters: Any) -> Any:
         mass, spin = parameters
         radius = mass + jnp.sqrt(mass**2 - spin**2)
         area = 4.0 * jnp.pi * (radius**2 + spin**2)
@@ -73,8 +75,8 @@ def test_kerr_geometry_jvp_vjp_and_finite_difference_agree():
     assert jnp.all(jnp.isfinite(evidence.vjp))
 
 
-def test_root_branch_change_and_event_do_not_expose_gradients():
-    def changing_root(parameters):
+def test_root_branch_change_and_event_do_not_expose_gradients() -> None:
+    def changing_root(parameters: Any) -> Any:
         signature = jnp.where(parameters[0] < 0.0, 1, 0)
         return _evaluation(jnp.asarray([parameters[0] ** 2]), signature)
 
@@ -116,7 +118,7 @@ def test_root_branch_change_and_event_do_not_expose_gradients():
     assert jnp.all(jnp.isnan(event.finite_difference))
 
 
-def test_qnm_result_realification_retains_root_identity_and_status():
+def test_qnm_result_realification_retains_root_identity_and_status() -> None:
     result = SimpleNamespace(
         angular_frequency=jnp.asarray(0.4 - 0.08j),
         separation_constant=jnp.asarray(2.1 + 0.03j),
@@ -136,7 +138,7 @@ def test_qnm_result_realification_retains_root_identity_and_status():
     assert bool(evaluation.sensitivity_eligible)
 
 
-def test_stationary_kerr_result_adapter_retains_subextremal_branch():
+def test_stationary_kerr_result_adapter_retains_subextremal_branch() -> None:
     horizon = evaluate_stationary_kerr_horizon(KerrInput(2.0, 0.8))
     evaluation = kerr_thermodynamics_model_evaluation(
         horizon,
@@ -150,11 +152,11 @@ def test_stationary_kerr_result_adapter_retains_subextremal_branch():
     assert evaluation.realization_id == horizon.parameters.input_id
 
 
-def test_opaque_evaluator_requires_revision_and_body_change_changes_identity():
-    def first(parameters):
+def test_opaque_evaluator_requires_revision_and_body_change_changes_identity() -> None:
+    def first(parameters: Any) -> Any:
         return _evaluation(parameters)
 
-    def changed_body(parameters):
+    def changed_body(parameters: Any) -> Any:
         return _evaluation(parameters + 1.0)
 
     kwargs = {

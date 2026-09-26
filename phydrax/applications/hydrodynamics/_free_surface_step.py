@@ -536,7 +536,10 @@ class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
             geometry = end_geometry
 
         # Plan validation guarantees at least one coupling iteration.
-        assert projection is not None and geometry is not None
+        if not (projection is not None and geometry is not None):
+            raise RuntimeError(
+                "Internal invariant failed: projection is not None and geometry is not None."
+            )
         eta_new = base.eta + dt * eta_rate
         final_geometry = hydro.surface.geometry(target_time, eta_new, eta_rate, args)
         final_capillary = hydro.capillarity.evaluate(eta_new, hydro.plan.density)

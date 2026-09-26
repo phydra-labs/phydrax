@@ -1,5 +1,7 @@
 """Two-time infiltration-to-ERT posterior on one physical source parameter."""
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -7,7 +9,7 @@ import numpy as np
 import phydrax as phx
 
 
-def _geometry():
+def _geometry() -> Any:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -25,9 +27,10 @@ def _geometry():
     return mesh, finite_volume
 
 
-def _electrical(mesh):
+def _electrical(mesh: Any) -> Any:
     exterior = np.flatnonzero(np.asarray(mesh.connectivity.boundary_faces))
     patches = tuple(
+        # ty: ignore[invalid-argument-type]
         phx.applications.geophysics.ElectrodePatch(f"E{index}", (int(face),))
         for index, face in enumerate(exterior[:4])
     )
@@ -87,9 +90,10 @@ def main() -> None:
         saturation_exponent=2.2,
     )
 
-    def predict(log_source):
+    def predict(log_source: Any) -> Any:
         source = jnp.exp(log_source)
         first = water.step(initial, 50.0, source_kg_s=jnp.asarray((source, 0.0)))
+        # ty: ignore[invalid-argument-type]
         second = water.step(first.state, 50.0, source_kg_s=jnp.asarray((source, 0.0)))
         first_voltage = hydro.predict(
             porosity,

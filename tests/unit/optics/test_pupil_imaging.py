@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -23,7 +26,7 @@ from phydrax.optics.wave._pupil import (
 )
 
 
-def _finite_space(count, lower, upper, *, z=0.0):
+def _finite_space(count: Any, lower: Any, upper: Any, *, z: Any = 0.0) -> Any:
     grid = TensorGridPlan(
         (UniformAxisSpec(count), UniformAxisSpec(count)),
         axis_names=("u", "v"),
@@ -35,7 +38,7 @@ def _finite_space(count, lower, upper, *, z=0.0):
     )
 
 
-def test_noll_mapping_and_modes_are_continuous_unit_rms():
+def test_noll_mapping_and_modes_are_continuous_unit_rms() -> None:
     space = _finite_space(129, -1.05, 1.05)
     result = evaluate_noll_zernike_opd(
         space,
@@ -59,7 +62,7 @@ def test_noll_mapping_and_modes_are_continuous_unit_rms():
     assert bool(result.evidence.adequate)
 
 
-def test_piston_and_tilt_have_exact_noll_normalization():
+def test_piston_and_tilt_have_exact_noll_normalization() -> None:
     coordinates = jnp.asarray(((0.0, 0.0), (0.25, 0.0), (0.0, -0.25)))
 
     np.testing.assert_allclose(noll_zernike(1, coordinates), (1.0, 1.0, 1.0))
@@ -67,7 +70,7 @@ def test_piston_and_tilt_have_exact_noll_normalization():
     np.testing.assert_allclose(noll_zernike(3, coordinates), (0.0, 0.0, -0.5))
 
 
-def _fraunhofer_case():
+def _fraunhofer_case() -> Any:
     pupil_space = _finite_space(65, -0.5, 0.5)
     image_space = _finite_space(101, -4.0, 4.0, z=1.0)
     radius = jnp.sqrt(jnp.sum(pupil_space.transverse_coordinates**2, axis=-1))
@@ -83,7 +86,7 @@ def _fraunhofer_case():
     return pupil_space, image_space, aperture, field, prepared
 
 
-def test_fraunhofer_circular_pupil_has_airy_null_and_unit_power():
+def test_fraunhofer_circular_pupil_has_airy_null_and_unit_power() -> None:
     _, image_space, _, field, prepared = _fraunhofer_case()
     result = fraunhofer_psf(prepared, field)
     axis = np.asarray(image_space.coordinate_axes[0])
@@ -99,7 +102,7 @@ def test_fraunhofer_circular_pupil_has_airy_null_and_unit_power():
     assert bool(result.valid)
 
 
-def test_fraunhofer_prepared_dft_matches_direct_quadrature():
+def test_fraunhofer_prepared_dft_matches_direct_quadrature() -> None:
     pupil = _finite_space(5, -0.5, 0.5)
     image = _finite_space(7, -0.4, 0.4, z=0.8)
     coordinates = pupil.transverse_coordinates
@@ -117,7 +120,7 @@ def test_fraunhofer_prepared_dft_matches_direct_quadrature():
     np.testing.assert_allclose(result.raw_intensity[1, 5], expected, rtol=2e-6)
 
 
-def test_circular_pupil_mtf_matches_diffraction_limited_formula():
+def test_circular_pupil_mtf_matches_diffraction_limited_formula() -> None:
     _, _, _, field, prepared = _fraunhofer_case()
     transfer = normalized_otf_mtf(fraunhofer_psf(prepared, field).plane)
     frequencies = np.asarray(transfer.frequency_axes[0])
@@ -142,15 +145,17 @@ def test_circular_pupil_mtf_matches_diffraction_limited_formula():
     assert bool(transfer.evidence.valid)
 
 
-def test_strehl_is_piston_invariant_and_detects_defocus():
+def test_strehl_is_piston_invariant_and_detects_defocus() -> None:
     pupil_space, _, aperture, field, prepared = _fraunhofer_case()
     reference = fraunhofer_psf(prepared, field).plane
     piston = evaluate_noll_zernike_opd(
         pupil_space,
+        # ty: ignore[invalid-argument-type]
         NollZernikeOPD((1,), (0.3,), 0.5),
     )
     defocus = evaluate_noll_zernike_opd(
         pupil_space,
+        # ty: ignore[invalid-argument-type]
         NollZernikeOPD((4,), (0.15,), 0.5),
     )
     piston_field = apply_pupil_opd(field, piston, 2.0 * jnp.pi)

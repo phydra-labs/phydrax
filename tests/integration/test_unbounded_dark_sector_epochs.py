@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax._fingerprint import canonical_fingerprint
@@ -22,11 +25,13 @@ from phydrax.solver._dark_sector_epoch_runtime import (
 )
 
 
-def _digest(name):
+def _digest(name: Any) -> Any:
     return canonical_fingerprint({"integration": name})
 
 
-def test_unbounded_committed_epoch_chain_uses_tiny_fixed_resident_pools(tmp_path):
+def test_unbounded_committed_epoch_chain_uses_tiny_fixed_resident_pools(
+    tmp_path: Any,
+) -> None:
     profile = HPCFilesystemProfile(
         "unbounded-dark-sector-posix",
         "local-posix",
@@ -106,8 +111,10 @@ def test_unbounded_committed_epoch_chain_uses_tiny_fixed_resident_pools(tmp_path
         assert max(map(int, result.resident_high_water)) <= 1
 
     tip = graph.run_tip("long-run")
+    # ty: ignore[unresolved-attribute]
     assert tip.epoch_sequence == epoch_count - 1
     lineage = []
+    # ty: ignore[unresolved-attribute]
     current = tip.epoch_manifest_id
     while current is not None:
         persisted = graph.load_epoch(current)

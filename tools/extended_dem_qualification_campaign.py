@@ -5,13 +5,14 @@
 """Nondistributed cohesive-contact and superquadric DEM qualification campaign."""
 
 import json
+from typing import Any
 
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _material():
+def _material() -> Any:
     return phx.equations.DEMMaterialTable(
         jnp.asarray([2.0e5]),
         jnp.asarray([0.25]),
@@ -21,7 +22,7 @@ def _material():
     )
 
 
-def _cohesive_case(center_distance):
+def _cohesive_case(center_distance: Any) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0, 1]), jnp.ones((2,)), ambient_dimension=3
     ).prepare()
@@ -78,7 +79,7 @@ def _cohesive_case(center_distance):
     }
 
 
-def _superquadric_case(semi_axes, epsilon1, epsilon2):
+def _superquadric_case(semi_axes: Any, epsilon1: Any, epsilon2: Any) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0, 1]), jnp.ones((2,)), ambient_dimension=3
     ).prepare()
@@ -120,7 +121,7 @@ def _superquadric_case(semi_axes, epsilon1, epsilon2):
     }
 
 
-def main():
+def main() -> None:
     cohesive_cases = [_cohesive_case(distance) for distance in (0.95, 1.0, 1.05)]
     superquadric_cases = [
         _superquadric_case(axes, epsilon1, epsilon2)

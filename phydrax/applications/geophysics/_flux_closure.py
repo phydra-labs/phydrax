@@ -685,7 +685,8 @@ def column_flux_datasets(
         task.validate_batch(batch)
         spec = task.field_by_name[name].output_spec
         # Validated target fields always resolve an output spec at construction.
-        assert spec is not None
+        if not (spec is not None):
+            raise RuntimeError("Internal invariant failed: spec is not None.")
         datasets.append(
             OperatorDataset(
                 batch,

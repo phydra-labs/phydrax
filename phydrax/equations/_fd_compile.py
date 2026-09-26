@@ -488,7 +488,10 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
             return self._coordinate(str(expression.symbol))
         if op == "constant":
             # validate_pde_ir admits constant nodes only with a numeric value.
-            assert expression.value is not None
+            if not (expression.value is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: expression.value is not None."
+                )
             return jnp.asarray(float(expression.value))
         if op == "divergence" and set(
             _expression_axes(expression, self.coordinate_axes)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import sqrt
-from typing import cast
+from typing import Any, cast
 
 import diffrax as dfx
 import jax
@@ -49,9 +49,12 @@ def _periodic_heat_problem(
     diffusivity: float,
     noise_rank: int,
     noise_scale: float,
-):
+) -> Any:
     axis = phx.discretization.UniformAxisSpec(
-        int(size), endpoint=False, periodic=True
+        int(size),
+        endpoint=False,
+        periodic=True,
+        # ty: ignore[invalid-argument-type]
     ).materialize(0.0, 1.0)
     spatial = phx.discretization.periodic_finite_difference(
         phx.discretization.PreparedTensorGrid((axis,), axis_names=("x",))
@@ -161,7 +164,10 @@ def run_stochastic_heat_convergence_benchmark(
     spatial_levels: list[phx.solver.SPDEConvergenceLevel] = []
     for size in (8, 16, 32):
         spatial_axis = phx.discretization.UniformAxisSpec(
-            size, endpoint=False, periodic=True
+            size,
+            endpoint=False,
+            periodic=True,
+            # ty: ignore[invalid-argument-type]
         ).materialize(0.0, 1.0)
         discretization = phx.discretization.periodic_finite_difference(
             phx.discretization.PreparedTensorGrid((spatial_axis,), axis_names=("x",))
@@ -429,7 +435,7 @@ def _brownian_terminal_values(
     keys = realization.path_keys.reshape((-1,))
     signs = realization.path_signs.reshape((-1,))
 
-    def one(path_key, sign):
+    def one(path_key: Any, sign: Any) -> Any:
         tree = dfx.VirtualBrownianTree(
             t0=realization.support[0],
             t1=realization.support[1],
@@ -456,7 +462,10 @@ def run_multiplicative_reaction_diffusion_benchmark(
     growth = 0.15
     noise_scale = 0.45
     axis = phx.discretization.UniformAxisSpec(
-        size, endpoint=False, periodic=True
+        size,
+        endpoint=False,
+        periodic=True,
+        # ty: ignore[invalid-argument-type]
     ).materialize(0.0, 1.0)
     spatial = phx.discretization.periodic_finite_difference(
         phx.discretization.PreparedTensorGrid((axis,), axis_names=("x",))
@@ -605,7 +614,7 @@ def run_commutative_noise_benchmark() -> CommutativeNoiseBenchmarkResult:
     state = jnp.asarray([0.7, -0.4])
     first_increment, second_increment = 0.3, -0.2
 
-    def order_error(left, right):
+    def order_error(left: Any, right: Any) -> Any:
         left_flow = jax.scipy.linalg.expm(first_increment * left)
         right_flow = jax.scipy.linalg.expm(second_increment * right)
         return jnp.linalg.norm(
@@ -675,13 +684,13 @@ def run_multilevel_monte_carlo_benchmark(
         hierarchy_id="gbm-mlmc-benchmark",
     )
 
-    def euler(normals, step):
+    def euler(normals: Any, step: Any) -> Any:
         return jnp.prod(
             1.0 + drift * step + diffusion * jnp.sqrt(step) * normals,
             axis=-1,
         )
 
-    def sampler(level_index, sample_indices, root_key):
+    def sampler(level_index: Any, sample_indices: Any, root_key: Any) -> Any:
         level_key = jr.fold_in(root_key, level_index)
         keys = jax.vmap(lambda index: jr.fold_in(level_key, index))(sample_indices)
         fine_steps = steps[level_index]
@@ -785,7 +794,7 @@ def run_rough_logode_convergence_benchmark(
     left = jnp.asarray([[0.0, 1.0], [0.0, 0.0]])
     right = jnp.asarray([[0.0, 0.0], [1.0, 0.0]])
 
-    def vector_fields(time, state, args):
+    def vector_fields(time: Any, state: Any, args: Any) -> Any:
         del time, args
         return jnp.stack((left @ state, right @ state), axis=-1)
 

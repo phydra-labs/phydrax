@@ -5,7 +5,7 @@
 import phydrax as phx
 
 
-def test_advanced_biophysics_uses_canonical_public_owners():
+def test_advanced_biophysics_uses_canonical_public_owners() -> None:
     assert (
         phx.discretization.DynamicPairRelationPlan
         is phx.discretization.particle.DynamicPairRelationPlan

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -36,7 +39,7 @@ def _valid_spherical_modes(plan: SphericalHarmonicPlan) -> jax.Array:
     return (jnp.abs(order) <= degree) & (degree >= abs(plan.spin))
 
 
-def test_radial_laguerre_matches_order_two_basis_columns_and_exact_small_cases():
+def test_radial_laguerre_matches_order_two_basis_columns_and_exact_small_cases() -> None:
     tau = 1.7
     one = RadialLaguerrePlan(1, tau=tau)
     two = RadialLaguerrePlan(2, tau=tau)
@@ -75,7 +78,7 @@ def test_radial_laguerre_matches_order_two_basis_columns_and_exact_small_cases()
     assert plan.orthogonality_defect <= 256 * 8 * np.finfo(np.float64).eps
 
 
-def test_radial_laguerre_roundtrips_parseval_tau_and_channel_contracts():
+def test_radial_laguerre_roundtrips_parseval_tau_and_channel_contracts() -> None:
     first = RadialLaguerrePlan(8, tau=1.0)
     second = RadialLaguerrePlan(8, tau=2.5)
     coefficients = jr.normal(jr.key(1), (8,)) + 1j * jr.normal(jr.key(2), (8,))
@@ -128,7 +131,7 @@ def test_radial_laguerre_roundtrips_parseval_tau_and_channel_contracts():
 
 
 @pytest.mark.parametrize("sampling", ("mw", "mwss", "dh", "gl"))
-def test_fourier_laguerre_matches_explicit_separable_transform(sampling):
+def test_fourier_laguerre_matches_explicit_separable_transform(sampling: Any) -> None:
     radial = RadialLaguerrePlan(4, tau=0.8)
     angular = SphericalHarmonicPlan(4, sampling=sampling, reality=False)
     plan = FourierLaguerrePlan(radial, angular)
@@ -153,7 +156,7 @@ def test_fourier_laguerre_matches_explicit_separable_transform(sampling):
     assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_fourier_laguerre_preserves_spin_batch_channel_and_execution_identity():
+def test_fourier_laguerre_preserves_spin_batch_channel_and_execution_identity() -> None:
     radial = RadialLaguerrePlan(3)
     recursive_angular = SphericalHarmonicPlan(
         4, spin=1, reality=False, execution="recursive"
@@ -181,7 +184,7 @@ def test_fourier_laguerre_preserves_spin_batch_channel_and_execution_identity():
     assert recursive.layout_id == precomputed.layout_id
 
 
-def test_laguerre_plans_reject_invalid_configuration_shapes_and_resources():
+def test_laguerre_plans_reject_invalid_configuration_shapes_and_resources() -> None:
     with pytest.raises(ValueError, match="positive"):
         RadialLaguerrePlan(0)
     with pytest.raises(ValueError, match="tau"):

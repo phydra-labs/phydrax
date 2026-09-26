@@ -11,7 +11,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def _conjugate_poisson_problem():
+def _conjugate_poisson_problem() -> Any:
     sensor_x = jnp.linspace(0.05, 0.95, 24)
     basis = 0.5 * sensor_x * (1.0 - sensor_x)
     observation_scale = 0.02
@@ -45,7 +45,7 @@ def _conjugate_poisson_problem():
     return problem, posterior_mean, posterior_variance
 
 
-def test_nuts_and_dense_laplace_recover_the_conjugate_poisson_posterior():
+def test_nuts_and_dense_laplace_recover_the_conjugate_poisson_posterior() -> None:
     problem, exact_mean, exact_variance = _conjugate_poisson_problem()
     nuts = phx.uq.sample_nuts(
         problem,
@@ -91,7 +91,7 @@ def test_nuts_and_dense_laplace_recover_the_conjugate_poisson_posterior():
     assert jnp.allclose(jnp.asarray(prediction.samples.data)[..., (0, -1)], 0.0)
 
 
-def test_fixed_hmc_retains_trajectory_configuration_and_replays_from_root_key():
+def test_fixed_hmc_retains_trajectory_configuration_and_replays_from_root_key() -> None:
     problem, exact_mean, _ = _conjugate_poisson_problem()
     settings: dict[str, Any] = dict(
         num_integration_steps=7,

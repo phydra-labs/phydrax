@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_population_allocation_deactivation_and_incarnation_are_transactional():
+def test_population_allocation_deactivation_and_incarnation_are_transactional() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(6),
         jnp.ones((6,)),
@@ -54,7 +54,7 @@ def test_population_allocation_deactivation_and_incarnation_are_transactional():
     assert reused.accepted_state.incarnation[slot] >= 2
 
 
-def test_particle_splat_runtime_mask_excludes_inactive_payload():
+def test_particle_splat_runtime_mask_excludes_inactive_payload() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=True),),
         axis_names=("x",),

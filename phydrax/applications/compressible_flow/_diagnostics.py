@@ -726,7 +726,10 @@ class CompressiblePlaneStatisticsPlan(StrictModule):
             wall_units_available = jnp.stack(availability_values)
             wall_coordinates = self.wall_normal_coordinates
             # The constructor requires wall-normal coordinates whenever a wall axis is set.
-            assert wall_coordinates is not None
+            if not (wall_coordinates is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: wall_coordinates is not None."
+                )
             coordinates = wall_coordinates.astype(state.dtype)
             lower_distance = coordinates - coordinates[0]
             upper_distance = coordinates[-1] - coordinates

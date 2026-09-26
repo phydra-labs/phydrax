@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import coordax as cx
 import equinox as eqx
@@ -32,9 +33,10 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _measure(points, weights, *, provenance):
+def _measure(points: Any, weights: Any, *, provenance: Any) -> Any:
     return phx.integration.discrete(
         points,
+        # ty: ignore[invalid-argument-type]
         cx.Field(weights, dims=("atom",)),
         axes="atom",
         normalized=True,
@@ -47,7 +49,7 @@ def _problem(
     support_atoms: int,
     num_measures: int,
     dimension: int,
-):
+) -> Any:
     measures = []
     for index in range(num_measures):
         count = atoms - index % max(1, min(atoms // 4, num_measures))
@@ -81,7 +83,7 @@ def _problem(
     )
 
 
-def _bytes(tree) -> int:
+def _bytes(tree: Any) -> int:
     return sum(
         leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
@@ -89,7 +91,9 @@ def _bytes(tree) -> int:
     )
 
 
-def _fixed_record(problem, iterations, block_size, repeats, *, blockwise):
+def _fixed_record(
+    problem: Any, iterations: Any, block_size: Any, repeats: Any, *, blockwise: Any
+) -> Any:
     solver = phx.transport.SinkhornBarycenter(
         0.5,
         max_iterations=iterations,
@@ -110,7 +114,7 @@ def _fixed_record(problem, iterations, block_size, repeats, *, blockwise):
         jax.block_until_ready(result.objective)
     steady_ms = 1e3 * (time.perf_counter() - started) / repeats
 
-    def objective(points):
+    def objective(points: Any) -> Any:
         candidate = eqx.tree_at(
             lambda item: item.measure_points,
             problem,
@@ -149,7 +153,7 @@ def _fixed_record(problem, iterations, block_size, repeats, *, blockwise):
     }
 
 
-def _free_record(problem, inner_iterations, outer_iterations):
+def _free_record(problem: Any, inner_iterations: Any, outer_iterations: Any) -> Any:
     inner = phx.transport.SinkhornBarycenter(
         0.5,
         max_iterations=inner_iterations,

@@ -7,6 +7,7 @@ PYTHONPATH=. python tools/geophysical_assimilation_qualification.py
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax
 import numpy as np
@@ -15,7 +16,7 @@ from examples.geophysical_assimilation import make_twin_problem, run_twin
 from phydrax.uq import ensemble_filter_step, initialize_ensemble_filter
 
 
-def qualify_linear_gaussian_limit():
+def qualify_linear_gaussian_limit() -> Any:
     problem, _, _, _ = make_twin_problem()
     state = initialize_ensemble_filter(jax.random.key(42), problem, ensemble_size=16)
     ensemble = np.asarray(state.ensemble)
@@ -39,7 +40,7 @@ def qualify_linear_gaussian_limit():
     }
 
 
-def qualify():
+def qualify() -> Any:
     linear = qualify_linear_gaussian_limit()
     twin = run_twin()
     twin_passed = (

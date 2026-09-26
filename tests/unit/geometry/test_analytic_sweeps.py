@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_circle_extrusion_is_an_exact_centered_cylinder():
+def test_circle_extrusion_is_an_exact_centered_cylinder() -> None:
     compiled = (
         phx.geometry.Circle(
             (0.0, 0.0),
@@ -42,7 +45,7 @@ def test_circle_extrusion_is_an_exact_centered_cylinder():
     assert bool(compiled.validity().accepted)
 
 
-def test_rectangle_extrusion_matches_box_distance_and_has_finite_gradients():
+def test_rectangle_extrusion_matches_box_distance_and_has_finite_gradients() -> None:
     compiled = (
         phx.geometry.Rectangle(
             center=(0.0, 0.0),
@@ -57,7 +60,7 @@ def test_rectangle_extrusion_matches_box_distance_and_has_finite_gradients():
 
     assert jnp.allclose(compiled.signed_distance(points), jnp.asarray([0.5, 0.5]))
 
-    def volume(height):
+    def volume(height: Any) -> Any:
         state = compiled.state.replace_at(height_index, height)
         return compiled.kernel.measure(state)
 
@@ -69,7 +72,7 @@ def test_rectangle_extrusion_matches_box_distance_and_has_finite_gradients():
     assert jnp.allclose(jnp.linalg.norm(normals, axis=-1), 1.0)
 
 
-def test_offset_circle_revolution_is_an_exact_torus_field():
+def test_offset_circle_revolution_is_an_exact_torus_field() -> None:
     compiled = (
         phx.geometry.Circle(
             center=(2.0, 0.0),
@@ -100,7 +103,7 @@ def test_offset_circle_revolution_is_an_exact_torus_field():
         _ = compiled.measure
 
 
-def test_revolution_rejects_a_profile_crossing_the_axis():
+def test_revolution_rejects_a_profile_crossing_the_axis() -> None:
     compiled = (
         phx.geometry.Circle(
             center=(0.25, 0.0),

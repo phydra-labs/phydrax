@@ -6,6 +6,7 @@
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +14,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def hierarchy_state(topology, value):
+def hierarchy_state(topology: Any, value: Any) -> Any:
     levels = []
     for level_plan, metadata in zip(topology.plan.levels, topology.levels, strict=True):
         values = jnp.zeros(

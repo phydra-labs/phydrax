@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 
 from phydrax.discretization import (
@@ -14,11 +17,11 @@ from phydrax.domain import Interval1d
 from phydrax.operators.differential import laplacian, partial_n
 
 
-def test_partial_n_basis_fourier_matches_closed_form_periodic():
+def test_partial_n_basis_fourier_matches_closed_form_periodic() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.sin(2.0 * jnp.pi * x[0])
 
     d2 = partial_n(
@@ -35,11 +38,11 @@ def test_partial_n_basis_fourier_matches_closed_form_periodic():
     assert jnp.allclose(out, expected, rtol=1e-6, atol=1e-6)
 
 
-def test_partial_n_fd_matches_closed_form_periodic_to_tolerance():
+def test_partial_n_fd_matches_closed_form_periodic_to_tolerance() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.sin(2.0 * jnp.pi * x[0])
 
     d1 = partial_n(
@@ -55,11 +58,11 @@ def test_partial_n_fd_matches_closed_form_periodic_to_tolerance():
     assert jnp.allclose(out, expected, rtol=2e-3, atol=2e-3)
 
 
-def test_partial_n_fd_third_order_matches_closed_form_periodic_to_tolerance():
+def test_partial_n_fd_third_order_matches_closed_form_periodic_to_tolerance() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.sin(2.0 * jnp.pi * x[0])
 
     d3 = partial_n(
@@ -75,11 +78,11 @@ def test_partial_n_fd_third_order_matches_closed_form_periodic_to_tolerance():
     assert jnp.allclose(out, expected, rtol=1e-2, atol=1e-2)
 
 
-def test_partial_n_basis_poly_on_legendre_nodes_matches_closed_form():
+def test_partial_n_basis_poly_on_legendre_nodes_matches_closed_form() -> None:
     geom = Interval1d(-1.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 3
 
     d2 = partial_n(
@@ -95,11 +98,11 @@ def test_partial_n_basis_poly_on_legendre_nodes_matches_closed_form():
     assert jnp.allclose(out, expected, rtol=1e-6, atol=1e-6)
 
 
-def test_partial_n_basis_poly_fourth_order_matches_closed_form():
+def test_partial_n_basis_poly_fourth_order_matches_closed_form() -> None:
     geom = Interval1d(-1.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return x[0] ** 6
 
     d4 = partial_n(
@@ -115,11 +118,11 @@ def test_partial_n_basis_poly_fourth_order_matches_closed_form():
     assert jnp.allclose(out, expected, rtol=1e-6, atol=1e-6)
 
 
-def test_laplacian_basis_matches_second_partial_in_1d():
+def test_laplacian_basis_matches_second_partial_in_1d() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.sin(2.0 * jnp.pi * x[0])
 
     lap = laplacian(
@@ -143,11 +146,11 @@ def test_laplacian_basis_matches_second_partial_in_1d():
     assert jnp.allclose(out_lap, out_d2, rtol=1e-8, atol=1e-8)
 
 
-def test_partial_n_basis_cosine_matches_closed_form():
+def test_partial_n_basis_cosine_matches_closed_form() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.cos(3.0 * jnp.pi * x[0])
 
     d1 = partial_n(
@@ -163,11 +166,11 @@ def test_partial_n_basis_cosine_matches_closed_form():
     assert jnp.allclose(out, expected, rtol=1e-6, atol=1e-6)
 
 
-def test_partial_n_basis_sine_matches_closed_form():
+def test_partial_n_basis_sine_matches_closed_form() -> None:
     geom = Interval1d(0.0, 1.0)
 
     @geom.Function("x")
-    def u(x):
+    def u(x: Any) -> Any:
         return jnp.sin(4.0 * jnp.pi * x[0])
 
     d1 = partial_n(

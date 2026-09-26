@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -41,12 +44,12 @@ class _LinearModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, coefficients):
+    def __init__(self, coefficients: Any) -> None:
         self.coefficients = jnp.asarray(coefficients)
         self.in_size = self.coefficients.shape[0]
         self.out_size = "scalar"
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return oe.contract("...f,f->...", jnp.asarray(x), self.coefficients)
 
@@ -67,7 +70,7 @@ _DIRECT_CONTRACT = DerivativeContract(
 
 
 class _ImportanceRecipe(AbstractRecipe):
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         x = batch.dense_features().reshape((-1, batch.feature_count))
         y = batch.require_targets().reshape((-1,))
@@ -92,11 +95,11 @@ class _ImportanceRecipe(AbstractRecipe):
         )
 
 
-def _linear_importance(model):
+def _linear_importance(model: Any) -> Any:
     return model.coefficients
 
 
-def _smooth_feature_scores(batch):
+def _smooth_feature_scores(batch: Any) -> Any:
     features = batch.dense_features()
     targets = batch.require_targets()
     weights = batch.effective_weight("statistical")
@@ -105,7 +108,7 @@ def _smooth_feature_scores(batch):
     )
 
 
-def _batch(case=False):
+def _batch(case: Any = False) -> Any:
     base = jnp.array(
         [
             [0.0, 1.0, 2.0],
@@ -128,7 +131,9 @@ def _batch(case=False):
     )
 
 
-def test_variance_and_score_filters_preserve_case_axes_masks_weights_and_gradients():
+def test_variance_and_score_filters_preserve_case_axes_masks_weights_and_gradients() -> (
+    None
+):
     batch = _batch(case=True)
     variance = VarianceFilterRecipe(1e-6, max_features=2).fit_batch(batch)
     score = ScoreFilterRecipe(threshold=0.2, max_features=1).fit_batch(batch)
@@ -152,7 +157,7 @@ def test_variance_and_score_filters_preserve_case_axes_masks_weights_and_gradien
     }
 
 
-def test_mutual_information_is_deterministic_fixed_capacity_and_fail_closed():
+def test_mutual_information_is_deterministic_fixed_capacity_and_fail_closed() -> None:
     batch = _batch()
     recipe = MutualInformationFilterRecipe(num_bins=3, threshold=0.0, max_features=2)
     first = recipe.fit_batch(batch, key=jax.random.key(1))
@@ -168,7 +173,7 @@ def test_mutual_information_is_deterministic_fixed_capacity_and_fail_closed():
         recipe.fit_batch(complex_batch)
 
 
-def test_recursive_sequential_and_model_based_selection_find_signal():
+def test_recursive_sequential_and_model_based_selection_find_signal() -> None:
     batch = _batch()
     estimator = _ImportanceRecipe()
     recursive = RecursiveFeatureEliminationRecipe(
@@ -197,7 +202,7 @@ def test_recursive_sequential_and_model_based_selection_find_signal():
         SequentialFeatureSelectionRecipe(estimator, num_features=1).fit_batch(batch)
 
 
-def test_continuous_sparse_gate_is_distinct_smooth_jittable_and_vmap_safe():
+def test_continuous_sparse_gate_is_distinct_smooth_jittable_and_vmap_safe() -> None:
     batch = _batch(case=True)
     result = ContinuousSparseGateRecipe(temperature=0.2, sparsity=0.4).fit_batch(batch)
     model = result.as_trainable()
@@ -212,7 +217,7 @@ def test_continuous_sparse_gate_is_distinct_smooth_jittable_and_vmap_safe():
     assert result.derivative_contract.route is DerivativeRoute.RELAXED
 
 
-def test_continuous_sparse_gate_hyperparameters_are_validated_array_leaves():
+def test_continuous_sparse_gate_hyperparameters_are_validated_array_leaves() -> None:
     recipe = ContinuousSparseGateRecipe(
         temperature=jnp.asarray(0.2),
         sparsity=jnp.asarray(0.4),
@@ -233,6 +238,7 @@ def test_continuous_sparse_gate_hyperparameters_are_validated_array_leaves():
     )
     for configuration in eager_invalid:
         with pytest.raises(Exception, match="temperature|sparsity"):
+            # ty: ignore[invalid-argument-type]
             invalid = ContinuousSparseGateRecipe(**configuration)
             jax.block_until_ready((invalid.temperature, invalid.sparsity))
 
@@ -240,6 +246,7 @@ def test_continuous_sparse_gate_hyperparameters_are_validated_array_leaves():
     with pytest.raises(Exception, match="temperature must be finite and positive"):
         invalid_gates = jax.jit(
             lambda temperature: (
+                # ty: ignore[unresolved-attribute]
                 ContinuousSparseGateRecipe(
                     temperature=temperature,
                     sparsity=0.4,
@@ -253,6 +260,7 @@ def test_continuous_sparse_gate_hyperparameters_are_validated_array_leaves():
     with pytest.raises(Exception, match=r"sparsity must be finite and lie in \[0, 1\]"):
         invalid_gates = jax.jit(
             lambda sparsity: (
+                # ty: ignore[unresolved-attribute]
                 ContinuousSparseGateRecipe(
                     temperature=0.2,
                     sparsity=sparsity,
@@ -265,13 +273,15 @@ def test_continuous_sparse_gate_hyperparameters_are_validated_array_leaves():
         jax.block_until_ready(invalid_gates)
 
 
-def test_continuous_sparse_gate_gradients_match_its_conditional_contract():
+def test_continuous_sparse_gate_gradients_match_its_conditional_contract() -> None:
     batch = _batch()
     features = batch.dense_features()
     targets = batch.require_targets()
     weights = jnp.asarray(batch.sample_weight)
 
-    def objective(features_, targets_, weights_, temperature, sparsity):
+    def objective(
+        features_: Any, targets_: Any, weights_: Any, temperature: Any, sparsity: Any
+    ) -> Any:
         candidate = MLBatch(
             features_,
             targets_,
@@ -280,6 +290,7 @@ def test_continuous_sparse_gate_gradients_match_its_conditional_contract():
             sample_weight=weights_,
         )
         gates = (
+            # ty: ignore[unresolved-attribute]
             ContinuousSparseGateRecipe(
                 temperature=temperature,
                 sparsity=sparsity,
@@ -319,7 +330,7 @@ def test_continuous_sparse_gate_gradients_match_its_conditional_contract():
     assert len(contract.conditions) == 4
 
 
-def test_continuous_sparse_gate_preserves_values_and_stays_finite_at_degeneracy():
+def test_continuous_sparse_gate_preserves_values_and_stays_finite_at_degeneracy() -> None:
     scores = jnp.asarray([0.2, 0.5, 0.9])
     result = ContinuousSparseGateRecipe(
         temperature=0.25,
@@ -328,6 +339,7 @@ def test_continuous_sparse_gate_preserves_values_and_stays_finite_at_degeneracy(
     ).fit_batch(_batch())
     normalized = (scores - jnp.min(scores)) / (jnp.max(scores) - jnp.min(scores))
     expected = jax.nn.sigmoid((normalized - 0.4) / 0.25)
+    # ty: ignore[unresolved-attribute]
     assert jnp.allclose(result.as_trainable().gates, expected)
 
     equal = ContinuousSparseGateRecipe(
@@ -340,7 +352,9 @@ def test_continuous_sparse_gate_preserves_values_and_stays_finite_at_degeneracy(
         jnp.ones((5,)),
     )
     zero_variance = ContinuousSparseGateRecipe().fit_batch(constant_batch)
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.isfinite(equal.as_trainable().gates))
+    # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.isfinite(zero_variance.as_trainable().gates))
     assert (
         equal.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
@@ -352,7 +366,7 @@ def test_continuous_sparse_gate_preserves_values_and_stays_finite_at_degeneracy(
     )
 
 
-def test_selector_capacity_scores_weights_and_importance_fail_closed():
+def test_selector_capacity_scores_weights_and_importance_fail_closed() -> None:
     batch = _batch()
     with pytest.raises(ValueError, match="positive"):
         VarianceFilterRecipe(max_features=0)
@@ -369,4 +383,5 @@ def test_selector_capacity_scores_weights_and_importance_fail_closed():
         VarianceFilterRecipe().fit_batch(bad_weight)
 
     with pytest.raises(TypeError, match="importance_getter"):
+        # ty: ignore[missing-argument]
         ModelBasedSelectionRecipe(_ImportanceRecipe())

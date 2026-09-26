@@ -328,7 +328,8 @@ class GRRMHDTorusInitialDataPlan(StrictModule, NonTrainableState):
         degree = 1
         coordinates = bridge.cochain.coordinates[degree]
         # StructuredCochainBridge populates coordinates at every degree.
-        assert coordinates is not None
+        if not (coordinates is not None):
+            raise RuntimeError("Internal invariant failed: coordinates is not None.")
         torus = self.torus.evaluate(coordinates)
         potential = jnp.zeros(
             (bridge.cochain.cell_counts[degree],), dtype=coordinates.dtype

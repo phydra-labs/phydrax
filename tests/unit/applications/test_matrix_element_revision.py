@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import pytest
 
 from phydrax._fingerprint import canonical_fingerprint
@@ -14,11 +17,13 @@ from phydrax.applications.relativistic_scattering._matrix_element_revision impor
 )
 
 
-def _digest(name):
+def _digest(name: Any) -> Any:
     return canonical_fingerprint({"test": name})
 
 
-def _revision(parameter, *, training="training", rights="native-commercial"):
+def _revision(
+    parameter: Any, *, training: Any = "training", rights: Any = "native-commercial"
+) -> Any:
     return MatrixElementRevision(
         "dark-fermion-annihilation",
         "vector-mediator-tree",
@@ -36,7 +41,7 @@ def _revision(parameter, *, training="training", rights="native-commercial"):
     )
 
 
-def test_revision_identity_binds_every_scientific_and_provenance_contract():
+def test_revision_identity_binds_every_scientific_and_provenance_contract() -> None:
     base = _revision("parameters-a")
     repeated = MatrixElementRevision.from_record(base.to_record())
     assert repeated.revision_id == base.revision_id
@@ -47,7 +52,7 @@ def test_revision_identity_binds_every_scientific_and_provenance_contract():
     assert not base.is_adapted
 
 
-def test_adaptation_accept_reject_and_replay_are_epoch_bound_and_exact():
+def test_adaptation_accept_reject_and_replay_are_epoch_bound_and_exact() -> None:
     boundary = _digest("committed-epoch")
     base = _revision("parameters-a")
     candidate = _revision("parameters-b")
@@ -133,7 +138,7 @@ def test_adaptation_accept_reject_and_replay_are_epoch_bound_and_exact():
         )
 
 
-def test_prior_event_weights_remain_revision_bound_after_adaptation():
+def test_prior_event_weights_remain_revision_bound_after_adaptation() -> None:
     base = _revision("parameters-a")
     snapshot = MatrixElementWeightSnapshot(
         (_digest("event-a"), _digest("event-b")),

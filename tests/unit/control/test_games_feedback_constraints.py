@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -32,13 +34,13 @@ from phydrax.control.games._nonlinear import (
 
 
 def _local_suggestion(
-    partition,
-    control_costs,
-    control_linear,
+    partition: Any,
+    control_costs: Any,
+    control_linear: Any,
     *,
-    state_control_cross=None,
-    suggestion_id="feedback-constraint-test",
-):
+    state_control_cross: Any = None,
+    suggestion_id: Any = "feedback-constraint-test",
+) -> Any:
     players = partition.num_players
     controls = partition.joint_control_size
     control_costs = jnp.asarray(control_costs, dtype="float64")
@@ -49,7 +51,7 @@ def _local_suggestion(
 
     input_layout = phx.dynamics.InputLayout((controls,), roles="control")
 
-    def transition(context, state, control, args):
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
         del context, control, args
         return state
 
@@ -68,8 +70,8 @@ def _local_suggestion(
         "N": state_control_cross,
     }
 
-    def stage_cost(player):
-        def cost(context, state, control, callback_args):
+    def stage_cost(player: Any) -> Any:
+        def cost(context: Any, state: Any, control: Any, callback_args: Any) -> Any:
             del context
             return (
                 0.5 * control @ callback_args["R"][player] @ control
@@ -79,7 +81,7 @@ def _local_suggestion(
 
         return cost
 
-    def terminal_cost(time, state, callback_args):
+    def terminal_cost(time: Any, state: Any, callback_args: Any) -> float:
         del time, state, callback_args
         return 0.0
 
@@ -121,14 +123,14 @@ def _local_suggestion(
 
 
 def _block(
-    constraint_id,
+    constraint_id: Any,
     *,
-    owner,
-    participants,
-    scope=GameConstraintScope.PLAYER_LOCAL,
-    equality=False,
-    control_dependencies=None,
-):
+    owner: Any,
+    participants: Any,
+    scope: Any = GameConstraintScope.PLAYER_LOCAL,
+    equality: Any = False,
+    control_dependencies: Any = None,
+) -> Any:
     if control_dependencies is None:
         control_dependencies = participants
     return GameConstraintBlock(
@@ -150,7 +152,7 @@ def _block(
     )
 
 
-def _plan():
+def _plan() -> Any:
     return FeedbackQuasiNashPlan(
         residual_tolerance=2.0e-5,
         feasibility_tolerance=2.0e-5,
@@ -163,16 +165,16 @@ def _plan():
 
 
 def _solve(
-    suggestion,
-    blocks=(),
+    suggestion: Any,
+    blocks: Any = (),
     *,
-    residuals=None,
-    control_jacobians=None,
-    state_jacobians=None,
-    active_set=None,
-    variational=False,
-    problem_id="feedback-constraint-case",
-):
+    residuals: Any = None,
+    control_jacobians: Any = None,
+    state_jacobians: Any = None,
+    active_set: Any = None,
+    variational: Any = False,
+    problem_id: Any = "feedback-constraint-case",
+) -> Any:
     constraints = OpenLoopGameConstraints(suggestion.model.partition, blocks)
     problem = ConstrainedFeedbackGameProblem(
         suggestion,
@@ -187,7 +189,7 @@ def _solve(
     return solve_feedback_quasi_nash_model(problem, plan=_plan())
 
 
-def test_unconstrained_model_reduces_to_the_local_lq_suggestion():
+def test_unconstrained_model_reduces_to_the_local_lq_suggestion() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     suggestion = _local_suggestion(
         partition,
@@ -215,7 +217,7 @@ def test_unconstrained_model_reduces_to_the_local_lq_suggestion():
     assert result.kkt_ranks[0] == partition.joint_control_size
 
 
-def test_active_bound_returns_affine_control_and_positive_multiplier():
+def test_active_bound_returns_affine_control_and_positive_multiplier() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     suggestion = _local_suggestion(
         partition,
@@ -241,7 +243,7 @@ def test_active_bound_returns_affine_control_and_positive_multiplier():
     assert result.own_minimum_curvatures[0, 0] > 0.0
 
 
-def test_private_and_shared_variational_multipliers_have_distinct_layouts():
+def test_private_and_shared_variational_multipliers_have_distinct_layouts() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     suggestion = _local_suggestion(
         partition,
@@ -281,7 +283,9 @@ def test_private_and_shared_variational_multipliers_have_distinct_layouts():
     np.testing.assert_allclose(result.variational_multipliers, [[1.0]], atol=2.0e-5)
 
 
-def test_generic_shared_rows_keep_player_multiplier_copies_and_report_nonisolation():
+def test_generic_shared_rows_keep_player_multiplier_copies_and_report_nonisolation() -> (
+    None
+):
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     suggestion = _local_suggestion(
         partition,
@@ -316,7 +320,7 @@ def test_generic_shared_rows_keep_player_multiplier_copies_and_report_nonisolati
     assert not result.generic_gne_existence_rejected
 
 
-def test_linearly_dependent_active_private_rows_fail_licq():
+def test_linearly_dependent_active_private_rows_fail_licq() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     suggestion = _local_suggestion(
         partition,
@@ -350,7 +354,7 @@ def test_linearly_dependent_active_private_rows_fail_licq():
     assert result.status == int(FeedbackQuasiNashStatus.LICQ_FAILURE)
 
 
-def test_zero_active_inequality_multiplier_fails_strict_complementarity():
+def test_zero_active_inequality_multiplier_fails_strict_complementarity() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     suggestion = _local_suggestion(
         partition,
@@ -372,7 +376,7 @@ def test_zero_active_inequality_multiplier_fails_strict_complementarity():
     assert result.status == int(FeedbackQuasiNashStatus.STRICT_COMPLEMENTARITY_FAILURE)
 
 
-def test_inactive_violation_is_reported_without_an_active_set_switch():
+def test_inactive_violation_is_reported_without_an_active_set_switch() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     suggestion = _local_suggestion(
         partition,
@@ -397,7 +401,7 @@ def test_inactive_violation_is_reported_without_an_active_set_switch():
     assert not bool(result.active_set[0, 0])
 
 
-def test_nonsymmetric_coupled_private_kkt_can_be_singular_despite_licq():
+def test_nonsymmetric_coupled_private_kkt_can_be_singular_despite_licq() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     suggestion = _local_suggestion(
         partition,
@@ -433,7 +437,7 @@ def test_nonsymmetric_coupled_private_kkt_can_be_singular_despite_licq():
     assert not bool(result.policy_authoritative)
 
 
-def test_player_permutation_permutes_policy_and_owned_multiplier_layout():
+def test_player_permutation_permutes_policy_and_owned_multiplier_layout() -> None:
     original_partition = PlayerControlPartition(("left", "right"), (1, 1))
     original = _local_suggestion(
         original_partition,
@@ -495,7 +499,7 @@ def test_player_permutation_permutes_policy_and_owned_multiplier_layout():
     )
 
 
-def test_result_labels_only_a_fixed_active_local_quasi_nash_model():
+def test_result_labels_only_a_fixed_active_local_quasi_nash_model() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     suggestion = _local_suggestion(
         partition,

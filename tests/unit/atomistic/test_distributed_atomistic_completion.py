@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -30,17 +32,21 @@ from phydrax.atomistic._distributed import (
 from phydrax.atomistic._potential_program import AtomisticPotentialEvaluation
 
 
-def _system():
+def _system() -> Any:
     return phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
         [101, 102, 103, 104],
+        # ty: ignore[invalid-argument-type]
         [1, 1, 1, 1],
+        # ty: ignore[invalid-argument-type]
         [1.0, 2.0, 3.0, 4.0],
         phx.atomistic.AtomisticUnitSystem.reduced(),
+        # ty: ignore[invalid-argument-type]
         atom_type_ids=[0, 0, 0, 0],
     ).prepare()
 
 
-def _positions():
+def _positions() -> Any:
     return jnp.asarray(
         [
             [3.75, 1.0, 1.0],
@@ -53,19 +59,21 @@ def _positions():
 
 def _plan(
     *,
-    halo_capacity=2,
-    migration_capacity=4,
-    partition_capacity=2,
-    output_mask=None,
-    pme=None,
-    polarization=None,
-    execution_mode="local-reference",
-    thermostat_capacity=0,
-    barostat_capacity=0,
-    bias_capacity=0,
-):
+    halo_capacity: Any = 2,
+    migration_capacity: Any = 4,
+    partition_capacity: Any = 2,
+    output_mask: Any = None,
+    pme: Any = None,
+    polarization: Any = None,
+    execution_mode: Any = "local-reference",
+    thermostat_capacity: Any = 0,
+    barostat_capacity: Any = 0,
+    bias_capacity: Any = 0,
+) -> Any:
     box = phx.discretization.ParticleBox(
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.0, 0.0],
+        # ty: ignore[invalid-argument-type]
         [4.0, 4.0, 4.0],
         periodic_axes=(False, False, False),
     )
@@ -86,7 +94,7 @@ def _plan(
     )
 
 
-def _evaluation(atom_energy, forces, virial, name):
+def _evaluation(atom_energy: Any, forces: Any, virial: Any, name: Any) -> Any:
     atom = jnp.asarray(atom_energy)
     return AtomisticPotentialEvaluation(
         jnp.sum(atom),
@@ -101,7 +109,7 @@ def _evaluation(atom_energy, forces, virial, name):
     )
 
 
-def test_stable_ownership_permutation_block_bounds_and_compiled_shape():
+def test_stable_ownership_permutation_block_bounds_and_compiled_shape() -> None:
     runtime = _plan().prepare_runtime()
     positions = _positions()
     state = runtime.initialize(positions)
@@ -118,7 +126,7 @@ def test_stable_ownership_permutation_block_bounds_and_compiled_shape():
     assert compiled.shape == (2, 6)
 
 
-def test_halo_routes_are_padded_and_capacity_overflow_fails_closed():
+def test_halo_routes_are_padded_and_capacity_overflow_fails_closed() -> None:
     state = _plan(halo_capacity=2).prepare_runtime().initialize(_positions())
     decomposition = state.decomposition
     assert decomposition.halo_send_indices.shape == (2, 2, 2)
@@ -134,7 +142,7 @@ def test_halo_routes_are_padded_and_capacity_overflow_fails_closed():
     assert not bool(overflow.successful)
 
 
-def test_migration_candidate_commits_or_rolls_back_atomically():
+def test_migration_candidate_commits_or_rolls_back_atomically() -> None:
     rollback_plan = _plan(migration_capacity=0, partition_capacity=3)
     rollback_state = rollback_plan.prepare_runtime().initialize(_positions())
     proposed = _positions().at[1, 0].set(2.75)
@@ -169,7 +177,7 @@ def test_migration_candidate_commits_or_rolls_back_atomically():
     assert not bool(rejected.successful)
 
 
-def test_reverse_halo_force_return_is_conservative():
+def test_reverse_halo_force_return_is_conservative() -> None:
     state = _plan().prepare_runtime().initialize(_positions())
     receive = jnp.zeros(state.decomposition.halo_receive_indices.shape + (3,))
     receive = receive.at[0, 1, 0].set(jnp.asarray([1.0, 2.0, 3.0]))
@@ -182,9 +190,11 @@ def test_reverse_halo_force_return_is_conservative():
     )
 
 
-def test_reverse_force_policy_orders_repeated_owner_contributions():
+def test_reverse_force_policy_orders_repeated_owner_contributions() -> None:
     box = phx.discretization.ParticleBox(
+        # ty: ignore[invalid-argument-type]
         [0.0, 0.0, 0.0],
+        # ty: ignore[invalid-argument-type]
         [6.0, 4.0, 4.0],
         periodic_axes=(False, False, False),
     )
@@ -217,7 +227,7 @@ def test_reverse_force_policy_orders_repeated_owner_contributions():
     np.testing.assert_allclose(returned[0], [0.0, 3.0, 0.0])
 
 
-def test_local_shard_direct_sparse_reciprocal_energy_force_virial_parity():
+def test_local_shard_direct_sparse_reciprocal_energy_force_virial_parity() -> None:
     plan = _plan(
         pme=DistributedPMEPlan((8, 6, 4)),
         output_mask=DistributedOutputMask(atom_energy=True),
@@ -286,7 +296,7 @@ def test_local_shard_direct_sparse_reciprocal_energy_force_virial_parity():
     assert bool(result.successful)
 
 
-def test_deterministic_reduction_and_load_evidence_are_reproducible():
+def test_deterministic_reduction_and_load_evidence_are_reproducible() -> None:
     energy = jnp.asarray([1.0e10, 1.0, -1.0e10, 3.0], dtype=jnp.float32)
     momentum = jnp.arange(12, dtype=jnp.float32).reshape((4, 3))
     policy = DistributedReductionPolicy("deterministic")
@@ -310,7 +320,7 @@ def test_deterministic_reduction_and_load_evidence_are_reproducible():
     assert bool(evidence.successful)
 
 
-def test_checkpoint_identity_covers_all_continuation_state():
+def test_checkpoint_identity_covers_all_continuation_state() -> None:
     plan = _plan(
         thermostat_capacity=2,
         barostat_capacity=2,
@@ -426,7 +436,7 @@ def test_checkpoint_identity_covers_all_continuation_state():
         restore_distributed_atomistic_checkpoint(runtime, forged)
 
 
-def test_static_output_mask_preserves_shapes_and_zeros_unrequested_outputs():
+def test_static_output_mask_preserves_shapes_and_zeros_unrequested_outputs() -> None:
     mask = DistributedOutputMask(
         energy=False,
         forces=True,
@@ -452,7 +462,9 @@ def test_static_output_mask_preserves_shapes_and_zeros_unrequested_outputs():
     np.testing.assert_array_equal(result.available, [False, True, False, False, False])
 
 
-def test_collective_execution_requires_and_reduces_rank_local_contributions_once():
+def test_collective_execution_requires_and_reduces_rank_local_contributions_once() -> (
+    None
+):
     plan = _plan(execution_mode="collective")
     with pytest.raises(ValueError, match="explicit JAX collectives"):
         plan.prepare_runtime()
@@ -460,7 +472,7 @@ def test_collective_execution_requires_and_reduces_rank_local_contributions_once
     rank_one_force = jnp.zeros((4, 3)).at[jnp.asarray([0, 2])].set(1.0)
     rank_one_atom = jnp.asarray([1.0, 0.0, 3.0, 0.0])
 
-    def global_sum(value):
+    def global_sum(value: Any) -> Any:
         if jnp.issubdtype(value.dtype, jnp.integer):
             return value
         if value.shape == ():
@@ -477,10 +489,10 @@ def test_collective_execution_requires_and_reduces_rank_local_contributions_once
             return value + jnp.asarray([4.0, 0.0, 0.0])
         raise AssertionError(f"Unexpected collective shape {value.shape}.")
 
-    def exchange(send, mask):
+    def exchange(send: Any, mask: Any) -> Any:
         return jnp.swapaxes(jnp.where(mask[..., None], send, 0), 0, 1)
 
-    def reverse_exchange(receive, mask):
+    def reverse_exchange(receive: Any, mask: Any) -> Any:
         returned = jnp.zeros_like(receive)
         return returned.at[0, 1, 0].set(jnp.asarray([0.5, 1.0, 1.5]))
 
@@ -519,7 +531,7 @@ def test_collective_execution_requires_and_reduces_rank_local_contributions_once
     )
     np.testing.assert_allclose(remote_force[3], [0.5, 1.0, 1.5])
 
-    def failed_global_sum(value):
+    def failed_global_sum(value: Any) -> Any:
         reduced = global_sum(value)
         return (
             reduced + jnp.ones_like(reduced)
@@ -540,8 +552,9 @@ def test_collective_execution_requires_and_reduces_rank_local_contributions_once
     assert not bool(failed_result.successful)
 
 
-def test_plans_reject_ambiguous_or_impossible_static_contracts():
+def test_plans_reject_ambiguous_or_impossible_static_contracts() -> None:
     with pytest.raises(TypeError, match="booleans"):
+        # ty: ignore[invalid-argument-type]
         DistributedOutputMask(energy=1)
     with pytest.raises(ValueError, match="partition_capacity"):
         _plan(partition_capacity=0)
@@ -555,7 +568,7 @@ def test_plans_reject_ambiguous_or_impossible_static_contracts():
         DistributedPolarizationPlan(tolerance=True)
 
 
-def test_documented_distributed_surface_is_public():
+def test_documented_distributed_surface_is_public() -> None:
     names = (
         "DistributedCollectiveOperations",
         "DistributedOutputMask",

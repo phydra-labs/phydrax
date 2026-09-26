@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def _triangle_model(*, charges=None):
+def _triangle_model(*, charges: Any = None) -> Any:
     topology = phx.discretization.polygonal_cell_complex(
         jnp.asarray([[0, 1, 2]]), None, 3
     )
@@ -21,7 +24,7 @@ def _triangle_model(*, charges=None):
     )
 
 
-def test_z2_gauss_sector_uses_binary_edge_basis_and_constraint_rank():
+def test_z2_gauss_sector_uses_binary_edge_basis_and_constraint_rank() -> None:
     model = _triangle_model()
     sector = phx.applications.lattice_field.prepare_z2_gauss_sector(model)
     occupations = jnp.asarray([[0, 0, 0], [1, 1, 1]], dtype=jnp.int32)
@@ -36,7 +39,7 @@ def test_z2_gauss_sector_uses_binary_edge_basis_and_constraint_rank():
     )
 
 
-def test_z2_hamiltonian_commutes_with_every_gauss_generator():
+def test_z2_hamiltonian_commutes_with_every_gauss_generator() -> None:
     model = _triangle_model()
     hamiltonian = phx.applications.lattice_field.z2_gauge_hamiltonian(model)
     dense = phx.solver.materialize_local_hamiltonian(hamiltonian)
@@ -49,7 +52,7 @@ def test_z2_hamiltonian_commutes_with_every_gauss_generator():
         assert jnp.max(jnp.abs(generator @ generator - jnp.eye(8))) < 1e-12
 
 
-def test_z2_boundary_loop_matches_magnetic_support():
+def test_z2_boundary_loop_matches_magnetic_support() -> None:
     model = _triangle_model()
     paths = phx.discretization.prepare_cell_boundary_paths(model.topology).paths
     loop = phx.applications.lattice_field.z2_loop_operator(model, paths, 0)
@@ -59,7 +62,7 @@ def test_z2_boundary_loop_matches_magnetic_support():
     assert jnp.max(jnp.abs(loop_dense @ loop_dense - jnp.eye(8))) < 1e-12
 
 
-def test_z2_charge_consistency_and_resource_limits_fail_before_allocation():
+def test_z2_charge_consistency_and_resource_limits_fail_before_allocation() -> None:
     inconsistent = _triangle_model(charges=jnp.asarray([1, 0, 0]))
     with pytest.raises(ValueError, match="inconsistent"):
         phx.applications.lattice_field.prepare_z2_gauss_sector(inconsistent)
@@ -69,7 +72,7 @@ def test_z2_charge_consistency_and_resource_limits_fail_before_allocation():
         )
 
 
-def test_z2_homology_uses_exact_gf2_topology():
+def test_z2_homology_uses_exact_gf2_topology() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(2, periodic=True),

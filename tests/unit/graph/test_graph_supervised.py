@@ -2,6 +2,9 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -28,21 +31,23 @@ def _graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
     return graph0, graph1
 
 
-def _node_targets():
+def _node_targets() -> Any:
     return (
         jnp.array([10.0, 11.0]),
         jnp.array([22.0, 24.0, 28.0]),
     )
 
 
-def _linear_node_targets():
+def _linear_node_targets() -> Any:
     return tuple(10.0 + 2.0 * graph.nodes[:, 0] for graph in _graphs())
 
 
-def test_graph_target_aligns_repeated_cases_and_node_sets():
+def test_graph_target_aligns_repeated_cases_and_node_sets() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs())
     batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
         [1, 0, 1],
+        # ty: ignore[invalid-argument-type]
         component=phx.domain.BoundaryNodes([1]),
         structure=phx.domain.SampleLayout((("graph",),)),
     )
@@ -59,12 +64,12 @@ def test_graph_target_aligns_repeated_cases_and_node_sets():
     assert jnp.allclose(jnp.asarray(target(batch).data), jnp.array([24.0, 11.0, 24.0]))
 
 
-def test_graph_supervised_constraint_zero_for_matching_node_function():
+def test_graph_supervised_constraint_zero_for_matching_node_function() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs())
     component = domain.component({"graph": phx.domain.Nodes()})
 
     @domain.Function("graph")
-    def u(node):
+    def u(node: Any) -> Any:
         return 10.0 + 2.0 * node[0]
 
     constraint = phx.terms.GraphSupervisedTerm(
@@ -81,7 +86,7 @@ def test_graph_supervised_constraint_zero_for_matching_node_function():
     )
 
 
-def test_graph_trajectory_signal_matches_nearest_observations():
+def test_graph_trajectory_signal_matches_nearest_observations() -> None:
     domain = phx.domain.GraphTrajectoryDatasetDomain(
         _graphs(),
         jnp.array([3, 5], dtype=jnp.int32),
@@ -108,7 +113,7 @@ def test_graph_trajectory_signal_matches_nearest_observations():
     )
 
 
-def test_graph_trajectory_signal_linearly_interpolates_time():
+def test_graph_trajectory_signal_linearly_interpolates_time() -> None:
     domain = phx.domain.GraphTrajectoryDatasetDomain(
         _graphs(),
         jnp.array([3, 5], dtype=jnp.int32),
@@ -124,6 +129,7 @@ def test_graph_trajectory_signal_linearly_interpolates_time():
         interpolation="linear",
     )
     component = domain.component(
+        # ty: ignore[invalid-argument-type]
         {"graph": phx.domain.BoundaryNodes([1]), "t": phx.domain.Interior()}
     )
     batch = domain.points_from_case_time(
@@ -136,7 +142,7 @@ def test_graph_trajectory_signal_linearly_interpolates_time():
     assert jnp.allclose(jnp.asarray(signal(batch).data), jnp.array([1.5, 5.5]))
 
 
-def test_graph_trajectory_supervised_constraint_zero_for_matching_function():
+def test_graph_trajectory_supervised_constraint_zero_for_matching_function() -> None:
     domain = phx.domain.GraphTrajectoryDatasetDomain(
         _graphs(),
         jnp.array([3, 5], dtype=jnp.int32),
@@ -151,7 +157,7 @@ def test_graph_trajectory_supervised_constraint_zero_for_matching_function():
     )
 
     @domain.Function("graph", "t")
-    def u(node, t):
+    def u(node: Any, t: Any) -> Any:
         return node[0] + 2.0 * t
 
     constraint = phx.terms.GraphTrajectorySupervisedTerm(

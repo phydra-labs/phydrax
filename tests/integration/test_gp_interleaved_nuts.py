@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -9,15 +12,15 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_interleaved_nuts_samples_dynamic_gp_likelihood_state():
+def test_interleaved_nuts_samples_dynamic_gp_likelihood_state() -> None:
     points = jnp.linspace(0.0, 1.0, 8)
     observations = 0.8 * points + 0.12 * jnp.sin(2.0 * jnp.pi * points)
     discrepancy = phx.uq.ExactGaussianProcessDiscrepancy(points, observations)
 
-    def physical_mean(parameters):
+    def physical_mean(parameters: Any) -> Any:
         return parameters["coefficient"] * points
 
-    def state(parameters):
+    def state(parameters: Any) -> Any:
         return phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.AmplitudeKernel(
                 phx.kernels.Matern32Kernel(

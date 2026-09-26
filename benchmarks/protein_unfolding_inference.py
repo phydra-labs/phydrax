@@ -7,6 +7,8 @@ Synthetic data qualify numerical inference only, not experimental accuracy.
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from dataclasses import asdict
@@ -37,7 +39,7 @@ from phydrax.applications.protein_folding.experiments import (
 from phydrax.optim import OptimizationTermination
 
 
-def _signal(temperature, denaturant, channels):
+def _signal(temperature: Any, denaturant: Any, channels: Any) -> Any:
     dg = (
         180 * (1 - temperature / 298.15)
         + 15 * temperature / 298.15
@@ -52,7 +54,7 @@ def _signal(temperature, denaturant, channels):
     )
 
 
-def _problem(temperature_count, denaturant_count, *, isotherm=False):
+def _problem(temperature_count: Any, denaturant_count: Any, *, isotherm: Any=False) -> Any:
     temperatures = [298.15] if isotherm else np.linspace(289, 358, temperature_count)
     t, d = np.meshgrid(
         temperatures, np.linspace(0, 6000, denaturant_count), indexing="ij"
@@ -91,7 +93,7 @@ def _problem(temperature_count, denaturant_count, *, isotherm=False):
     return prepare_protein_experiments((plan,), parameters)
 
 
-def run_case(*, temperature_count, denaturant_count, repeats, posterior_samples):
+def run_case(*, temperature_count: Any, denaturant_count: Any, repeats: Any, posterior_samples: Any) -> Any:
     problem, preparation_seconds = measure_synchronized(
         lambda: _problem(temperature_count, denaturant_count)
     )
@@ -202,7 +204,7 @@ def run_case(*, temperature_count, denaturant_count, repeats, posterior_samples)
     return report
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--temperatures", type=int, default=9)
     parser.add_argument("--denaturants", type=int, default=11)

@@ -14,7 +14,7 @@ from phydrax.optics.geometric._nonsequential import (
 )
 
 
-def test_finite_dielectric_reflection_tree_closes_launched_power():
+def test_finite_dielectric_reflection_tree_closes_launched_power() -> None:
     vertices = jnp.asarray(
         [
             [-50.0, -50.0, 0.0],

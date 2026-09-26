@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -32,7 +34,7 @@ from phydrax.optim import ConvexProgramStatus
 
 
 def _path_inequality(
-    function,
+    function: Any,
     constraint_id: str,
     *,
     scope: GameConstraintScope,
@@ -60,7 +62,7 @@ def _path_inequality(
 
 
 def _separable_problem(
-    targets,
+    targets: Any,
     *,
     constraints: OpenLoopGameConstraints | None = None,
     problem_id: str = "test:open-loop-gne",
@@ -138,7 +140,7 @@ def _two_player_shared_resource(
     return OpenLoopGameConstraints(partition, tuple(blocks))
 
 
-def _solve_exact_profile(problem, controls, inequality_multipliers):
+def _solve_exact_profile(problem: Any, controls: Any, inequality_multipliers: Any) -> Any:
     plan = plan_open_loop_gne(problem)
     prepared = prepare_open_loop_gne(
         plan,
@@ -149,7 +151,9 @@ def _solve_exact_profile(problem, controls, inequality_multipliers):
     return solve_prepared_open_loop_gne(prepared)
 
 
-def test_shared_resource_continuum_endpoints_keep_unequal_player_multiplier_copies():
+def test_shared_resource_continuum_endpoints_keep_unequal_player_multiplier_copies() -> (
+    None
+):
     constraints = _two_player_shared_resource()
     problem = _separable_problem(
         (2.0, 2.0), constraints=constraints, problem_id="test:gne-endpoints"
@@ -178,7 +182,9 @@ def test_shared_resource_continuum_endpoints_keep_unequal_player_multiplier_copi
     assert left.multiplier_layout.shared_slice == (2, 2)
 
 
-def test_variational_midpoint_is_one_generic_gne_without_common_multiplier_claim():
+def test_variational_midpoint_is_one_generic_gne_without_common_multiplier_claim() -> (
+    None
+):
     constraints = _two_player_shared_resource()
     problem = _separable_problem(
         (2.0, 2.0), constraints=constraints, problem_id="test:ve-is-gne"
@@ -205,7 +211,7 @@ def test_variational_midpoint_is_one_generic_gne_without_common_multiplier_claim
     assert int(midpoint.status) == int(OpenLoopGNEStatus.RESIDUAL_VALID_NONISOLATED)
 
 
-def test_shared_participant_subset_allocates_no_multiplier_to_nonparticipant():
+def test_shared_participant_subset_allocates_no_multiplier_to_nonparticipant() -> None:
     partition = PlayerControlPartition(("player-0", "player-1", "player-2"), (1, 1, 1))
     resource = _path_inequality(
         lambda time, state, control, args: control[0] + control[1] - 1.0,
@@ -238,7 +244,9 @@ def test_shared_participant_subset_allocates_no_multiplier_to_nonparticipant():
     assert bool(result.original_kkt_valid)
 
 
-def test_private_and_shared_constraints_retain_one_physical_copy_and_player_blocks():
+def test_private_and_shared_constraints_retain_one_physical_copy_and_player_blocks() -> (
+    None
+):
     constraints = _two_player_shared_resource(include_private=True)
     problem = _separable_problem(
         (2.0, 2.0), constraints=constraints, problem_id="test:private-shared-gne"
@@ -257,8 +265,8 @@ def test_private_and_shared_constraints_retain_one_physical_copy_and_player_bloc
 
 
 def test_best_response_gap_uses_minimizer_sign_and_complete_audit_enables_global_bound(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     problem = _separable_problem((1.0, 2.0), problem_id="test:best-response-sign")
     prepared = prepare_open_loop_gne(
         plan_open_loop_gne(problem, audit_best_responses=True),
@@ -267,7 +275,7 @@ def test_best_response_gap_uses_minimizer_sign_and_complete_audit_enables_global
     )
     original = _gne.solve_prepared_variational_inequality
 
-    def leave_non_equilibrium_profile(candidate, *, termination=None):
+    def leave_non_equilibrium_profile(candidate: Any, *, termination: Any = None) -> Any:
         result = original(candidate, termination=termination)
         controls, equality, inequality = result.state
         return eqx.tree_at(
@@ -293,7 +301,9 @@ def test_best_response_gap_uses_minimizer_sign_and_complete_audit_enables_global
     assert int(result.status) == int(OpenLoopGNEStatus.ORIGINAL_KKT_FAILURE)
 
 
-def test_complete_best_response_audits_publish_separate_global_convex_gap_evidence():
+def test_complete_best_response_audits_publish_separate_global_convex_gap_evidence() -> (
+    None
+):
     problem = _separable_problem((1.0, 2.0), problem_id="test:global-gap-gne")
 
     result = solve_open_loop_gne(problem, audit_best_responses=True)
@@ -307,8 +317,8 @@ def test_complete_best_response_audits_publish_separate_global_convex_gap_eviden
 
 
 def test_failed_inner_best_response_solve_has_stable_status_and_no_global_bound(
-    monkeypatch,
-):
+    monkeypatch: Any,
+) -> None:
     problem = _separable_problem((1.0, 2.0), problem_id="test:failed-br-gne")
     prepared = prepare_open_loop_gne(
         plan_open_loop_gne(problem, audit_best_responses=True),
@@ -317,7 +327,9 @@ def test_failed_inner_best_response_solve_has_stable_status_and_no_global_bound(
     )
     original = _gne.solve_quadratic_program
 
-    def fail_second_player(program, *, policy=None, warm_start=None):
+    def fail_second_player(
+        program: Any, *, policy: Any = None, warm_start: Any = None
+    ) -> Any:
         result = original(program, policy=policy, warm_start=warm_start)
         if program.problem_id.endswith("player-1:best-response"):
             return eqx.tree_at(
@@ -342,7 +354,7 @@ def test_failed_inner_best_response_solve_has_stable_status_and_no_global_bound(
     assert not bool(result.valid)
 
 
-def test_zero_game_reports_nonisolated_branch_without_fabricating_uniqueness():
+def test_zero_game_reports_nonisolated_branch_without_fabricating_uniqueness() -> None:
     partition = PlayerControlPartition(("player-0", "player-1"), (1, 1))
     problem = FiniteHorizonLQOpenLoopGNEProblem(
         jnp.zeros((1, 1, 1)),
@@ -365,7 +377,7 @@ def test_zero_game_reports_nonisolated_branch_without_fabricating_uniqueness():
     assert int(result.status) == int(OpenLoopGNEStatus.RESIDUAL_VALID_NONISOLATED)
 
 
-def test_player_owned_coupled_constraint_has_only_the_owner_multiplier():
+def test_player_owned_coupled_constraint_has_only_the_owner_multiplier() -> None:
     partition = PlayerControlPartition(("player-0", "player-1"), (1, 1))
     unilateral = _path_inequality(
         lambda time, state, control, args: control[0] + control[1] - 1.0,
@@ -391,7 +403,7 @@ def test_player_owned_coupled_constraint_has_only_the_owner_multiplier():
     assert bool(result.original_kkt_valid)
 
 
-def test_dependent_active_rows_report_failed_player_cq_and_singular_branch():
+def test_dependent_active_rows_report_failed_player_cq_and_singular_branch() -> None:
     partition = PlayerControlPartition(("player-0",), (1,))
     first = _path_inequality(
         lambda time, state, control, args: control[0],
@@ -424,7 +436,9 @@ def test_dependent_active_rows_report_failed_player_cq_and_singular_branch():
     assert not bool(result.regularity_certified)
 
 
-def test_case_axes_jit_and_refresh_preserve_topology_and_change_numeric_solution():
+def test_case_axes_jit_and_refresh_preserve_topology_and_change_numeric_solution() -> (
+    None
+):
     first = _separable_problem(
         jnp.asarray(((1.0, 2.0), (3.0, -1.0))),
         problem_id="test:case-refresh-gne",

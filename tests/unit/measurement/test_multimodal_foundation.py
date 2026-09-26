@@ -1,10 +1,12 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
 import phydrax as phx
 
 
-def _manifest():
+def _manifest() -> Any:
     return phx.qualification.ReferenceArtifactManifest(
         "foundation-source",
         checksum_algorithm="sha256",
@@ -22,7 +24,7 @@ def _manifest():
     )
 
 
-def _asset(name, values):
+def _asset(name: Any, values: Any) -> Any:
     support = phx.measurement.IndexSampleSupport((len(values),), ("sample",))
     field = phx.measurement.QuantityField(
         f"{name}.field",
@@ -46,7 +48,7 @@ def _asset(name, values):
     )
 
 
-def test_collection_relations_and_bounded_selection_remain_explicit():
+def test_collection_relations_and_bounded_selection_remain_explicit() -> None:
     first, second = _asset("first", (1, 2, 3)), _asset("second", (4, 5, 6))
     relation = phx.measurement.MeasurementRelation(
         first.asset_id,
@@ -76,7 +78,7 @@ def test_collection_relations_and_bounded_selection_remain_explicit():
     assert selected.relations == ()
 
 
-def test_affine_piecewise_clocks_and_frame_routes_are_bounded():
+def test_affine_piecewise_clocks_and_frame_routes_are_bounded() -> None:
     source = phx.measurement.ClockIdentity("sensor", phx.units.SECOND, "relative")
     target = phx.measurement.ClockIdentity("experiment", phx.units.SECOND, "relative")
     affine = phx.measurement.AffineClockMap(
@@ -128,7 +130,7 @@ def test_affine_piecewise_clocks_and_frame_routes_are_bounded():
     assert bool(evidence.successful)
 
 
-def test_frame_route_rejects_equal_shortest_paths_that_merge_before_target():
+def test_frame_route_rejects_equal_shortest_paths_that_merge_before_target() -> None:
     axis = phx.measurement.SampleTimeAxis(
         "ambiguous-frame-time", np.asarray((0.0, 1.0)), phx.units.SECOND
     )
@@ -137,7 +139,7 @@ def test_frame_route_rejects_equal_shortest_paths_that_merge_before_target():
         phx.geometry.RigidFrame.identity(3),
     )
 
-    def timeline(source, target):
+    def timeline(source: Any, target: Any) -> Any:
         return phx.geometry.FrameTransformTimeline(
             source,
             target,

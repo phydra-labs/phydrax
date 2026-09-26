@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_operator_flow_matching_metric_uses_query_quadrature_and_mask():
+def test_operator_flow_matching_metric_uses_query_quadrature_and_mask() -> None:
     query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.asarray([[0.0], [0.5], [1.0]]),
@@ -21,7 +21,7 @@ def test_operator_flow_matching_metric_uses_query_quadrature_and_mask():
     assert jnp.allclose(metric(state, prediction, target), 2.2)
 
 
-def test_operator_flow_matching_metric_applies_channel_geometry():
+def test_operator_flow_matching_metric_applies_channel_geometry() -> None:
     query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.asarray([[0.0], [1.0]]),
@@ -42,7 +42,7 @@ def test_operator_flow_matching_metric_applies_channel_geometry():
     )
 
 
-def test_operator_flow_matching_metric_integrates_with_generic_term():
+def test_operator_flow_matching_metric_integrates_with_generic_term() -> None:
     query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.linspace(0.0, 1.0, 4)[:, None],

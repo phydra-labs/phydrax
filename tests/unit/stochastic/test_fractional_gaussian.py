@@ -10,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def test_fractional_gaussian_realization_matches_finite_grid_covariance():
+def test_fractional_gaussian_realization_matches_finite_grid_covariance() -> None:
     process = phx.stochastic.FractionalGaussianProcess(
         0.75,
         0.8,
@@ -39,7 +39,7 @@ def test_fractional_gaussian_realization_matches_finite_grid_covariance():
     assert jnp.allclose(empirical_adjacent, expected_adjacent, rtol=0.12)
 
 
-def test_fractional_paths_are_prefix_stable_across_sample_batch_growth():
+def test_fractional_paths_are_prefix_stable_across_sample_batch_growth() -> None:
     process = phx.stochastic.FractionalGaussianProcess(
         0.35,
         jnp.asarray([0.5, 1.2]),
@@ -64,7 +64,7 @@ def test_fractional_paths_are_prefix_stable_across_sample_batch_growth():
     assert jnp.array_equal(first.values, wider.values[:3])
 
 
-def test_fractional_linear_queries_share_one_additive_global_interpolant():
+def test_fractional_linear_queries_share_one_additive_global_interpolant() -> None:
     process = phx.stochastic.FractionalGaussianProcess(
         0.6,
         1.0,
@@ -96,7 +96,7 @@ def test_fractional_linear_queries_share_one_additive_global_interpolant():
         realization.evaluate(jnp.asarray([0.3]), interpolation="grid")
 
 
-def test_hurst_half_recovers_brownian_covariance_contract():
+def test_hurst_half_recovers_brownian_covariance_contract() -> None:
     process = phx.stochastic.FractionalGaussianProcess(0.5, 1.0)
     left = jnp.asarray([[0.1], [0.7]])
     right = jnp.asarray([[0.2, 0.9]])
@@ -109,7 +109,7 @@ def test_hurst_half_recovers_brownian_covariance_contract():
     )
 
 
-def test_dense_method_preserves_seeded_values_and_identifiers():
+def test_dense_method_preserves_seeded_values_and_identifiers() -> None:
     process = phx.stochastic.FractionalGaussianProcess(
         0.35,
         jnp.asarray([0.5, 1.2]),
@@ -165,7 +165,7 @@ def test_dense_method_preserves_seeded_values_and_identifiers():
     )
 
 
-def test_davies_harte_matches_covariance_autocovariance_and_hurst():
+def test_davies_harte_matches_covariance_autocovariance_and_hurst() -> None:
     hurst = 0.7
     process = phx.stochastic.FractionalGaussianProcess(hurst, 0.8)
     grid = jnp.linspace(0.0, 1.0, 65)
@@ -226,7 +226,7 @@ def test_davies_harte_matches_covariance_autocovariance_and_hurst():
     assert jnp.allclose(estimated_hurst, hurst, rtol=0.025)
 
 
-def test_davies_harte_preserves_reference_drift_and_component_contracts():
+def test_davies_harte_preserves_reference_drift_and_component_contracts() -> None:
     process = phx.stochastic.FractionalGaussianProcess(
         0.4,
         jnp.asarray([0.5, 1.2]),
@@ -260,7 +260,7 @@ def test_davies_harte_preserves_reference_drift_and_component_contracts():
     assert jnp.abs(empirical_covariance[0, 1]) < 0.035
 
 
-def test_davies_harte_resolution_prefix_ids_and_scale_validation():
+def test_davies_harte_resolution_prefix_ids_and_scale_validation() -> None:
     process = phx.stochastic.FractionalGaussianProcess(
         0.65,
         jnp.asarray([0.4, 1.1]),
@@ -316,12 +316,13 @@ def test_davies_harte_resolution_prefix_ids_and_scale_validation():
     assert dense.covariance_factor is not None
     assert dense.covariance_factor.shape == (257, 257)
     with pytest.raises(AttributeError):
+        # ty: ignore[invalid-assignment]
         dense.covariance_factor = jnp.eye(257)
     assert tiny.sampling_method == "davies-harte"
     assert jnp.all(jnp.isfinite(tiny.values))
 
 
-def test_davies_harte_jit_interpolation_trajectory_and_rough_consumers():
+def test_davies_harte_jit_interpolation_trajectory_and_rough_consumers() -> None:
     process = phx.stochastic.FractionalGaussianProcess(0.6, 0.7, drift=0.1)
     grid = jnp.linspace(0.0, 1.0, 33)
     realization = phx.stochastic.FractionalGaussianRealization(
@@ -361,7 +362,7 @@ def test_davies_harte_jit_interpolation_trajectory_and_rough_consumers():
     )
 
 
-def test_davies_harte_rejects_invalid_inputs_and_auto_records_fallbacks():
+def test_davies_harte_rejects_invalid_inputs_and_auto_records_fallbacks() -> None:
     process = phx.stochastic.FractionalGaussianProcess(0.7, 1.0)
     small_grid = jnp.linspace(0.0, 1.0, 9)
     nonuniform_grid = jnp.linspace(0.0, 1.0, 257).at[128].add(1e-4)
@@ -371,6 +372,7 @@ def test_davies_harte_rejects_invalid_inputs_and_auto_records_fallbacks():
             process,
             jr.key(67),
             small_grid,
+            # ty: ignore[invalid-argument-type]
             method="circulant",
         )
     with pytest.raises(ValueError, match="uniform grid"):
@@ -415,7 +417,7 @@ def test_davies_harte_rejects_invalid_inputs_and_auto_records_fallbacks():
     assert trajectory.metadata["sampling_provenance"] == "auto:dense-invalid-embedding"
 
 
-def test_davies_harte_requires_exact_anchor_and_translation_invariant_spacing():
+def test_davies_harte_requires_exact_anchor_and_translation_invariant_spacing() -> None:
     process = phx.stochastic.FractionalGaussianProcess(0.7, 1.0)
     near_anchor_grid = jnp.linspace(1e-12, 1.0 + 1e-12, 3)
     explicit_dense = phx.stochastic.FractionalGaussianRealization(

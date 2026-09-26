@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,15 +9,15 @@ import pytest
 import phydrax as phx
 
 
-def _normal_proposal(scale=0.25):
+def _normal_proposal(scale: Any = 0.25) -> Any:
     return phx.sampling.GaussianRandomWalkProposal(scale)
 
 
-def _standard_normal(value):
+def _standard_normal(value: Any) -> Any:
     return -0.5 * jnp.sum(value**2)
 
 
-def _standard_target():
+def _standard_target() -> Any:
     return phx.sampling.FullMarkovTarget(
         _standard_normal,
         target_id="standard-normal",
@@ -25,23 +27,23 @@ def _standard_target():
 class _PayloadSpinFlipProposal(phx.sampling.AbstractProposal):
     proposal_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.proposal_id = "payload-spin-flip"
 
-    def sample(self, _key, current, /):
+    def sample(self, _key: Any, current: Any, /) -> Any:
         proposed = current.at[1].multiply(-1)
         return proposed.at[0].set(jnp.where(current[0] > 0, proposed[0], jnp.nan))
 
-    def log_prob(self, proposed, current, /):
+    def log_prob(self, proposed: Any, current: Any, /) -> Any:
         del proposed, current
         return jnp.zeros(())
 
-    def payload(self, key, current, proposed, /):
+    def payload(self, key: Any, current: Any, proposed: Any, /) -> Any:
         del key, current, proposed
         return jnp.asarray([1]), jnp.asarray([True])
 
 
-def _select_tree(current, proposed, accepted):
+def _select_tree(current: Any, proposed: Any, accepted: Any) -> Any:
     return jax.tree_util.tree_map(
         lambda proposed_leaf, current_leaf: jnp.where(
             accepted, proposed_leaf, current_leaf
@@ -51,11 +53,11 @@ def _select_tree(current, proposed, accepted):
     )
 
 
-def test_metropolis_hastings_uses_asymmetric_proposal_ratio():
-    def toggle(_key, current):
+def test_metropolis_hastings_uses_asymmetric_proposal_ratio() -> None:
+    def toggle(_key: Any, current: Any) -> Any:
         return 1 - current
 
-    def log_prob(proposed, current):
+    def log_prob(proposed: Any, current: Any) -> Any:
         return jnp.where(
             current == 0,
             jnp.where(proposed == 1, jnp.log(0.8), jnp.log(0.2)),
@@ -89,7 +91,7 @@ def test_metropolis_hastings_uses_asymmetric_proposal_ratio():
     assert info.target_valid[0]
 
 
-def test_markov_sampling_is_jittable_reproducible_and_prefix_stable():
+def test_markov_sampling_is_jittable_reproducible_and_prefix_stable() -> None:
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
     initial_two = jnp.asarray([[-0.5], [0.75]])
     initial_three = jnp.asarray([[-0.5], [0.75], [1.25]])
@@ -101,7 +103,7 @@ def test_markov_sampling_is_jittable_reproducible_and_prefix_stable():
         observers=(phx.execution.IterationTraceObserver(20),),
     )
 
-    def run(state, key):
+    def run(state: Any, key: Any) -> Any:
         return phx.sampling.sample_markov(
             target,
             kernel,
@@ -135,7 +137,7 @@ def test_markov_sampling_is_jittable_reproducible_and_prefix_stable():
     assert trace.records.metrics.accepted.shape[1:] == (2,)
 
 
-def test_refresh_rejects_a_different_explicit_target_identity():
+def test_refresh_rejects_a_different_explicit_target_identity() -> None:
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
     original = _standard_target()
     changed = phx.sampling.FullMarkovTarget(
@@ -148,7 +150,7 @@ def test_refresh_rejects_a_different_explicit_target_identity():
         kernel.refresh(changed, state)
 
 
-def test_rebind_replaces_full_target_identity_without_advancing_chain():
+def test_rebind_replaces_full_target_identity_without_advancing_chain() -> None:
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
     original = phx.sampling.FullMarkovTarget(
         _standard_normal,
@@ -177,13 +179,13 @@ def test_rebind_replaces_full_target_identity_without_advancing_chain():
     assert jnp.all(rebound.valid)
 
 
-def test_incremental_rebind_rebuilds_cache_while_refresh_detects_drift():
-    def target(shift):
-        def initialize(position):
+def test_incremental_rebind_rebuilds_cache_while_refresh_detects_drift() -> None:
+    def target(shift: Any) -> Any:
+        def initialize(position: Any) -> Any:
             cache = position + shift
             return -jnp.sum(cache**2), cache
 
-        def propose(_current, cache, proposed, _payload):
+        def propose(_current: Any, cache: Any, proposed: Any, _payload: Any) -> Any:
             proposed_cache = proposed + shift
             ratio = -jnp.sum(proposed_cache**2) + jnp.sum(cache**2)
             return ratio, proposed_cache, jnp.asarray(True)
@@ -211,7 +213,7 @@ def test_incremental_rebind_rebuilds_cache_while_refresh_detects_drift():
     assert jnp.all(rebound.valid)
 
 
-def test_markov_chain_measure_preserves_correlation_and_never_claims_iid_error():
+def test_markov_chain_measure_preserves_correlation_and_never_claims_iid_error() -> None:
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
     target_law = _standard_target()
     state = kernel.initialize(target_law, jnp.asarray([[-0.5], [0.75]]))
@@ -240,9 +242,10 @@ def test_markov_chain_measure_preserves_correlation_and_never_claims_iid_error()
     )
 
 
-def test_markov_sampling_rejects_invalid_contracts():
+def test_markov_sampling_rejects_invalid_contracts() -> None:
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
     with pytest.raises(TypeError, match="explicit target_id"):
+        # ty: ignore[invalid-argument-type]
         kernel.initialize(lambda value: -jnp.sum(value**2), jnp.zeros((2, 1)))
     complex_target = phx.sampling.FullMarkovTarget(
         lambda value: 1j * jnp.sum(value),
@@ -265,7 +268,7 @@ def test_markov_sampling_rejects_invalid_contracts():
         )
 
 
-def test_incremental_spin_targets_commit_only_accepted_cached_updates():
+def test_incremental_spin_targets_commit_only_accepted_cached_updates() -> None:
     initial = jnp.asarray([[1.0, -1.0, 1.0], [-1.0, -1.0, 1.0]])
     expected_accepted = initial.at[0, 1].multiply(-1)
     kernel = phx.sampling.MetropolisHastings(_PayloadSpinFlipProposal())
@@ -287,6 +290,7 @@ def test_incremental_spin_targets_commit_only_accepted_cached_updates():
     )
 
     for model, make_target in models_and_targets:
+        # ty: ignore[invalid-argument-type]
         target = make_target(model)
         state = kernel.initialize(target, initial)
         result = phx.sampling.sample_markov_chunked(
@@ -308,7 +312,7 @@ def test_incremental_spin_targets_commit_only_accepted_cached_updates():
         assert result.target_id == target.target_id
 
 
-def test_incremental_target_refresh_runs_on_declared_transition_cadence():
+def test_incremental_target_refresh_runs_on_declared_transition_cadence() -> None:
     target = phx.sampling.IncrementalMarkovTarget(
         initialize=lambda position: (jnp.zeros(()), position),
         propose=lambda current, cache, proposed, payload: (
@@ -338,13 +342,13 @@ def test_incremental_target_refresh_runs_on_declared_transition_cadence():
     assert jnp.all(result.target_valid)
 
 
-def test_chunked_markov_host_control_preserves_exact_active_prefix():
+def test_chunked_markov_host_control_preserves_exact_active_prefix() -> None:
     kernel = phx.sampling.MetropolisHastings(_normal_proposal())
     target = _standard_target()
     state = kernel.initialize(target, jnp.asarray([[0.0], [1.0]]))
     phases = []
 
-    def phase(event):
+    def phase(event: Any) -> Any:
         return int(event.record.coordinates.phase)
 
     session = phx.execution.IterationSession(
@@ -381,7 +385,7 @@ def test_chunked_markov_host_control_preserves_exact_active_prefix():
     assert result.iteration_session_state.stop_requested
 
 
-def test_incremental_target_refresh_cache_mismatch_fails_closed():
+def test_incremental_target_refresh_cache_mismatch_fails_closed() -> None:
     target = phx.sampling.IncrementalMarkovTarget(
         initialize=lambda position: (jnp.zeros(()), position),
         propose=lambda current, cache, proposed, payload: (
@@ -411,8 +415,8 @@ def test_incremental_target_refresh_cache_mismatch_fails_closed():
     assert jnp.array_equal(result.final_state.cache, result.final_state.position)
 
 
-def test_incremental_refresh_can_validate_semantically_equivalent_rebased_cache():
-    def initialize(position):
+def test_incremental_refresh_can_validate_semantically_equivalent_rebased_cache() -> None:
+    def initialize(position: Any) -> Any:
         return jnp.sum(position), (position, jnp.zeros((), dtype=jnp.int32))
 
     target = phx.sampling.IncrementalMarkovTarget(
@@ -449,7 +453,7 @@ def test_incremental_refresh_can_validate_semantically_equivalent_rebased_cache(
     assert int(refreshed.cache[1]) == 0
 
 
-def test_incremental_target_rejects_unadmitted_chain_count():
+def test_incremental_target_rejects_unadmitted_chain_count() -> None:
     target = phx.sampling.IncrementalMarkovTarget(
         initialize=lambda position: (jnp.sum(position), position),
         propose=lambda current, cache, proposed, payload: (

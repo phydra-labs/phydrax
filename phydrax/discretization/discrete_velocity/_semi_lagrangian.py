@@ -300,7 +300,10 @@ class PeriodicUniformGridDepartureTransfer(StrictModule, NonTrainableState):
     def primal_operator(self) -> FunctionLinearOperator:
         operator = self.field_transfer.primal_operator
         # Construction always wraps the departure pull in a FunctionLinearOperator.
-        assert isinstance(operator, FunctionLinearOperator)
+        if not (isinstance(operator, FunctionLinearOperator)):
+            raise RuntimeError(
+                "Internal invariant failed: isinstance(operator, FunctionLinearOperator)."
+            )
         return operator
 
     @property

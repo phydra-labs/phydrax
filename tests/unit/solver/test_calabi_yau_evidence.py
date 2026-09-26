@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def _solve_training_candidate():
+def _solve_training_candidate() -> Any:
     training = phx.solver.prepare_elliptic_curve(jax.random.key(101), line_count=2)
     result = phx.solver.solve_calabi_yau_metric(
         training.problem,
@@ -33,7 +36,7 @@ def _solve_training_candidate():
     return training, heldout, result, plan
 
 
-def test_heldout_metric_evidence_retains_weights_ess_and_ancestry():
+def test_heldout_metric_evidence_retains_weights_ess_and_ancestry() -> None:
     training, _, result, plan = _solve_training_candidate()
     evidence = phx.solver.evaluate_calabi_yau_metric_evidence(
         result,
@@ -52,7 +55,7 @@ def test_heldout_metric_evidence_retains_weights_ess_and_ancestry():
     assert "no-exact-ricci-flat" in evidence.claim
 
 
-def test_frozen_metric_artifact_includes_heldout_evidence_identity():
+def test_frozen_metric_artifact_includes_heldout_evidence_identity() -> None:
     training, _, result, plan = _solve_training_candidate()
     evidence = phx.solver.evaluate_calabi_yau_metric_evidence(
         result,
@@ -72,7 +75,7 @@ def test_frozen_metric_artifact_includes_heldout_evidence_identity():
     assert jnp.all(jnp.isfinite(evaluation.metric))
 
 
-def test_metric_evidence_refuses_shared_train_holdout_points():
+def test_metric_evidence_refuses_shared_train_holdout_points() -> None:
     campaign = phx.solver.prepare_elliptic_curve(jax.random.key(303), line_count=1)
     with pytest.raises(ValueError, match="share an exact point"):
         phx.solver.CalabiYauMetricEvidencePlan(
@@ -82,7 +85,7 @@ def test_metric_evidence_refuses_shared_train_holdout_points():
         )
 
 
-def test_required_ricci_evaluator_is_explicit():
+def test_required_ricci_evaluator_is_explicit() -> None:
     training, _, result, plan = _solve_training_candidate()
     required = phx.solver.CalabiYauMetricEvidencePlan(
         plan.training_samples,

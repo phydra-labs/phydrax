@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -12,7 +14,9 @@ import pytest
 import phydrax as phx
 
 
-def _prepared(*, accumulation: str = "deterministic", particle_ids=(7, 2, 11)):
+def _prepared(
+    *, accumulation: str = "deterministic", particle_ids: Any = (7, 2, 11)
+) -> Any:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(8, periodic=True, endpoint=False),),
         axis_names=("x",),
@@ -25,11 +29,12 @@ def _prepared(*, accumulation: str = "deterministic", particle_ids=(7, 2, 11)):
     return phx.discretization.ParticleGridSplatPlan(
         grid,
         assignment=phx.discretization.TensorBSplineSplatAssignment(2),
+        # ty: ignore[invalid-argument-type]
         execution=phx.discretization.SplatExecutionPolicy(accumulation=accumulation),
     ).prepare(particles)
 
 
-def _manual(state, payload, target_size):
+def _manual(state: Any, payload: Any, target_size: Any) -> Any:
     valid = state.stencil.valid[..., None]
     material = jnp.where(valid, payload, 0.0)
     return (
@@ -40,7 +45,7 @@ def _manual(state, payload, target_size):
 
 
 @pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
-def test_route_payload_scatter_matches_manual_sum(accumulation):
+def test_route_payload_scatter_matches_manual_sum(accumulation: Any) -> None:
     prepared = _prepared(accumulation=accumulation)
     position = jnp.asarray([[0.13], [0.52], [0.88]])
     state = prepared.build(position)
@@ -60,7 +65,7 @@ def test_route_payload_scatter_matches_manual_sum(accumulation):
     np.testing.assert_allclose(result.values, expected, rtol=2e-13, atol=2e-13)
 
 
-def test_deterministic_route_scatter_is_particle_id_order_invariant():
+def test_deterministic_route_scatter_is_particle_id_order_invariant() -> None:
     position = jnp.asarray([[0.13], [0.52], [0.88]])
     payload = jnp.arange(18, dtype=jnp.float64).reshape((3, 3, 2))
     first = _prepared(particle_ids=(7, 2, 11))
@@ -75,7 +80,7 @@ def test_deterministic_route_scatter_is_particle_id_order_invariant():
     np.testing.assert_array_equal(first_result, second_result)
 
 
-def test_route_scatter_jit_vmap_jvp_vjp_and_finite_difference():
+def test_route_scatter_jit_vmap_jvp_vjp_and_finite_difference() -> None:
     prepared = _prepared()
     positions = jnp.asarray(
         [
@@ -86,7 +91,7 @@ def test_route_scatter_jit_vmap_jvp_vjp_and_finite_difference():
     base_payload = jnp.linspace(-0.5, 0.7, 18).reshape((3, 3, 2))
 
     @jax.jit
-    def apply(position, payload):
+    def apply(position: Any, payload: Any) -> Any:
         state = prepared.build(position)
         weighted = payload * state.stencil.weights[..., None]
         return prepared.scatter_route_payload(state, weighted).values
@@ -124,7 +129,7 @@ def test_route_scatter_jit_vmap_jvp_vjp_and_finite_difference():
     np.testing.assert_allclose(directional, finite, rtol=2e-8, atol=2e-9)
 
 
-def test_route_scatter_rejects_wrong_layout_and_foreign_state():
+def test_route_scatter_rejects_wrong_layout_and_foreign_state() -> None:
     prepared = _prepared()
     state = prepared.build(jnp.asarray([[0.13], [0.52], [0.88]]))
     with pytest.raises(ValueError, match="Route payload must begin"):

@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 
 import phydrax as phx
@@ -7,13 +9,17 @@ _EXPONENTS = [3.42525091, 0.62391373, 0.16885540]
 _COEFFICIENTS = [0.15432897, 0.53532814, 0.44463454]
 
 
-def _hydrogen_system(distance=0.74):
+def _hydrogen_system(distance: Any = 0.74) -> Any:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(
+        # ty: ignore[invalid-argument-type]
         [1, 1],
+        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, -0.5 * distance], [0.0, 0.0, 0.5 * distance]],
+        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
         units.scale,
+        # ty: ignore[invalid-argument-type]
         particle_ids=[11, 17],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
@@ -21,7 +27,9 @@ def _hydrogen_system(distance=0.74):
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
         [11, 17],
+        # ty: ignore[invalid-argument-type]
         [_EXPONENTS, _EXPONENTS],
+        # ty: ignore[invalid-argument-type]
         [_COEFFICIENTS, _COEFFICIENTS],
         source_id="general-mean-field-hydrogen",
     ).prepare(system)
@@ -31,7 +39,9 @@ def _hydrogen_system(distance=0.74):
     return structure, system, basis, positions
 
 
-def test_general_rhf_and_analytic_lagrangian_force_close_against_energy_difference():
+def test_general_rhf_and_analytic_lagrangian_force_close_against_energy_difference() -> (
+    None
+):
     _, system, basis, positions = _hydrogen_system()
     plan = phx.chemistry.MolecularHartreeFockPlan(
         system,
@@ -56,16 +66,29 @@ def test_general_rhf_and_analytic_lagrangian_force_close_against_energy_differen
     )
 
 
-def test_open_shell_reference_states_share_the_one_electron_limit():
+def test_open_shell_reference_states_share_the_one_electron_limit() -> None:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(
-        [1], [[0.0, 0.0, 0.0]], [1.0], units.scale, particle_ids=[5]
+        # ty: ignore[invalid-argument-type]
+        [1],
+        # ty: ignore[invalid-argument-type]
+        [[0.0, 0.0, 0.0]],
+        # ty: ignore[invalid-argument-type]
+        [1.0],
+        units.scale,
+        # ty: ignore[invalid-argument-type]
+        particle_ids=[5],
     )
     system = phx.atomistic.AtomisticSystemPlan.from_structure(
         structure, units, molecule_ids=[0]
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
-        [5], [[1.0]], [[1.0]], source_id="one-electron-reference"
+        [5],
+        # ty: ignore[invalid-argument-type]
+        [[1.0]],
+        # ty: ignore[invalid-argument-type]
+        [[1.0]],
+        source_id="one-electron-reference",
     ).prepare(system)
     sector = phx.chemistry.MolecularElectronicSectorPlan(0, 2)
     energies = []
@@ -84,14 +107,16 @@ def test_open_shell_reference_states_share_the_one_electron_limit():
     np.testing.assert_allclose(energies, energies[0], rtol=0.0, atol=2.0e-14)
     assert all(bool(state.evidence.converged) for state in states)
     np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
         states[1].alpha_coefficients,
+        # ty: ignore[unresolved-attribute]
         states[1].beta_coefficients,
         rtol=0.0,
         atol=0.0,
     )
 
 
-def test_stretched_restricted_hydrogen_detects_external_instability():
+def test_stretched_restricted_hydrogen_detects_external_instability() -> None:
     _, system, basis, positions = _hydrogen_system(distance=3.0)
     plan = phx.chemistry.MolecularHartreeFockPlan(
         system,
@@ -100,6 +125,7 @@ def test_stretched_restricted_hydrogen_detects_external_instability():
         phx.chemistry.ElectronicReferenceKind.RESTRICTED,
     )
     state = plan.solve_atomic_units(positions)
+    # ty: ignore[invalid-argument-type]
     stability = plan.stability_analysis(positions, state)
 
     assert bool(stability.successful)
@@ -108,7 +134,7 @@ def test_stretched_restricted_hydrogen_detects_external_instability():
     assert float(np.min(np.asarray(stability.external_eigenvalues))) < 0.0
 
 
-def test_implicit_cphf_polarizability_has_response_residual_and_axial_symmetry():
+def test_implicit_cphf_polarizability_has_response_residual_and_axial_symmetry() -> None:
     _, system, basis, positions = _hydrogen_system()
     plan = phx.chemistry.MolecularHartreeFockPlan(
         system,
@@ -118,7 +144,10 @@ def test_implicit_cphf_polarizability_has_response_residual_and_axial_symmetry()
     )
     state = plan.solve_atomic_units(positions)
     response = phx.chemistry.MeanFieldResponsePlan().electric_response(
-        plan, positions, state
+        plan,
+        positions,
+        # ty: ignore[invalid-argument-type]
+        state,
     )
 
     assert bool(response.successful)
@@ -129,7 +158,7 @@ def test_implicit_cphf_polarizability_has_response_residual_and_axial_symmetry()
     np.testing.assert_allclose(response.polarizability[:2], 0.0, atol=1.0e-12)
 
 
-def test_moving_atom_centered_grid_translates_without_changing_weights():
+def test_moving_atom_centered_grid_translates_without_changing_weights() -> None:
     structure, system, _, positions = _hydrogen_system()
     grid = phx.chemistry.MolecularDFTGridPlan(
         system,
@@ -148,7 +177,7 @@ def test_moving_atom_centered_grid_translates_without_changing_weights():
     np.testing.assert_allclose(first.partition_sum_residual, 0.0, atol=1.0e-14)
 
 
-def test_native_pbe_rks_closes_energy_density_and_commutator_residuals():
+def test_native_pbe_rks_closes_energy_density_and_commutator_residuals() -> None:
     _, system, basis, positions = _hydrogen_system()
     grid = phx.chemistry.MolecularDFTGridPlan(
         system,
@@ -172,7 +201,9 @@ def test_native_pbe_rks_closes_energy_density_and_commutator_residuals():
     assert np.isfinite(float(state.total_energy))
 
 
-def test_implicit_cphf_nuclear_hessian_is_symmetric_and_translationally_invariant():
+def test_implicit_cphf_nuclear_hessian_is_symmetric_and_translationally_invariant() -> (
+    None
+):
     _, system, basis, positions = _hydrogen_system()
     plan = phx.chemistry.MolecularHartreeFockPlan(
         system,
@@ -182,7 +213,10 @@ def test_implicit_cphf_nuclear_hessian_is_symmetric_and_translationally_invarian
     )
     state = plan.solve_atomic_units(positions)
     response = phx.chemistry.MeanFieldResponsePlan().nuclear_hessian(
-        plan, positions, state
+        plan,
+        positions,
+        # ty: ignore[invalid-argument-type]
+        state,
     )
     matrix = np.asarray(response.hessian).reshape((positions.size, positions.size))
 
@@ -195,7 +229,7 @@ def test_implicit_cphf_nuclear_hessian_is_symmetric_and_translationally_invarian
     )
 
 
-def test_adiabatic_tddft_orbital_hessians_produce_positive_tda_and_full_roots():
+def test_adiabatic_tddft_orbital_hessians_produce_positive_tda_and_full_roots() -> None:
     _, system, basis, positions = _hydrogen_system()
     grid = phx.chemistry.MolecularDFTGridPlan(
         system,
@@ -210,6 +244,7 @@ def test_adiabatic_tddft_orbital_hessians_produce_positive_tda_and_full_roots():
         grid,
     )
     state = plan.solve_atomic_units(positions)
+    # ty: ignore[invalid-argument-type]
     response = phx.chemistry.KohnShamExcitedResponsePlan(plan, positions, state)
     tda = response.tda(1).solve()
     full = response.tddft(1).solve()

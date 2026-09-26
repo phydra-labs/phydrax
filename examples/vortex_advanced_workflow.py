@@ -27,6 +27,7 @@ count = 8
 coordinates = jnp.arange(count) / count
 xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
 vorticity = jnp.sin(2.0 * jnp.pi * xx) * jnp.cos(2.0 * jnp.pi * yy)
+# ty: ignore[call-non-callable]
 reconstruction = phx.applications.vortex_flow.PeriodicVorticityReconstructionPlan(
     (count, count),
     (1.0, 1.0),

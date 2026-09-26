@@ -1,5 +1,6 @@
 import hashlib
 import math
+from typing import Any
 
 import numpy as np
 import pytest
@@ -8,7 +9,7 @@ import phydrax as phx
 from phydrax.nuclear import dosimetry
 
 
-def _data(name="internal-dosimetry"):
+def _data(name: Any = "internal-dosimetry") -> Any:
     payload = name.encode()
     reference = phx.qualification.ReferenceArtifactManifest(
         name,
@@ -34,7 +35,7 @@ def _data(name="internal-dosimetry"):
     )
 
 
-def _transition(data):
+def _transition(data: Any) -> Any:
     iodine = phx.nuclear.NuclideKey(53, 131)
     xenon = phx.nuclear.NuclideKey(54, 131)
     return phx.nuclear.InventoryTransition(
@@ -53,7 +54,7 @@ def _transition(data):
     )
 
 
-def _derivation():
+def _derivation() -> Any:
     return phx.measurement.DerivationRecord(
         phx.measurement.DataOrigin.SYNTHETIC,
         phx.measurement.DataStage.RECONSTRUCTED,
@@ -61,7 +62,7 @@ def _derivation():
     )
 
 
-def _quantity(kind, unit, *, support, axes=()):
+def _quantity(kind: Any, unit: Any, *, support: Any, axes: Any = ()) -> Any:
     return phx.measurement.resolve_radiation_quantity(
         "iodine-131-activity",
         kind,
@@ -72,7 +73,7 @@ def _quantity(kind, unit, *, support, axes=()):
     )
 
 
-def _regional_series(values=(4.0, 2.0, 1.0)):
+def _regional_series(values: Any = (4.0, 2.0, 1.0)) -> Any:
     data = _data()
     transition = _transition(data)
     axis = phx.measurement.SampleTimeAxis(
@@ -108,7 +109,7 @@ def _regional_series(values=(4.0, 2.0, 1.0)):
     return dosimetry.TimeActivitySeries(asset, transition), data
 
 
-def _affine():
+def _affine() -> Any:
     contract = phx.SpatialCoordinateContract(
         phx.units.METER,
         coordinate_system="cartesian-lps",
@@ -119,7 +120,7 @@ def _affine():
     )
 
 
-def _spatial_series():
+def _spatial_series() -> Any:
     data = _data("spatial-s-values")
     transition = _transition(data)
     axis = phx.measurement.SampleTimeAxis(
@@ -156,7 +157,9 @@ def _spatial_series():
     return dosimetry.TimeActivitySeries(image.measurement, transition), data
 
 
-def test_time_activity_trapezoid_is_six_becquerel_seconds_and_refuses_extrapolation():
+def test_time_activity_trapezoid_is_six_becquerel_seconds_and_refuses_extrapolation() -> (
+    None
+):
     series, _ = _regional_series()
     result = dosimetry.TimeActivityIntegrationPlan(
         series.time_axis, 0.0, 3.0, phx.units.SECOND
@@ -177,7 +180,7 @@ def test_time_activity_trapezoid_is_six_becquerel_seconds_and_refuses_extrapolat
         )
 
 
-def test_time_activity_result_binds_evidence_to_asset_and_radionuclide():
+def test_time_activity_result_binds_evidence_to_asset_and_radionuclide() -> None:
     series, _ = _regional_series()
     result = dosimetry.TimeActivityIntegrationPlan(
         series.time_axis, 0.0, 3.0, phx.units.SECOND
@@ -214,7 +217,9 @@ def test_time_activity_result_binds_evidence_to_asset_and_radionuclide():
         )
 
 
-def test_regional_s_values_apply_target_by_source_arithmetic_and_preserve_unknown_uncertainty():
+def test_regional_s_values_apply_target_by_source_arithmetic_and_preserve_unknown_uncertainty() -> (
+    None
+):
     series, data = _regional_series()
     integrated = dosimetry.TimeActivityIntegrationPlan(
         series.time_axis, 0.0, 3.0, phx.units.SECOND
@@ -270,7 +275,9 @@ def test_regional_s_values_apply_target_by_source_arithmetic_and_preserve_unknow
     assert result.target_region_ids == ("target-a", "target-b")
 
 
-def test_spatial_delta_kernel_converts_activity_concentration_through_voxel_volume():
+def test_spatial_delta_kernel_converts_activity_concentration_through_voxel_volume() -> (
+    None
+):
     series, data = _spatial_series()
     integrated = dosimetry.TimeActivityIntegrationPlan(
         series.time_axis, 0.0, 3.0, phx.units.SECOND
@@ -280,7 +287,9 @@ def test_spatial_delta_kernel_converts_activity_concentration_through_voxel_volu
     kernel = dosimetry.SpatialSValueKernel(
         np.ones((1, 1, 1)),
         dosimetry.S_VALUE_UNIT,
+        # ty: ignore[invalid-argument-type]
         support,
+        # ty: ignore[invalid-argument-type]
         support,
         "activity-grid",
         "dose-grid",
@@ -296,13 +305,14 @@ def test_spatial_delta_kernel_converts_activity_concentration_through_voxel_volu
     assert result.asset.field.uncertainty is None
 
 
-def test_spatial_dosimetry_refuses_wrong_quantity_and_grid():
+def test_spatial_dosimetry_refuses_wrong_quantity_and_grid() -> None:
     series, data = _spatial_series()
     integrated = dosimetry.TimeActivityIntegrationPlan(
         series.time_axis, 0.0, 3.0, phx.units.SECOND
     ).integrate(series)
     support = integrated.asset.field.support
     shifted = phx.imaging.MedicalImageSupport(
+        # ty: ignore[unresolved-attribute]
         support.spatial_shape,
         phx.imaging.ImageIndexAffine(
             np.asarray(
@@ -314,6 +324,7 @@ def test_spatial_dosimetry_refuses_wrong_quantity_and_grid():
                 )
             ),
             "voxel-index",
+            # ty: ignore[unresolved-attribute]
             support.spatial_affine.coordinate_contract,
             phx.imaging.ImageAxisConvention.LPS,
         ),
@@ -322,6 +333,7 @@ def test_spatial_dosimetry_refuses_wrong_quantity_and_grid():
         dosimetry.SpatialSValueKernel(
             np.ones((1, 1, 1)),
             dosimetry.S_VALUE_UNIT,
+            # ty: ignore[invalid-argument-type]
             support,
             shifted,
             "activity-grid",

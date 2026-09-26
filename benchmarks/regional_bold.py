@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import argparse
 import json
 from pathlib import Path
@@ -47,11 +49,11 @@ def main() -> None:
         tuple(f"region-{index}" for index in range(args.regions)), weights, delays
     )
 
-    def history(time_s, user_args):
+    def history(time_s: Any, user_args: Any) -> Any:
         del time_s, user_args
         return jnp.zeros((args.regions, 2))
 
-    def drive(time_s, neural, user_args):
+    def drive(time_s: Any, neural: Any, user_args: Any) -> Any:
         del user_args
         pulse = 0.2 * jnp.exp(-jnp.square((time_s - 0.25) / 0.08))
         return jnp.zeros_like(neural).at[0, 0].set(pulse)
@@ -68,7 +70,7 @@ def main() -> None:
     )
     times = jnp.linspace(0.0, args.duration, args.samples)
 
-    def evaluate(gain):
+    def evaluate(gain: Any) -> Any:
         problem = eqx.tree_at(lambda value: value.args.model.coupling_per_s, base, gain)
         result = ns.solve_regional(
             problem,

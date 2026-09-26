@@ -20,6 +20,7 @@ from ..._differentiation import (
 )
 from ..._model import ModelBinding
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import AbstractRecipe, FitResult, prediction_fit_contract
 from .._schema import AbstractFittedModel, FeatureSchema
@@ -173,8 +174,7 @@ class StandardScaler(AbstractRecipe):
         with_std: bool = True,
         weight_policy: WeightPolicy = "statistical",
     ) -> None:
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.with_mean = bool(with_mean)
         self.with_std = bool(with_std)
         self.weight_policy = weight_policy
@@ -278,8 +278,7 @@ class MinMaxScaler(AbstractRecipe):
         lower, upper = (float(feature_range[0]), float(feature_range[1]))
         if not jnp.isfinite(lower) or not jnp.isfinite(upper) or not upper > lower:
             raise ValueError("feature_range must contain finite increasing bounds.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.feature_range = (lower, upper)
         self.clip = bool(clip)
         self.weight_policy = weight_policy
@@ -364,8 +363,7 @@ class MaxAbsScaler(AbstractRecipe):
     weight_policy: WeightPolicy = eqx.field(static=True)
 
     def __init__(self, *, weight_policy: WeightPolicy = "statistical") -> None:
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.weight_policy = weight_policy
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -450,8 +448,7 @@ class RobustScaler(AbstractRecipe):
         low, high = float(quantile_range[0]), float(quantile_range[1])
         if not 0.0 <= low < high <= 100.0:
             raise ValueError("quantile_range must be an increasing interval in [0, 100].")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.with_centering = bool(with_centering)
         self.with_scaling = bool(with_scaling)
         self.quantile_range = (low, high)
@@ -585,8 +582,7 @@ class NormScaler(AbstractRecipe):
     ) -> None:
         if norm not in ("l1", "l2", "max"):
             raise ValueError("norm must be 'l1', 'l2', or 'max'.")
-        if weight_policy not in ("none", "statistical", "measure", "product"):
-            raise ValueError("Unsupported weight policy.")
+        weight_policy = parse(weight_policy, WeightPolicy, "weight_policy")
         self.norm = norm
         self.weight_policy = weight_policy
 

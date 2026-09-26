@@ -5,7 +5,7 @@ import pytest
 import phydrax as phx
 
 
-def test_diffrax_ensemble_converts_to_process_predictive_field():
+def test_diffrax_ensemble_converts_to_process_predictive_field() -> None:
     problem = phx.solver.DifferentialProblem(
         lambda t, state, args: -0.3 * state,
         jnp.asarray([1.0, -1.0]),

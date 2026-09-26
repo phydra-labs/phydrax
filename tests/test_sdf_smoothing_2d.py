@@ -15,7 +15,7 @@ from phydrax.domain import Boundary
 from phydrax.enforcement import enforce_dirichlet
 
 
-def test_geometry2d_sdf_signs_and_boundary():
+def test_geometry2d_sdf_signs_and_boundary() -> None:
     # Simple in-memory mesh: unit square split into two triangles
     pts = np.array(
         [
@@ -51,7 +51,7 @@ def test_geometry2d_sdf_signs_and_boundary():
     assert np.isclose(float(sd_boundary[0]), 0.0, atol=1e-2)
 
 
-def test_dense_curved_mesh_adf_has_only_the_geometric_zero_set():
+def test_dense_curved_mesh_adf_has_only_the_geometric_zero_set() -> None:
     geometry = phx.domain.GeometryDomain(
         phx.geometry.Ellipse((0.0, 0.0), (1.25, 0.7)).compile()
     )
@@ -93,14 +93,14 @@ def _scaled_square(scale: float) -> phx.domain.GeometryDomain:
     )
 
 
-def _derivative(function, order: int):
+def _derivative(function: Any, order: int) -> Any:
     derivative = function
     for _ in range(order):
         derivative = jax.grad(derivative)
     return derivative
 
 
-def test_boundary_factor_is_scale_covariant_with_exact_boundary_collar():
+def test_boundary_factor_is_scale_covariant_with_exact_boundary_collar() -> None:
     scales = (1e-7, 1.0)
     geometries = tuple(_scaled_square(scale) for scale in scales)
     normalized_points = jnp.array(
@@ -148,7 +148,7 @@ def test_boundary_factor_is_scale_covariant_with_exact_boundary_collar():
     )
 
 
-def test_enforcement_gate_is_dimensionless_scale_invariant_and_broad():
+def test_enforcement_gate_is_dimensionless_scale_invariant_and_broad() -> None:
     scales = (1e-7, 1.0)
     normalized_points = jnp.array([[0.5, 0.0], [0.4, 0.0], [0.25, 0.0], [0.0, 0.0]])
     normalized_values = []
@@ -183,7 +183,7 @@ def test_enforcement_gate_is_dimensionless_scale_invariant_and_broad():
     assert jnp.linalg.norm(normalized_boundary_gradients[0]) < 5.0
 
 
-def test_compact_enforcement_gate_saturation_controls_transition_extent():
+def test_compact_enforcement_gate_saturation_controls_transition_extent() -> None:
     geometry = _scaled_square(1.0)
     point = jnp.array([0.4, 0.0])
 
@@ -194,7 +194,7 @@ def test_compact_enforcement_gate_saturation_controls_transition_extent():
     assert float(compact(point)) > 0.6
 
 
-def test_enforcement_gate_rejects_unknown_method():
+def test_enforcement_gate_rejects_unknown_method() -> None:
     geometry = _scaled_square(1.0)
     invalid_method: Any = "unknown"
 
@@ -202,12 +202,12 @@ def test_enforcement_gate_rejects_unknown_method():
         geometry.make_enforcement_gate(method=invalid_method)
 
 
-def test_boundary_field_has_finite_flat_high_order_face_jets():
+def test_boundary_field_has_finite_flat_high_order_face_jets() -> None:
     geometry = _scaled_square(1.0)
     boundary_point = jnp.array([0.5, 0.0])
     normal = jnp.array([1.0, 0.0])
 
-    def boundary_profile(offset):
+    def boundary_profile(offset: Any) -> Any:
         return geometry.adf(boundary_point + offset * normal)
 
     for order in (2, 3, 4):
@@ -216,7 +216,7 @@ def test_boundary_field_has_finite_flat_high_order_face_jets():
         assert jnp.allclose(value, 0.0, atol=1e-10)
 
 
-def test_cad_hard_ansatz_uses_certified_boundary_field():
+def test_cad_hard_ansatz_uses_certified_boundary_field() -> None:
     geometry = _scaled_square(1.0)
     assert geometry.geometry.field_certificate.is_signed_distance
     assert geometry.geometry.contains(jnp.array([0.0, 0.0]))
@@ -224,7 +224,7 @@ def test_cad_hard_ansatz_uses_certified_boundary_field():
     component = geometry.component({"x": Boundary()})
 
     @geometry.Function("x")
-    def field(x):
+    def field(x: Any) -> Any:
         del x
         return jnp.asarray(1.0)
 

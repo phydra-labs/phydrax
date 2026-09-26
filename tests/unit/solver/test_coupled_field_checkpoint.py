@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -9,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def test_coupled_field_checkpoint_roundtrip_and_identity_rejection(tmp_path):
+def test_coupled_field_checkpoint_roundtrip_and_identity_rejection(tmp_path: Any) -> None:
     plan = phx.solver.CoupledFieldCheckpointPlan(
         "runtime",
         "program",

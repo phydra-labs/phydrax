@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -40,11 +41,11 @@ _FULL_DISCLOSURE = frozenset(
 _SEMANTIC = SemanticProvenance({"kind": "lifecycle-test-state"})
 
 
-def _lineage(arrays, /, **kwargs) -> RevisionLineage:
+def _lineage(arrays: Any, /, **kwargs: Any) -> RevisionLineage:
     return RevisionLineage(NumericRevision(_SEMANTIC, arrays), **kwargs)
 
 
-def _sensitive_archive(tmp_path: Path):
+def _sensitive_archive(tmp_path: Path) -> Any:
     values = np.asarray((1.0, 2.0, 3.0))
     revision = _lineage(
         {"patient-waveform": values},
@@ -64,7 +65,7 @@ def _sensitive_archive(tmp_path: Path):
 
 def test_support_bundle_is_recursively_allowlisted_and_payload_free_by_default(
     tmp_path: Path,
-):
+) -> None:
     source = _sensitive_archive(tmp_path)
     destination = support_bundle(source, tmp_path / "sanitized-support.zip")
 
@@ -97,7 +98,7 @@ def test_support_bundle_is_recursively_allowlisted_and_payload_free_by_default(
 
 def test_full_support_payload_requires_explicit_complete_owner_authorization(
     tmp_path: Path,
-):
+) -> None:
     source = _sensitive_archive(tmp_path)
 
     with pytest.raises(ValueError, match="every sensitive disclosure"):
@@ -114,6 +115,7 @@ def test_full_support_payload_requires_explicit_complete_owner_authorization(
         "data-owner-1",
         source.archive_id,
         1_700_000_000,
+        # ty: ignore[invalid-argument-type]
         _FULL_DISCLOSURE,
     )
     wrong_source = SupportBundleAuthorization(
@@ -121,6 +123,7 @@ def test_full_support_payload_requires_explicit_complete_owner_authorization(
         "data-owner-1",
         "0" * 64,
         1_700_000_000,
+        # ty: ignore[invalid-argument-type]
         _FULL_DISCLOSURE,
     )
     with pytest.raises(ValueError, match="not bound"):
@@ -149,7 +152,7 @@ def test_full_support_payload_requires_explicit_complete_owner_authorization(
     assert arrays["archive"].tobytes() == source.path.read_bytes()
 
 
-def test_revision_lineage_archive_requires_materialized_content(tmp_path: Path):
+def test_revision_lineage_archive_requires_materialized_content(tmp_path: Path) -> None:
     lineage = _lineage({"state": np.asarray((1.0,))}, label="unbacked")
     with pytest.raises(ValueError, match="materialized payload"):
         create(tmp_path / "unbacked.zip", manifest=lineage, arrays={})
@@ -161,7 +164,7 @@ def test_revision_lineage_archive_requires_materialized_content(tmp_path: Path):
         )
 
 
-def test_revision_lineage_round_trips_canonical_revision_ids(tmp_path: Path):
+def test_revision_lineage_round_trips_canonical_revision_ids(tmp_path: Path) -> None:
     parent_arrays = {"state": np.asarray((1.0, 2.0))}
     parent_revision = NumericRevision(_SEMANTIC, parent_arrays)
     parent = create(
@@ -174,7 +177,9 @@ def test_revision_lineage_round_trips_canonical_revision_ids(tmp_path: Path):
     child_lineage = RevisionLineage(
         child_revision,
         label="child",
+        # ty: ignore[unresolved-attribute]
         parent_revision_id=parent.manifest.revision_id,
+        # ty: ignore[unresolved-attribute]
         parent_lineage_id=parent.manifest.lineage_id,
         metadata={"round": "2"},
     )
@@ -187,8 +192,11 @@ def test_revision_lineage_round_trips_canonical_revision_ids(tmp_path: Path):
 
     reopened = open_lifecycle_archive(child.path, parent=parent)
     assert reopened.manifest == child_lineage
+    # ty: ignore[unresolved-attribute]
     assert reopened.manifest.revision_id == child_revision.revision_id
+    # ty: ignore[unresolved-attribute]
     assert reopened.manifest.semantic_id == _SEMANTIC.semantic_id
+    # ty: ignore[unresolved-attribute]
     assert reopened.manifest.parent_revision_id == parent_revision.revision_id
     # The archive payload is the canonical numeric content of the revision.
     assert (
@@ -199,7 +207,7 @@ def test_revision_lineage_round_trips_canonical_revision_ids(tmp_path: Path):
         RevisionLineage(child_revision, parent_revision_id=parent_revision.revision_id)
 
 
-def test_parented_revision_lineage_requires_exact_parent_archive(tmp_path: Path):
+def test_parented_revision_lineage_requires_exact_parent_archive(tmp_path: Path) -> None:
     parent_values = {"state": np.asarray((1.0,))}
     parent_lineage = _lineage(parent_values, label="parent")
     parent = create(
@@ -237,6 +245,7 @@ def test_parented_revision_lineage_requires_exact_parent_archive(tmp_path: Path)
         arrays=child_values,
         parent=parent,
     )
+    # ty: ignore[unresolved-attribute]
     assert child.manifest.parent_lineage_id == parent_lineage.lineage_id
     with pytest.raises(ValueError, match="parent archive"):
         open_lifecycle_archive(child.path)
@@ -245,7 +254,7 @@ def test_parented_revision_lineage_requires_exact_parent_archive(tmp_path: Path)
     )
 
 
-def test_legacy_numeric_revision_archive_fails_closed(tmp_path: Path):
+def test_legacy_numeric_revision_archive_fails_closed(tmp_path: Path) -> None:
     values = np.asarray((1.0, 2.0))
     legacy_record = {
         "kind": "numeric-revision",
@@ -279,7 +288,7 @@ def test_legacy_numeric_revision_archive_fails_closed(tmp_path: Path):
         open_lifecycle_archive(path)
 
 
-def test_model_manifest_binding_identity_round_trips(tmp_path: Path):
+def test_model_manifest_binding_identity_round_trips(tmp_path: Path) -> None:
     values = np.arange(3.0)
     revision = NumericRevision(_SEMANTIC, {"weights": values})
     signature = ExecutableSignature(shapes={"weights": (3,)}, dtypes={"weights": "f8"})
@@ -300,7 +309,9 @@ def test_model_manifest_binding_identity_round_trips(tmp_path: Path):
         tmp_path / "model.zip", manifest=manifest, arrays={"weights": values}
     )
     reopened = open_lifecycle_archive(archive.path)
+    # ty: ignore[unresolved-attribute]
     assert reopened.manifest.binding == binding
+    # ty: ignore[unresolved-attribute]
     assert reopened.manifest.manifest_id == manifest.manifest_id
     with pytest.raises(ValueError, match="manifest numeric revision"):
         ModelManifest(
@@ -312,13 +323,14 @@ def test_model_manifest_binding_identity_round_trips(tmp_path: Path):
         )
 
 
-def test_authorized_support_copy_revalidates_source_snapshot(tmp_path: Path):
+def test_authorized_support_copy_revalidates_source_snapshot(tmp_path: Path) -> None:
     source = _sensitive_archive(tmp_path)
     authorization = SupportBundleAuthorization(
         "authorization-1",
         "data-owner-1",
         source.archive_id,
         1_700_000_000,
+        # ty: ignore[invalid-argument-type]
         _FULL_DISCLOSURE,
     )
     replacement_values = np.asarray((9.0,))

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import zipfile
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -15,7 +16,7 @@ import pytest
 import phydrax as phx
 
 
-def _case():
+def _case() -> Any:
     claim = phx.discretization.MPMClaimTuple(
         equation_family="solid-mechanics",
         dimension=2,
@@ -93,7 +94,7 @@ def _case():
     return compiled, arguments, state
 
 
-def test_checkpoint_generation_roundtrip_and_current_pointer(tmp_path):
+def test_checkpoint_generation_roundtrip_and_current_pointer(tmp_path: Any) -> None:
     compiled, arguments, state = _case()
     detail = compiled.dynamics.step_detailed(state, 0.001, arguments)
     plan = phx.solver.MPMCheckpointPlan(compiled, state)
@@ -114,7 +115,7 @@ def test_checkpoint_generation_roundtrip_and_current_pointer(tmp_path):
         np.testing.assert_array_equal(expected, actual)
 
 
-def test_checkpoint_corruption_is_rejected(tmp_path):
+def test_checkpoint_corruption_is_rejected(tmp_path: Any) -> None:
     compiled, _, state = _case()
     plan = phx.solver.MPMCheckpointPlan(compiled, state)
     path = tmp_path / "state.mpmckpt"
@@ -130,7 +131,7 @@ def test_checkpoint_corruption_is_rejected(tmp_path):
         plan.read(corrupt)
 
 
-def test_checkpoint_writer_rejects_runtime_leaf_shape_mismatch(tmp_path):
+def test_checkpoint_writer_rejects_runtime_leaf_shape_mismatch(tmp_path: Any) -> None:
     compiled, _, state = _case()
     plan = phx.solver.MPMCheckpointPlan(compiled, state)
     incompatible = eqx.tree_at(
@@ -143,7 +144,7 @@ def test_checkpoint_writer_rejects_runtime_leaf_shape_mismatch(tmp_path):
         plan.write(tmp_path / "incompatible.mpmckpt", incompatible)
 
 
-def test_quarantined_run_cannot_complete_or_release():
+def test_quarantined_run_cannot_complete_or_release() -> None:
     compiled, arguments, state = _case()
     supervisor = phx.solver.MPMRunSupervisor(
         compiled.dynamics,
@@ -158,7 +159,7 @@ def test_quarantined_run_cannot_complete_or_release():
         supervisor.release("release-bundle")
 
 
-def test_hdf5_xdmf_vtk_output_and_backpressure(tmp_path):
+def test_hdf5_xdmf_vtk_output_and_backpressure(tmp_path: Any) -> None:
     compiled, arguments, state = _case()
     output = phx.solver.MPMOutputPlan(compiled, tmp_path / "trajectory.h5")
     output.initialize()
@@ -180,8 +181,8 @@ def test_hdf5_xdmf_vtk_output_and_backpressure(tmp_path):
 
 
 def test_run_supervisor_separates_numerical_rejection_and_operational_recovery(
-    tmp_path,
-):
+    tmp_path: Any,
+) -> None:
     compiled, arguments, state = _case()
     checkpoint = phx.solver.MPMCheckpointPlan(compiled, state)
     output = phx.solver.MPMOutputPlan(compiled, tmp_path / "run.h5")
@@ -204,4 +205,5 @@ def test_run_supervisor_separates_numerical_rejection_and_operational_recovery(
     recovered = supervisor.recover()
     assert int(recovered.accepted_step) == 1
     snapshot = supervisor.snapshot()
+    # ty: ignore[not-subscriptable]
     assert snapshot["metrics"]["rejected_steps"] == 1

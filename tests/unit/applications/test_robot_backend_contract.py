@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -26,7 +29,7 @@ from phydrax.applications.robotics._mjx import (
 from phydrax.backends._types import BackendUnavailableError
 
 
-def _provenance(model="probe-model"):
+def _provenance(model: Any = "probe-model") -> Any:
     return RoboticsProjectionProvenance(
         model=model,
         compiler="probe-compiler",
@@ -37,7 +40,7 @@ def _provenance(model="probe-model"):
     )
 
 
-def _profile():
+def _profile() -> Any:
     return RoboticsBackendProfile(
         backend="contract-probe",
         implementation="native-probe",
@@ -62,7 +65,7 @@ def _profile():
     )
 
 
-def test_capability_negotiation_accepts_only_declared_operation_conditions():
+def test_capability_negotiation_accepts_only_declared_operation_conditions() -> None:
     profile = _profile()
     accepted = profile.negotiate(
         (
@@ -102,7 +105,7 @@ def test_capability_negotiation_accepts_only_declared_operation_conditions():
         profile.require((RoboticsOperationRequirement("step", solver="pgs"),))
 
 
-def test_profiles_are_per_operation_and_never_claim_universal_differentiability():
+def test_profiles_are_per_operation_and_never_claim_universal_differentiability() -> None:
     assert tuple(capability.operation for capability in MJX_JAX_PROFILE.operations) == (
         ROBOTICS_OPERATIONS
     )
@@ -133,7 +136,7 @@ def test_profiles_are_per_operation_and_never_claim_universal_differentiability(
         MJX_WARP_PROFILE.require((RoboticsOperationRequirement("vjp"),))
 
 
-def test_projection_maps_are_complete_stable_and_immutable():
+def test_projection_maps_are_complete_stable_and_immutable() -> None:
     index_map = RoboticsProjectionMap(
         "qpos",
         4,
@@ -175,7 +178,9 @@ def test_projection_maps_are_complete_stable_and_immutable():
         RoboticsProjection(jnp.zeros((3,)), index_map)
 
 
-def test_operation_evidence_is_casewise_and_projection_freshness_is_epoch_derived():
+def test_operation_evidence_is_casewise_and_projection_freshness_is_epoch_derived() -> (
+    None
+):
     evidence = RoboticsOperationEvidence(
         status=jnp.asarray(
             [RoboticsOperationStatus.SUCCESS, RoboticsOperationStatus.NONFINITE]
@@ -242,17 +247,18 @@ def test_operation_evidence_is_casewise_and_projection_freshness_is_epoch_derive
     ),
 )
 def test_provider_pair_contract_is_closed_to_matching_qualified_releases(
-    versions, reason
-):
+    versions: Any, reason: Any
+) -> None:
     rejection = _provider_pair_reason(versions)
 
     if reason is None:
         assert rejection is None
     else:
+        # ty: ignore[unsupported-operator]
         assert reason in rejection
 
 
-def test_missing_mjx_provider_uses_shared_unavailable_contract(monkeypatch):
+def test_missing_mjx_provider_uses_shared_unavailable_contract(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         "phydrax.backends._availability.importlib.util.find_spec",
         lambda module: None,

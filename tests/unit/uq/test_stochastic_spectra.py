@@ -18,7 +18,7 @@ from phydrax.uq import (
 )
 
 
-def test_stochastic_transfer_reuses_control_frequency_response():
+def test_stochastic_transfer_reuses_control_frequency_response() -> None:
     a = jnp.array([[-2.0]])
     b = jnp.array([[3.0]])
     c = jnp.array([[4.0]])
@@ -36,7 +36,7 @@ def test_stochastic_transfer_reuses_control_frequency_response():
     assert transfer.diagnostics.method_id == expected.method_id
 
 
-def test_siso_state_output_and_cross_spectra_match_analytic_values():
+def test_siso_state_output_and_cross_spectra_match_analytic_values() -> None:
     a = jnp.array([[-2.0]])
     b = jnp.array([[1.0]])
     c = jnp.array([[3.0]])
@@ -71,7 +71,7 @@ def test_siso_state_output_and_cross_spectra_match_analytic_values():
     assert bool(jnp.all(spectra.valid))
 
 
-def test_mimo_spectra_are_hermitian_positive_semidefinite():
+def test_mimo_spectra_are_hermitian_positive_semidefinite() -> None:
     a = jnp.array([[-2.0, 0.5], [-0.25, -1.0]])
     b = jnp.array([[1.0, 0.2], [0.5, -0.4]])
     c = jnp.array([[1.0, 0.5], [-0.25, 1.0]])
@@ -160,7 +160,7 @@ def test_mimo_spectra_are_hermitian_positive_semidefinite():
     )
 
 
-def test_stationary_spectra_reject_unstable_or_ill_shaped_models():
+def test_stationary_spectra_reject_unstable_or_ill_shaped_models() -> None:
     one = jnp.ones((1, 1))
     zero = jnp.zeros((1, 1))
     with pytest.raises(ValueError, match="stable"):

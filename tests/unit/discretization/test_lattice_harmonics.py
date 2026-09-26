@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -7,7 +9,7 @@ import pytest
 from phydrax.discretization.spectral import BrillouinZonePlan, LatticeHarmonicPlan
 
 
-def _lattice():
+def _lattice() -> Any:
     return LatticeHarmonicPlan.parallelogramic((3,), (9,)).prepare(
         jnp.asarray(((2.0, 0.0),))
     )
@@ -71,4 +73,5 @@ def test_layout_rejects_underresolved_grid_and_nonclosed_custom_set() -> None:
     with pytest.raises(ValueError, match="minimum"):
         LatticeHarmonicPlan.parallelogramic((3,), (3,))
     with pytest.raises(ValueError, match="conjugation"):
+        # ty: ignore[invalid-argument-type]
         LatticeHarmonicPlan(((0,), (1,)), (5,))

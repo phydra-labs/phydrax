@@ -5,6 +5,7 @@
 
 import hashlib
 from dataclasses import replace
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -16,7 +17,7 @@ from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import derived_unit, ELECTRONVOLT, GRAY, JOULE, UnitDefinition
 
 
-def reference(*, training=True, uncertainty=0.01):
+def reference(*, training: Any = True, uncertainty: Any = 0.01) -> Any:
     payload = b"hand-authored-known-Gaussian-sigma-radiation-regression"
     return ReferenceArtifactManifest(
         "synthetic-yield-law",
@@ -37,7 +38,9 @@ def reference(*, training=True, uncertainty=0.01):
     )
 
 
-def dataset(prefix, pairs, *, oxygen_start=0.0, sigma=0.01):
+def dataset(
+    prefix: Any, pairs: Any, *, oxygen_start: Any = 0.0, sigma: Any = 0.01
+) -> Any:
     supports = tuple(
         rad.LesionExpectationSupport(
             tuple(d), tuple(i), 1.0, f"{prefix}-candidates-{row}"
@@ -69,7 +72,7 @@ def dataset(prefix, pairs, *, oxygen_start=0.0, sigma=0.01):
     )
 
 
-def test_union_probability_is_not_sum_and_masked_support_is_jit_differentiable():
+def test_union_probability_is_not_sum_and_masked_support_is_jit_differentiable() -> None:
     direct = jnp.asarray([[1, 0, 99]])
     indirect = jnp.asarray([[2, 1, 99]])
     mask = jnp.asarray([[True, True, False]])
@@ -84,7 +87,7 @@ def test_union_probability_is_not_sum_and_masked_support_is_jit_differentiable()
     )
 
 
-def test_native_probability_fit_predicts_independent_heldout_conditions():
+def test_native_probability_fit_predicts_independent_heldout_conditions() -> None:
     training = dataset("fit", [((1,), (0,)), ((0,), (1,)), ((1, 1), (0, 1))])
     heldout = dataset("validation", [((1,), (2,)), ((0, 1), (3, 2))], oxygen_start=10.0)
     result = rad.calibrate_radiation_lesions(
@@ -112,7 +115,7 @@ def test_native_probability_fit_predicts_independent_heldout_conditions():
         )
 
 
-def test_prior_does_not_manufacture_likelihood_identifiability():
+def test_prior_does_not_manufacture_likelihood_identifiability() -> None:
     training = dataset("fit", [((1,), (1,)), ((1,), (1,))])
     heldout = dataset("validation", [((1,), (1,))], oxygen_start=10.0)
     result = rad.calibrate_radiation_lesions(
@@ -139,7 +142,7 @@ def test_prior_does_not_manufacture_likelihood_identifiability():
     assert np.all(np.isfinite(np.asarray(result.heldout_standardized_residuals)))
 
 
-def test_unknown_uncertainty_and_training_rights_are_separate_gates():
+def test_unknown_uncertainty_and_training_rights_are_separate_gates() -> None:
     training = dataset("fit", [((1,), (0,)), ((0,), (1,))])
     heldout = dataset("validation", [((1,), (2,))], oxygen_start=10.0)
     with pytest.raises(ValueError, match="uncertainty"):
@@ -155,7 +158,7 @@ def test_unknown_uncertainty_and_training_rights_are_separate_gates():
         )
 
 
-def test_stage_evidence_compares_observables_against_declared_uncertainty():
+def test_stage_evidence_compares_observables_against_declared_uncertainty() -> None:
     evidence = rad.RadiationStageEvidence(
         "chemical-G",
         ("1ps", "1ns"),
@@ -173,7 +176,7 @@ def test_stage_evidence_compares_observables_against_declared_uncertainty():
     assert not replace(evidence, predicted=(10.0, 10.0)).accepted
 
 
-def test_expected_lesion_yield_respects_measured_unit_scale():
+def test_expected_lesion_yield_respects_measured_unit_scale() -> None:
     data = dataset("units", [((1,), (2,))])
     unit = UnitDefinition(
         "mGy^-1", data.yield_unit.dimension, data.yield_unit.reference_system_id, "1000"

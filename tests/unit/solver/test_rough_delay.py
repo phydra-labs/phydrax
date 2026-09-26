@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from math import factorial
+from typing import Any
 
 import diffrax as dfx
 import jax
@@ -12,11 +14,11 @@ import pytest
 import phydrax as phx
 
 
-def _smooth_control(times):
+def _smooth_control(times: Any) -> Any:
     return phx.stochastic.GeometricRoughPath.from_values(times, times[:, None])
 
 
-def test_rough_delay_euler_reduces_to_fixed_step_dde_on_smooth_driver():
+def test_rough_delay_euler_reduces_to_fixed_step_dde_on_smooth_driver() -> None:
     times = jnp.linspace(0.0, 1.0, 21)
     delay = phx.solver.ConstantDelay("past", 0.2)
     rate = 0.7
@@ -55,7 +57,7 @@ def test_rough_delay_euler_reduces_to_fixed_step_dde_on_smooth_driver():
     assert rough.metadata["delayed_second_level"] == "not-required-young"
 
 
-def test_delayed_davie_cross_level_improves_constant_delay_accuracy():
+def test_delayed_davie_cross_level_improves_constant_delay_accuracy() -> None:
     times = jnp.linspace(0.0, 1.0, 21)
     delay_value = 0.2
     rate = 0.8
@@ -93,7 +95,7 @@ def test_delayed_davie_cross_level_improves_constant_delay_accuracy():
     )
 
 
-def test_young_rough_delay_supports_bounded_history_functionals():
+def test_young_rough_delay_supports_bounded_history_functionals() -> None:
     times = jnp.linspace(0.0, 0.8, 17)
     lags = jnp.asarray([0.2, 0.3, 0.4])
     functional = phx.solver.FunctionalDelay(
@@ -125,7 +127,7 @@ def test_young_rough_delay_supports_bounded_history_functionals():
         )
 
 
-def test_rough_delay_euler_preserves_quaternion_point_tangent_roles():
+def test_rough_delay_euler_preserves_quaternion_point_tangent_roles() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
     angular_velocity = jnp.asarray([0.15, -0.2, 0.1])
@@ -153,7 +155,7 @@ def test_rough_delay_euler_preserves_quaternion_point_tangent_roles():
     assert jnp.all(jax.vmap(geometry.contains)(solution.states))
 
 
-def test_rough_delay_rejects_point_shaped_quaternion_tangent():
+def test_rough_delay_rejects_point_shaped_quaternion_tangent() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     with pytest.raises(ValueError, match="physical tangent shape"):
         phx.solver.RoughDelayDifferentialProblem(

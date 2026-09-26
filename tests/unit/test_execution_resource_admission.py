@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from phydrax._execution_plan import (
@@ -43,7 +45,7 @@ def _resolve(
     inventory: ResourceInventory,
     candidate: ExecutionCandidate,
     request: ResourceRequest,
-):
+) -> Any:
     return resolve_execution_plan(
         ExecutionPolicy(DistributionMode.SINGLE, resources=request),
         inventory,
@@ -53,7 +55,7 @@ def _resolve(
     )
 
 
-def test_accelerator_admission_uses_accelerator_count_and_attested_device_facts():
+def test_accelerator_admission_uses_accelerator_count_and_attested_device_facts() -> None:
     inventory = ResourceInventory(
         1,
         0,
@@ -84,7 +86,7 @@ def test_accelerator_admission_uses_accelerator_count_and_attested_device_facts(
     assert plan.group.device_count == 1
 
 
-def test_unknown_required_component_budget_fails_closed():
+def test_unknown_required_component_budget_fails_closed() -> None:
     inventory = ResourceInventory(1, 0, (DeviceResource(0, 0, 0, "cpu", "cpu"),))
     request = ResourceRequest(1, 4_096, maximum_device_bytes=2_048)
 
@@ -94,7 +96,7 @@ def test_unknown_required_component_budget_fails_closed():
         _resolve(inventory, _candidate(inventory), request)
 
 
-def test_complete_component_and_capability_evidence_is_admitted():
+def test_complete_component_and_capability_evidence_is_admitted() -> None:
     inventory = ResourceInventory(1, 0, (DeviceResource(0, 0, 0, "cpu", "cpu"),))
     evidence = ExecutionResourceEvidence(
         per_device_peak_bytes=1_000,
@@ -128,7 +130,7 @@ def test_complete_component_and_capability_evidence_is_admitted():
     assert plan.resource_evidence == evidence
 
 
-def test_resource_evidence_changes_candidate_and_plan_serialization_identity():
+def test_resource_evidence_changes_candidate_and_plan_serialization_identity() -> None:
     inventory = ResourceInventory(1, 0, (DeviceResource(0, 0, 0, "cpu", "cpu"),))
     first_evidence = ExecutionResourceEvidence(output_backlog_bytes=64)
     second_evidence = ExecutionResourceEvidence(output_backlog_bytes=65)
@@ -151,7 +153,7 @@ def test_resource_evidence_changes_candidate_and_plan_serialization_identity():
     assert different_request.resource_id != request.resource_id
 
 
-def test_legacy_cpu_request_without_extra_evidence_remains_valid():
+def test_legacy_cpu_request_without_extra_evidence_remains_valid() -> None:
     inventory = ResourceInventory(1, 0, (DeviceResource(0, 0, 0, "cpu", "cpu"),))
 
     plan = _resolve(
@@ -165,7 +167,7 @@ def test_legacy_cpu_request_without_extra_evidence_remains_valid():
 
 def _distributed_host_candidate(
     inventory: ResourceInventory,
-    process_host_ids=(),
+    process_host_ids: Any = (),
 ) -> ExecutionCandidate:
     requirements = ExecutionRequirements("distributed-host-admission")
     return ExecutionCandidate(
@@ -183,7 +185,7 @@ def _distributed_host_candidate(
 def _resolve_distributed_hosts(
     inventory: ResourceInventory,
     candidate: ExecutionCandidate,
-):
+) -> Any:
     return resolve_execution_plan(
         ExecutionPolicy(
             DistributionMode.DISTRIBUTED,
@@ -201,7 +203,7 @@ def _resolve_distributed_hosts(
     )
 
 
-def test_multiprocess_single_host_does_not_satisfy_multihost_request():
+def test_multiprocess_single_host_does_not_satisfy_multihost_request() -> None:
     hosts = tuple((process, "node-a") for process in range(4))
     inventory = ResourceInventory(
         4,
@@ -217,7 +219,7 @@ def test_multiprocess_single_host_does_not_satisfy_multihost_request():
         )
 
 
-def test_true_multihost_mapping_is_bound_and_admitted():
+def test_true_multihost_mapping_is_bound_and_admitted() -> None:
     hosts = (
         (0, "node-a"),
         (1, "node-a"),
@@ -242,7 +244,7 @@ def test_true_multihost_mapping_is_bound_and_admitted():
     assert restored.group == plan.group
 
 
-def test_unattested_multiprocess_host_placement_fails_closed():
+def test_unattested_multiprocess_host_placement_fails_closed() -> None:
     inventory = ResourceInventory(
         4,
         0,

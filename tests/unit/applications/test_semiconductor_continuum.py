@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -27,12 +30,12 @@ Q = 1.602176634e-19
 
 
 @pytest.fixture(autouse=True)
-def _double_precision():
+def _double_precision() -> Any:
     with jax.enable_x64(True):
         yield
 
 
-def _resistor(*, multidimensional=False):
+def _resistor(*, multidimensional: Any = False) -> Any:
     if multidimensional:
         support = TransportSupport.tensor_grid(
             (np.linspace(0, 1e-6, 5), np.linspace(0, 0.6e-6, 3)),
@@ -59,7 +62,7 @@ def _resistor(*, multidimensional=False):
     )
 
 
-def test_common_fermi_is_exact_detailed_balance_with_full_linear_conductance():
+def test_common_fermi_is_exact_detailed_balance_with_full_linear_conductance() -> None:
     prepared = PreparedSemiconductorDevice(pn_junction(nodes=9))
     u = prepared.plan.equilibrium_coordinates()
     # Detailed balance must hold for arbitrary potential, not only a converged
@@ -81,7 +84,7 @@ def test_common_fermi_is_exact_detailed_balance_with_full_linear_conductance():
     support = prepared.plan.support
     tail, head = support.tail, support.head
 
-    def unfactored(state):
+    def unfactored(state: Any) -> Any:
         n, p = prepared.densities(state)
         difference = state[head, 0] - state[tail, 0]
         return (
@@ -109,7 +112,7 @@ def test_common_fermi_is_exact_detailed_balance_with_full_linear_conductance():
         np.testing.assert_allclose(actual_species, expected_species, rtol=2e-13)
 
 
-def test_srh_is_pair_recombination_and_resolves_near_equilibrium_imbalance():
+def test_srh_is_pair_recombination_and_resolves_near_equilibrium_imbalance() -> None:
     prepared = _resistor()
     u = prepared.plan.equilibrium_coordinates()
     u = u.at[:, 1].set(1e-12)
@@ -130,7 +133,7 @@ def test_srh_is_pair_recombination_and_resolves_near_equilibrium_imbalance():
     assert bool(jnp.all(generation < 0))
 
 
-def test_multidimensional_flux_and_srh_satisfy_terminal_charge_continuity():
+def test_multidimensional_flux_and_srh_satisfy_terminal_charge_continuity() -> None:
     prepared = _resistor(multidimensional=True)
     support = prepared.plan.support
     x, y = support.positions[:, 0] / 1e-6, support.positions[:, 1] / 0.6e-6
@@ -151,7 +154,7 @@ def test_multidimensional_flux_and_srh_satisfy_terminal_charge_continuity():
     np.testing.assert_allclose(jnp.sum(currents), integrated_charge_residual, rtol=2e-13)
 
 
-def test_storage_derivative_is_density_dependent_and_algebraic_rows_are_empty():
+def test_storage_derivative_is_density_dependent_and_algebraic_rows_are_empty() -> None:
     prepared = PreparedSemiconductorDevice(
         mos_capacitor(semiconductor_nodes=5, oxide_nodes=3)
     )
@@ -176,7 +179,7 @@ def test_storage_derivative_is_density_dependent_and_algebraic_rows_are_empty():
     np.testing.assert_array_equal(prepared.storage(u)[~prepared.differential_mask], 0)
 
 
-def test_uniform_resistor_has_analytic_positive_into_device_current():
+def test_uniform_resistor_has_analytic_positive_into_device_current() -> None:
     prepared = _resistor()
     plan = prepared.plan
     voltage = 0.075
@@ -193,7 +196,7 @@ def test_uniform_resistor_has_analytic_positive_into_device_current():
     )
 
 
-def test_pure_dielectric_capacitor_charge_and_displacement_current_signs():
+def test_pure_dielectric_capacitor_charge_and_displacement_current_signs() -> None:
     area, length, permittivity = 1e-12, 1e-6, 3.9 * 8.8541878128e-12
     support = TransportSupport.interval(
         np.asarray([0, 0.1, 0.35, 0.8, 1.0]) * length, area=area
@@ -243,7 +246,7 @@ def test_pure_dielectric_capacitor_charge_and_displacement_current_signs():
     )
 
 
-def test_failed_biased_native_solve_never_reports_valid_operating_point():
+def test_failed_biased_native_solve_never_reports_valid_operating_point() -> None:
     prepared = PreparedSemiconductorDevice(pn_junction(nodes=17))
     equilibrium = prepared.equilibrium()
     assert bool(equilibrium.successful)
@@ -263,7 +266,7 @@ def test_failed_biased_native_solve_never_reports_valid_operating_point():
     assert point.evidence.scaled_residual_norm > 1e-12
 
 
-def test_numeric_refresh_rebinds_material_doping_and_normalization():
+def test_numeric_refresh_rebinds_material_doping_and_normalization() -> None:
     original = _resistor()
     plan = original.plan
     u = plan.equilibrium_coordinates()
@@ -292,7 +295,7 @@ def test_numeric_refresh_rebinds_material_doping_and_normalization():
     )
 
 
-def test_failed_equilibrium_prerequisite_survives_a_converged_new_root():
+def test_failed_equilibrium_prerequisite_survives_a_converged_new_root() -> None:
     prepared = PreparedSemiconductorDevice(pn_junction(nodes=17))
     failed = prepared.equilibrium(
         termination=NonlinearTermination(
@@ -306,4 +309,5 @@ def test_failed_equilibrium_prerequisite_survives_a_converged_new_root():
     assert bool(point.nonlinear_result.successful)
     assert not bool(point.successful)
     assert not bool(point.evidence.valid)
+    # ty: ignore[unresolved-attribute]
     assert not bool(point.initial_result.successful)

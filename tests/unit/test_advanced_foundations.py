@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_compiled_frequency_system_closes_complex_residual():
+def test_compiled_frequency_system_closes_complex_residual() -> None:
     system = phx.frequency.CompiledFrequencySystem.create(
         jnp.asarray(((1.0,),)),
         jnp.asarray(((0.2,),)),
@@ -18,7 +18,7 @@ def test_compiled_frequency_system_closes_complex_residual():
     assert jnp.all(result.residual_norm < 1e-6)
 
 
-def test_acausal_compiler_enforces_across_and_through_connections():
+def test_acausal_compiler_enforces_across_and_through_connections() -> None:
     connector_type = phx.system_modeling.ConnectorType.create(
         "electrical",
         (
@@ -46,7 +46,7 @@ def test_acausal_compiler_enforces_across_and_through_connections():
     assert jnp.isclose(values["load"]["current"], 5.0)
 
 
-def test_population_aggregation_conserves_first_moment_with_overflow():
+def test_population_aggregation_conserves_first_moment_with_overflow() -> None:
     solver = phx.population_balance.ConservativeSectionalSolver.create(
         jnp.asarray((1.0, 2.0, 4.0)),
         jnp.ones((3, 3)),
@@ -63,7 +63,7 @@ def test_population_aggregation_conserves_first_moment_with_overflow():
     assert jnp.isclose(step.first_moment_residual, 0, atol=1e-10)
 
 
-def test_spatial_population_transport_conserves_closed_domain_inventory():
+def test_spatial_population_transport_conserves_closed_domain_inventory() -> None:
     transport = phx.population_balance.SpatialPopulationTransport.create(
         jnp.asarray((1.0, 1.0))
     )
@@ -76,7 +76,7 @@ def test_spatial_population_transport_conserves_closed_domain_inventory():
     assert jnp.allclose(step.boundary_balance_residual, 0)
 
 
-def test_spatial_conformation_transport_preserves_spd_state():
+def test_spatial_conformation_transport_preserves_spd_state() -> None:
     law = phx.rheology.ViscoelasticLaw("oldroyd-b", 2.0, 1.0)
     solver = phx.rheology.SpatialConformationSolver.create(
         jnp.asarray((1.0, 1.0)),
@@ -98,7 +98,7 @@ def test_spatial_conformation_transport_preserves_spd_state():
     )
 
 
-def test_bulk_surface_adsorption_conserves_total_species():
+def test_bulk_surface_adsorption_conserves_total_species() -> None:
     kinetics = phx.interfacial_transport.AdsorptionKinetics(0.1, 0.0, 1.0)
     solver = phx.interfacial_transport.CoupledBulkSurfaceTransport.create(
         jnp.asarray((1.0,)),
@@ -114,7 +114,7 @@ def test_bulk_surface_adsorption_conserves_total_species():
     assert jnp.isclose(result.total_mole_balance_residual, 0, atol=1e-12)
 
 
-def test_structural_modes_and_newmark_step_close_equilibrium():
+def test_structural_modes_and_newmark_step_close_equilibrium() -> None:
     system = phx.structural_dynamics.LinearStructuralSystem.create(
         jnp.eye(2),
         jnp.zeros((2, 2)),
@@ -133,7 +133,7 @@ def test_structural_modes_and_newmark_step_close_equilibrium():
     assert step.mechanical_energy_j > 0
 
 
-def test_modal_and_frf_correlation_pair_permuted_modes():
+def test_modal_and_frf_correlation_pair_permuted_modes() -> None:
     correlation = phx.correlation.correlate_modes(
         jnp.asarray((10.0, 20.0)),
         jnp.eye(2),

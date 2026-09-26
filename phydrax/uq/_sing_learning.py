@@ -206,7 +206,10 @@ def fit_sing(
             )
         if kernel is not None:
             # `kernel`, `training`, and `parameter_subspace` are set together above.
-            assert training is not None and parameter_subspace is not None
+            if not (training is not None and parameter_subspace is not None):
+                raise RuntimeError(
+                    "Internal invariant failed: training is not None and parameter_subspace is not None."
+                )
             payload = (
                 posterior.state,
                 batch,

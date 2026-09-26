@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
 from dataclasses import FrozenInstanceError
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -22,7 +24,9 @@ from phydrax.ml.compose import Pipeline, TransformedTargetRegressor
 from phydrax.ml.preprocessing import StandardScaler
 
 
-def _contract(levels, *, route=DerivativeRoute.DIRECT, conditions=()):
+def _contract(
+    levels: Any, *, route: Any = DerivativeRoute.DIRECT, conditions: Any = ()
+) -> Any:
     return DerivativeContract(
         (SurfaceDerivative(surface, level) for surface, level in levels.items()),
         route=route,
@@ -55,11 +59,11 @@ class _IdentityModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, width):
+    def __init__(self, width: Any) -> None:
         self.in_size = int(width)
         self.out_size = int(width)
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.asarray(x)
 
@@ -67,10 +71,10 @@ class _IdentityModel(AbstractArrayModel):
 class _AuditRecipe(phx.ml.AbstractRecipe):
     derivative_contract: DerivativeContract
 
-    def __init__(self, derivative_contract=_DIRECT_CONTRACT):
+    def __init__(self, derivative_contract: Any = _DIRECT_CONTRACT) -> None:
         self.derivative_contract = derivative_contract
 
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         diagnostics = _AuditDiagnostics(
             batch.feature_mask,
@@ -95,16 +99,16 @@ class _LeakageRejectingShift(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
-    def __init__(self, shift, width):
+    def __init__(self, shift: Any, width: Any) -> None:
         self.shift = jnp.asarray(shift)
         self.in_size = int(width)
         self.out_size = int(width)
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.asarray(x) + self.shift
 
-    def transform_batch(self, batch, /, *, key=None):
+    def transform_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         if batch.targets is not None:
             raise AssertionError("Fitted feature transforms must not receive targets.")
@@ -116,7 +120,7 @@ class _LeakageRejectingShift(AbstractArrayModel):
 
 
 class _KeyedShiftRecipe(phx.ml.AbstractRecipe):
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         if key is None:
             raise ValueError("_KeyedShiftRecipe requires an explicit key.")
         shift = jax.random.uniform(key, (), minval=-1.0, maxval=1.0)
@@ -147,19 +151,19 @@ class _MeanModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
-    def __init__(self, mean, in_size):
+    def __init__(self, mean: Any, in_size: Any) -> None:
         self.mean = jnp.asarray(mean).reshape(())
         self.in_size = int(in_size)
         self.out_size = "scalar"
 
-    def __call__(self, x, /, *, key=None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         values = jnp.asarray(x)
         return self.mean + jnp.asarray(0, dtype=values.dtype) * jnp.sum(values)
 
 
 class _MeanRegressor(phx.ml.AbstractRecipe):
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         targets = jnp.asarray(batch.require_targets())
         if targets.ndim != len(batch.case_shape) + 1:
@@ -196,10 +200,10 @@ class _MeanRegressor(phx.ml.AbstractRecipe):
 class _StatusRecipe(phx.ml.AbstractRecipe):
     status: int = eqx.field(static=True)
 
-    def __init__(self, status):
+    def __init__(self, status: Any) -> None:
         self.status = int(status)
 
-    def fit_batch(self, batch, /, *, key=None):
+    def fit_batch(self, batch: Any, /, *, key: Any = None) -> Any:
         del key
         valid = self.status == phx.ml.ML_SUCCESS
         return phx.ml.FitResult(
@@ -222,7 +226,7 @@ class _StatusRecipe(phx.ml.AbstractRecipe):
         )
 
 
-def _batch():
+def _batch() -> Any:
     return phx.ml.MLBatch(
         jnp.array([[1.0, 2.0], [3.0, 5.0], [8.0, 13.0]]),
         jnp.array([2.0, 4.0, 9.0]),
@@ -235,7 +239,7 @@ def _batch():
     )
 
 
-def test_pipeline_is_leakage_safe_deterministic_and_preserves_batch_metadata():
+def test_pipeline_is_leakage_safe_deterministic_and_preserves_batch_metadata() -> None:
     batch = _batch()
     contract = _contract(
         {
@@ -249,6 +253,7 @@ def test_pipeline_is_leakage_safe_deterministic_and_preserves_batch_metadata():
     repeated = recipe.fit_batch(batch, key=jax.random.key(17))
     different = recipe.fit_batch(batch, key=jax.random.key(18))
     fitted = first.as_trainable()
+    # ty: ignore[unresolved-attribute]
     audit = fitted.fit_results[1].diagnostics
 
     assert jnp.allclose(fitted(batch.features), repeated.as_trainable()(batch.features))
@@ -261,7 +266,9 @@ def test_pipeline_is_leakage_safe_deterministic_and_preserves_batch_metadata():
     assert jnp.array_equal(audit.measure_weight, batch.measure_weight)
     assert jnp.array_equal(audit.groups, batch.groups)
     assert jnp.array_equal(audit.targets, batch.targets)
+    # ty: ignore[unresolved-attribute]
     assert fitted.feature_schema.names == ("x", "z")
+    # ty: ignore[unresolved-attribute]
     assert fitted.final_feature_schema.names == ("x", "z")
     pipeline_contract = first.derivative_contract
     assert pipeline_contract.level(DerivativeSurface.INPUT) is (
@@ -274,6 +281,7 @@ def test_pipeline_is_leakage_safe_deterministic_and_preserves_batch_metadata():
     assert pipeline_contract.level(DerivativeSurface.FIT_FEATURES) is (GradientLevel.NONE)
     assert pipeline_contract.route is DerivativeRoute.DIRECT
     assert first.diagnostics.names == ("shift", "audit")
+    # ty: ignore[unresolved-attribute]
     assert len(fitted.fit_results) == 2
     with pytest.raises(FrozenInstanceError, match="cannot assign to field 'steps'"):
         fitted.steps = ()
@@ -284,7 +292,7 @@ def test_pipeline_is_leakage_safe_deterministic_and_preserves_batch_metadata():
     assert jnp.allclose(gradient, jnp.ones_like(point))
 
 
-def test_pipeline_propagates_feature_masks_and_case_dependent_bindings():
+def test_pipeline_propagates_feature_masks_and_case_dependent_bindings() -> None:
     masked = phx.ml.MLBatch(
         jnp.asarray([[1.0, 2.0], [3.0, 99.0], [5.0, 6.0]]),
         feature_mask=jnp.asarray([[True, True], [True, False], [True, True]]),
@@ -296,7 +304,9 @@ def test_pipeline_propagates_feature_masks_and_case_dependent_bindings():
             ("audit", _AuditRecipe()),
         )
     ).fit_batch(masked)
+    # ty: ignore[unresolved-attribute]
     audit = imputed.as_trainable().fit_results[-1].diagnostics
+    # ty: ignore[unresolved-attribute]
     transformed = imputed.as_trainable().transform_batch(masked)
 
     assert jnp.all(audit.feature_mask)
@@ -315,13 +325,14 @@ def test_pipeline_propagates_feature_masks_and_case_dependent_bindings():
         (("scale", StandardScaler()), ("audit", _AuditRecipe()))
     ).fit_batch(case_batch)
     case_model = case_result.as_trainable()
+    # ty: ignore[unresolved-attribute]
     expected = case_model.steps[0][1](case_batch.features)
 
     assert case_model.input_binding().batch_mode == "blockwise"
     assert jnp.allclose(case_model(case_batch.features), expected)
 
 
-def test_pipeline_reports_the_most_severe_child_status():
+def test_pipeline_reports_the_most_severe_child_status() -> None:
     result = Pipeline(
         (
             ("first", _StatusRecipe(phx.ml.ML_INSUFFICIENT_DATA)),
@@ -333,7 +344,9 @@ def test_pipeline_reports_the_most_severe_child_status():
     assert int(result.diagnostics.status) == phx.ml.ML_CAPACITY_EXHAUSTED
 
 
-def test_transformed_target_regressor_uses_fitted_inverse_and_composes_contracts():
+def test_transformed_target_regressor_uses_fitted_inverse_and_composes_contracts() -> (
+    None
+):
     features = jnp.array([[0.0], [1.0], [2.0], [3.0]])
     targets = jnp.array([2.0, 4.0, 8.0, 10.0])
     weights = jnp.array([1.0, 1.0, 2.0, 0.0])
@@ -355,7 +368,9 @@ def test_transformed_target_regressor_uses_fitted_inverse_and_composes_contracts
         jax.grad(lambda value: fitted(value))(jnp.array([5.0])),
         jnp.array([0.0]),
     )
+    # ty: ignore[unresolved-attribute]
     assert fitted.transformer_result.method == "standard_scaler"
+    # ty: ignore[unresolved-attribute]
     assert fitted.regressor_result.method == "mean-regressor"
     assert result.diagnostics.names == ("transformer", "regressor")
     contract = result.derivative_contract
@@ -368,7 +383,7 @@ def test_transformed_target_regressor_uses_fitted_inverse_and_composes_contracts
     assert any("inverse_transform" in condition for condition in contract.conditions)
 
 
-def test_transformed_target_regressor_rejects_non_regression_target_semantics():
+def test_transformed_target_regressor_rejects_non_regression_target_semantics() -> None:
     batch = phx.ml.MLBatch(
         jnp.ones((3, 1)),
         jnp.array([0, 1, 0]),

@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from typing import Any
 
 import coordax as cx
 import equinox as eqx
@@ -31,13 +32,14 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _problem(size: int, dimension: int):
+def _problem(size: int, dimension: int) -> Any:
     indices = jnp.arange(size * dimension, dtype="float64")
     source_points = jnp.reshape(jnp.sin(0.013 * indices), (size, dimension))
     target_points = jnp.reshape(jnp.cos(0.017 * indices), (size, dimension))
     weights = cx.Field(jnp.ones((size,), dtype="float64"), dims=("atom",))
     source = phx.integration.discrete(
         source_points,
+        # ty: ignore[invalid-argument-type]
         weights,
         axes="atom",
         normalized=True,
@@ -45,6 +47,7 @@ def _problem(size: int, dimension: int):
     )
     target = phx.integration.discrete(
         target_points,
+        # ty: ignore[invalid-argument-type]
         weights,
         axes="atom",
         normalized=True,
@@ -64,7 +67,7 @@ def _record(
     iterations: int,
     repeats: int,
     seed: int,
-):
+) -> Any:
     problem = _problem(size, dimension)
     feature_map = phx.transport.GaussianPositiveFeatures(
         jax.random.key(seed),
@@ -104,10 +107,11 @@ def _record(
         jax.block_until_ready(applied)
     plan_action_ms = 1e3 * (time.perf_counter() - started) / repeats
 
-    def scalar(points):
+    def scalar(points: Any) -> Any:
         weights = cx.Field(jnp.ones((size,), dtype="float64"), dims=("atom",))
         source = phx.integration.discrete(
             points,
+            # ty: ignore[invalid-argument-type]
             weights,
             axes="atom",
             normalized=True,
@@ -115,6 +119,7 @@ def _record(
         )
         target = phx.integration.discrete(
             problem.target.points,
+            # ty: ignore[invalid-argument-type]
             weights,
             axes="atom",
             normalized=True,

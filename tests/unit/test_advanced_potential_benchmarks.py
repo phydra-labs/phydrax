@@ -5,7 +5,7 @@
 from tools.advanced_potential_benchmarks import run_advanced_potential_benchmarks
 
 
-def test_advanced_potential_benchmark_schema_and_guarantee_split():
+def test_advanced_potential_benchmark_schema_and_guarantee_split() -> None:
     result = run_advanced_potential_benchmarks(
         panels_per_chart=2,
         quadrature_order=4,

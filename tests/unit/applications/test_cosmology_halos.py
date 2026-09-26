@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -17,7 +19,7 @@ NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
 cosmology = phx.applications.cosmology
 
 
-def _power(background):
+def _power(background: Any) -> Any:
     provenance = cosmology.CosmologyProductProvenance(
         producer="test",
         producer_version="current",
@@ -32,6 +34,7 @@ def _power(background):
     k = jnp.geomspace(1.0e-2, 20.0, 256)
     values = jnp.stack((k**-1.0, 2.0 * k**-1.0))
     return cosmology.MatterPowerTable(
+        # ty: ignore[invalid-argument-type]
         [0.5, 1.0],
         k,
         values,
@@ -42,7 +45,7 @@ def _power(background):
     )
 
 
-def test_spherical_overdensity_mass_radius_inverse_and_eds_constants():
+def test_spherical_overdensity_mass_radius_inverse_and_eds_constants() -> None:
     background = cosmology.FLRWBackground(1.0, 1.0)
     definition = cosmology.SphericalOverdensityMassDefinition(200.0, "critical")
     mass = jnp.asarray([1.0, 10.0, 100.0])
@@ -54,7 +57,7 @@ def test_spherical_overdensity_mass_radius_inverse_and_eds_constants():
     np.testing.assert_allclose(collapse.virial_overdensity, 18.0 * np.pi**2)
 
 
-def test_linear_variance_and_nfw_normalization_are_finite():
+def test_linear_variance_and_nfw_normalization_are_finite() -> None:
     background = cosmology.FLRWBackground(1.0, 1.0)
     power = _power(background)
     variance = cosmology.LinearVariancePlan(1.0).sigma(

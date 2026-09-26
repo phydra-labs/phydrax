@@ -14,6 +14,7 @@ from pathlib import Path
 output = io.StringIO()
 with contextlib.redirect_stdout(output):
     namespace = runpy.run_path(
+        # ty: ignore[invalid-argument-type]
         Path(__file__).resolve().parents[1] / "examples/growing_reactive_particle_pool.py"
     )
 result = namespace["result"]

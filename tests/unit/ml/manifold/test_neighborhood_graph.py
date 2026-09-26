@@ -12,7 +12,9 @@ from phydrax.ml import MLBatch, SparseFeatures
 from phydrax.ml.manifold import build_neighbor_graph, LocallyLinearEmbeddingRecipe
 
 
-def test_neighbor_graph_has_fixed_sparse_capacity_deterministic_ties_and_case_diagnostics():
+def test_neighbor_graph_has_fixed_sparse_capacity_deterministic_ties_and_case_diagnostics() -> (
+    None
+):
     tied = jnp.array([[0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [4.0, 0.0]])
     features = jnp.stack((tied, tied + jnp.array([0.0, 1.0])), axis=0)
     active = jnp.array([[True, True, True, True, True], [True, True, False, True, True]])
@@ -46,7 +48,9 @@ def test_neighbor_graph_has_fixed_sparse_capacity_deterministic_ties_and_case_di
     assert "topology" in first.topology_gradient
 
 
-def test_neighbor_graph_reports_disconnected_components_and_keeps_edge_length_gradients():
+def test_neighbor_graph_reports_disconnected_components_and_keeps_edge_length_gradients() -> (
+    None
+):
     disconnected = jnp.array([[0.0], [1.0], [10.0], [11.0]])
     graph = build_neighbor_graph(
         disconnected, jnp.ones((4,), dtype="bool"), n_neighbors=1
@@ -69,7 +73,7 @@ def test_neighbor_graph_reports_disconnected_components_and_keeps_edge_length_gr
     assert jnp.any(jnp.abs(gradient) > 0.0)
 
 
-def test_neighbor_graph_rejects_precomputed_geometry_and_invalid_capacity():
+def test_neighbor_graph_rejects_precomputed_geometry_and_invalid_capacity() -> None:
     coordinates = jnp.eye(4)
     active = jnp.ones((4,), dtype="bool")
     invalid_metric: Any = "precomputed"
@@ -80,7 +84,7 @@ def test_neighbor_graph_rejects_precomputed_geometry_and_invalid_capacity():
         build_neighbor_graph(coordinates, active, n_neighbors=4)
 
 
-def test_sparse_features_fail_explicitly_without_implicit_densification():
+def test_sparse_features_fail_explicitly_without_implicit_densification() -> None:
     dense = jnp.array(
         [[-2.0, 0.0], [-1.0, 0.5], [0.0, -0.2], [1.0, 0.4], [2.0, -0.1], [3.0, 0.7]]
     )

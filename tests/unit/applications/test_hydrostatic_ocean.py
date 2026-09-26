@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def _grid(*, vertical_coordinate="zstar", rest_depth=10.0):
+def _grid(*, vertical_coordinate: Any = "zstar", rest_depth: Any = 10.0) -> Any:
     shape = (4, 4, 3)
     grid = phx.discretization.TensorGridPlan(
         (
@@ -29,14 +32,16 @@ def _grid(*, vertical_coordinate="zstar", rest_depth=10.0):
     ).prepare()
 
 
-def _ocean(**kwargs):
+def _ocean(**kwargs: Any) -> Any:
     geometry = _grid(vertical_coordinate=kwargs.pop("vertical_coordinate", "zstar"))
     return phx.applications.ocean.HydrostaticPrimitiveEquationPlan(
         geometry, **kwargs
     ).prepare()
 
 
-def _state(ocean, *, eta=0.0, salinity=35.0, temperature=10.0):
+def _state(
+    ocean: Any, *, eta: Any = 0.0, salinity: Any = 35.0, temperature: Any = 10.0
+) -> Any:
     eta_ = jnp.full(ocean.geometry.horizontal_shape, eta)
     return ocean.initialize_state(
         eta_,
@@ -47,7 +52,7 @@ def _state(ocean, *, eta=0.0, salinity=35.0, temperature=10.0):
     )
 
 
-def test_checked_tridiagonal_line_solve():
+def test_checked_tridiagonal_line_solve() -> None:
     lower = jnp.asarray(((0.0, -1.0, -1.0), (0.0, -2.0, -2.0)))
     diagonal = jnp.asarray(((2.0, 2.0, 2.0), (4.0, 4.0, 4.0)))
     upper = jnp.asarray(((-1.0, -1.0, 0.0), (-2.0, -2.0, 0.0)))
@@ -69,7 +74,7 @@ def test_checked_tridiagonal_line_solve():
     assert result.residual_norm <= 1e-12
 
 
-def test_zstar_geometry_volume_and_continuity_identities():
+def test_zstar_geometry_volume_and_continuity_identities() -> None:
     geometry = _grid()
     eta = jnp.full(geometry.horizontal_shape, 0.5)
     epoch = geometry.metric_epoch(eta)
@@ -88,7 +93,7 @@ def test_zstar_geometry_volume_and_continuity_identities():
     np.testing.assert_allclose(vertical[..., -1], -barotropic_net)
 
 
-def test_partial_cell_geometry_preserves_column_depth():
+def test_partial_cell_geometry_preserves_column_depth() -> None:
     geometry = _grid(vertical_coordinate="partial-z")
     eta = jnp.zeros(geometry.horizontal_shape)
     epoch = geometry.metric_epoch(eta)
@@ -101,7 +106,7 @@ def test_partial_cell_geometry_preserves_column_depth():
     )
 
 
-def test_linear_and_nonlinear_eos_have_consistent_derivatives():
+def test_linear_and_nonlinear_eos_have_consistent_derivatives() -> None:
     salinity = jnp.asarray((34.0, 35.0, 36.0))
     temperature = jnp.asarray((5.0, 10.0, 15.0))
     pressure = jnp.asarray((0.0, 1000.0, 5000.0))
@@ -120,7 +125,7 @@ def test_linear_and_nonlinear_eos_have_consistent_derivatives():
     assert jnp.all(jnp.isfinite(nonlinear.density_pressure_derivative))
 
 
-def test_implicit_free_surface_preserves_rest():
+def test_implicit_free_surface_preserves_rest() -> None:
     ocean = _ocean()
     state = _state(ocean)
     epoch = ocean.geometry.metric_epoch(state.eta)
@@ -136,7 +141,7 @@ def test_implicit_free_surface_preserves_rest():
     assert result.residual_norm <= 1e-10
 
 
-def test_freshwater_changes_volume_and_conserves_salt_inventory():
+def test_freshwater_changes_volume_and_conserves_salt_inventory() -> None:
     freshwater = phx.applications.ocean.FreshwaterVolumeFluxPlan(
         1.0e-4,
         absolute_salinity=0.0,
@@ -175,7 +180,7 @@ def test_freshwater_changes_volume_and_conserves_salt_inventory():
     )
 
 
-def test_beta_plane_and_latitude_longitude_metrics():
+def test_beta_plane_and_latitude_longitude_metrics() -> None:
     lon = jnp.linspace(0.0, 0.2, 5)
     lat = jnp.linspace(-0.3, 0.3, 5)
     z = jnp.linspace(-10.0, 0.0, 4)
@@ -196,7 +201,7 @@ def test_beta_plane_and_latitude_longitude_metrics():
     )
 
 
-def test_vertical_closure_modes_return_finite_coefficients():
+def test_vertical_closure_modes_return_finite_coefficients() -> None:
     for kind in ("prescribed", "ri", "kpp", "tke", "redi-gm"):
         ocean = _ocean(mixing=phx.applications.ocean.HydrostaticMixingPlan(kind))
         state = _state(ocean)

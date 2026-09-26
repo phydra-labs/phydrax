@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import jax
 
@@ -21,7 +22,7 @@ def main() -> None:
     stretch = MileusnicSpindleInput(1.02, 0.1, 0.0, 70.0, 70.0)
     initial = runtime.initialize(rest)
 
-    def step(state, _):
+    def step(state: Any, _: Any) -> Any:
         candidate = runtime.candidate(state, stretch, 1.0e-4)
         return candidate.commit(), candidate.evidence.successful
 
